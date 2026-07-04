@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, CalendarPlus, Phone, FileSignature,
@@ -87,7 +87,10 @@ import {
   type PlaygroundWidgetType,
   type WidgetPatientContext,
 } from "@/components/portal/tools/workspaceWidgets";
-import { MessageSquare, Smartphone, StickyNote, Settings as SettingsIcon } from "lucide-react";
+import { MessageSquare, Smartphone, StickyNote, Settings as SettingsIcon, MessageCircle } from "lucide-react";
+import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
+import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
+import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy
@@ -1124,6 +1127,29 @@ export function TeamPortalShell({
     updateWidget: updatePlaygroundWidget,
     removeWidget: removePlaygroundWidget,
   } = useWorkspaceWidgets(currentUser?.username ?? "you", currentUserId ?? null);
+  // ── Task #740: iMessage-style Messaging (frontend mock only) ─────
+  // A single source of truth for the inbox panel + floating window. No
+  // backend — the real Twilio/direct/team messaging still lives in the
+  // Communication Tray under the Tools tab and is untouched.
+  const {
+    conversations: messagingConversations,
+    totalUnread: messagingUnread,
+    markRead: markMessagingRead,
+    sendMessage: sendMessagingMessage,
+  } = usePortalMessages();
+  // Which top-level tab the left panel shows: the new Messaging inbox or the
+  // existing Tools dock (calendar + tray + tool launchers).
+  const [leftPanelTab, setLeftPanelTab] = useState<"messaging" | "tools">("messaging");
+  const [messagesWindowOpen, setMessagesWindowOpen] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const openMessagesConversation = useCallback(
+    (id: string) => {
+      setActiveConversationId(id);
+      setMessagesWindowOpen(true);
+      markMessagingRead(id);
+    },
+    [markMessagingRead],
+  );
   // --- Hover-only panels (task #628) ---
   // The Tools (left) and Work Queue (right) panels always REST ASIDE (slid
   // mostly off-screen at ~50% opacity, leaving a visible edge) and reveal to
@@ -2692,24 +2718,67 @@ export function TeamPortalShell({
             }`}
           >
             <div className="flex h-full flex-col">
-            {/* Blue header band (step 1). */}
-            <div className="flex items-center justify-between gap-1.5 border-b border-white/20 bg-[#4863A0] px-3 py-1.5 text-white">
-              <div className="flex items-center gap-1.5">
-                <Wrench className="h-3 w-3 text-white/80" />
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/90">Tools</span>
+            {/* Blue header band (step 1) — top-level tab switcher (Task #740).
+                Messaging shows the iMessage-style inbox; Tools shows the
+                existing dock + calendar + communication tray. */}
+            <div className="flex items-center justify-between gap-1.5 border-b border-white/20 bg-[#4863A0] px-2 py-1.5 text-white">
+              <div className="flex items-center gap-1" data-testid="left-panel-tabs">
+                <button
+                  type="button"
+                  onClick={() => setLeftPanelTab("messaging")}
+                  className={`relative inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                    leftPanelTab === "messaging"
+                      ? "bg-white text-[#4863A0] shadow-sm"
+                      : "text-white/80 hover:bg-white/15"
+                  }`}
+                  data-testid="left-panel-tab-messaging"
+                >
+                  <MessageCircle className="h-3 w-3" />
+                  Messaging
+                  {messagingUnread > 0 ? (
+                    <span
+                      className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-purple-600 px-1 text-[8px] font-bold text-white"
+                      data-testid="left-panel-tab-messaging-badge"
+                    >
+                      {messagingUnread}
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLeftPanelTab("tools")}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                    leftPanelTab === "tools"
+                      ? "bg-white text-[#4863A0] shadow-sm"
+                      : "text-white/80 hover:bg-white/15"
+                  }`}
+                  data-testid="left-panel-tab-tools"
+                >
+                  <Wrench className="h-3 w-3" />
+                  Tools
+                </button>
               </div>
               <button
                 type="button"
                 onClick={() => setLeftRailPinned((v) => !v)}
-                aria-label={leftRailPinned ? "Unpin Tools panel" : "Pin Tools panel"}
-                title={leftRailPinned ? "Unpin Tools panel" : "Pin Tools panel"}
-                className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors ${leftRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
+                aria-label={leftRailPinned ? "Unpin panel" : "Pin panel"}
+                title={leftRailPinned ? "Unpin panel" : "Pin panel"}
+                className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${leftRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
                 data-testid="button-pin-left-rail"
               >
                 {leftRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
               </button>
             </div>
-            {(() => {
+            {leftPanelTab === "messaging" ? (
+              <div className="flex min-h-0 flex-1 flex-col p-3" data-testid="left-rail-messaging">
+                <PortalMessagesPanel
+                  conversations={messagingConversations}
+                  activeConversationId={messagesWindowOpen ? activeConversationId : null}
+                  onOpenConversation={openMessagesConversation}
+                />
+              </div>
+            ) : (
+            (() => {
               // Active center-canvas tab kind so we can highlight the
               // matching left-rail tool. Single source of truth.
               const activeKind = portalTabs.find((t) => t.id === activePortalTabId)?.kind ?? null;
@@ -2747,6 +2816,18 @@ export function TeamPortalShell({
                       label: "Messaging",
                       tint: "sky",
                       tools: [
+                        {
+                          id: "messages",
+                          label: "Messages",
+                          icon: MessageCircle,
+                          onClick: () => {
+                            setMessagesWindowOpen(true);
+                            if (activeConversationId) markMessagingRead(activeConversationId);
+                          },
+                          active: messagesWindowOpen,
+                          badge: messagingUnread > 0 ? messagingUnread : undefined,
+                          testId: "left-rail-tool-messages",
+                        },
                         {
                           id: "patients",
                           label: "Patients",
@@ -2947,7 +3028,8 @@ export function TeamPortalShell({
                 )}
               </div>
               );
-            })()}
+            })()
+            )}
             </div>
           </div>
         </div>
@@ -3720,6 +3802,16 @@ export function TeamPortalShell({
           setSelectedDate(d);
           setTeamPortalCalendarOpen(false);
         }}
+      />
+
+      {/* Floating iMessage-style Messages window (Task #740, mock data). */}
+      <PortalMessagesWindow
+        open={messagesWindowOpen}
+        conversations={messagingConversations}
+        activeConversationId={activeConversationId}
+        onSelectConversation={openMessagesConversation}
+        onSend={sendMessagingMessage}
+        onClose={() => setMessagesWindowOpen(false)}
       />
 
       {/* In-session workspace settings (Task #643). Not persisted. */}
