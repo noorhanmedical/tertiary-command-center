@@ -3,6 +3,15 @@ name: Mockup sandbox + canvas iframe gotchas
 description: Recovering the mockup-sandbox preview artifact and reliably placing/presenting live iframes on the canvas
 ---
 
+# applyCanvasActions / presentArtifact payload quirks
+
+`applyCanvasActions` `create-auto` uses key `shape` (+ `shapeIds`/`names`). But `update` actions use a
+different shape: `{ type:"update", shapeId, updates:{ shapeType:"iframe", state, url, componentPath, name } }`
+— NOT `shape`, and `shapeType` inside `updates` is MANDATORY (two separate errors nudge you there).
+
+`presentArtifact` REQUIRES an `artifactId` and only works for real registered artifacts. Mockup preview
+iframes are not artifacts, so it errors. Fallback: `focusCanvasShapes({ shapeIds, animateMs:500 })`.
+
 # Mockup sandbox preview server
 
 The `artifacts/mockup-sandbox` artifact serves component previews behind the public
