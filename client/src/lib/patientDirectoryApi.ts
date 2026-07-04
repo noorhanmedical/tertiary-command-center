@@ -104,6 +104,38 @@ export async function searchPatientDirectory(q: string, limit = 50): Promise<Rea
   return body?.rows ?? [];
 }
 
+export type DocumentSearchHit = {
+  id: number;
+  title: string;
+  kind: string;
+  filename: string;
+  facility: string | null;
+  contentType: string;
+  downloadUrl: string;
+};
+
+export async function searchDocumentLibrary(q: string, limit = 25): Promise<ReadonlyArray<DocumentSearchHit>> {
+  const res = await fetch(`/api/documents-library/search?q=${encodeURIComponent(q)}&limit=${limit}`, { credentials: "include" });
+  const body = await jsonOrFail<{ rows: DocumentSearchHit[] }>(res, { rows: [] });
+  return body?.rows ?? [];
+}
+
+export type BillingSearchHit = {
+  id: number;
+  patientName: string;
+  service: string;
+  facility: string | null;
+  dateOfService: string | null;
+  mrn: string | null;
+  billingStatus: string | null;
+};
+
+export async function searchBillingRecords(q: string, limit = 25): Promise<ReadonlyArray<BillingSearchHit>> {
+  const res = await fetch(`/api/billing-records/search?q=${encodeURIComponent(q)}&limit=${limit}`, { credentials: "include" });
+  const body = await jsonOrFail<{ rows: BillingSearchHit[] }>(res, { rows: [] });
+  return body?.rows ?? [];
+}
+
 // ── snapshot / audit / restrictions / prior tests ─────────────────────
 export async function getPatientDirectorySnapshot(id: number): Promise<DirectorySnapshot | null> {
   const res = await fetch(`/api/patient-directory/${id}`, { credentials: "include" });

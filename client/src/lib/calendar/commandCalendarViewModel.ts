@@ -21,6 +21,7 @@ import type {
   CanonicalMonthCellSummary,
   CanonicalCalendarUnscheduledItem,
 } from "@/calendar";
+import type { CalendarFilterId } from "@/calendar/calendarFilters";
 import type { GlobalScheduleEvent } from "@shared/schema";
 
 // Input row for the calendar-summary feed (one row per
@@ -56,6 +57,22 @@ export type BuildCommandCalendarCellsInput = {
   // where any procedure was completed. Plexus IQ + Dashboard both
   // surface this; PCS/ACS may or may not depending on profile.
   completedEvents?: GlobalScheduleEvent[];
+  // Optional active calendar filters. When omitted or empty, every
+  // cell component (patient count, ancillary dots, completion badge)
+  // renders as before. When one or more filters are active, only the
+  // components mapped to an active filter are surfaced — so toggling
+  // "Ancillary Tests Scheduled" alone hides the patient count and
+  // completion badge, leaving just the ancillary dots. Filters with
+  // no data feed on this surface (e.g. Daily Call List) simply match
+  // nothing here, which is the honest result for the home calendar.
+  activeFilters?: CalendarFilterId[];
+};
+
+// Maps each cell component to the filters that should reveal it.
+const CELL_COMPONENT_FILTERS = {
+  count: ["clinicVisits", "qualifiedVisitPatients"] as CalendarFilterId[],
+  dots: ["ancillaryScheduled"] as CalendarFilterId[],
+  badge: ["procedureCompleted"] as CalendarFilterId[],
 };
 
 function yyyymmdd(d: Date): string {
@@ -67,7 +84,15 @@ function yyyymmdd(d: Date): string {
 export function buildCommandCalendarCells(
   input: BuildCommandCalendarCellsInput,
 ): Record<string, CanonicalMonthCellSummary> {
-  const { summary, facility, completedEvents = [] } = input;
+  const { summary, facility, completedEvents = [], activeFilters = [] } = input;
+  const filterSet = new Set(activeFilters);
+  const hasFilters = filterSet.size > 0;
+  const showCount =
+    !hasFilters || CELL_COMPONENT_FILTERS.count.some((f) => filterSet.has(f));
+  const showDots =
+    !hasFilters || CELL_COMPONENT_FILTERS.dots.some((f) => filterSet.has(f));
+  const showBadge =
+    !hasFilters || CELL_COMPONENT_FILTERS.badge.some((f) => filterSet.has(f));
   type Acc = { count: number; cats: Set<string>; completed: boolean };
   const acc: Record<string, Acc> = {};
 
@@ -106,19 +131,22 @@ export function buildCommandCalendarCells(
   const cells: Record<string, CanonicalMonthCellSummary> = {};
   for (const [key, val] of Object.entries(acc)) {
     cells[key] = {
-      count: val.count,
-      dots: Array.from(val.cats)
-        .map((c) => ANCILLARY_DOT_CLASS[c])
-        .filter((x): x is { className: string; title: string } => !!x),
-      badge: val.completed
-        ? {
-            // React-element form so the canonical view can render
-            // the icon without callers importing lucide.
-            icon: createElement(Check, { className: "w-3 h-3", strokeWidth: 3 }),
-            className: "bg-emerald-100 text-emerald-700",
-            title: "Procedure completed",
-          }
-        : undefined,
+      count: showCount ? val.count : undefined,
+      dots: showDots
+        ? Array.from(val.cats)
+            .map((c) => ANCILLARY_DOT_CLASS[c])
+            .filter((x): x is { className: string; title: string } => !!x)
+        : [],
+      badge:
+        showBadge && val.completed
+          ? {
+              // React-element form so the canonical view can render
+              // the icon without callers importing lucide.
+              icon: createElement(Check, { className: "w-3 h-3", strokeWidth: 3 }),
+              className: "bg-emerald-100 text-emerald-700",
+              title: "Procedure completed",
+            }
+          : undefined,
     };
   }
   return cells;

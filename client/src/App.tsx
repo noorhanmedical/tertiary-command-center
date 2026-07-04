@@ -7,6 +7,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
+import MissionControlPage from "@/pages/mission-control";
+import UltrasoundCentralPage from "@/pages/ultrasound-central";
 import SchedulePage from "@/pages/SchedulePage";
 import SharedSchedule from "@/pages/shared-schedule";
 import PatientDatabasePage from "@/pages/patient-database";
@@ -50,6 +52,8 @@ import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
+// Temporary design-prototype route — mock data only, not production.
+import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
@@ -105,6 +109,16 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/home">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <Home />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/mission-control">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <MissionControlPage />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/ultrasound-central">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <UltrasoundCentralPage />
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
@@ -170,6 +184,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
             <PlexusIQPage />
           </SidebarProvider>
         </Route>
+        {/* Temporary design-prototype route — mock data only. */}
+        <Route path="/plexus-iq-prototype">
+          <PlexusIqPrototypePage />
+        </Route>
         <Route path="/team-member-portals">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <TeamMemberPortalsPage />
@@ -186,9 +204,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
           </SidebarProvider>
         </Route>
         <Route path="/engagement-center">
-          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-            <EngagementCenterPage />
-          </SidebarProvider>
+          <EngagementCenterPage />
         </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
@@ -266,7 +282,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
 }
 
 function AppShell() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: user, isLoading, refetch } = useQuery<AuthUser>({

@@ -569,18 +569,16 @@ export function buildPlexusPdfBody(batchName: string, patients: PatientScreening
 
   const buildCompactTop = (p: PatientScreening) => {
     const demoLine = [p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
-    const trunc = (s: string | null | undefined, max = 80) =>
-      s ? (s.length > max ? esc(s.slice(0, max)) + "…" : esc(s)) : "";
     const clinFields = [
-      p.insurance ? { label: "Insurance", val: trunc(p.insurance, 40) } : null,
-      p.diagnoses ? { label: "Dx", val: trunc(p.diagnoses) } : null,
-      p.history   ? { label: "Hx", val: trunc(p.history) }   : null,
-      p.medications ? { label: "Rx", val: trunc(p.medications) } : null,
-      p.previousTests ? { label: "Prev Tests", val: trunc(p.previousTests) } : null,
+      p.insurance ? { label: "Insurance", val: esc(p.insurance) } : null,
+      p.diagnoses ? { label: "Dx", val: esc(p.diagnoses) } : null,
+      p.history   ? { label: "Hx", val: esc(p.history) }   : null,
+      p.medications ? { label: "Rx", val: esc(p.medications) } : null,
+      p.previousTests ? { label: "Prev Tests", val: esc(p.previousTests) } : null,
     ].filter(Boolean) as { label: string; val: string }[];
     const clinRow = clinFields.length ? `
-      <div style="display:grid;grid-template-columns:repeat(${clinFields.length},1fr);gap:8px;margin-top:5px;padding:5px 8px;background:#f8fafc;border-radius:4px;border:1px solid #e2e8f0;">
-        ${clinFields.map(f => `<div><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">${f.label} </span><span style="font-size:8.5px;color:#475569;">${f.val}</span></div>`).join("")}
+      <div style="display:grid;grid-template-columns:repeat(${clinFields.length},1fr);gap:8px;margin-top:5px;padding:5px 8px;background:#f8fafc;border-radius:4px;border:1px solid #e2e8f0;align-items:start;">
+        ${clinFields.map(f => `<div style="word-wrap:break-word;overflow-wrap:anywhere;white-space:normal;min-width:0;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">${f.label} </span><span style="font-size:8.5px;color:#475569;line-height:1.4;">${f.val}</span></div>`).join("")}
       </div>` : "";
     return `
       <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;margin-bottom:6px;border-bottom:1px solid #cbd5e1;">
@@ -760,6 +758,13 @@ const PREVIEW_TOOLBAR_STYLES = `
 // Build the popup HTML body for one or more sections. Used by every
 // print-preview entry point so the toolbar markup + testIds + media
 // rules are defined exactly once.
+//
+// Packet QA Gate hardening — toolbar now carries a "Generated at"
+// timestamp so the operator can see how fresh the popup snapshot is
+// before they hit Print. The timestamp is rendered inside the
+// toolbar `<h1>` block and inherits the existing print-hide rule
+// (@media print { .preview-toolbar { display:none } }) so it does
+// NOT bleed into the printed packet.
 function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSection[]): string {
   const sectionsHtml = sections
     .map((s) => {
@@ -769,6 +774,13 @@ function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSec
       return `${head}${s.body}`;
     })
     .join("");
+  const generatedAt = new Date().toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
   return (
     `<!DOCTYPE html><html><head><meta charset="utf-8">` +
     `<title>${esc(docTitle)}</title>` +
@@ -776,7 +788,10 @@ function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSec
     `<style>${PREVIEW_TOOLBAR_STYLES}</style>` +
     `</head><body>` +
     `<div class="preview-toolbar" data-testid="packet-print-preview-window">` +
+    `<div style="display:flex;flex-direction:column;gap:2px;">` +
     `<h1>${esc(docTitle)}</h1>` +
+    `<span data-testid="packet-print-preview-generated-at" style="font-size:10px;font-weight:500;opacity:0.75;">Generated at ${esc(generatedAt)}</span>` +
+    `</div>` +
     `<div>` +
     `<button type="button" class="preview-print-btn" data-testid="packet-print-preview-print-button" onclick="window.print()">Print / Save as PDF</button>` +
     ` ` +

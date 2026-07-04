@@ -9,7 +9,6 @@ import {
   Receipt,
   Users2,
   Database,
-  Shield,
   ChevronLeft,
   ChevronRight,
   CheckSquare,
@@ -17,6 +16,7 @@ import {
   Library,
   Stethoscope,
   HeartHandshake,
+  Shield,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
@@ -52,6 +52,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
   { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  { href: "/admin-ops",        label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {
@@ -118,11 +119,13 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
   const isActive = (href: string) => {
     if (href === "/home") return location === "/home" || location === "/";
     if (href === "/schedule") return location === "/schedule";
+    if (href === "/admin-ops") {
+      return location === "/admin-ops" || location === "/admin" || location.startsWith("/admin/") || location.startsWith("/admin-ops/");
+    }
     return location === href || location.startsWith(href + "/");
   };
 
   const visibleNavItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
-  const canSeeAdmin = userRole === "admin";
 
   return (
     <nav
@@ -130,22 +133,7 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
       data-testid="global-nav"
       aria-label="Global navigation"
     >
-      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-between px-3 py-3"} border-b border-finance-dark-3`}>
-        {collapsed ? (
-          <img
-            src="/plexus-logo-icon.png"
-            alt="Plexus Ancillary Services"
-            className="w-8 h-8 object-contain"
-            data-testid="img-nav-logo"
-          />
-        ) : (
-          <img
-            src="/plexus-logo.png"
-            alt="Plexus Ancillary Services"
-            className="h-8 w-auto object-contain rounded-md"
-            data-testid="img-nav-logo"
-          />
-        )}
+      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-end px-3 py-3"} border-b border-finance-dark-3`}>
         <button
           onClick={() => { setManualOverride(true); setCollapsed((c) => !c); }}
           className="text-slate-400 hover:text-white transition-colors rounded-lg p-1 hover:bg-finance-dark-3"
@@ -199,30 +187,6 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
       </div>
 
       <div className="border-t border-finance-dark-3 px-2 py-2 space-y-0.5">
-        {canSeeAdmin && (
-          <>
-            {!collapsed && (
-              <div className="px-2 pt-1 pb-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Settings</span>
-              </div>
-            )}
-            <Link href="/admin">
-              <div
-                className={`flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
-                  isActive("/admin") || isActive("/admin-ops") || isActive("/settings")
-                    ? "bg-white text-finance-text shadow-sm"
-                    : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
-                } ${collapsed ? "justify-center" : ""}`}
-                data-testid="nav-item-admin"
-                title={collapsed ? "Admin" : undefined}
-              >
-                <Shield className="w-4 h-4 shrink-0" strokeWidth={1.75} />
-                {!collapsed && <span className="text-[14px] font-medium truncate">Admin</span>}
-              </div>
-            </Link>
-          </>
-        )}
-
       </div>
     </nav>
   );

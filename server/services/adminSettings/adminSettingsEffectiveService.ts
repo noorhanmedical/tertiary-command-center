@@ -232,7 +232,7 @@ export async function getEffectiveAdminSettings(
       sameDayAddAllowedIfCapacity: sameDayAdd.value?.enabled ?? true,
     },
     assignment: {
-      schedulerAutoAssignEnabled: autoAssign.value?.enabled ?? true,
+      schedulerAutoAssignEnabled: autoAssign.value?.enabled ?? false,
       pcsAssignmentRespectsFacilityScope: pcsScope.value?.enabled ?? true,
       acsAssignmentRespectsFacilityScope: acsScope.value?.enabled ?? true,
     },

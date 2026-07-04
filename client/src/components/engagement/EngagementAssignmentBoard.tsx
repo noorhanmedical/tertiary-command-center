@@ -22,6 +22,13 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Loader2,
   UserCog,
   AlertCircle,
@@ -33,6 +40,10 @@ import {
   Shuffle,
   ChevronDown,
   ChevronRight,
+  MoreHorizontal,
+  SlidersHorizontal,
+  Rows3,
+  Rows4,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { PatientScreening } from "@shared/schema";
@@ -47,6 +58,8 @@ import {
   type PdfPacketSourcePatient,
   type SchedulerPdfPacket,
 } from "@/lib/pdfPacketGrouping";
+import { auditPacketPatients, type PacketQaReport } from "@/lib/packetQa";
+import { PacketQaBlockingDialog } from "@/components/plexus-iq/PacketQaBlockingDialog";
 
 // Engagement Assignment Board.
 //
@@ -110,6 +123,22 @@ export function EngagementAssignmentBoard() {
   // SOURCE MARKER: Engagement Center can group by date facility scheduler
   type GroupMode = "none" | "date" | "facility" | "scheduler";
   const [groupMode, setGroupMode] = useState<GroupMode>("date");
+  // Row density toggle (Compact / Comfortable). Persisted to
+  // localStorage so the operator's choice survives reloads / revisits.
+  type Density = "compact" | "comfortable";
+  const [density, setDensity] = useState<Density>(() => {
+    if (typeof window === "undefined") return "comfortable";
+    const stored = window.localStorage.getItem("engagement-board-density");
+    return stored === "compact" || stored === "comfortable"
+      ? stored
+      : "comfortable";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("engagement-board-density", density);
+    }
+  }, [density]);
+  const compact = density === "compact";
   // Per-group selection state keyed by group key → set of
   // executionCaseIds. Distinct from selectedIds (which keys by
   // patientScreeningId for the bulk-assign flow) so switching
@@ -153,6 +182,14 @@ export function EngagementAssignmentBoard() {
   const [pdfProgressByGroup, setPdfProgressByGroup] = useState<
     Record<string, { current: number; total: number } | null>
   >({});
+  // Packet QA Gate — opened when auditPacketPatients finds blockers
+  // for a single-group or scheduler-split packet. `proceedFn` carries
+  // the printable-subset path forward so each caller can re-enter its
+  // own scheduler-split or single-group preview logic.
+  const [packetQa, setPacketQa] = useState<{
+    report: PacketQaReport;
+    proceed: () => void;
+  } | null>(null);
   // All grouped cards start COLLAPSED. The operator opens a group by
   // clicking the chevron / group header; the action bar (Select All,
   // PDF buttons, Assign, Delete All) stays visible even when
@@ -638,23 +675,46 @@ export function EngagementAssignmentBoard() {
     // SOURCE MARKER: Engagement Center date packets use print preview
     // SOURCE MARKER: Engagement Center facility packets use print preview
     // SOURCE MARKER: Engagement Center packet print preview avoids html2canvas
-    try {
-      const result = openPatientPacketPrintPreview({
-        mode,
-        batchName,
-        patients: validation.patients,
-        scheduleDate: validation.scheduleDate,
-        createdAt: null,
-      });
-      if (!result.ok && result.reason === "popup-blocked") {
-        // SOURCE MARKER: Engagement Center print preview popup blocked is surfaced
-        reportGenerationError(
-          "Popup blocked. Allow popups to print this packet.",
-        );
+    //
+    // Packet QA Gate — audit every patient before opening preview.
+    // No auto-regenerate; operator either cancels or proceeds with
+    // the printable subset.
+    const openWithSubset = (subset: PatientScreening[]) => {
+      try {
+        const result = openPatientPacketPrintPreview({
+          mode,
+          batchName,
+          patients: subset,
+          scheduleDate: validation.scheduleDate,
+          createdAt: null,
+        });
+        if (!result.ok && result.reason === "popup-blocked") {
+          // SOURCE MARKER: Engagement Center print preview popup blocked is surfaced
+          reportGenerationError(
+            "Popup blocked. Allow popups to print this packet.",
+          );
+        }
+      } catch (err) {
+        reportGenerationError(err instanceof Error ? err.message : "Unknown PDF export error");
       }
-    } catch (err) {
-      reportGenerationError(err instanceof Error ? err.message : "Unknown PDF export error");
+    };
+
+    const qaReport = auditPacketPatients(validation.patients, mode);
+    if (qaReport.blockedCount > 0) {
+      const printable = validation.patients.filter(
+        (p) => !qaReport.blockedPatients.some((b) => b.patientId === p.id),
+      );
+      setPacketQa({
+        report: qaReport,
+        proceed: () => {
+          setPacketQa(null);
+          openWithSubset(printable);
+        },
+      });
+      return;
     }
+
+    openWithSubset(validation.patients);
   }
 
   // Scheduler-tab PDF: split the scheduler's selected patients into
@@ -692,6 +752,88 @@ export function EngagementAssignmentBoard() {
     }
 
     const schedulerName = group.label;
+
+    // Packet QA Gate — audit across every packet's patients. If any
+    // patient is blocked, surface the report; on proceed, drop the
+    // blocked rows from each group before opening preview.
+    const openWithGroups = (groups: SchedulerPacketPreviewGroup[]) => {
+      let result: ReturnType<typeof openSchedulerPacketPrintPreview>;
+      try {
+        result = openSchedulerPacketPrintPreview({
+          mode,
+          schedulerName,
+          groups,
+          createdAt: null,
+        });
+      } catch (err) {
+        helpers.reportGenerationError(
+          err instanceof Error ? err.message : "Could not open print preview",
+        );
+        return;
+      }
+
+      if (result.ok) {
+        const rendered = result.renderedGroupCount;
+        const droppedFacility = split.skipped.length;
+        const droppedEmpty = result.droppedGroups.length;
+        const totalDropped = droppedFacility + droppedEmpty;
+        toast({
+          title:
+            rendered === 1
+              ? `Opened 1 packet for ${schedulerName}.`
+              : `Opened ${rendered} packets for ${schedulerName} in one preview.`,
+          description:
+            totalDropped > 0
+              ? `${droppedFacility ? `${droppedFacility} patient${droppedFacility === 1 ? "" : "s"} with no facility skipped. ` : ""}${droppedEmpty ? `${droppedEmpty} group${droppedEmpty === 1 ? "" : "s"} dropped (no qualifying tests).` : ""}`.trim()
+              : undefined,
+        });
+        return;
+      }
+
+      if (result.reason === "popup-blocked") {
+        // SOURCE MARKER: Engagement Center scheduler print preview popup blocked is surfaced
+        helpers.reportGenerationError(
+          "Popup blocked. Allow popups to print this packet.",
+        );
+        return;
+      }
+      // no-groups (every group produced an empty body)
+      helpers.reportGenerationError(
+        mode === "plexus"
+          ? "Plexus packet has no qualifying tests for any selected patient."
+          : "No patients to render in this packet.",
+      );
+    };
+
+    const allPatients = split.packets.flatMap((p) => p.patients);
+    const qaReport = auditPacketPatients(allPatients, mode);
+    if (qaReport.blockedCount > 0) {
+      const blockedIds = new Set(
+        qaReport.blockedPatients.map((b) => b.patientId),
+      );
+      const filteredPreviewGroups: SchedulerPacketPreviewGroup[] = split.packets
+        .map((packet) => ({
+          label: packetLabelFor(packet),
+          patients: packet.patients.filter((p) => !blockedIds.has(p.id)),
+          scheduleDate: packet.scheduleDate,
+        }))
+        .filter((g) => g.patients.length > 0);
+      setPacketQa({
+        report: qaReport,
+        proceed: () => {
+          setPacketQa(null);
+          if (filteredPreviewGroups.length === 0) {
+            helpers.reportGenerationError(
+              "Every selected patient is blocked by the QA gate — nothing to print.",
+            );
+            return;
+          }
+          openWithGroups(filteredPreviewGroups);
+        },
+      });
+      return;
+    }
+
     const previewGroups: SchedulerPacketPreviewGroup[] = split.packets.map(
       (packet) => ({
         label: packetLabelFor(packet),
@@ -699,53 +841,7 @@ export function EngagementAssignmentBoard() {
         scheduleDate: packet.scheduleDate,
       }),
     );
-
-    let result: ReturnType<typeof openSchedulerPacketPrintPreview>;
-    try {
-      result = openSchedulerPacketPrintPreview({
-        mode,
-        schedulerName,
-        groups: previewGroups,
-        createdAt: null,
-      });
-    } catch (err) {
-      helpers.reportGenerationError(
-        err instanceof Error ? err.message : "Could not open print preview",
-      );
-      return;
-    }
-
-    if (result.ok) {
-      const rendered = result.renderedGroupCount;
-      const droppedFacility = split.skipped.length;
-      const droppedEmpty = result.droppedGroups.length;
-      const totalDropped = droppedFacility + droppedEmpty;
-      toast({
-        title:
-          rendered === 1
-            ? `Opened 1 packet for ${schedulerName}.`
-            : `Opened ${rendered} packets for ${schedulerName} in one preview.`,
-        description:
-          totalDropped > 0
-            ? `${droppedFacility ? `${droppedFacility} patient${droppedFacility === 1 ? "" : "s"} with no facility skipped. ` : ""}${droppedEmpty ? `${droppedEmpty} group${droppedEmpty === 1 ? "" : "s"} dropped (no qualifying tests).` : ""}`.trim()
-            : undefined,
-      });
-      return;
-    }
-
-    if (result.reason === "popup-blocked") {
-      // SOURCE MARKER: Engagement Center scheduler print preview popup blocked is surfaced
-      helpers.reportGenerationError(
-        "Popup blocked. Allow popups to print this packet.",
-      );
-      return;
-    }
-    // no-groups (every group produced an empty body)
-    helpers.reportGenerationError(
-      mode === "plexus"
-        ? "Plexus packet has no qualifying tests for any selected patient."
-        : "No patients to render in this packet.",
-    );
+    openWithGroups(previewGroups);
   }
 
   function packetLabelFor(packet: SchedulerPdfPacket): string {
@@ -971,6 +1067,22 @@ export function EngagementAssignmentBoard() {
     });
   };
 
+  // Secondary filters that live behind the "Filters" popover. Search
+  // and grouping stay inline in the toolbar and are NOT counted here.
+  const activeFilterCount =
+    (facilityFilter !== "__all" ? 1 : 0) +
+    (assignedFilter !== "__all" ? 1 : 0) +
+    (statusFilter !== "__all" ? 1 : 0) +
+    (unassignedOnly ? 1 : 0) +
+    (missingInfoOnly ? 1 : 0);
+  const clearFilters = () => {
+    setFacilityFilter("__all");
+    setAssignedFilter("__all");
+    setStatusFilter("__all");
+    setUnassignedOnly(false);
+    setMissingInfoOnly(false);
+  };
+
   return (
     <div className="space-y-4" data-testid="engagement-assignment-board">
       {/* Summary cards */}
@@ -985,141 +1097,217 @@ export function EngagementAssignmentBoard() {
         <SummaryCard label="Needs info" value={summary?.needsInfo ?? 0} tone="rose" />
       </div>
 
-      {/* Filters */}
-      <Card className="p-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
-          <div className="md:col-span-2">
-            <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              Search
-            </Label>
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Name, DOB, facility…"
-              className="mt-1 h-8 text-xs"
-              data-testid="input-engagement-board-search"
-            />
-          </div>
-          <div>
-            <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              Facility
-            </Label>
-            <Select value={facilityFilter} onValueChange={setFacilityFilter}>
-              <SelectTrigger className="mt-1 h-8 text-xs" data-testid="select-engagement-board-facility">
-                <SelectValue placeholder="All facilities" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all">All facilities</SelectItem>
-                {facilityOptions.map((f) => (
-                  <SelectItem key={f} value={f}>{f}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              Assigned to
-            </Label>
-            <Select value={assignedFilter} onValueChange={setAssignedFilter}>
-              <SelectTrigger className="mt-1 h-8 text-xs" data-testid="select-engagement-board-assigned">
-                <SelectValue placeholder="Anyone" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all">Anyone</SelectItem>
-                {assignedOptions.map((o) => (
-                  <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              Status
-            </Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="mt-1 h-8 text-xs" data-testid="select-engagement-board-status">
-                <SelectValue placeholder="Any status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all">Any status</SelectItem>
-                {statusOptions.map((s) => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+      {/* Toolbar — search + grouping inline; secondary filters and
+          density behind compact controls so resting state is calm. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Search (inline). */}
+        <div className="relative min-w-[180px] flex-1 sm:max-w-xs">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name, DOB, facility…"
+            className="h-8 text-xs"
+            data-testid="input-engagement-board-search"
+          />
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-4 text-[11px] text-slate-600">
-          <label className="inline-flex items-center gap-1.5 cursor-pointer">
-            <Checkbox
-              checked={unassignedOnly}
-              onCheckedChange={(v) => setUnassignedOnly(v === true)}
-              data-testid="checkbox-engagement-board-unassigned-only"
-            />
-            Unassigned only
-          </label>
-          <label className="inline-flex items-center gap-1.5 cursor-pointer">
-            <Checkbox
-              checked={missingInfoOnly}
-              onCheckedChange={(v) => setMissingInfoOnly(v === true)}
-              data-testid="checkbox-engagement-board-missing-info-only"
-            />
-            Missing info only
-          </label>
-        </div>
-      </Card>
 
-      {/* Grouping toolbar — Date / Facility / Scheduler. */}
-      <div
-        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1"
-        data-testid="engagement-center-grouped-board"
-      >
-        {(
-          [
-            { id: "date" as GroupMode, label: "Date", icon: CalendarDays, testId: "engagement-center-group-mode-date" },
-            { id: "facility" as GroupMode, label: "Facility", icon: Building2, testId: "engagement-center-group-mode-facility" },
-            { id: "scheduler" as GroupMode, label: "Scheduler", icon: Users, testId: "engagement-center-group-mode-scheduler" },
-          ] as const
-        ).map((opt) => {
-          const Icon = opt.icon;
-          const active = groupMode === opt.id;
-          return (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => {
-                setGroupMode(opt.id);
-                setSelectedByGroup({});
-              }}
-              data-testid={opt.testId}
-              data-active={active ? "true" : "false"}
-              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                active
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              <Icon className="h-3 w-3" />
-              {opt.label}
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => {
-            setGroupMode("none");
-            setSelectedByGroup({});
-          }}
-          data-testid="engagement-center-group-mode-flat"
-          data-active={groupMode === "none" ? "true" : "false"}
-          className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
-            groupMode === "none"
-              ? "bg-slate-900 text-white"
-              : "text-slate-600 hover:bg-slate-100"
-          }`}
+        {/* Grouping toggle — Date / Facility / Scheduler / Flat. */}
+        <div
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1"
+          data-testid="engagement-center-grouped-board"
         >
-          Flat
-        </button>
+          {(
+            [
+              { id: "date" as GroupMode, label: "Date", icon: CalendarDays, testId: "engagement-center-group-mode-date" },
+              { id: "facility" as GroupMode, label: "Facility", icon: Building2, testId: "engagement-center-group-mode-facility" },
+              { id: "scheduler" as GroupMode, label: "Scheduler", icon: Users, testId: "engagement-center-group-mode-scheduler" },
+            ] as const
+          ).map((opt) => {
+            const Icon = opt.icon;
+            const active = groupMode === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => {
+                  setGroupMode(opt.id);
+                  setSelectedByGroup({});
+                }}
+                data-testid={opt.testId}
+                data-active={active ? "true" : "false"}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  active
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                <Icon className="h-3 w-3" />
+                {opt.label}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => {
+              setGroupMode("none");
+              setSelectedByGroup({});
+            }}
+            data-testid="engagement-center-group-mode-flat"
+            data-active={groupMode === "none" ? "true" : "false"}
+            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              groupMode === "none"
+                ? "bg-slate-900 text-white"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            Flat
+          </button>
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {/* Filters popover — facility / assigned / status / toggles. */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2.5 text-xs"
+                data-testid="button-engagement-board-filters"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span
+                    className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-slate-900 px-1 text-[10px] font-semibold text-white"
+                    data-testid="badge-engagement-board-filter-count"
+                  >
+                    {activeFilterCount}
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-[280px] space-y-3 p-3"
+              data-testid="popover-engagement-board-filters"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Filters
+                </span>
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="text-[11px] font-medium text-slate-500 hover:text-slate-900"
+                    data-testid="button-engagement-board-clear-filters"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              <div>
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Facility
+                </Label>
+                <Select value={facilityFilter} onValueChange={setFacilityFilter}>
+                  <SelectTrigger className="mt-1 h-8 text-xs" data-testid="select-engagement-board-facility">
+                    <SelectValue placeholder="All facilities" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">All facilities</SelectItem>
+                    {facilityOptions.map((f) => (
+                      <SelectItem key={f} value={f}>{f}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Assigned to
+                </Label>
+                <Select value={assignedFilter} onValueChange={setAssignedFilter}>
+                  <SelectTrigger className="mt-1 h-8 text-xs" data-testid="select-engagement-board-assigned">
+                    <SelectValue placeholder="Anyone" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">Anyone</SelectItem>
+                    {assignedOptions.map((o) => (
+                      <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Status
+                </Label>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="mt-1 h-8 text-xs" data-testid="select-engagement-board-status">
+                    <SelectValue placeholder="Any status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">Any status</SelectItem>
+                    {statusOptions.map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2 border-t border-slate-100 pt-3 text-[11px] text-slate-600">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <Checkbox
+                    checked={unassignedOnly}
+                    onCheckedChange={(v) => setUnassignedOnly(v === true)}
+                    data-testid="checkbox-engagement-board-unassigned-only"
+                  />
+                  Unassigned only
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <Checkbox
+                    checked={missingInfoOnly}
+                    onCheckedChange={(v) => setMissingInfoOnly(v === true)}
+                    data-testid="checkbox-engagement-board-missing-info-only"
+                  />
+                  Missing info only
+                </label>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          {/* Density toggle — Compact / Comfortable (persisted). */}
+          <div
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1"
+            data-testid="engagement-board-density-toggle"
+          >
+            <button
+              type="button"
+              onClick={() => setDensity("comfortable")}
+              data-active={!compact ? "true" : "false"}
+              title="Comfortable rows"
+              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                !compact ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+              }`}
+              data-testid="button-engagement-board-density-comfortable"
+            >
+              <Rows3 className="h-3 w-3" />
+              Comfortable
+            </button>
+            <button
+              type="button"
+              onClick={() => setDensity("compact")}
+              data-active={compact ? "true" : "false"}
+              title="Compact rows"
+              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                compact ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+              }`}
+              data-testid="button-engagement-board-density-compact"
+            >
+              <Rows4 className="h-3 w-3" />
+              Compact
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Bulk assign */}
@@ -1310,43 +1498,6 @@ export function EngagementAssignmentBoard() {
                     >
                       {allSel ? "Clear" : "Select All"}
                     </Button>
-                    {/* SOURCE MARKER: Engagement Center PDF spinner shows only on clicked mode */}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={selectedCount === 0 || pdfGroupBusy}
-                      onClick={() => generateGroupPdf(group, selectedList, "plexus")}
-                      className="h-7 gap-1 px-2 text-[11px]"
-                      data-testid={groupPlexus}
-                      data-bar-testid="engagement-center-plexus-pdf"
-                      data-print-preview-testid={groupPlexusPreview}
-                      data-pdf-generating={plexusBusy ? "true" : "false"}
-                    >
-                      {plexusBusy ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <FileText className="h-3 w-3" />
-                      )}
-                      {plexusBusy ? pdfBusyLabel : "Plexus PDF"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={selectedCount === 0 || pdfGroupBusy}
-                      onClick={() => generateGroupPdf(group, selectedList, "clinician")}
-                      className="h-7 gap-1 px-2 text-[11px]"
-                      data-testid={groupClinician}
-                      data-bar-testid="engagement-center-clinician-pdf"
-                      data-print-preview-testid={groupClinicianPreview}
-                      data-pdf-generating={clinicianBusy ? "true" : "false"}
-                    >
-                      {clinicianBusy ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <FileText className="h-3 w-3" />
-                      )}
-                      {clinicianBusy ? pdfBusyLabel : "Clinician PDF"}
-                    </Button>
                     {/* SOURCE MARKER: Engagement Center assign controls are disabled while pending */}
                     <GroupAssignPopover
                       group={group}
@@ -1358,19 +1509,88 @@ export function EngagementAssignmentBoard() {
                         distributeSelectionAcrossSchedulers(group, selectedList, sids)
                       }
                     />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={selectedCount === 0 || cancelManyMutation.isPending}
-                      onClick={() => confirmDeleteGroup(group, selectedList)}
-                      className="h-7 gap-1 px-2 text-[11px] text-rose-700 border-rose-200 hover:bg-rose-50"
-                      data-testid={groupDelete}
-                      data-bar-testid="engagement-center-delete-group"
-                      data-delete-confirm="engagement-center-delete-group-confirm"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                      Delete All
-                    </Button>
+                    {/* Less-used actions (PDF/packet generation + Delete
+                        All) tucked behind a compact "More" menu so the
+                        group header stays calm. Every action remains
+                        reachable; testIds are preserved on the menu
+                        items for QA / e2e.
+                        SOURCE MARKER: Engagement Center PDF spinner shows only on clicked mode */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 w-7 p-0"
+                          data-testid={`engagement-center-group-more-${group.key}`}
+                          data-bar-testid="engagement-center-group-more"
+                          title="More actions"
+                          aria-label="More actions"
+                        >
+                          {pdfGroupBusy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="w-48"
+                        data-testid="engagement-center-group-more-menu"
+                      >
+                        <DropdownMenuItem
+                          disabled={selectedCount === 0 || pdfGroupBusy}
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            generateGroupPdf(group, selectedList, "plexus");
+                          }}
+                          data-testid={groupPlexus}
+                          data-bar-testid="engagement-center-plexus-pdf"
+                          data-print-preview-testid={groupPlexusPreview}
+                          data-pdf-generating={plexusBusy ? "true" : "false"}
+                        >
+                          {plexusBusy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5" />
+                          )}
+                          {plexusBusy ? pdfBusyLabel : "Plexus PDF"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={selectedCount === 0 || pdfGroupBusy}
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            generateGroupPdf(group, selectedList, "clinician");
+                          }}
+                          data-testid={groupClinician}
+                          data-bar-testid="engagement-center-clinician-pdf"
+                          data-print-preview-testid={groupClinicianPreview}
+                          data-pdf-generating={clinicianBusy ? "true" : "false"}
+                        >
+                          {clinicianBusy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5" />
+                          )}
+                          {clinicianBusy ? pdfBusyLabel : "Clinician PDF"}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={selectedCount === 0 || cancelManyMutation.isPending}
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            confirmDeleteGroup(group, selectedList);
+                          }}
+                          className="text-rose-700 focus:text-rose-700"
+                          data-testid={groupDelete}
+                          data-bar-testid="engagement-center-delete-group"
+                          data-delete-confirm="engagement-center-delete-group-confirm"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete All
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
                 {pdfError && (
@@ -1450,12 +1670,31 @@ export function EngagementAssignmentBoard() {
                   >
                     {group.rows.map((r) => {
                       const isSelected = selected.has(r.executionCaseId);
+                      const isAssigned = r.assignedName != null;
+                      // Secondary statuses surfaced only on hover/select:
+                      // patient type, engagement/appointment status, last
+                      // outcome summary, qualifying services.
+                      const secondaryBits = [
+                        r.patientType,
+                        r.engagementStatus,
+                        r.lastActivitySummary,
+                      ].filter(Boolean) as string[];
+                      // Actions (per-row picker + delete) reveal on hover
+                      // or when the row is selected, keeping resting rows
+                      // quiet. Pointer events follow visibility so hidden
+                      // controls are not accidentally clickable.
+                      const actionsVisibility = isSelected
+                        ? "opacity-100"
+                        : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto";
                       return (
                         <li
                           key={r.executionCaseId}
-                          className="flex items-start gap-3 px-3 py-2"
+                          className={`group flex items-center gap-3 px-3 transition-colors hover:bg-slate-50/70 ${
+                            compact ? "py-1" : "py-2"
+                          } ${isSelected ? "bg-indigo-50/40" : ""}`}
                           data-testid={groupPatientTestId}
                           data-execution-case-id={r.executionCaseId}
+                          data-density={density}
                         >
                           <Checkbox
                             checked={isSelected}
@@ -1463,57 +1702,83 @@ export function EngagementAssignmentBoard() {
                             data-testid="engagement-center-select-patient"
                             data-group-key={group.key}
                           />
+                          {/* Primary status indicator: assignment state. */}
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                              isAssigned ? "bg-emerald-500" : "bg-amber-400"
+                            }`}
+                            title={isAssigned ? `Assigned · ${r.assignedName}` : "Assignment pending"}
+                            aria-hidden
+                          />
                           <div className="min-w-0 flex-1 text-xs">
-                            <div className="font-medium text-slate-900 truncate">
-                              {r.patientName}
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-medium text-slate-900 truncate">
+                                {r.patientName}
+                              </span>
+                              {r.missingInfo?.length ? (
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-[10px] text-rose-600"
+                                  title={`Missing: ${r.missingInfo.join(", ")}`}
+                                >
+                                  <AlertCircle className="h-3 w-3" />
+                                </span>
+                              ) : null}
                             </div>
-                            <div className="text-slate-500 truncate">
-                              {[r.facility, r.scheduleDate, r.engagementStatus]
-                                .filter(Boolean)
-                                .join(" · ")}
+                            <div className="text-[11px] text-slate-500 truncate">
+                              {[r.facility, r.scheduleDate].filter(Boolean).join(" · ") || "—"}
                             </div>
-                            {r.selectedServices?.length ? (
-                              <div className="text-slate-400 truncate">
-                                {r.selectedServices.join(", ")}
+                            {/* Secondary details — hidden at rest. */}
+                            {secondaryBits.length || r.selectedServices?.length ? (
+                              <div className="mt-0.5 hidden text-[10px] text-slate-400 group-hover:block group-focus-within:block">
+                                {secondaryBits.length ? (
+                                  <div className="truncate">{secondaryBits.join(" · ")}</div>
+                                ) : null}
+                                {r.selectedServices?.length ? (
+                                  <div className="truncate">{r.selectedServices.join(", ")}</div>
+                                ) : null}
                               </div>
                             ) : null}
                           </div>
-                          <div className="text-[10px] text-slate-500 shrink-0 text-right">
-                            <div>
+                          {/* Primary assignment label at rest. */}
+                          <div className="shrink-0 text-right text-[10px] text-slate-500">
+                            <div className="truncate max-w-[140px]">
                               {r.assignedName ?? "Unassigned"}
                             </div>
                             <div>{fmtRel(r.lastActivityAt)}</div>
                           </div>
-                          <InlineSchedulerPicker
-                            executionCaseId={r.executionCaseId}
-                            patientScreeningId={r.patientScreeningId}
-                            currentSchedulerId={r.assignedTeamMemberId}
-                            currentSchedulerName={r.assignedName}
-                            schedulers={schedulers.data ?? []}
-                            busy={assignMutation.isPending}
-                            onAssign={(schedulerId) => {
-                              if (r.patientScreeningId != null) {
-                                submitOne(r.patientScreeningId, schedulerId);
-                              }
-                            }}
-                          />
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              const ok = confirm(
-                                `Remove this assignment from Engagement Center? The patient record stays in Plexus IQ.`,
-                              );
-                              if (ok) cancelManyMutation.mutate({ executionCaseIds: [r.executionCaseId] });
-                            }}
-                            disabled={cancelManyMutation.isPending}
-                            className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
-                            data-testid="engagement-center-delete-patient"
-                            aria-label="Remove this assignment"
-                            title="Remove this assignment"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
+                          {/* Row actions — revealed on hover / selection. */}
+                          <div className={`flex items-center gap-1.5 shrink-0 transition-opacity ${actionsVisibility}`}>
+                            <InlineSchedulerPicker
+                              executionCaseId={r.executionCaseId}
+                              patientScreeningId={r.patientScreeningId}
+                              currentSchedulerId={r.assignedTeamMemberId}
+                              currentSchedulerName={r.assignedName}
+                              schedulers={schedulers.data ?? []}
+                              busy={assignMutation.isPending}
+                              onAssign={(schedulerId) => {
+                                if (r.patientScreeningId != null) {
+                                  submitOne(r.patientScreeningId, schedulerId);
+                                }
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                const ok = confirm(
+                                  `Remove this assignment from Engagement Center? The patient record stays in Plexus IQ.`,
+                                );
+                                if (ok) cancelManyMutation.mutate({ executionCaseIds: [r.executionCaseId] });
+                              }}
+                              disabled={cancelManyMutation.isPending}
+                              className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
+                              data-testid="engagement-center-delete-patient"
+                              aria-label="Remove this assignment"
+                              title="Remove this assignment"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
                         </li>
                       );
                     })}
@@ -1584,6 +1849,14 @@ export function EngagementAssignmentBoard() {
         </div>
       </Card>
       )}
+      <PacketQaBlockingDialog
+        open={packetQa !== null}
+        report={packetQa?.report ?? null}
+        onCancel={() => setPacketQa(null)}
+        onProceed={() => {
+          packetQa?.proceed?.();
+        }}
+      />
     </div>
   );
 }

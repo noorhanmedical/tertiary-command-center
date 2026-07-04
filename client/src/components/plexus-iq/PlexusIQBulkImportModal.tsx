@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -305,6 +305,8 @@ export function PlexusIQBulkImportModal({
   onClinicalImport,
   pending,
   progress,
+  defaultFacility,
+  defaultScheduleDate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -319,19 +321,33 @@ export function PlexusIQBulkImportModal({
   ) => Promise<void>;
   pending: boolean;
   progress: { current: number; total: number; uniqueBatches: number; uniqueFacilities: number } | null;
+  // Default routing sourced from the operating list's current selection.
+  // Per-row Clinic / Appointment Date columns still override these; they
+  // are fallbacks only and remain overridable in Step 1.
+  defaultFacility?: string;
+  defaultScheduleDate?: string;
 }) {
   const [step, setStep] = useState<"source" | "preview">("source");
-  const [defFacility, setDefFacility] = useState<string>("");
-  const [defDate, setDefDate] = useState<string>(todayIso());
+  const [defFacility, setDefFacility] = useState<string>(defaultFacility ?? "");
+  const [defDate, setDefDate] = useState<string>(defaultScheduleDate ?? todayIso());
   const [defType, setDefType] = useState<PatientType>("visit");
   const [text, setText] = useState("");
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [errors, setErrors] = useState<ParsedRowError[]>([]);
 
+  // On open, seed the default facility/date from the operating list's
+  // current selection so an import lands in the list the user is viewing.
+  useEffect(() => {
+    if (open) {
+      setDefFacility(defaultFacility ?? "");
+      setDefDate(defaultScheduleDate ?? todayIso());
+    }
+  }, [open, defaultFacility, defaultScheduleDate]);
+
   function reset() {
     setStep("source");
-    setDefFacility("");
-    setDefDate(todayIso());
+    setDefFacility(defaultFacility ?? "");
+    setDefDate(defaultScheduleDate ?? todayIso());
     setDefType("visit");
     setText("");
     setFileNotice(null);

@@ -1,0 +1,80 @@
+I am on my phone and cannot safely use the shell manually.
+
+Please take my current Replit workspace changes and safely push them to GitHub on a separate branch without merging into main.
+
+Repository:
+noorhanmedical/tertiary-command-center
+
+Important:
+Do NOT push directly to main.
+Do NOT merge anything.
+Do NOT delete any work.
+Do NOT reset the workspace.
+Create a safety branch, commit all current changes, push that branch, and open a draft pull request.
+
+Steps to perform:
+
+1. First inspect current git status:
+- Show me changed files
+- Show me current branch
+- Confirm remote origin points to:
+  noorhanmedical/tertiary-command-center
+
+2. Create a new branch from the current workspace state:
+Branch name:
+replit-enterprise-tiles-imaging-central
+
+If that branch already exists, use:
+replit-enterprise-tiles-imaging-central-v2
+
+3. Stage all current changes:
+- Include modified files
+- Include new files
+- Include deleted files only if they are intentional
+- If there are obvious temporary/cache files, do not commit them
+
+4. Commit with this message:
+Enterprise tiles and Imaging Central architecture pass
+
+5. Push the branch to GitHub:
+origin replit-enterprise-tiles-imaging-central
+
+6. Open a Draft Pull Request into main.
+
+PR title:
+Enterprise tiles and Imaging Central architecture pass
+
+PR body:
+This PR contains the Replit workspace changes for the enterprise Tertiary Command Center architecture pass.
+
+Scope:
+- Mission Control
+- Imaging Central rename/buildout
+- Clinic Analytics
+- Clinic Onboarding
+- Navigation/domain registry updates
+- Route compatibility
+- MD/rules-driven architecture cleanup
+
+Important review notes:
+- Do not merge yet.
+- This PR is for architectural review.
+- Confirm that Technician Central / Ultrasound Central is renamed to Imaging Central in the UI.
+- Confirm /technician-central redirects to /imaging-central.
+- Confirm /clinic-analytics works and /analytics still works.
+- Confirm Mission Control remains monitoring only, not qualification.
+- Confirm Imaging Central is imaging execution, currently ultrasound-focused.
+
+7. After pushing, give me:
+- Branch name
+- Draft PR link
+- Files changed
+- Commit SHA
+- Whether npm run check passed
+- Whether npm run build passed
+
+8. Before finishing, run:
+npm run check
+npm run build
+
+If either fails, do not try random fixes. Tell me the exact error and the file/line causing it.

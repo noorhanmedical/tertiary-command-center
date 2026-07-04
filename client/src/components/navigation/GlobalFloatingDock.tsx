@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sheet,
   SheetContent,
@@ -8,19 +9,42 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { DOCK_ITEMS, type DockItem } from "@/lib/navigation/navigationRegistry";
+import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 
-function CalendarPlaceholderPanel() {
+function DockCalendarPanel({ onClose }: { onClose: () => void }) {
+  const [, navigate] = useLocation();
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  const { data: summary = [] } = useQuery<CalendarSummaryRow[]>({
+    queryKey: ["/api/screening-batches/calendar-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Calendar summary fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 15_000,
+  });
+
+  function handleSelectDate(isoDate: string) {
+    setSelectedDate(isoDate);
+  }
+
+  function handleAssignDate(_batchId: number, _batchLabel: string) {
+    onClose();
+    navigate("/plexus-iq");
+  }
+
   return (
-    <div
-      className="mt-6 rounded-2xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-muted/20 p-8 text-center"
-      data-testid="global-floating-dock-calendar-panel"
-    >
-      <p className="text-sm font-medium text-slate-700 dark:text-foreground">
-        Calendar panel coming soon.
-      </p>
-      <p className="mt-2 text-xs text-slate-500 dark:text-muted-foreground">
-        Use the Home dashboard for the live monthly clinic calendar today.
-      </p>
+    <div className="overflow-y-auto" data-testid="global-floating-dock-calendar-panel">
+      <PlexusIQCalendar
+        summary={summary}
+        onSelectDate={handleSelectDate}
+        onAssignDate={handleAssignDate}
+        selectedDate={selectedDate}
+        compact={false}
+      />
     </div>
   );
 }
@@ -39,47 +63,38 @@ function DockButton({
   const Icon = item.Icon;
 
   const stateClass = item.kind === "disabled"
-    ? "opacity-40 cursor-not-allowed text-slate-500"
+    ? "opacity-40 cursor-not-allowed text-white/40"
     : active
-      ? "text-indigo-700 dark:text-indigo-200"
-      : "text-slate-700 dark:text-foreground hover:text-indigo-700 dark:hover:text-indigo-200";
+      ? "text-white"
+      : "text-white/80 hover:text-white";
 
   const wrapperClass = `group/dock-item flex flex-col items-center gap-1 px-2 transition-all duration-200 ${stateClass}`;
 
   const iconWrap = (
     <span
-      className={`relative inline-flex items-center justify-center transition-all duration-200 rounded-2xl ${
+      className={`relative inline-flex items-center justify-center transition-all duration-200 ease-out rounded-2xl ${
         active
-          ? "bg-indigo-50 dark:bg-indigo-500/15"
-          : "bg-transparent group-hover/dock-item:bg-slate-100 dark:group-hover/dock-item:bg-muted/40"
-      } ${expanded ? "h-10 w-10" : "h-9 w-9"}`}
+          ? "bg-white/15"
+          : "bg-transparent group-hover/dock-item:bg-white/10"
+      } ${expanded ? "h-10 w-10" : "h-7 w-7"}`}
     >
-      <Icon className="w-5 h-5" strokeWidth={1.75} />
-    </span>
-  );
-
-  const label = (
-    <span
-      className={`text-[11px] font-medium leading-none transition-[max-height,opacity] duration-200 overflow-hidden ${
-        expanded ? "max-h-[1.25rem] opacity-100" : "max-h-0 opacity-0"
-      }`}
-    >
-      {item.label}
+      <Icon
+        className={`transition-all duration-200 ease-out ${expanded ? "w-5 h-5" : "w-4 h-4"}`}
+        strokeWidth={1.75}
+      />
     </span>
   );
 
   if (item.kind === "link" && item.href) {
     return (
-      <Link href={item.href}>
-        <a
-          className={wrapperClass}
-          data-testid={item.testId}
-          aria-current={active ? "page" : undefined}
-          title={item.label}
-        >
-          {iconWrap}
-          {label}
-        </a>
+      <Link
+        href={item.href}
+        className={wrapperClass}
+        data-testid={item.testId}
+        aria-current={active ? "page" : undefined}
+        title={item.label}
+      >
+        {iconWrap}
       </Link>
     );
   }
@@ -94,7 +109,6 @@ function DockButton({
         title={item.label}
       >
         {iconWrap}
-        {label}
       </button>
     );
   }
@@ -109,7 +123,6 @@ function DockButton({
       title={`${item.label} (unavailable)`}
     >
       {iconWrap}
-      {label}
     </button>
   );
 }
@@ -154,7 +167,7 @@ export function GlobalFloatingDock() {
         <button
           type="button"
           onClick={() => setTapToggled((v) => !v)}
-          className="md:hidden absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center justify-center h-6 w-12 rounded-full bg-indigo-600 text-white text-[10px] font-semibold shadow"
+          className="md:hidden absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center justify-center h-6 w-12 rounded-full bg-slate-800/90 text-white/90 border border-slate-600/60 backdrop-blur-xl text-[10px] font-semibold shadow"
           aria-label="Toggle dock labels"
           data-testid="global-floating-dock-mobile-toggle"
         >
@@ -162,8 +175,10 @@ export function GlobalFloatingDock() {
         </button>
 
         <div
-          className={`rounded-full border border-slate-200/70 dark:border-border bg-white/90 dark:bg-card/85 backdrop-blur-xl shadow-lg transition-all duration-200 ease-out ${
-            expanded ? "px-3 py-2" : "px-2 py-1.5"
+          className={`rounded-full border border-slate-600/50 bg-slate-800/85 backdrop-blur-xl shadow-lg transition-all duration-200 ease-out origin-bottom ${
+            expanded
+              ? "px-3 py-2 opacity-100 scale-100"
+              : "px-2 py-1 opacity-40 scale-90"
           }`}
         >
           <div
@@ -200,14 +215,16 @@ export function GlobalFloatingDock() {
         open={openPanel === "calendar"}
         onOpenChange={(open) => setOpenPanel(open ? "calendar" : null)}
       >
-        <SheetContent side="right" className="w-full sm:max-w-md">
-          <SheetHeader>
+        <SheetContent side="right" className="w-full sm:max-w-3xl flex flex-col overflow-hidden">
+          <SheetHeader className="shrink-0">
             <SheetTitle>Calendar</SheetTitle>
             <SheetDescription>
-              Quick-glance calendar surface — full monthly view lives on Home.
+              Monthly schedule — ancillary categories and patient counts at a glance.
             </SheetDescription>
           </SheetHeader>
-          <CalendarPlaceholderPanel />
+          <div className="flex-1 overflow-y-auto -mx-6 px-6">
+            <DockCalendarPanel onClose={() => setOpenPanel(null)} />
+          </div>
         </SheetContent>
       </Sheet>
     </>

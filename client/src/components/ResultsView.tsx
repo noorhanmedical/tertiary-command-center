@@ -4,11 +4,12 @@ import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  generateClinicianPDF,
-  generatePlexusPDF,
+  openPatientPacketPrintPreview,
   type ReasoningValue,
 } from "@/lib/pdfGeneration";
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
+import { PacketQaBlockingDialog } from "@/components/plexus-iq/PacketQaBlockingDialog";
+import { auditPacketPatients, type PacketQaReport } from "@/lib/packetQa";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -227,6 +228,14 @@ export function ResultsView({
   const queryClient = useQueryClient();
   const [shareButtonText, setShareButtonText] = useState("Share");
   const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
+  // Packet QA Gate — opened when auditPacketPatients finds blockers.
+  // Mirrors the Plexus IQ pre-print gate so the batch results page and
+  // the Plexus IQ workspace block the same low-quality packets.
+  const [packetQa, setPacketQa] = useState<{
+    report: PacketQaReport;
+    mode: "clinician" | "plexus";
+    printable: PatientScreening[];
+  } | null>(null);
   const [completeModalPatient, setCompleteModalPatient] = useState<PatientScreening | null>(null);
   const [scheduleEditingPatientId, setScheduleEditingPatientId] = useState<number | null>(null);
   const [sendingPatientIds, setSendingPatientIds] = useState<Set<number>>(new Set());
@@ -334,12 +343,65 @@ export function ResultsView({
     onUpdatePatient(patient.id, { appointmentStatus: newStatus });
   }, [toast, onUpdatePatient, setCompleteModalPatient]);
 
-  const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
+  // Opens the print-preview popup for a clean (or operator-confirmed)
+  // subset. Kept separate from handlePdfGenerate so the QA gate's
+  // "Print N safe rows" path can reuse it without re-auditing.
+  const openPreview = useCallback((mode: "clinician" | "plexus", selected: PatientScreening[]) => {
     if (!batch) return;
+    try {
+      const result = openPatientPacketPrintPreview({
+        mode,
+        batchName: batch.name,
+        patients: selected,
+        scheduleDate: batch.scheduleDate,
+        createdAt: batch.createdAt,
+      });
+      if (!result.ok && result.reason === "popup-blocked") {
+        toast({
+          title: "Popup blocked. Allow popups to print this packet.",
+          description:
+            "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Could not open print preview",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  }, [batch, toast]);
+
+  // Packet QA Gate — same pre-print check the Plexus IQ workspace runs.
+  //   1. Refetch latest batch data so a stale tab can't print outdated
+  //      reasoning after a background qualification finished.
+  //   2. Run auditPacketPatients(mode). If any patient has blockers,
+  //      open PacketQaBlockingDialog; the dialog never auto-regenerates.
+  //   3. Only after a clean (or operator-confirmed-subset) audit do we
+  //      open the print-preview window.
+  const handlePdfGenerate = useCallback(async (selected: PatientScreening[]) => {
+    if (!batch || !pdfMode) return;
+    const mode = pdfMode;
     setPdfMode(null);
-    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
-    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
-  }, [batch, pdfMode]);
+
+    // Freshness step — best-effort. A network blip falls through to the
+    // audit on the in-memory copies (still real data, just possibly
+    // slightly older) and the operator can still bail at the QA dialog.
+    try {
+      await queryClient.refetchQueries({ queryKey: ["/api/screening-batches"] });
+    } catch {
+      // ignore — proceed with audit on current data
+    }
+
+    const report = auditPacketPatients(selected, mode);
+    if (report.blockedCount > 0) {
+      setPacketQa({ report, mode, printable: report.printablePatients });
+      return;
+    }
+
+    openPreview(mode, selected);
+  }, [batch, pdfMode, queryClient, openPreview]);
 
   const handleOpenClinicianPdf = useCallback(() => {
     setPdfMode("clinician");
@@ -701,6 +763,19 @@ export function ResultsView({
         patients={patients}
         onClose={() => setPdfMode(null)}
         onGenerate={handlePdfGenerate}
+      />
+
+      <PacketQaBlockingDialog
+        open={packetQa !== null}
+        report={packetQa?.report ?? null}
+        onCancel={() => setPacketQa(null)}
+        onProceed={() => {
+          if (!packetQa) return;
+          const subset = packetQa.printable;
+          const mode = packetQa.mode;
+          setPacketQa(null);
+          openPreview(mode, subset);
+        }}
       />
 
       <NotesPanelDrawer

@@ -9,6 +9,7 @@ import {
   type QualificationJobStatus,
 } from "@/lib/plexusIqClinicalImportApi";
 import { useToast } from "@/hooks/use-toast";
+import { categoryLabel, formatEta } from "./qualificationJobFormat";
 
 // Multi-job clinical-import qualification status banner.
 //
@@ -108,6 +109,13 @@ export function PlexusIQQualificationJobsStatus({
 
   // Aggregate header — weighted by patient counts, not a simple average
   // across jobs.
+  //
+  // Plexus IQ runtime hardening — also aggregate the v2 metadata
+  // fields. Sums where additive (skipped, rateLimited, aiBatchFallback,
+  // category counters). For throughput / ETA, jobs run concurrently
+  // so the user-visible signal is: sum patientsPerMinute across
+  // still-running jobs; ETA = max remaining across jobs (the slowest
+  // job is the one we wait on).
   const aggregate = useMemo(() => {
     let total = 0;
     let completed = 0;
@@ -115,6 +123,16 @@ export function PlexusIQQualificationJobsStatus({
     let queued = 0;
     let processing = 0;
     let skipped = 0;
+    let rateLimitedCount = 0;
+    let aiBatchFallbackCount = 0;
+    let missingClinicalCount = 0;
+    let missingDemographicCount = 0;
+    let technicalFailedCount = 0;
+    let aiErrorCount = 0;
+    let anyCategoryCount = false;
+    let patientsPerMinute = 0;
+    let anySpeed = false;
+    let etaSecondsRemaining: number | undefined = undefined;
     let terminalCount = 0;
     let anyFailed = false;
     for (let i = 0; i < jobs.length; i++) {
@@ -126,6 +144,36 @@ export function PlexusIQQualificationJobsStatus({
       queued += s?.queued ?? 0;
       processing += s?.processing ?? 0;
       skipped += s?.skipped ?? 0;
+      rateLimitedCount += s?.rateLimitedCount ?? 0;
+      aiBatchFallbackCount += s?.aiBatchFallbackCount ?? 0;
+      if (s?.missingClinicalCount != null) {
+        missingClinicalCount += s.missingClinicalCount;
+        anyCategoryCount = true;
+      }
+      if (s?.missingDemographicCount != null) {
+        missingDemographicCount += s.missingDemographicCount;
+        anyCategoryCount = true;
+      }
+      if (s?.technicalFailedCount != null) {
+        technicalFailedCount += s.technicalFailedCount;
+        anyCategoryCount = true;
+      }
+      if (s?.aiErrorCount != null) {
+        aiErrorCount += s.aiErrorCount;
+        anyCategoryCount = true;
+      }
+      // Only count throughput from jobs still running — a finished
+      // job's last-known patientsPerMinute is no longer happening.
+      if (s && !isTerminal(s.status) && s.patientsPerMinute != null) {
+        patientsPerMinute += s.patientsPerMinute;
+        anySpeed = true;
+      }
+      if (s && !isTerminal(s.status) && s.etaSecondsRemaining != null) {
+        etaSecondsRemaining =
+          etaSecondsRemaining == null
+            ? s.etaSecondsRemaining
+            : Math.max(etaSecondsRemaining, s.etaSecondsRemaining);
+      }
       if (s && isTerminal(s.status)) terminalCount += 1;
       if (s?.status === "failed") anyFailed = true;
     }
@@ -146,6 +194,15 @@ export function PlexusIQQualificationJobsStatus({
       percent,
       headerStatus,
       allTerminal,
+      rateLimitedCount,
+      aiBatchFallbackCount,
+      missingClinicalCount,
+      missingDemographicCount,
+      technicalFailedCount,
+      aiErrorCount,
+      anyCategoryCount,
+      patientsPerMinute: anySpeed ? patientsPerMinute : undefined,
+      etaSecondsRemaining,
     };
   }, [jobs, statuses]);
 
@@ -218,12 +275,95 @@ export function PlexusIQQualificationJobsStatus({
               <span>
                 <strong className="text-slate-900">{aggregate.queued}</strong> queued
               </span>
+              {aggregate.skipped > 0 && (
+                <span data-testid="qualification-jobs-skipped">
+                  <strong className="text-slate-900">{aggregate.skipped}</strong> skipped
+                </span>
+              )}
               {aggregate.failed > 0 && (
                 <span className="text-rose-700">
                   <strong>{aggregate.failed}</strong> failed
                 </span>
               )}
             </div>
+            {/* Plexus IQ runtime hardening — aggregate throughput.
+                Sum of in-flight job p/min; ETA is the slowest job's
+                remaining. Skipped when no running job has reported. */}
+            {(aggregate.patientsPerMinute != null ||
+              aggregate.etaSecondsRemaining != null ||
+              aggregate.rateLimitedCount > 0 ||
+              aggregate.aiBatchFallbackCount > 0) && (
+              <div
+                className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500"
+                data-testid="qualification-jobs-aggregate-throughput"
+              >
+                {aggregate.patientsPerMinute != null && (
+                  <span data-testid="qualification-jobs-speed">
+                    <strong className="text-slate-700">{aggregate.patientsPerMinute}</strong>/min
+                  </span>
+                )}
+                {aggregate.etaSecondsRemaining != null &&
+                  aggregate.etaSecondsRemaining > 0 && (
+                    <span data-testid="qualification-jobs-eta">
+                      ETA <strong className="text-slate-700">{formatEta(aggregate.etaSecondsRemaining)}</strong>
+                    </span>
+                  )}
+                {aggregate.rateLimitedCount > 0 && (
+                  <span className="text-amber-700" data-testid="qualification-jobs-rate-limited">
+                    rate-limited <strong>{aggregate.rateLimitedCount}</strong>
+                  </span>
+                )}
+                {aggregate.aiBatchFallbackCount > 0 && (
+                  <span className="text-amber-700" data-testid="qualification-jobs-ai-batch-fallback">
+                    ai-batch fallback <strong>{aggregate.aiBatchFallbackCount}</strong>
+                  </span>
+                )}
+              </div>
+            )}
+            {aggregate.anyCategoryCount &&
+              aggregate.missingClinicalCount +
+                aggregate.missingDemographicCount +
+                aggregate.technicalFailedCount +
+                aggregate.aiErrorCount >
+                0 && (
+                <div
+                  className="flex flex-wrap items-center gap-2 text-[11px]"
+                  data-testid="qualification-jobs-aggregate-categories"
+                >
+                  {aggregate.missingClinicalCount > 0 && (
+                    <span
+                      className="rounded-full bg-amber-50 text-amber-800 px-2 py-0.5"
+                      data-testid="qualification-jobs-missing-clinical"
+                    >
+                      missing clinical <strong>{aggregate.missingClinicalCount}</strong>
+                    </span>
+                  )}
+                  {aggregate.missingDemographicCount > 0 && (
+                    <span
+                      className="rounded-full bg-amber-50 text-amber-800 px-2 py-0.5"
+                      data-testid="qualification-jobs-missing-demographic"
+                    >
+                      missing demographic <strong>{aggregate.missingDemographicCount}</strong>
+                    </span>
+                  )}
+                  {aggregate.technicalFailedCount > 0 && (
+                    <span
+                      className="rounded-full bg-rose-50 text-rose-800 px-2 py-0.5"
+                      data-testid="qualification-jobs-technical-failed"
+                    >
+                      technical failed <strong>{aggregate.technicalFailedCount}</strong>
+                    </span>
+                  )}
+                  {aggregate.aiErrorCount > 0 && (
+                    <span
+                      className="rounded-full bg-rose-50 text-rose-800 px-2 py-0.5"
+                      data-testid="qualification-jobs-ai-error"
+                    >
+                      ai error <strong>{aggregate.aiErrorCount}</strong>
+                    </span>
+                  )}
+                </div>
+              )}
             <p className="text-[10px] text-slate-500 leading-snug" data-testid="qualification-jobs-transparency">
               Each patient is qualified individually. Jobs run with limited
               concurrency, so multiple patients may complete at the same time.
@@ -308,6 +448,15 @@ function JobRow({
   const retryMutation = useMutation({
     mutationFn: () => retryPlexusIqQualificationJobFailed(job.jobId),
     onSuccess: (resp) => {
+      // Plexus IQ runtime hardening — Routes step 3.
+      // Retry can return `jobId: null` for the zero-failed and
+      // duplicate-in-flight branches. Both are user-facing messages,
+      // not a started job — surface them via the error toast path
+      // and skip the poll-target swap.
+      if (resp.jobId == null) {
+        onRetryError(resp.reason ?? "No retryable failed patients");
+        return;
+      }
       onRetried(resp.jobId, resp.totalPatients ?? null);
     },
     onError: (err: unknown) => {
@@ -320,9 +469,18 @@ function JobRow({
   const total = status?.total ?? job.totalPatients ?? 0;
   const completed = status?.completed ?? 0;
   const failed = status?.failed ?? 0;
+  const skipped = status?.skipped ?? 0;
   const queued = status?.queued ?? Math.max(0, total - completed - failed);
   const percent = status?.percent ?? (total > 0 ? Math.round(((completed + failed) / total) * 100) : 0);
   const showRetry = (failed > 0 || status?.status === "failed") && !retryMutation.isPending;
+  const isStillRunning = status ? !["completed", "failed", "cancelled"].includes(status.status) : false;
+  const showChunk =
+    status?.chunkIndex != null && status?.totalChunks != null;
+  const showSpeed = isStillRunning && status?.patientsPerMinute != null;
+  const showEta =
+    isStillRunning &&
+    status?.etaSecondsRemaining != null &&
+    status.etaSecondsRemaining > 0;
 
   return (
     <li
@@ -350,8 +508,24 @@ function JobRow({
                     <>
                       {percent}% · <strong className="text-slate-700">{completed}</strong>/{total} completed
                       {queued > 0 ? <> · {queued} queued</> : null}
+                      {skipped > 0 ? <> · {skipped} skipped</> : null}
                       {failed > 0 ? (
                         <span className="text-rose-700"> · <strong>{failed}</strong> failed</span>
+                      ) : null}
+                      {(showChunk || showSpeed || showEta) && (
+                        <span data-testid={`qualification-job-row-${job.jobId}-throughput`}>
+                          {showChunk ? (
+                            <> · chunk {status!.chunkIndex}/{status!.totalChunks}</>
+                          ) : null}
+                          {showSpeed ? <> · {status!.patientsPerMinute}/min</> : null}
+                          {showEta ? <> · ETA {formatEta(status!.etaSecondsRemaining!)}</> : null}
+                        </span>
+                      )}
+                      {(status?.rateLimitedCount ?? 0) > 0 ? (
+                        <span className="text-amber-700"> · rate-limited {status!.rateLimitedCount}</span>
+                      ) : null}
+                      {(status?.aiBatchFallbackCount ?? 0) > 0 ? (
+                        <span className="text-amber-700"> · ai-batch fallback {status!.aiBatchFallbackCount}</span>
                       ) : null}
                     </>
                   )}
@@ -413,7 +587,14 @@ function JobRow({
           <ul className="mt-1 ml-2 max-h-20 overflow-y-auto space-y-0.5">
             {status.errors.slice(0, 8).map((e) => (
               <li key={e.patientId} className="truncate">
-                #{e.patientId} · {e.patientName} · {e.error}
+                #{e.patientId} · {e.patientName}
+                {e.category ? (
+                  <span className="ml-1 text-[9px] uppercase tracking-wider opacity-70">
+                    [{categoryLabel(e.category)}]
+                  </span>
+                ) : null}
+                {" · "}
+                {e.error}
               </li>
             ))}
             {status.errors.length > 8 && (
