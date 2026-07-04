@@ -9,7 +9,7 @@
 // patientDirectoryApi helpers. When the flag is OFF the calls return
 // 404 and the dialogs surface the error via toast without crashing.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/api/auth";
 import {
   addPriorTest,
   clearCooldown,
@@ -27,39 +28,88 @@ import {
   importPreview,
   setCooldown,
   setDoNotContact,
+  type ApprovedMatch,
+  type ImportPreviewRow,
+  type PendingImportPayload,
 } from "@/lib/patientDirectoryApi";
 import { COOLDOWN_PRESET_LABEL, endsAtForPreset, type CooldownPreset } from "../../../../shared/contactRestrictions";
 
 // ─── Bulk Import ─────────────────────────────────────────────────────────
+//
+// Two shapes of import (task #723):
+//   - Full-field (name + dob [+ mrn/phone/facility]): the original
+//     two-step paste → preview → confirm flow, unchanged.
+//   - Minimal-field ("service" import — name only + optional date of
+//     service / procedure): rows are fuzzy-matched server-side against
+//     existing profiles. Admins review matches (link vs new profile)
+//     and commit; non-admins submit for approval and the batch shows a
+//     "Waiting for approval" badge in Recent Imports.
+
+/** Per-row decision in the match-review step. */
+type MatchDecision = { link: boolean; candidateId: number | null };
 
 export function BulkImportDialog({
   open,
   onOpenChange,
   batchId,
   onComplete,
+  resumePending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   batchId: number;
   onComplete?: (createdIds: number[]) => void;
+  /** Admin resume mode: review a batch previously submitted for approval. */
+  resumePending?: { batchId: number; payload: PendingImportPayload } | null;
 }) {
   const [format, setFormat] = useState<"csv" | "txt">("csv");
   const [text, setText] = useState("");
-  const [preview, setPreview] = useState<ReadonlyArray<{
-    rowIndex: number;
-    identity: { name?: string | null; dob?: string | null; mrn?: string | null; facility?: string | null; phoneNumber?: string | null };
-    classifications: ReadonlyArray<string>;
-    missingFields: ReadonlyArray<string>;
-    selected: boolean;
-  }>>([]);
+  const [preview, setPreview] = useState<ReadonlyArray<ImportPreviewRow>>([]);
+  const [sourceFields, setSourceFields] = useState<string[]>([]);
+  const [minimal, setMinimal] = useState(false);
+  const [decisions, setDecisions] = useState<Record<number, MatchDecision>>({});
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
+  const resuming = !!resumePending;
+
+  // Resume mode: hydrate directly from the parked payload.
+  useEffect(() => {
+    if (!open) return;
+    if (resumePending) {
+      setPreview(resumePending.payload.rows);
+      setSourceFields(resumePending.payload.sourceFields);
+      setMinimal(true);
+      setDecisions(defaultDecisions(resumePending.payload.rows));
+    }
+  }, [open, resumePending]);
+
+  function defaultDecisions(rows: ReadonlyArray<ImportPreviewRow>): Record<number, MatchDecision> {
+    const d: Record<number, MatchDecision> = {};
+    for (const r of rows) {
+      const best = r.matchCandidates?.[0] ?? null;
+      d[r.rowIndex] = best ? { link: true, candidateId: best.patientScreeningId } : { link: false, candidateId: null };
+    }
+    return d;
+  }
+
+  function reset() {
+    setText("");
+    setPreview([]);
+    setSourceFields([]);
+    setMinimal(false);
+    setDecisions({});
+  }
 
   async function runPreview() {
     setBusy(true);
     try {
       const res = await importPreview({ format, text });
-      setPreview(res.rows as never);
+      setPreview(res.rows);
+      setSourceFields(res.sourceFields);
+      setMinimal(res.minimal);
+      if (res.minimal) setDecisions(defaultDecisions(res.rows));
     } catch (e) {
       toast({ title: "Preview failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -71,10 +121,92 @@ export function BulkImportDialog({
     setPreview((rows) => rows.map((r) => (r.rowIndex === rowIndex ? { ...r, selected: !r.selected } : r)));
   }
 
+  function setDecision(rowIndex: number, next: Partial<MatchDecision>) {
+    setDecisions((d) => ({ ...d, [rowIndex]: { ...(d[rowIndex] ?? { link: false, candidateId: null }), ...next } }));
+  }
+
+  const eligibleRows = preview.filter((r) => !r.classifications.includes("missing_required_fields"));
+  const validRows = eligibleRows.filter((r) => r.selected);
+  // Groups derive from ALL eligible rows (not just selected) so a skipped
+  // row stays visible with its include checkbox unchecked.
+  const matchedGroup = minimal ? eligibleRows.filter((r) => (r.matchCandidates?.length ?? 0) > 0) : [];
+  const newGroup = minimal ? eligibleRows.filter((r) => (r.matchCandidates?.length ?? 0) === 0) : [];
+  const linkCount = matchedGroup.filter((r) => r.selected && decisions[r.rowIndex]?.link && decisions[r.rowIndex]?.candidateId).length;
+  const skipCount = minimal ? eligibleRows.length - validRows.length : 0;
+
   async function confirmImport() {
-    const selected = preview
-      .filter((r) => r.selected && !r.classifications.includes("missing_required_fields"))
-      .map((r) => ({
+    if (validRows.length === 0) {
+      toast({ title: "Nothing to import", description: "Select at least one valid row." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const effectiveBatchId = resumePending?.batchId ?? (batchId > 0 ? batchId : undefined);
+
+      if (minimal) {
+        if (!isAdmin) {
+          // Non-admin: park the whole preview for admin review.
+          const res = await importConfirm({
+            batchId: effectiveBatchId,
+            sourceFields,
+            importKind: "service",
+            selected: [],
+            submitForApproval: true,
+            previewRows: preview,
+          });
+          toast({ title: "Submitted for approval", description: "An admin will review the matched profiles before anything is imported." });
+          onComplete?.([]);
+          onOpenChange(false);
+          reset();
+          return void res;
+        }
+
+        const approvedMatches: ApprovedMatch[] = [];
+        const selected: NonNullable<Parameters<typeof importConfirm>[0]["selected"]> = [];
+        for (const r of validRows) {
+          const d = decisions[r.rowIndex];
+          if (d?.link && d.candidateId) {
+            approvedMatches.push({
+              importRowIndex: r.rowIndex,
+              existingPatientId: d.candidateId,
+              dateOfService: r.extras?.dateOfService ?? null,
+              procedure: r.extras?.procedure ?? null,
+              name: r.identity.name ?? null,
+            });
+          } else {
+            selected.push({
+              rowIndex: r.rowIndex,
+              identity: {
+                name: r.identity.name ?? null,
+                dob: r.identity.dob ?? null,
+                mrn: r.identity.mrn ?? null,
+                facility: r.identity.facility ?? null,
+                phoneNumber: r.identity.phoneNumber ?? r.identity.phone ?? null,
+              },
+              extras: r.extras,
+            });
+          }
+        }
+        const res = await importConfirm({
+          batchId: effectiveBatchId,
+          sourceFields,
+          importKind: "service",
+          selected,
+          approvedMatches,
+        });
+        toast({
+          title: "Import committed",
+          description: `${res.createdIds.length} new profile(s), ${res.linked.length} linked to existing patients.`,
+        });
+        onComplete?.(res.createdIds);
+        onOpenChange(false);
+        reset();
+        return;
+      }
+
+      // Full-field import — original behavior.
+      const selected = validRows.map((r) => ({
+        rowIndex: r.rowIndex,
         identity: {
           name: r.identity.name ?? null,
           dob: r.identity.dob ?? null,
@@ -82,20 +214,14 @@ export function BulkImportDialog({
           facility: r.identity.facility ?? null,
           phoneNumber: r.identity.phoneNumber ?? null,
         },
+        extras: r.extras,
         patientType: undefined as "visit" | "outreach" | undefined,
       }));
-    if (selected.length === 0) {
-      toast({ title: "Nothing to import", description: "Select at least one valid row." });
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await importConfirm({ batchId, selected });
+      const res = await importConfirm({ batchId: effectiveBatchId, sourceFields, importKind: "full", selected });
       toast({ title: "Imported", description: `${res.createdIds.length} patient(s) created.` });
       onComplete?.(res.createdIds);
       onOpenChange(false);
-      setText("");
-      setPreview([]);
+      reset();
     } catch (e) {
       toast({ title: "Import failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -103,42 +229,56 @@ export function BulkImportDialog({
     }
   }
 
+  const confirmLabel = minimal
+    ? (isAdmin
+        ? `Approve & commit (${linkCount} link, ${validRows.length - linkCount} new${skipCount > 0 ? `, ${skipCount} skipped` : ""})`
+        : "Submit for approval")
+    : "Confirm import";
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl" data-testid="patient-directory-bulk-import-dialog">
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
+      <DialogContent className="max-w-3xl" data-testid="patient-directory-bulk-import-dialog">
         <DialogHeader>
-          <DialogTitle>Bulk import — Patient Directory</DialogTitle>
+          <DialogTitle>{resuming ? "Match review — pending import" : "Bulk import — Patient Directory"}</DialogTitle>
           <DialogDescription>
-            CSV with headers (name, dob, mrn, facility, phone), or pipe-separated TXT
-            (Name | DOB | Phone | Facility | MRN). DOC / DOCX / PDF parsing not supported.
+            {resuming
+              ? `Submitted by ${resumePending?.payload.submittedByUsername ?? "a team member"} — review matched profiles, then approve to commit.`
+              : "CSV with headers (name, dob, mrn, facility, phone), or pipe-separated TXT (Name | DOB | Phone | Facility | MRN). Name-only lists (e.g. name, date of service, procedure) trigger smart profile matching."}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center gap-2 text-[12px]">
-          <Label>Format:</Label>
-          <select value={format} onChange={(e) => setFormat(e.target.value as "csv" | "txt")} className="rounded border border-slate-200 px-2 py-1">
-            <option value="csv">CSV</option>
-            <option value="txt">TXT</option>
-          </select>
-        </div>
+        {!resuming && (
+          <>
+            <div className="flex items-center gap-2 text-[12px]">
+              <Label>Format:</Label>
+              <select value={format} onChange={(e) => setFormat(e.target.value as "csv" | "txt")} className="rounded border border-slate-200 px-2 py-1">
+                <option value="csv">CSV</option>
+                <option value="txt">TXT</option>
+              </select>
+            </div>
 
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={6}
-          placeholder={format === "csv" ? "name,dob,phone,mrn,facility\nJane Doe,1980-05-12,..." : "Jane Doe | 1980-05-12 | 2025550101 | Plexus Cary | M-1"}
-          className="font-mono text-[12px]"
-          data-testid="patient-directory-bulk-import-text"
-        />
+            <Textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={6}
+              placeholder={format === "csv" ? "name,dob,phone,mrn,facility\nJane Doe,1980-05-12,..." : "Jane Doe | 1980-05-12 | 2025550101 | Plexus Cary | M-1"}
+              className="font-mono text-[12px]"
+              data-testid="patient-directory-bulk-import-text"
+            />
 
-        <div className="flex items-center justify-between">
-          <Button type="button" variant="outline" onClick={runPreview} disabled={busy || text.trim().length === 0} data-testid="patient-directory-bulk-import-preview">
-            Preview
-          </Button>
-          <div className="text-[11px] text-slate-500">{preview.length} row(s) parsed</div>
-        </div>
+            <div className="flex items-center justify-between">
+              <Button type="button" variant="outline" onClick={runPreview} disabled={busy || text.trim().length === 0} data-testid="patient-directory-bulk-import-preview">
+                Preview
+              </Button>
+              <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                {minimal && <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px]">Minimal-field import</Badge>}
+                <span>{preview.length} row(s) parsed</span>
+              </div>
+            </div>
+          </>
+        )}
 
-        {preview.length > 0 && (
+        {preview.length > 0 && !minimal && (
           <div className="max-h-[40vh] overflow-y-auto rounded border border-slate-200" data-testid="patient-directory-bulk-import-preview-list">
             <table className="w-full text-[11px]">
               <thead className="bg-slate-50 text-left">
@@ -179,15 +319,109 @@ export function BulkImportDialog({
           </div>
         )}
 
+        {preview.length > 0 && minimal && (
+          <div className="max-h-[46vh] space-y-3 overflow-y-auto pr-1" data-testid="patient-directory-match-review">
+            {!isAdmin && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800" data-testid="patient-directory-match-review-non-admin-note">
+                This list only has patient names, so matches against existing profiles need admin approval.
+                Submitting sends it to an admin for review — nothing is imported yet.
+              </div>
+            )}
+
+            {matchedGroup.length > 0 && (
+              <section>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Matched to existing profiles ({matchedGroup.length})
+                </div>
+                <div className="space-y-2">
+                  {matchedGroup.map((r) => {
+                    const d = decisions[r.rowIndex] ?? { link: false, candidateId: null };
+                    const included = r.selected;
+                    return (
+                      <div
+                        key={r.rowIndex}
+                        className={`rounded-lg border p-2 ${included ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-70"}`}
+                        data-testid={`patient-directory-match-row-${r.rowIndex}`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="flex items-center gap-2 text-[12px] font-medium">
+                            <input
+                              type="checkbox"
+                              checked={included}
+                              onChange={() => toggle(r.rowIndex)}
+                              data-testid={`patient-directory-match-include-${r.rowIndex}`}
+                            />
+                            {r.identity.name}
+                            {r.extras?.dateOfService && <span className="text-[11px] font-normal text-slate-500">DOS {r.extras.dateOfService}</span>}
+                            {r.extras?.procedure && <span className="text-[11px] font-normal text-slate-500">{r.extras.procedure}</span>}
+                          </label>
+                          <label className="flex items-center gap-1 text-[11px]">
+                            <input
+                              type="checkbox"
+                              checked={d.link}
+                              disabled={!isAdmin || !included}
+                              onChange={(e) => setDecision(r.rowIndex, { link: e.target.checked })}
+                              data-testid={`patient-directory-match-link-${r.rowIndex}`}
+                            />
+                            Link to existing profile
+                          </label>
+                        </div>
+                        <div className="mt-1 space-y-1">
+                          {(r.matchCandidates ?? []).map((c) => (
+                            <label key={c.patientScreeningId} className="flex items-center gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-slate-50">
+                              <input
+                                type="radio"
+                                name={`match-candidate-${r.rowIndex}`}
+                                checked={d.candidateId === c.patientScreeningId}
+                                disabled={!isAdmin || !d.link || !included}
+                                onChange={() => setDecision(r.rowIndex, { candidateId: c.patientScreeningId })}
+                                data-testid={`patient-directory-match-candidate-${r.rowIndex}-${c.patientScreeningId}`}
+                              />
+                              <span className="font-medium">{c.name}</span>
+                              <span className="text-slate-500">{c.dob ?? "no DOB"} · {c.facility ?? "no facility"}</span>
+                              <Badge variant="secondary" className="ml-auto text-[10px]">{Math.round(c.score * 100)}% match</Badge>
+                            </label>
+                          ))}
+                        </div>
+                        {!included && <div className="mt-1 text-[10px] text-slate-500">Skipped — this row will not be imported or linked.</div>}
+                        {included && !d.link && <div className="mt-1 text-[10px] text-slate-500">Will create a new profile instead.</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {newGroup.length > 0 && (
+              <section>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  New profiles ({newGroup.length})
+                </div>
+                <div className="rounded-lg border border-slate-200">
+                  {newGroup.map((r) => (
+                    <div key={r.rowIndex} className="flex items-center gap-2 border-b border-slate-100 px-2 py-1 text-[11px] last:border-b-0" data-testid={`patient-directory-new-row-${r.rowIndex}`}>
+                      <input type="checkbox" checked={r.selected} onChange={() => toggle(r.rowIndex)} data-testid={`patient-directory-bulk-import-row-${r.rowIndex}`} />
+                      <span className="font-medium">{r.identity.name}</span>
+                      {r.extras?.dateOfService && <span className="text-slate-500">DOS {r.extras.dateOfService}</span>}
+                      {r.extras?.procedure && <span className="text-slate-500">{r.extras.procedure}</span>}
+                      <Badge variant="secondary" className="ml-auto text-[10px]">no match found</Badge>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => { onOpenChange(false); reset(); }}>Cancel</Button>
           <Button
             onClick={confirmImport}
             disabled={busy || preview.length === 0}
             className="rounded-full bg-indigo-600 px-4 text-white hover:bg-indigo-700 disabled:opacity-40"
             data-testid="patient-directory-bulk-import-confirm"
           >
-            Confirm import
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

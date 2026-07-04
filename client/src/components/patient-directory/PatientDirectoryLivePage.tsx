@@ -17,6 +17,7 @@ import {
   BulkImportDialog,
   DncCooldownDialog,
 } from "@/components/patient-directory/PatientDirectoryActions";
+import { RecentImportsPanel } from "@/components/patient-directory/RecentImportsPanel";
 import type { PatientProfileSnapshot } from "@/components/patient-directory/PatientProfileDrawer";
 import {
   type DirectorySnapshot,
@@ -168,6 +169,10 @@ export function PatientDirectoryLivePage({
         onBulkImport={() => setBulkImportOpen(true)}
         auditEndpointUnavailable={!reachable}
       />
+
+      <div className="px-4 pb-4">
+        <RecentImportsPanel />
+      </div>
 
       <BulkImportDialog
         open={bulkImportOpen}

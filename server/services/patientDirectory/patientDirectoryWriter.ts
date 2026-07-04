@@ -34,7 +34,11 @@ export type PatientDirectoryEventKind =
   | "dnc_cleared"
   | "prior_test_added"
   | "packet_generated"
-  | "profile_updated";
+  | "profile_updated"
+  | "visit_linked"
+  | "procedure_linked"
+  | "batch_deleted"
+  | "import_submitted_for_approval";
 
 export type PatientDirectoryEventWrite = {
   patientScreeningId: number | null;

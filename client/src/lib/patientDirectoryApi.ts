@@ -195,19 +195,117 @@ export type ImportPreviewRequest = {
   facts?: unknown; // ImportPreviewFacts shape (loose to keep API forward-compatible)
 };
 
-export async function importPreview(req: ImportPreviewRequest): Promise<{ rows: ReadonlyArray<unknown> }> {
-  const res = await apiRequest("POST", "/api/patient-directory/import-preview", req);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
-  return res.json();
-}
-
-export type ImportConfirmRequest = {
-  batchId: number;
-  selected: Array<{ identity: PatientIdentityInput; patientType?: "visit" | "outreach" }>;
+export type ImportMatchCandidate = {
+  patientScreeningId: number;
+  name: string;
+  dob: string | null;
+  facility: string | null;
+  score: number;
 };
 
-export async function importConfirm(req: ImportConfirmRequest): Promise<{ createdIds: number[] }> {
+export type ImportPreviewRow = {
+  rowIndex: number;
+  identity: { name?: string | null; dob?: string | null; mrn?: string | null; facility?: string | null; phoneNumber?: string | null; phone?: string | null };
+  extras?: { dateOfService?: string; procedure?: string };
+  classifications: ReadonlyArray<string>;
+  missingFields: ReadonlyArray<string>;
+  matchedExistingId?: number | null;
+  matchCandidates?: ReadonlyArray<ImportMatchCandidate>;
+  selected: boolean;
+};
+
+export type ImportPreviewResponse = {
+  rows: ReadonlyArray<ImportPreviewRow>;
+  sourceFields: string[];
+  minimal: boolean;
+};
+
+export async function importPreview(req: ImportPreviewRequest): Promise<ImportPreviewResponse> {
+  const res = await apiRequest("POST", "/api/patient-directory/import-preview", req);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  const body = await res.json();
+  return {
+    rows: body.rows ?? [],
+    sourceFields: body.sourceFields ?? [],
+    minimal: body.minimal === true,
+  };
+}
+
+export type ApprovedMatch = {
+  importRowIndex: number;
+  existingPatientId: number;
+  dateOfService?: string | null;
+  procedure?: string | null;
+  name?: string | null;
+};
+
+export type ImportConfirmRequest = {
+  batchId?: number;
+  batchName?: string;
+  sourceFields?: string[];
+  importKind?: "full" | "service";
+  selected: Array<{
+    rowIndex?: number;
+    identity: PatientIdentityInput;
+    extras?: { dateOfService?: string; procedure?: string };
+    patientType?: "visit" | "outreach";
+  }>;
+  approvedMatches?: ApprovedMatch[];
+  submitForApproval?: boolean;
+  previewRows?: ReadonlyArray<ImportPreviewRow>;
+};
+
+export type ImportConfirmResponse = {
+  createdIds: number[];
+  linked: Array<{ importRowIndex: number; existingPatientId: number; eventKind: string }>;
+  batchId: number;
+  pending: boolean;
+};
+
+export async function importConfirm(req: ImportConfirmRequest): Promise<ImportConfirmResponse> {
   const res = await apiRequest("POST", "/api/patient-directory/import-confirm", req);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  const body = await res.json();
+  return {
+    createdIds: body.createdIds ?? [],
+    linked: body.linked ?? [],
+    batchId: body.batchId ?? 0,
+    pending: body.pending === true,
+  };
+}
+
+// ── import sessions (Recent Imports) ───────────────────────────────────
+export type PendingImportPayload = {
+  rows: ReadonlyArray<ImportPreviewRow>;
+  sourceFields: string[];
+  minimal: boolean;
+  submittedBy: string | null;
+  submittedByUsername: string | null;
+  submittedAt: string;
+};
+
+export type ImportBatchSummary = {
+  id: number;
+  name: string;
+  createdAt: string;
+  createdByUserId: string | null;
+  createdByUsername: string | null;
+  patientCount: number;
+  sourceFields: string[];
+  importKind: "full" | "service" | null;
+  pending: boolean;
+  pendingPayload: PendingImportPayload | null;
+  patientNames: string[];
+};
+
+export async function listImportBatches(): Promise<ReadonlyArray<ImportBatchSummary>> {
+  const res = await fetch("/api/patient-directory/import-batches", { credentials: "include" });
+  const body = await jsonOrFail<{ batches: ImportBatchSummary[] }>(res, { batches: [] });
+  return body?.batches ?? [];
+}
+
+export async function deleteImportBatch(id: number): Promise<{ affected: number }> {
+  const res = await apiRequest("DELETE", `/api/patient-directory/import-batches/${id}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
   return res.json();
 }

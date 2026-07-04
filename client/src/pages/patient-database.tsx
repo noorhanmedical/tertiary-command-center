@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { PatientProfileWorkspace } from "@/components/patient-directory/PatientProfileWorkspace";
 import { PatientChartSkeleton } from "@/components/patient-directory/PatientChart";
+import { RecentImportsPanel } from "@/components/patient-directory/RecentImportsPanel";
 import { initials, fmtDate } from "@/components/patient-directory/profileTypes";
 
 type RosterPatient = {
@@ -362,6 +363,11 @@ export default function PatientDatabasePage() {
               <X className="w-3 h-3" />Clear filters
             </Button>
           )}
+        </div>
+
+        {/* Recent imports (collapsible) */}
+        <div className="px-2 pt-2">
+          <RecentImportsPanel />
         </div>
 
         {/* Roster list */}

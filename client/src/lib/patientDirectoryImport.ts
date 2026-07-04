@@ -11,10 +11,16 @@ import {
   type PatientIdentityInput,
 } from "../../../shared/patientIdentity";
 
+export type ParsedImportRowExtras = {
+  dateOfService?: string;
+  procedure?: string;
+};
+
 export type ParsedImportRow = {
   rowIndex: number; // 0-based, header excluded
   raw: Record<string, string>;
   identity: PatientIdentityInput;
+  extras?: ParsedImportRowExtras;
 };
 
 export type ImportClassification =
@@ -77,6 +83,7 @@ function splitCsvLine(line: string, delim: string): string[] {
 
 const HEADER_ALIASES: Record<string, keyof PatientIdentityInput> = {
   "name": "name",
+  "patient": "name",
   "patient name": "name",
   "patient_name": "name",
   "full name": "name",
@@ -100,6 +107,53 @@ const HEADER_ALIASES: Record<string, keyof PatientIdentityInput> = {
   "telephone": "phoneNumber",
 };
 
+// Non-identity columns that minimal ("service") imports commonly carry.
+const EXTRA_HEADER_ALIASES: Record<string, keyof ParsedImportRowExtras> = {
+  "date of service": "dateOfService",
+  "dos": "dateOfService",
+  "service date": "dateOfService",
+  "date": "dateOfService",
+  "procedure": "procedure",
+  "procedure name": "procedure",
+  "test": "procedure",
+  "service": "procedure",
+};
+
+/** Which identity/extra fields a set of CSV headers maps to. */
+export function detectSourceFields(headers: ReadonlyArray<string>): string[] {
+  const out: string[] = [];
+  for (const h of headers) {
+    const key = h.toLowerCase().trim();
+    const mapped = HEADER_ALIASES[key] ?? EXTRA_HEADER_ALIASES[key] ?? null;
+    out.push(mapped ?? key);
+  }
+  return out;
+}
+
+/**
+ * A "minimal" (service) import has a name column but none of the strong
+ * identity columns (DOB, MRN, phone). Those rows can't key-match and
+ * must go through fuzzy name matching + admin approval.
+ */
+export function isMinimalFieldImport(parsed: ReadonlyArray<ParsedImportRow>): boolean {
+  if (parsed.length === 0) return false;
+  const hasName = parsed.some((r) => (r.identity.name ?? "").trim().length > 0);
+  if (!hasName) return false;
+  const hasStrongField = parsed.some((r) =>
+    [(r.identity.dob ?? ""), (r.identity.mrn ?? ""), (r.identity.phoneNumber ?? r.identity.phone ?? "")]
+      .some((v) => String(v).trim().length > 0),
+  );
+  return !hasStrongField;
+}
+
+/** Raw header cells of a pasted CSV/TSV (lower-cased, trimmed). */
+export function extractCsvHeaders(text: string): string[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return [];
+  const delim = detectDelimiter(lines[0]);
+  return splitCsvLine(lines[0], delim).map((h) => h.toLowerCase().trim());
+}
+
 export function parseCsv(text: string): ReadonlyArray<ParsedImportRow> {
   const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim().length > 0);
   if (lines.length === 0) return [];
@@ -114,15 +168,25 @@ export function parseCsv(text: string): ReadonlyArray<ParsedImportRow> {
     const cells = splitCsvLine(lines[i], delim);
     const raw: Record<string, string> = {};
     const identity: PatientIdentityInput = {};
+    const extras: ParsedImportRowExtras = {};
     for (let c = 0; c < headers.length; c++) {
       const headerName = headers[c];
       const value = cells[c] ?? "";
       raw[headerName] = value;
       const key = headerMap[c];
-      if (!key) continue;
-      (identity as Record<string, string>)[key] = value;
+      if (key) {
+        (identity as Record<string, string>)[key] = value;
+        continue;
+      }
+      const extraKey = EXTRA_HEADER_ALIASES[headerName];
+      if (extraKey && value) extras[extraKey] = value;
     }
-    rows.push({ rowIndex: i - 1, raw, identity });
+    rows.push({
+      rowIndex: i - 1,
+      raw,
+      identity,
+      ...(Object.keys(extras).length > 0 ? { extras } : {}),
+    });
   }
   return rows;
 }
