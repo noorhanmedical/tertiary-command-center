@@ -158,6 +158,25 @@ export function GlobalFloatingDock() {
   const [tapToggled, setTapToggled] = useState(false);
   const [openPanel, setOpenPanel] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Task #755 — hover-intent debounce. The dock grows on hover, which can move
+  // its edge past a stationary cursor mid-transition and fire rapid
+  // leave→enter→leave events (the "quiver"). Deferring the collapse and
+  // cancelling it on re-enter absorbs that jitter.
+  const hoverLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleHoverEnter = () => {
+    if (hoverLeaveTimer.current) {
+      clearTimeout(hoverLeaveTimer.current);
+      hoverLeaveTimer.current = null;
+    }
+    setHovered(true);
+  };
+  const handleHoverLeave = () => {
+    if (hoverLeaveTimer.current) clearTimeout(hoverLeaveTimer.current);
+    hoverLeaveTimer.current = setTimeout(() => {
+      hoverLeaveTimer.current = null;
+      setHovered(false);
+    }, 120);
+  };
 
   // Read the current user's role to decide which dock to render. Portal
   // users (scheduler / clinician) get the simplified 4-item dock; everyone
@@ -191,6 +210,12 @@ export function GlobalFloatingDock() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (hoverLeaveTimer.current) clearTimeout(hoverLeaveTimer.current);
+    };
+  }, []);
+
   function handleActivate(item: DockItem) {
     if (item.kind === "panel" && item.panelId) {
       setOpenPanel(item.panelId);
@@ -203,8 +228,8 @@ export function GlobalFloatingDock() {
       <div
         ref={rootRef}
         className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseEnter={handleHoverEnter}
+        onMouseLeave={handleHoverLeave}
         data-testid="global-floating-dock"
         data-expanded={expanded ? "true" : "false"}
       >

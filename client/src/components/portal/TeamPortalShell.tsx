@@ -1184,6 +1184,19 @@ export function TeamPortalShell({
   // Task #643 — Playground surface ref for drop-point math (drag tool → widget).
   const playgroundSurfaceRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
+  // Task #755 — hover-intent debounce timers for each rail. The sliding
+  // peek transform sweeps the element's bounding rect past a stationary
+  // cursor mid-animation, firing rapid leave→enter→leave events (the
+  // "quiver"). Delaying the collapse and cancelling it on re-enter absorbs
+  // those spurious leaves.
+  const leftRailPeekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rightRailPeekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (leftRailPeekTimer.current) clearTimeout(leftRailPeekTimer.current);
+      if (rightRailPeekTimer.current) clearTimeout(rightRailPeekTimer.current);
+    };
+  }, []);
   // TOUCH SUPPORT (task #629) — hover is unavailable on tablets / touchscreens,
   // so the hover-only reveal from task #628 leaves touch users stuck with just
   // the center canvas. On `(hover: none)` devices we switch the panels to a TAP
@@ -1236,9 +1249,29 @@ export function TeamPortalShell({
   // so a naive onMouseLeave on the body fires spuriously as the element slides
   // under a stationary cursor at the panel edge — checking against the stable
   // outer ref rect stops the flicker loop.
+  // Task #755 — schedule the collapse instead of firing it synchronously.
+  // The rect-guard below still short-circuits an obvious in-bounds leave, but
+  // during the slide animation getBoundingClientRect returns an intermediate
+  // rect, so the guard alone can't stop the quiver. Deferring setPeek(false)
+  // by ~120ms lets a matching onMouseEnter (see makeRailPeekEnterHandler)
+  // cancel the pending collapse, absorbing rapid leave→enter jitter.
+  const RAIL_PEEK_LEAVE_DELAY_MS = 120;
+  const makeRailPeekEnterHandler =
+    (
+      timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+      setPeek: (v: boolean) => void,
+    ) =>
+    () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      setPeek(true);
+    };
   const makeRailPeekLeaveHandler =
     (
       ref: React.RefObject<HTMLDivElement>,
+      timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
       setPeek: (v: boolean) => void,
     ) =>
     (e: React.MouseEvent) => {
@@ -1254,7 +1287,11 @@ export function TeamPortalShell({
           return;
         }
       }
-      setPeek(false);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        setPeek(false);
+      }, RAIL_PEEK_LEAVE_DELAY_MS);
     };
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
@@ -2695,11 +2732,19 @@ export function TeamPortalShell({
               full opacity on hover/focus; moving the pointer away slides it back
               aside. Independent of the right rail. */}
           <div
-            onMouseEnter={isTouchDevice ? undefined : () => setLeftRailPeek(true)}
+            onMouseEnter={
+              isTouchDevice
+                ? undefined
+                : makeRailPeekEnterHandler(leftRailPeekTimer, setLeftRailPeek)
+            }
             onMouseLeave={
               isTouchDevice
                 ? undefined
-                : makeRailPeekLeaveHandler(leftRailRef, setLeftRailPeek)
+                : makeRailPeekLeaveHandler(
+                    leftRailRef,
+                    leftRailPeekTimer,
+                    setLeftRailPeek,
+                  )
             }
             onClick={
               isTouchDevice
@@ -3045,11 +3090,19 @@ export function TeamPortalShell({
               full opacity on hover/focus; moving the pointer away slides it back
               aside. Mirrors the left rail; independent of it. */}
           <div
-            onMouseEnter={isTouchDevice ? undefined : () => setRightRailPeek(true)}
+            onMouseEnter={
+              isTouchDevice
+                ? undefined
+                : makeRailPeekEnterHandler(rightRailPeekTimer, setRightRailPeek)
+            }
             onMouseLeave={
               isTouchDevice
                 ? undefined
-                : makeRailPeekLeaveHandler(rightRailRef, setRightRailPeek)
+                : makeRailPeekLeaveHandler(
+                    rightRailRef,
+                    rightRailPeekTimer,
+                    setRightRailPeek,
+                  )
             }
             onClick={
               isTouchDevice
