@@ -182,14 +182,36 @@ function PatientMessagesTab({
   const threads = useMemo(() => threadsQuery.data?.threads ?? [], [threadsQuery.data]);
 
   useEffect(() => {
-    if (activePhone == null && threads.length > 0) {
-      onSelectionChange({
-        phone: threads[0].patientPhone,
-        name: threads[0].patientName,
-        screeningId: null,
-      });
+    if (activePhone == null) {
+      if (threads.length > 0) {
+        onSelectionChange({
+          phone: threads[0].patientPhone,
+          name: threads[0].patientName,
+          screeningId: null,
+        });
+      }
+      return;
     }
-  }, [threads, activePhone, onSelectionChange]);
+    // Task #764 — a restored thread selection whose conversation no longer
+    // exists falls back cleanly to the first available thread (or nothing). A
+    // pending new-conversation pick (screeningId set, not yet texted) is left
+    // intact so the user's fresh selection survives.
+    if (
+      activeScreeningId == null &&
+      threadsQuery.isSuccess &&
+      !threads.some((t) => t.patientPhone === activePhone)
+    ) {
+      onSelectionChange(
+        threads.length > 0
+          ? {
+              phone: threads[0].patientPhone,
+              name: threads[0].patientName,
+              screeningId: null,
+            }
+          : { phone: null, name: null, screeningId: null },
+      );
+    }
+  }, [threads, activePhone, activeScreeningId, threadsQuery.isSuccess, onSelectionChange]);
 
   const patientsQuery = useQuery<{ patients: SmsPatientOption[] }>({
     queryKey: ["/api/portal/patient-messages/patients", search],
@@ -491,10 +513,17 @@ function DirectMessagesTab({
   useEffect(() => {
     if (activeUserId == null && roster.length > 0) {
       onActiveUserIdChange(roster[0].id);
-    } else if (activeUserId != null && !roster.some((r) => r.id === activeUserId)) {
+    } else if (
+      activeUserId != null &&
+      // Task #764 — only invalidate a restored selection AFTER the roster has
+      // loaded; during the initial fetch `roster` is [] and would wrongly clear
+      // the remembered teammate.
+      rosterQuery.isSuccess &&
+      !roster.some((r) => r.id === activeUserId)
+    ) {
       onActiveUserIdChange(roster[0]?.id ?? null);
     }
-  }, [roster, activeUserId, onActiveUserIdChange]);
+  }, [roster, activeUserId, rosterQuery.isSuccess, onActiveUserIdChange]);
 
   const activePerson = roster.find((r) => r.id === activeUserId) ?? null;
 
@@ -650,6 +679,7 @@ function DirectMessagesTab({
 // server-side from the session, so admin "view-as" cannot fake a sender.
 function TeamChatTab({
   teamTasks,
+  teamTasksLoaded = false,
   currentUserId,
   activeTaskId,
   onActiveTaskIdChange,
@@ -657,6 +687,7 @@ function TeamChatTab({
   expanded = false,
 }: {
   teamTasks: TeamTaskThread[];
+  teamTasksLoaded?: boolean;
   currentUserId: string | null;
   activeTaskId: number | null;
   onActiveTaskIdChange: (id: number | null) => void;
@@ -669,10 +700,17 @@ function TeamChatTab({
   useEffect(() => {
     if (activeTaskId == null && teamTasks.length > 0) {
       onActiveTaskIdChange(teamTasks[0].id);
-    } else if (activeTaskId != null && !teamTasks.some((t) => t.id === activeTaskId)) {
+    } else if (
+      activeTaskId != null &&
+      // Task #764 — only invalidate a restored selection AFTER the task list
+      // has loaded; during the initial fetch it's [] and would wrongly clear
+      // the remembered thread.
+      teamTasksLoaded &&
+      !teamTasks.some((t) => t.id === activeTaskId)
+    ) {
       onActiveTaskIdChange(teamTasks[0]?.id ?? null);
     }
-  }, [teamTasks, activeTaskId, onActiveTaskIdChange]);
+  }, [teamTasks, teamTasksLoaded, activeTaskId, onActiveTaskIdChange]);
 
   const messagesQuery = useQuery<PlexusMessage[]>({
     queryKey: ["/api/plexus/tasks", activeTaskId, "messages"],
@@ -812,6 +850,7 @@ export function CommunicationTray({
   onTabChange,
   currentUserId,
   teamTasks,
+  teamTasksLoaded = false,
   directUnread = 0,
   patientsUnread = 0,
   expanded = false,
@@ -829,6 +868,9 @@ export function CommunicationTray({
   onTabChange: (tab: TrayTab) => void;
   currentUserId: string | null;
   teamTasks: TeamTaskThread[];
+  /** True once the team-task list has loaded, so the Team tab won't clear a
+   *  restored thread selection while its data is still in flight (Task #764). */
+  teamTasksLoaded?: boolean;
   /** Total unread direct messages, surfaced as a per-tab indicator on the
    *  Direct tab so operators notice new messages (Task #656). */
   directUnread?: number;
@@ -944,6 +986,7 @@ export function CommunicationTray({
         ) : (
           <TeamChatTab
             teamTasks={teamTasks}
+            teamTasksLoaded={teamTasksLoaded}
             currentUserId={currentUserId}
             activeTaskId={teamActive}
             onActiveTaskIdChange={setTeamActive}

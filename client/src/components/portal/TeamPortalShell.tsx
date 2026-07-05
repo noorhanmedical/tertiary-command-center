@@ -1189,12 +1189,49 @@ export function TeamPortalShell({
     setRightRailPinned(workspacePrefs.workQueuePinnedByDefault);
   }, [workspacePrefs.workQueuePinnedByDefault]);
   useEffect(() => {
-    // Seed the tray tab from the persisted default ONCE, after the saved
-    // prefs have hydrated from the server; user tab clicks win after that.
+    // Task #764 — restore the last-read chat thread ONCE, after the saved
+    // prefs have hydrated from the server. The active tab falls back to the
+    // Settings default when nothing was remembered; per-tab selections restore
+    // to their saved thread (each tab self-corrects if the saved target no
+    // longer exists). User clicks win after this initial restore.
     if (trayTabInitRef.current || !workspacePrefsHydrated) return;
     trayTabInitRef.current = true;
-    setTrayTab(workspacePrefs.defaultTrayTab);
-  }, [workspacePrefs.defaultTrayTab, workspacePrefsHydrated]);
+    setTrayTab(workspacePrefs.chatActiveTab ?? workspacePrefs.defaultTrayTab);
+    setChatDirectActiveUserId(workspacePrefs.chatDirectUserId ?? null);
+    setChatTeamActiveTaskId(workspacePrefs.chatTeamTaskId ?? null);
+    setChatPatientSelection(
+      workspacePrefs.chatPatientSelection ?? { phone: null, name: null, screeningId: null },
+    );
+  }, [
+    workspacePrefs.chatActiveTab,
+    workspacePrefs.defaultTrayTab,
+    workspacePrefs.chatDirectUserId,
+    workspacePrefs.chatTeamTaskId,
+    workspacePrefs.chatPatientSelection,
+    workspacePrefsHydrated,
+  ]);
+  // Task #764 — persist chat tab + per-tab selection back to the user's prefs
+  // whenever they change, but only AFTER the initial restore has run so a
+  // pre-hydration auto-select (e.g. the first roster entry) can never clobber
+  // the saved thread. Writes are debounced inside useWorkspacePrefs.
+  useEffect(() => {
+    if (!trayTabInitRef.current) return;
+    updateWorkspacePref("chatActiveTab", trayTab);
+  }, [trayTab, updateWorkspacePref]);
+  useEffect(() => {
+    if (!trayTabInitRef.current) return;
+    updateWorkspacePref("chatDirectUserId", chatDirectActiveUserId);
+  }, [chatDirectActiveUserId, updateWorkspacePref]);
+  useEffect(() => {
+    if (!trayTabInitRef.current) return;
+    updateWorkspacePref("chatTeamTaskId", chatTeamActiveTaskId);
+  }, [chatTeamActiveTaskId, updateWorkspacePref]);
+  useEffect(() => {
+    if (!trayTabInitRef.current) return;
+    const hasSelection =
+      chatPatientSelection.phone != null || chatPatientSelection.screeningId != null;
+    updateWorkspacePref("chatPatientSelection", hasSelection ? chatPatientSelection : null);
+  }, [chatPatientSelection, updateWorkspacePref]);
   const leftRailRef = useRef<HTMLDivElement>(null);
   // Task #643 — Playground surface ref for drop-point math (drag tool → widget).
   const playgroundSurfaceRef = useRef<HTMLDivElement>(null);
@@ -1554,7 +1591,10 @@ export function TeamPortalShell({
       .catch(() => { /* best effort */ });
   }, [facility, selectedDate, scheduleData?.patients?.length]);
 
-  const { data: tasksData } = useQuery<{ urgent: PortalTask[]; open: PortalTask[] }>({
+  const { data: tasksData, isSuccess: tasksLoaded } = useQuery<{
+    urgent: PortalTask[];
+    open: PortalTask[];
+  }>({
     queryKey: ["/api/portal/my-tasks"],
     queryFn: async () => {
       const res = await fetch("/api/portal/my-tasks", { credentials: "include" });
@@ -2338,6 +2378,7 @@ export function TeamPortalShell({
                     onTabChange={setTrayTab}
                     currentUserId={currentUser?.id ?? null}
                     teamTasks={trayTeamTasks}
+                    teamTasksLoaded={tasksLoaded}
                     directUnread={directUnread}
                     patientsUnread={patientsUnread}
                     expanded
@@ -2790,6 +2831,7 @@ export function TeamPortalShell({
                       onTabChange={setTrayTab}
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
+                    teamTasksLoaded={tasksLoaded}
                       directUnread={directUnread}
                       patientsUnread={patientsUnread}
                       focusNonce={chatFocusNonce}
@@ -3174,6 +3216,7 @@ export function TeamPortalShell({
                       onTabChange={setTrayTab}
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
+                    teamTasksLoaded={tasksLoaded}
                       directUnread={directUnread}
                       patientsUnread={patientsUnread}
                       focusNonce={chatFocusNonce}

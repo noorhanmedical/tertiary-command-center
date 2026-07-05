@@ -21,6 +21,19 @@ const prefsSchema = z.object({
   workQueuePinnedByDefault: z.boolean(),
   playgroundLayout: z.enum(["docked", "split"]),
   calendarBehavior: z.enum(["playground", "quickSchedule"]),
+  // Task #764 — last-read chat thread, remembered across reloads. Optional so
+  // older clients that don't send these keys keep working.
+  chatActiveTab: z.enum(["patients", "direct", "team"]).nullable().optional(),
+  chatDirectUserId: z.string().nullable().optional(),
+  chatTeamTaskId: z.number().nullable().optional(),
+  chatPatientSelection: z
+    .object({
+      phone: z.string().nullable(),
+      name: z.string().nullable(),
+      screeningId: z.number().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export function registerPortalPrefsRoutes(app: Express) {

@@ -12,6 +12,14 @@ export type TrayTab = "patients" | "direct" | "team";
 export type PlaygroundLayout = "docked" | "split";
 export type CalendarBehavior = "playground" | "quickSchedule";
 
+// Last-read patient SMS thread (Task #764). Mirrors PatientTraySelection in
+// CommunicationTray but re-declared here to avoid a circular import.
+export type ChatPatientPref = {
+  phone: string | null;
+  name: string | null;
+  screeningId: number | null;
+};
+
 export type WorkspacePrefs = {
   /** Which communication-tray tab is selected by default. */
   defaultTrayTab: TrayTab;
@@ -25,6 +33,15 @@ export type WorkspacePrefs = {
   playgroundLayout: PlaygroundLayout;
   /** What the Calendar tool does when clicked. */
   calendarBehavior: CalendarBehavior;
+  // ── Task #764: last-read chat thread, remembered across reloads ──
+  /** The chat tab the user last had open (null → fall back to defaultTrayTab). */
+  chatActiveTab: TrayTab | null;
+  /** Last-selected teammate in the Direct tab. */
+  chatDirectUserId: string | null;
+  /** Last-selected Plexus task thread in the Team tab. */
+  chatTeamTaskId: number | null;
+  /** Last-selected patient conversation in the Patients tab. */
+  chatPatientSelection: ChatPatientPref | null;
 };
 
 export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
@@ -36,14 +53,32 @@ export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
   // Task #698 — the Calendar tool opens the Quick Schedule pop-up by
   // default; "playground" (full calendar view) is the opt-out.
   calendarBehavior: "quickSchedule",
+  chatActiveTab: null,
+  chatDirectUserId: null,
+  chatTeamTaskId: null,
+  chatPatientSelection: null,
 };
 
 // Coalesce rapid toggle flips into one PUT.
 const PERSIST_DEBOUNCE_MS = 600;
 
 const TRAY_TABS: TrayTab[] = ["direct", "team"];
+// The last-active tab may be any tab (including Patients), unlike the Settings
+// default which only offers Direct/Team.
+const ALL_TRAY_TABS: TrayTab[] = ["patients", "direct", "team"];
 const LAYOUTS: PlaygroundLayout[] = ["docked", "split"];
 const CAL_BEHAVIORS: CalendarBehavior[] = ["playground", "quickSchedule"];
+
+function parseChatPatientSelection(raw: unknown): ChatPatientPref | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const phone = typeof r.phone === "string" ? r.phone : null;
+  const name = typeof r.name === "string" ? r.name : null;
+  const screeningId = typeof r.screeningId === "number" ? r.screeningId : null;
+  // A selection with nothing identifiable is meaningless — treat as none.
+  if (phone == null && screeningId == null) return null;
+  return { phone, name, screeningId };
+}
 
 // Defensive validation of a server payload — never trust the wire blindly.
 // Unknown/missing keys fall back to defaults so an older row never breaks a
@@ -73,6 +108,18 @@ export function parseWorkspacePrefs(raw: unknown): WorkspacePrefs | null {
     calendarBehavior: CAL_BEHAVIORS.includes(r.calendarBehavior as CalendarBehavior)
       ? (r.calendarBehavior as CalendarBehavior)
       : DEFAULT_WORKSPACE_PREFS.calendarBehavior,
+    chatActiveTab: ALL_TRAY_TABS.includes(r.chatActiveTab as TrayTab)
+      ? (r.chatActiveTab as TrayTab)
+      : DEFAULT_WORKSPACE_PREFS.chatActiveTab,
+    chatDirectUserId:
+      typeof r.chatDirectUserId === "string"
+        ? r.chatDirectUserId
+        : DEFAULT_WORKSPACE_PREFS.chatDirectUserId,
+    chatTeamTaskId:
+      typeof r.chatTeamTaskId === "number"
+        ? r.chatTeamTaskId
+        : DEFAULT_WORKSPACE_PREFS.chatTeamTaskId,
+    chatPatientSelection: parseChatPatientSelection(r.chatPatientSelection),
   };
 }
 
