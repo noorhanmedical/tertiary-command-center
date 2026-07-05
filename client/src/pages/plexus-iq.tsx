@@ -943,6 +943,34 @@ export default function PlexusIQPage() {
             </span>
           </Link>
         </div>
+        {/* Repeat Testing Review — prototype shell. Plexus IQ supports two
+            review types: Initial Qualification Review (the batch board below)
+            and Repeat Testing / Re-Eligibility Review (this queue). The repeat
+            queue is not wired yet; it will populate from repeat opportunities
+            created by Clinical Intelligence after report upload, opening ~1
+            month before the payer repeat-due date. Blueprint:
+            docs/architecture/clinical-intelligence-repeat-testing-loop.md */}
+        <div className="px-4 pt-3">
+          <Link
+            href="/clinical-intelligence"
+            className="group flex items-center gap-3 rounded-2xl border border-sky-200/70 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
+            data-testid="tile-repeat-testing-review"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900">Repeat Testing Review</span>
+              <span className="block truncate text-xs text-slate-500">
+                Re-eligibility queue for prior BrainWave / VitalWave / Ultrasound tests — payer interval,
+                repeat due date, and medical-necessity rationale. Separate from Initial Qualification.
+              </span>
+            </span>
+            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 sm:inline-flex">
+              Not connected yet
+            </span>
+          </Link>
+        </div>
         <PlexusIQWorkspace
           summary={summary}
           batches={batches}

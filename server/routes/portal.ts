@@ -742,6 +742,27 @@ export function registerPortalRoutes(app: Express) {
         throw innerErr;
       }
 
+      // ── Repeat Testing Loop trigger point (NOT YET WIRED) ──────────────
+      // This is the catch-all safety trigger for the Clinical Intelligence
+      // repeat-testing loop. When a report is uploaded for a BrainWave /
+      // VitalWave / Ultrasound test, the full implementation must (in order,
+      // and only from real data — never fabricated):
+      //   1. Confirm the report is saved + linked to patientScreeningId,
+      //      executionCaseId, and serviceType (report already saved above).
+      //   2. Run documentation reconciliation via the Ancillary Readiness
+      //      read model (server/services/ancillary/ancillaryReadModel.ts):
+      //      report / order_note / post_procedure_note Present|Missing.
+      //   3. Create a Clinical Intelligence result-review record
+      //      (ci_evidence_records) — extraction stays honest/placeholder
+      //      until an AI extractor is wired.
+      //   4. Create/update a repeat opportunity (proposed repeat_opportunities
+      //      table): payer interval PPO 6mo / Medicare 12mo, repeat due date,
+      //      admin-review-open date = due date − 1 month.
+      //   5. Append patient_journey_events (report_uploaded, procedure_note_*,
+      //      order_note_*, repeat_opportunity_created) where supported.
+      // Order note stays conceptually tied to SCHEDULING, not report upload;
+      // report upload only catches a MISSING order note.
+      // Full spec: docs/architecture/clinical-intelligence-repeat-testing-loop.md
       res.status(201).json({ id: doc.id, title: doc.title, filename: doc.filename });
     } catch (err: any) {
       console.error("[portal/uploads]", err);

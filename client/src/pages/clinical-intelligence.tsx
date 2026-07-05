@@ -116,7 +116,13 @@ type ModuleId =
   | "cms_watch"
   | "emr_wiring"
   | "guardrails"
-  | "knowledge_objects";
+  | "knowledge_objects"
+  | "evidence_inbox"
+  | "result_review"
+  | "ancillary_opportunities"
+  | "repeat_eligibility"
+  | "documentation_reconciliation"
+  | "evidence_timeline";
 
 const MODULES: { id: ModuleId; label: string; icon: typeof Brain; group: string }[] = [
   { id: "learning_center", label: "AI Learning Center", icon: GraduationCap, group: "Learning & Rules" },
@@ -139,9 +145,22 @@ const MODULES: { id: ModuleId; label: string; icon: typeof Brain; group: string 
   { id: "cms_watch", label: "CMS & Regulatory Watch", icon: Globe, group: "External Intelligence" },
   { id: "emr_wiring", label: "EMR / API Data Wiring", icon: Database, group: "External Intelligence" },
   { id: "knowledge_objects", label: "Knowledge Objects", icon: Brain, group: "External Intelligence" },
+  { id: "evidence_inbox", label: "Evidence Inbox", icon: GitBranch, group: "Repeat Testing Loop" },
+  { id: "result_review", label: "Result Review", icon: Activity, group: "Repeat Testing Loop" },
+  { id: "ancillary_opportunities", label: "Ancillary Opportunities", icon: Network, group: "Repeat Testing Loop" },
+  { id: "repeat_eligibility", label: "Repeat Eligibility", icon: History, group: "Repeat Testing Loop" },
+  { id: "documentation_reconciliation", label: "Documentation Reconciliation", icon: ClipboardList, group: "Repeat Testing Loop" },
+  { id: "evidence_timeline", label: "Evidence Timeline", icon: ScrollText, group: "Repeat Testing Loop" },
 ];
 
-const MODULE_GROUPS = ["Learning & Rules", "Governance", "Clinical Libraries", "Documentation", "External Intelligence"];
+const MODULE_GROUPS = [
+  "Learning & Rules",
+  "Governance",
+  "Clinical Libraries",
+  "Documentation",
+  "External Intelligence",
+  "Repeat Testing Loop",
+];
 
 // ───── Small shared bits ────────────────────────────────────────────────
 
@@ -1337,6 +1356,150 @@ function KnowledgeObjects() {
   );
 }
 
+// ───── Repeat Testing Loop (prototype shells) ───────────────────────────
+//
+// Honest, not-yet-wired scaffolds for the Clinical Intelligence → Plexus IQ
+// Repeat Testing → Admin Review → Scheduling Reconciliation → Engagement
+// loop. These sections intentionally render NO fabricated data. Each names
+// the existing tables/services it will read from once wired. The full
+// implementation blueprint lives at:
+//   docs/architecture/clinical-intelligence-repeat-testing-loop.md
+
+function RepeatLoopShell({
+  id,
+  title,
+  purpose,
+  reads,
+  writes,
+  producesFor,
+}: {
+  id: ModuleId;
+  title: string;
+  purpose: string;
+  reads: string[];
+  writes: string[];
+  producesFor: string;
+}) {
+  return (
+    <div className="mx-auto max-w-3xl space-y-4" data-testid={`ci-repeat-shell-${id}`}>
+      <div className="flex items-start gap-3">
+        <div>
+          <h2 className="text-base font-bold text-slate-900">{title}</h2>
+          <p className="mt-0.5 text-xs text-slate-500">{purpose}</p>
+        </div>
+        <Badge
+          variant="outline"
+          className="ml-auto shrink-0 border-amber-200 bg-amber-50 text-[10px] text-amber-700"
+        >
+          Not connected yet
+        </Badge>
+      </div>
+
+      <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-center">
+        <GitBranch className="mx-auto h-6 w-6 text-slate-300" />
+        <p className="mt-2 text-sm font-medium text-slate-700">Prototype shell — no live data</p>
+        <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
+          This surface is scaffolded but not wired. It will populate only from real records — never
+          fabricated findings, ICDs, or statuses. See the implementation blueprint for the exact
+          wiring plan.
+        </p>
+        <code className="mt-3 inline-block rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-600">
+          docs/architecture/clinical-intelligence-repeat-testing-loop.md
+        </code>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-slate-200 bg-white/70 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Reads from</div>
+          <ul className="mt-1.5 space-y-1">
+            {reads.map((r) => (
+              <li key={r} className="text-[11px] text-slate-600">
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">{r}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white/70 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Writes to</div>
+          <ul className="mt-1.5 space-y-1">
+            {writes.map((w) => (
+              <li key={w} className="text-[11px] text-slate-600">
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">{w}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white/70 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Feeds</div>
+          <p className="mt-1.5 text-[11px] text-slate-600">{producesFor}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const REPEAT_LOOP_SHELLS: Record<
+  Extract<
+    ModuleId,
+    | "evidence_inbox"
+    | "result_review"
+    | "ancillary_opportunities"
+    | "repeat_eligibility"
+    | "documentation_reconciliation"
+    | "evidence_timeline"
+  >,
+  Omit<Parameters<typeof RepeatLoopShell>[0], "id">
+> = {
+  evidence_inbox: {
+    title: "Evidence Inbox",
+    purpose:
+      "Newly uploaded ancillary reports and imported documents awaiting Clinical Intelligence review.",
+    reads: ["documents", "case_document_readiness"],
+    writes: ["ci_evidence_records", "patient_journey_events"],
+    producesFor: "Result Review and Documentation Reconciliation.",
+  },
+  result_review: {
+    title: "Result Review",
+    purpose:
+      "AI-reviewed reports with extracted findings, key abnormalities, and suggested ICDs — every item human-verified before use.",
+    reads: ["documents", "ci_evidence_records"],
+    writes: ["ci_evidence_records"],
+    producesFor: "Ancillary Opportunities and Repeat Eligibility.",
+  },
+  ancillary_opportunities: {
+    title: "Ancillary Opportunities",
+    purpose:
+      "Suggested BrainWave / VitalWave / Ultrasound services justified by report findings, routed to Plexus IQ / Admin Review.",
+    reads: ["ci_evidence_records", "patient_screenings"],
+    writes: ["ci_learning_items"],
+    producesFor: "Plexus IQ Initial Qualification Review.",
+  },
+  repeat_eligibility: {
+    title: "Repeat Eligibility",
+    purpose:
+      "Repeat opportunities created after prior testing — payer interval (PPO 6mo / Medicare 12mo), due date, admin-review-open date, and cooldown state.",
+    reads: ["cooldown_records", "ancillary_appointments", "documents"],
+    writes: ["repeat_opportunities (proposed)"],
+    producesFor: "Plexus IQ Repeat Testing Review.",
+  },
+  documentation_reconciliation: {
+    title: "Documentation Reconciliation",
+    purpose:
+      "At report upload, checks report saved + order note present + procedure note present. Reuses the existing Ancillary Readiness read model — honest Present / Missing / Needs Review states.",
+    reads: ["case_document_readiness", "documents"],
+    writes: ["patient_journey_events"],
+    producesFor: "Billing readiness gate and the patient chart.",
+  },
+  evidence_timeline: {
+    title: "Evidence Timeline",
+    purpose:
+      "Longitudinal view of prior reports, findings, ICD suggestions, repeat opportunities, admin decisions, and outreach events.",
+    reads: ["patient_journey_events", "ci_evidence_records", "documents"],
+    writes: [],
+    producesFor: "Patient Directory / Plexus EHR chart display.",
+  },
+};
+
 // ───── Page ─────────────────────────────────────────────────────────────
 
 export default function ClinicalIntelligencePage() {
@@ -1384,6 +1547,13 @@ export default function ClinicalIntelligencePage() {
         return <Guardrails />;
       case "knowledge_objects":
         return <KnowledgeObjects />;
+      case "evidence_inbox":
+      case "result_review":
+      case "ancillary_opportunities":
+      case "repeat_eligibility":
+      case "documentation_reconciliation":
+      case "evidence_timeline":
+        return <RepeatLoopShell id={activeModule} {...REPEAT_LOOP_SHELLS[activeModule]} />;
     }
   };
 
