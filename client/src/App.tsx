@@ -314,7 +314,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/dashboard" />
                 </Route>
                 <Route path="/settings">
-                  <Redirect to="/admin/settings?tab=team" />
+                  <Redirect to="/admin/settings#team" />
                 </Route>
                 <Route component={NotFound} />
               </Switch>

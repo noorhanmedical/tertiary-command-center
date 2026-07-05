@@ -15,7 +15,6 @@ import {
   BellRing,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
@@ -146,7 +145,7 @@ export function CallListDistributionCard() {
   const rows = data?.rows ?? [];
 
   return (
-    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+    <div>
       <div className="mb-4 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <SettingsIcon className="h-5 w-5 text-indigo-600" />
@@ -218,7 +217,7 @@ export function CallListDistributionCard() {
           ))}
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -273,7 +272,7 @@ export function InvoiceReminderSettingsCard() {
   const isDirty = draftValid && data && parsedDraft !== data.thresholdDays;
 
   return (
-    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+    <div>
       <div className="mb-4 flex items-center gap-2">
         <BellRing className="h-5 w-5 text-rose-600" />
         <h2 className="text-lg font-semibold text-slate-900">Overdue Invoice Reminders</h2>
@@ -320,7 +319,7 @@ export function InvoiceReminderSettingsCard() {
           Currently reminding on invoices ≥ {data.thresholdDays} day(s) old (default {data.defaultThresholdDays}).
         </p>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -349,7 +348,7 @@ export function ChangePasswordCard() {
   }
 
   return (
-    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+    <div>
       <div className="mb-4 flex items-center gap-2">
         <Lock className="h-5 w-5 text-indigo-700" />
         <h2 className="text-lg font-semibold text-slate-900">Change Password</h2>
@@ -371,7 +370,7 @@ export function ChangePasswordCard() {
           {loading ? "Changing…" : "Change Password"}
         </Button>
       </form>
-    </Card>
+    </div>
   );
 }
 
@@ -473,8 +472,8 @@ export function SchedulerTeamSection() {
   }
 
   return (
-    <>
-        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+    <div className="space-y-8">
+        <div>
           <div className="mb-4 flex items-center gap-2">
             <Database className="h-5 w-5 text-blue-700" />
             <h2 className="text-lg font-semibold text-slate-900">Team Members</h2>
@@ -494,10 +493,10 @@ export function SchedulerTeamSection() {
               </div>
             ))}
           </div>
-        </Card>
+        </div>
 
         {/* Scheduler Team */}
-        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+        <div>
           <div className="mb-4 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Users2 className="h-5 w-5 text-violet-600" />
@@ -666,8 +665,8 @@ export function SchedulerTeamSection() {
               Add Member
             </Button>
           </div>
-        </Card>
-    </>
+        </div>
+    </div>
   );
 }
 
