@@ -10,6 +10,7 @@ import { getAncillaryCategory } from "@shared/ancillaryCategory";
 export const READINESS_DOC_INFORMED_CONSENT = "informed_consent";
 export const READINESS_DOC_SCREENING_FORM = "screening_form";
 export const READINESS_DOC_BRAINWAVE_PDF = "brainwave_pdf";
+export const READINESS_DOC_REPORT = "report";
 
 // Any of these documentStatus values count as "the item is done".
 const COMPLETE_STATUSES = new Set([
@@ -26,6 +27,10 @@ export type AncillaryReadinessSummary = {
   informedConsent: ReadinessItemState;
   screeningForm: ReadinessItemState;
   brainwavePdf: ReadinessItemState;
+  // Report (result file) applies to every ancillary and is patient-specific
+  // (no library template). "complete" once a report has been uploaded for the
+  // case; "missing" until then.
+  report: ReadinessItemState;
   informedConsentDocId: number | null;
   screeningFormDocId: number | null;
 };
@@ -171,10 +176,19 @@ export async function buildAncillaryReadinessSummaries(
         : "missing"
       : "not_required";
 
+    // Report applies to every ancillary. For BrainWave the result lives under
+    // the dedicated brainwave_pdf item, so treat either as satisfying report.
+    const report: ReadinessItemState =
+      isComplete(lookup(row, READINESS_DOC_REPORT)) ||
+      (req.brainwavePdf && isComplete(lookup(row, READINESS_DOC_BRAINWAVE_PDF)))
+        ? "complete"
+        : "missing";
+
     result.set(String(row.id), {
       informedConsent,
       screeningForm,
       brainwavePdf,
+      report,
       informedConsentDocId: req.informedConsent ? informedConsentDocId : null,
       screeningFormDocId: req.screeningForm
         ? screeningDocByCategory.get(req.category) ?? null

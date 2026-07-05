@@ -20,7 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
-import { AncillaryReadinessRow } from "@/components/portal/AncillaryReadinessRow";
+import type { AncillaryServiceContext } from "@/components/portal/AncillaryDocModals";
 import {
   WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
@@ -1061,7 +1061,11 @@ export function TeamPortalShell({
   // calendar icon → UniversalCalendarDrawer pattern).
   const [teamPortalCalendarOpen, setTeamPortalCalendarOpen] = useState(false);
   const [schedulePatientPlaygroundContext, setSchedulePatientPlaygroundContext] =
-    useState<{ patient: SchedulePatientDialogPatient; selectedDate: string } | null>(null);
+    useState<{
+      patient: SchedulePatientDialogPatient;
+      selectedDate: string;
+      ancillaries?: AncillaryServiceContext[];
+    } | null>(null);
   // Optional pre-fill date/time carried into the SchedulePatientDialog from the
   // left-rail Calendar quick-schedule pop-up (task #635). Null falls back to
   // selectedDate / no preset time.
@@ -1445,6 +1449,45 @@ export function TeamPortalShell({
     });
   }, [workspaceAncillarySchedule, allowedServiceTypes]);
 
+  // Key a patient's ancillary rows so the doc workflows can offer a compact
+  // "which ancillary" selector when a patient has more than one active test.
+  const ancillaryPatientKey = (row: {
+    patientScreeningId?: number | null;
+    patientName?: string | null;
+    facilityId?: string | null;
+  }): string =>
+    row.patientScreeningId != null
+      ? `p:${row.patientScreeningId}`
+      : `n:${(row.patientName ?? "").toLowerCase().trim()}|${row.facilityId ?? ""}`;
+
+  const ancillariesByPatient = useMemo(() => {
+    const map = new Map<string, AncillaryServiceContext[]>();
+    for (const row of filteredAncillarySchedule) {
+      const key = ancillaryPatientKey(row);
+      const svc: AncillaryServiceContext = {
+        // Each scheduled ancillary is its own instance (the schedule row id),
+        // so repeat/return visits of the same test stay distinct and route
+        // docs to the correct execution case.
+        instanceId: String(row.id),
+        serviceType: row.serviceType ?? "Ancillary",
+        executionCaseId: row.executionCaseId ?? null,
+        patientScreeningId: row.patientScreeningId ?? null,
+        readiness: row.readiness ?? null,
+        startsAt: row.startsAt ?? null,
+        status: row.status ?? null,
+      };
+      const list = map.get(key);
+      if (list) {
+        // Dedupe by instance id only (never by service type) so identical rows
+        // don't stack while distinct same-type appointments are preserved.
+        if (!list.some((s) => s.instanceId === svc.instanceId)) list.push(svc);
+      } else {
+        map.set(key, [svc]);
+      }
+    }
+    return map;
+  }, [filteredAncillarySchedule]);
+
   // Cells for the canonical team-portal calendar drawer. We bucket the
   // workspace's clinic + ancillary events by local date so the month
   // view shows accurate per-day counts without a new backend route.
@@ -1658,6 +1701,7 @@ export function TeamPortalShell({
   function openSchedulePatientPlayground(payload: {
     patient: SchedulePatientDialogPatient;
     selectedDate: string;
+    ancillaries?: AncillaryServiceContext[];
   }) {
     if (payload.patient.patientScreeningId != null) {
       setSelectedPatientId(payload.patient.patientScreeningId);
@@ -2324,6 +2368,7 @@ export function TeamPortalShell({
                     }-${schedulePatientPlaygroundContext.selectedDate}`}
                     patient={schedulePatientPlaygroundContext.patient}
                     selectedDate={schedulePatientPlaygroundContext.selectedDate}
+                    ancillaries={schedulePatientPlaygroundContext.ancillaries}
                     onClose={() => setSchedulePatientPlaygroundContext(null)}
                   />
                 </div>
@@ -3420,6 +3465,9 @@ export function TeamPortalShell({
                                     serviceType: row.serviceType ?? null,
                                   },
                                   selectedDate,
+                                  ancillaries: ancillariesByPatient.get(
+                                    ancillaryPatientKey(row),
+                                  ),
                                 })
                               }
                             />
@@ -3428,7 +3476,45 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className={`overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
+                          role="button"
+                          tabIndex={0}
+                          title="Open patient workspace"
+                          onClick={() =>
+                            openSchedulePatientPlayground({
+                              patient: {
+                                patientName: row.patientName ?? null,
+                                patientDob: row.patientDob ?? null,
+                                facilityId: row.facilityId ?? null,
+                                patientScreeningId: row.patientScreeningId ?? null,
+                                executionCaseId: row.executionCaseId ?? null,
+                                serviceType: row.serviceType ?? null,
+                              },
+                              selectedDate,
+                              ancillaries: ancillariesByPatient.get(
+                                ancillaryPatientKey(row),
+                              ),
+                            })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openSchedulePatientPlayground({
+                                patient: {
+                                  patientName: row.patientName ?? null,
+                                  patientDob: row.patientDob ?? null,
+                                  facilityId: row.facilityId ?? null,
+                                  patientScreeningId: row.patientScreeningId ?? null,
+                                  executionCaseId: row.executionCaseId ?? null,
+                                  serviceType: row.serviceType ?? null,
+                                },
+                                selectedDate,
+                                ancillaries: ancillariesByPatient.get(
+                                  ancillaryPatientKey(row),
+                                ),
+                              });
+                            }
+                          }}
+                          className={`cursor-pointer overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
                             removing
                               ? "max-h-0 -translate-y-2 border-transparent py-0 opacity-0"
                               : "max-h-[400px] py-1.5 opacity-100 hover:bg-white/90"
@@ -3437,7 +3523,10 @@ export function TeamPortalShell({
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="text-sm font-medium truncate">
+                              <div
+                                className="max-w-full truncate text-left text-sm font-medium"
+                                data-testid={`button-ancillary-open-playground-${row.id ?? idx}`}
+                              >
                                 {row.patientName ?? "Unnamed patient"}
                               </div>
                               <div className="text-[10px] text-slate-500 truncate">
@@ -3454,74 +3543,16 @@ export function TeamPortalShell({
                               </Badge>
                             )}
                           </div>
-                          {workspaceCanCallAndSchedule && (() => {
-                            // Client-side service prevalidation: when the
-                            // team-member profile carries an allowedServiceTypes
-                            // list, disable the row schedule button for any
-                            // service the user can't book. The server gate is
-                            // still authoritative; this only prevents a
-                            // disallowed click from reaching the dialog.
-                            const rowServiceType = row.serviceType ?? null;
-                            const serviceDisallowed =
-                              allowedServiceTypes.length > 0 &&
-                              !!rowServiceType &&
-                              !allowedServiceTypes.includes(rowServiceType);
-                            return (
-                            <div className="mt-2 flex items-center justify-end gap-1">
-                              <div className="inline-flex rounded-full border border-slate-200 bg-white overflow-hidden">
-                                <button
-                                  type="button"
-                                  disabled={serviceDisallowed}
-                                  onClick={() => {
-                                    if (serviceDisallowed) return;
-                                    openSchedulePatientDialog({
-                                      patientName: row.patientName ?? null,
-                                      patientDob: row.patientDob ?? null,
-                                      facilityId: row.facilityId ?? null,
-                                      patientScreeningId: row.patientScreeningId ?? null,
-                                      executionCaseId: row.executionCaseId ?? null,
-                                      serviceType: row.serviceType ?? null,
-                                    });
-                                  }}
-                                  className="inline-flex h-7 w-7 items-center justify-center hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                                  data-testid={`button-ancillary-calendar-${row.id ?? idx}`}
-                                  title={
-                                    serviceDisallowed
-                                      ? `Your profile doesn't include "${rowServiceType}" — ask an admin if you need access.`
-                                      : "Schedule patient"
-                                  }
-                                >
-                                  <CalendarPlus className="h-3.5 w-3.5 text-[#4863A0]" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    openSchedulePatientPlayground({
-                                      patient: {
-                                        patientName: row.patientName ?? null,
-                                        patientDob: row.patientDob ?? null,
-                                        facilityId: row.facilityId ?? null,
-                                        patientScreeningId: row.patientScreeningId ?? null,
-                                        executionCaseId: row.executionCaseId ?? null,
-                                        serviceType: row.serviceType ?? null,
-                                      },
-                                      selectedDate,
-                                    })
-                                  }
-                                  className="inline-flex h-7 w-7 items-center justify-center border-l border-slate-200 hover:bg-slate-50"
-                                  data-testid={`button-ancillary-calendar-expand-${row.id ?? idx}`}
-                                  title="Open schedule in Playground"
-                                >
-                                  <Maximize2 className="h-3.5 w-3.5 text-[#4863A0]" />
-                                </button>
-                              </div>
-                            </div>
-                            );
-                          })()}
+                          {/* Document workflows live inside the patient's
+                              Playground (opened by clicking anywhere on this row),
+                              keeping the schedule row clean and uncluttered. */}
                           {workspaceCanCompleteProcedure &&
                             row.patientScreeningId != null &&
                             row.serviceType && (
-                              <div className="mt-2 flex justify-end">
+                              <div
+                                className="mt-2 flex justify-end"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 <ProcedureCompleteButton
                                   patientScreeningId={row.patientScreeningId}
                                   patientName={row.patientName ?? null}
@@ -3548,18 +3579,6 @@ export function TeamPortalShell({
                                 />
                               </div>
                             )}
-                          <AncillaryReadinessRow
-                            rowId={String(row.id ?? idx)}
-                            executionCaseId={row.executionCaseId ?? null}
-                            serviceType={row.serviceType ?? null}
-                            patientName={row.patientName ?? null}
-                            readiness={row.readiness ?? null}
-                            onChanged={() =>
-                              queryClient.invalidateQueries({
-                                queryKey: ["team-workspace-ancillary-schedule"],
-                              })
-                            }
-                          />
                         </div>
                         );
                       })

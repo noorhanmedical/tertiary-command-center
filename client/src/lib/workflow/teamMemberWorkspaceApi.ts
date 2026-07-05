@@ -33,6 +33,7 @@ export type AncillaryReadinessSummary = {
   informedConsent: AncillaryReadinessItemState;
   screeningForm: AncillaryReadinessItemState;
   brainwavePdf: AncillaryReadinessItemState;
+  report: AncillaryReadinessItemState;
   informedConsentDocId: number | null;
   screeningFormDocId: number | null;
 };
