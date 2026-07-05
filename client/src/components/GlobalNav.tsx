@@ -52,7 +52,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
   { href: "/clinic-analytics", label: "Clinic Analytics", Icon: BarChart3,      roles: ["admin"] },
   { href: "/clinic-onboarding", label: "Clinic Onboarding", Icon: ClipboardCheck, roles: ["admin"] },
-  { href: "/patient-directory", label: "Patient Directory", Icon: Database,     roles: ["admin", "clinician", "biller"] },
+  { href: "/patient-directory", label: "Patient EHR", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   // Slice 1.5: legacy duplicate Patient-Directory-live nav item
   // removed. The /patient-directory/live URL still redirects to
   // /patient-directory for back-compat with existing bookmarks.

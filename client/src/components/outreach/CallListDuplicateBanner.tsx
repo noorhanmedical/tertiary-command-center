@@ -35,7 +35,7 @@ export function CallListDuplicateBanner({
   return (
     <>
       <EngagementHandoffDuplicateBar
-        title="Call list — Patient Directory warnings"
+        title="Call list — Patient EHR warnings"
         results={warnings.list}
         onOpenAudit={(r) => setAuditId(r.patientScreeningId)}
       />

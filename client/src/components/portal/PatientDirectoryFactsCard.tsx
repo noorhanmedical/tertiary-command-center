@@ -61,7 +61,7 @@ export function PatientDirectoryFactsCard({ patientScreeningId }: Props) {
       >
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading Patient Directory facts…
+          Loading Patient EHR facts…
         </div>
       </Card>
     );
@@ -88,7 +88,7 @@ export function PatientDirectoryFactsCard({ patientScreeningId }: Props) {
       data-testid="patient-directory-facts-card"
     >
       <div className="mb-2 text-sm font-semibold text-slate-900">
-        Patient Directory facts
+        Patient EHR facts
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {hasDnc ? (

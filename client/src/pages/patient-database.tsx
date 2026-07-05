@@ -291,7 +291,7 @@ export default function PatientDatabasePage() {
               </div>
               <div className="min-w-0">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Plexus Ancillary</div>
-                <h1 className="text-base font-bold leading-tight truncate">Patient Directory</h1>
+                <h1 className="text-base font-bold leading-tight truncate">Patient EHR</h1>
               </div>
             </div>
             <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5 shrink-0" data-testid="button-import-test-history">
@@ -471,13 +471,13 @@ export default function PatientDatabasePage() {
           <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-6" data-testid="profile-not-found">
             <UserSearch className="w-12 h-12 mb-4 opacity-30" />
             <p className="text-base">We couldn't find that patient.</p>
-            <Button size="sm" variant="outline" className="mt-4" onClick={clearSelection} data-testid="button-clear-selection">Back to directory</Button>
+            <Button size="sm" variant="outline" className="mt-4" onClick={clearSelection} data-testid="button-clear-selection">Back to EHR</Button>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-6" data-testid="profile-empty-state">
             <UserSearch className="w-14 h-14 mb-4 opacity-25" />
             <p className="text-lg font-medium text-slate-700 dark:text-foreground">Select a patient</p>
-            <p className="text-sm mt-1 max-w-sm">Choose a patient from the directory to open their full clinical chart, qualifying opportunities, calls, scheduling, and billing readiness.</p>
+            <p className="text-sm mt-1 max-w-sm">Choose a patient from the EHR to open their full clinical chart, qualifying opportunities, calls, scheduling, and billing readiness.</p>
           </div>
         )}
       </section>

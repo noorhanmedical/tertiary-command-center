@@ -17,7 +17,7 @@ type Props = {
 export function EngagementHandoffDuplicateBar({
   results,
   onOpenAudit,
-  title = "Patient Directory warnings",
+  title = "Patient EHR warnings",
 }: Props) {
   const flagged = results.filter((r) => r.warnings.length > 0);
   if (flagged.length === 0) return null;

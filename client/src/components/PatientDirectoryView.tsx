@@ -190,7 +190,7 @@ export function PatientDirectoryView({ testHistory, historyLoading, dirPasteText
             <div>
               <h1 className="text-base font-bold tracking-tight flex items-center gap-2">
                 <Users className="w-4 h-4" />
-                Patient Directory
+                Patient EHR
               </h1>
               <p className="text-xs text-muted-foreground">{patients.length} patients · {testHistory.length} completed tests</p>
             </div>

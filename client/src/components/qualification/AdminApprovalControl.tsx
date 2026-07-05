@@ -199,7 +199,7 @@ export function AdminApprovalControl({
               disabled={mutation.isPending || picked === current || (blocked && picked === "approved")}
               className="gap-1.5"
               data-testid={`admin-approval-save-${patientId}`}
-              title={blocked && picked === "approved" ? "Blocked by Patient Directory (DNC or active cooldown)" : undefined}
+              title={blocked && picked === "approved" ? "Blocked by Patient EHR (DNC or active cooldown)" : undefined}
             >
               {mutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {blocked && picked === "approved" ? "Blocked — cannot approve" : "Save"}

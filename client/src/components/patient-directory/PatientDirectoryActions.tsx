@@ -239,7 +239,7 @@ export function BulkImportDialog({
     <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
       <DialogContent className="max-w-3xl" data-testid="patient-directory-bulk-import-dialog">
         <DialogHeader>
-          <DialogTitle>{resuming ? "Match review — pending import" : "Bulk import — Patient Directory"}</DialogTitle>
+          <DialogTitle>{resuming ? "Match review — pending import" : "Bulk import — Patient EHR"}</DialogTitle>
           <DialogDescription>
             {resuming
               ? `Submitted by ${resumePending?.payload.submittedByUsername ?? "a team member"} — review matched profiles, then approve to commit.`

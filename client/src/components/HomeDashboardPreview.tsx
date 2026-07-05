@@ -406,7 +406,7 @@ export function HomeDashboardPreview({
                 <SecondaryTile
                   href="/patient-directory"
                   testId="tile-patient-directory"
-                  label="Patient Directory"
+                  label="Patient EHR"
                   icon={<Users className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
                 />
                 <SecondaryTile

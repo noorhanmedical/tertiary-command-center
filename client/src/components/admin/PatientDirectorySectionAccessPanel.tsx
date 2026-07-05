@@ -114,7 +114,7 @@ export default function PatientDirectorySectionAccessPanel() {
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Patient chart section access</h2>
           <p className="text-[11px] text-slate-500">
-            Control what each role sees for every section of the Patient Directory chart.
+            Control what each role sees for every section of the Patient EHR chart.
             Admins always see everything.
           </p>
         </div>
