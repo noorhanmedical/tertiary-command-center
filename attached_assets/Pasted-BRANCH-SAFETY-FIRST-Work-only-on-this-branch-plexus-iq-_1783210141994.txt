@@ -1,0 +1,417 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report:
+
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+TASK:
+
+Update the Team Portal / Ancillary Schedule patient workspace so each patient has a clean 5-button patient action bar.
+
+This applies to the Team Member Portal / ACS / PCS patient workspace / Playground area where ancillary scheduling work is performed.
+
+The 5 patient bar buttons should be:
+
+1. Informed Consent
+2. Screening Form
+3. Report Upload
+4. Calendar
+5. Phone
+
+Do not add extra patient bar buttons unless already existing critical actions must remain elsewhere.
+
+The goal is clean architecture:
+
+- Document Library stores reusable forms/templates.
+- Patient Directory / Plexus EHR stores patient-specific signed/uploaded documents.
+- Team Portal / Playground is only the workspace where team members pull forms, get signatures, upload files, and complete the patient workflow.
+- Ancillary Documents should not be the long-term source of truth for screening forms if Document Library exists or can be used.
+- Patient-specific completed documents should save back to Patient Directory / Plexus EHR.
+
+PART 1 — Inspect current wiring first
+
+Before editing, inspect and report:
+
+Team Portal / Playground:
+- Team Member Portal route/page
+- ACS/PCS portal components
+- Ancillary Schedule component
+- Patient action bar component
+- Playground patient workspace component
+- where calendar action is wired
+- where phone/RingCentral action is wired
+- where patient name click is wired
+- where active/scheduled ancillaries are shown
+
+Documents:
+- current Document Library route/components/endpoints
+- current Ancillary Documents route/components/endpoints
+- where screening forms currently live
+- how documents are uploaded today
+- how patient documents are saved to Patient Directory / Plexus EHR
+- how documents are linked to patientId
+- how documents are linked to ancillary/test/execution case if supported
+- whether e-signature/sign-in-place already exists
+- whether file upload accepts image/PDF/other file types
+- existing document categories/types/statuses
+
+Backend/API:
+- endpoint for document library templates
+- endpoint for patient document upload
+- endpoint for saving signed documents
+- endpoint for patient directory documents
+- endpoint for execution case / ancillary document linkage
+- endpoint for report upload if already present
+
+Report exact files to touch before editing.
+
+PART 2 — Patient bar layout
+
+In the Ancillary Schedule patient workspace, add or update the patient bar to show exactly these 5 primary buttons:
+
+1. Informed Consent
+2. Screening Form
+3. Report Upload
+4. Calendar
+5. Phone
+
+Button behavior:
+
+Informed Consent:
+- Opens informed consent workflow for the selected patient.
+- Allows pulling a general informed consent from Document Library.
+- Allows patient to sign the consent directly inside the Playground if signing infrastructure exists.
+- Allows upload of a signed consent as picture, PDF, or other supported file type.
+- Saves completed/uploaded consent to Patient Directory / Plexus EHR under that patient.
+- If ancillary/case linkage exists, also link to the relevant patient_execution_case and ancillary/test.
+- If signing infrastructure does not exist, show honest upload/select-template workflow and do not fake signature.
+
+Screening Form:
+- Opens screening form workflow for the selected patient.
+- Screening forms currently in Ancillary Documents should be moved or surfaced from Document Library.
+- Document Library should become the reusable source for screening form templates.
+- Team Portal pulls the correct screening form for the patient/ancillary from Document Library.
+- Completed/uploaded screening form saves to Patient Directory / Plexus EHR under that patient.
+- If ancillary/case linkage exists, also link to the relevant patient_execution_case and ancillary/test.
+- Do not duplicate forms across multiple places unnecessarily.
+
+Report Upload:
+- Opens report upload workflow for the selected patient.
+- Allows upload of report files for the scheduled/active ancillary.
+- Supported file types should include PDF and images if current upload infrastructure supports it.
+- Uploaded report saves to Patient Directory / Plexus EHR.
+- If ancillary/case linkage exists, link to the correct ancillary/test and execution case.
+- If report upload already triggers order note, procedure note, billing document, or document status, preserve that existing workflow.
+
+Calendar:
+- Opens scheduling/calendar workflow for this patient.
+- Should remain tied to current platform scheduling logic.
+- Do not use Google Calendar.
+- Do not break existing schedule action.
+
+Phone:
+- Opens existing phone/RingCentral/call workflow for this patient.
+- Do not fake RingCentral integration.
+- If RingCentral is not connected, show existing honest unavailable/integration-required state.
+- Do not break existing call result submission.
+
+PART 3 — Patient name click behavior
+
+When the patient name is clicked in Team Portal / Ancillary Schedule:
+
+Open/focus that patient’s Playground workspace.
+
+The workspace should clearly show:
+
+- patient name
+- clinic/facility
+- phone/contact if available
+- assigned team member if available
+- active/scheduled ancillaries
+- which ancillaries are scheduled
+- which documents are needed per ancillary
+- which documents are already completed/uploaded
+- easy access to the 5 patient bar buttons
+
+The patient name click should not just open a generic profile with no operational context.
+
+It should pull in specifically which ancillaries are scheduled or active for that patient.
+
+Examples:
+- BrainWave scheduled
+- VitalWave scheduled
+- Ultrasound scheduled
+- BrainWave + VitalWave scheduled
+- Repeat test due
+- Return for additional testing
+
+For each active/scheduled ancillary, show a compact card or section with:
+- ancillary name
+- schedule status/date/time if available
+- informed consent status
+- screening form status
+- report upload status
+- quick upload/access action
+
+PART 4 — Document Library architecture
+
+Document Library should be the reusable template/source area.
+
+Document Library should contain or expose:
+- General Informed Consent
+- BrainWave screening form
+- VitalWave screening form
+- Ultrasound screening form
+- any other ancillary screening forms supported by current data
+
+If forms currently live in Ancillary Documents, either:
+- migrate/surface them into Document Library if safe, or
+- create a bridge that reads from the existing location but presents them through Document Library UI/API
+
+Do not delete existing documents unless explicitly safe.
+
+Do not break existing Ancillary Documents behavior if other modules still depend on it.
+
+The clean target architecture is:
+
+Document Library template/form
+        ↓ pulled into
+Team Portal / Playground patient workflow
+        ↓ signed/completed/uploaded by patient/team
+        ↓ saved as patient-specific document in
+Patient Directory / Plexus EHR
+        ↓ optionally linked to
+patient_execution_cases / ancillary/test
+
+PART 5 — Informed Consent workflow
+
+When Informed Consent button is clicked:
+
+Show a modal/panel/workspace inside Playground.
+
+Options:
+1. Select general informed consent from Document Library
+2. Open for patient signature if signature component exists
+3. Upload signed consent file
+4. Save to patient chart
+
+Accepted upload types should use existing upload restrictions, but should support:
+- PDF
+- image/photo
+- document file types if already supported
+
+Required metadata:
+- patientId
+- document type: Informed Consent
+- source: Document Library or Upload
+- uploaded/signed timestamp
+- uploaded by / completed by if available
+- linked ancillary/test if selected
+- linked patient_execution_case if available
+
+If e-signature is not currently implemented:
+- do not fake it
+- show “Signature workflow not connected” or equivalent honest state
+- still allow upload of signed consent file if upload exists
+
+PART 6 — Screening Form workflow
+
+When Screening Form button is clicked:
+
+Show a modal/panel/workspace inside Playground.
+
+It should:
+- identify active/scheduled ancillaries for the patient
+- let team member choose the relevant screening form
+- pull template/form from Document Library
+- allow completion/upload
+- save completed/uploaded form to Patient Directory / Plexus EHR
+- link to ancillary/test and execution case if supported
+
+Screening forms should no longer feel buried in Ancillary Documents for this workflow.
+
+The Team Portal should surface the correct screening form directly for the selected patient.
+
+PART 7 — Report Upload workflow
+
+When Report Upload button is clicked:
+
+Show report upload workflow for the selected patient and active/scheduled ancillary.
+
+It should:
+- allow file upload
+- allow selecting which ancillary/test the report belongs to if more than one is active
+- save to Patient Directory / Plexus EHR
+- link to patient_execution_case if supported
+- preserve existing report upload side effects if already implemented
+
+Do not break any existing generation of:
+- order note
+- procedure note
+- billing document
+- proof packet
+- report status
+
+PART 8 — Save destinations
+
+All completed/uploaded patient-specific documents should save to Patient Directory / Plexus EHR.
+
+Document categories/types:
+
+- Informed Consent
+- Screening Form
+- Report Upload
+
+If document categories already exist, use existing enum/category names where possible.
+
+If new categories are required, add them minimally and safely.
+
+Do not make Team Portal the source of truth for documents.
+
+Do not make Document Library store patient-specific completed documents.
+
+Document Library stores reusable templates/forms only.
+
+Patient Directory / Plexus EHR stores completed patient documents.
+
+PART 9 — UI/UX requirements
+
+Make the patient bar clean and simple.
+
+The 5 buttons should be visible and easy to use:
+
+- Informed Consent
+- Screening Form
+- Report Upload
+- Calendar
+- Phone
+
+Use consistent button style.
+
+Do not make this cluttered.
+
+When a patient has multiple scheduled ancillaries, make it easy to choose which ancillary the document belongs to.
+
+Use a compact selector:
+- BrainWave
+- VitalWave
+- Ultrasound
+
+or automatically preselect if there is only one active ancillary.
+
+The right detail/workspace should make document status clear without cluttering the patient bar.
+
+PART 10 — Validation
+
+Verify:
+
+1. Team Portal / Ancillary Schedule patient bar shows exactly:
+   - Informed Consent
+   - Screening Form
+   - Report Upload
+   - Calendar
+   - Phone
+
+2. Informed Consent button opens a workflow.
+
+3. Informed Consent can pull general informed consent from Document Library if available.
+
+4. Informed Consent can upload signed consent file if upload infrastructure exists.
+
+5. Completed/uploaded informed consent saves to Patient Directory / Plexus EHR.
+
+6. Screening Form button opens a workflow.
+
+7. Screening Form pulls/surfaces forms from Document Library, not buried only in Ancillary Documents.
+
+8. Completed/uploaded screening form saves to Patient Directory / Plexus EHR.
+
+9. Report Upload button opens report upload workflow.
+
+10. Uploaded report saves to Patient Directory / Plexus EHR.
+
+11. Uploaded report links to ancillary/test/execution case if current data supports it.
+
+12. Calendar button still opens current patient scheduling workflow.
+
+13. Phone button still opens current patient call/RingCentral workflow.
+
+14. Patient name click opens/focuses the patient Playground workspace.
+
+15. Patient workspace shows which ancillaries are scheduled/active.
+
+16. Patient workspace makes it easy to upload/access documents for each scheduled/active ancillary.
+
+17. Document Library remains reusable template/source area.
+
+18. Patient Directory / Plexus EHR remains patient-specific document storage.
+
+19. Existing Ancillary Documents behavior is not broken unless safely replaced.
+
+20. No fake e-signature is implemented.
+
+21. No fake RingCentral call is implemented.
+
+22. npm run check passes.
+
+23. npm run build passes.
+
+DO NOT:
+
+- Do not make Team Portal the permanent document source of truth.
+- Do not store reusable templates as patient documents.
+- Do not store patient-specific signed/uploaded files only in Document Library.
+- Do not bury screening forms only in Ancillary Documents for this workflow.
+- Do not fake e-signature.
+- Do not fake RingCentral.
+- Do not use Google Calendar.
+- Do not break existing scheduling.
+- Do not break existing phone/call result workflow.
+- Do not break Patient Directory / Plexus EHR documents.
+- Do not break report upload document generation side effects.
+- Do not change schema unless absolutely required.
+- Do not touch unrelated files.
+
+After implementation:
+
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+   - current branch
+   - files changed
+   - what changed
+   - where patient bar lives
+   - where Informed Consent pulls from
+   - where Screening Forms pull from
+   - where uploads save
+   - where Patient Directory/Plexus EHR documents are updated
+   - whether e-signature exists or is upload-only for now
+   - whether report upload side effects are preserved
+   - check/build result
+   - latest commit SHA if available
+   - risks/gaps
+   - whether I need to push from Replit Git pane
+
+Commit message:
+Add ancillary schedule document action bar
