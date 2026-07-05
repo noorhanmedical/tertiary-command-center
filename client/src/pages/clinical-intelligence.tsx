@@ -1496,7 +1496,7 @@ const REPEAT_LOOP_SHELLS: Record<
       "Longitudinal view of prior reports, findings, ICD suggestions, repeat opportunities, admin decisions, and outreach events.",
     reads: ["patient_journey_events", "ci_evidence_records", "documents"],
     writes: [],
-    producesFor: "Patient Directory / Plexus EHR chart display.",
+    producesFor: "Patient EHR chart display.",
   },
 };
 

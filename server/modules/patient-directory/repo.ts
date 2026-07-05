@@ -1,4 +1,4 @@
-// Patient Directory — read-only repository layer.
+// Patient EHR — read-only repository layer.
 //
 // Two queries are exposed:
 //   1. listCanonicalPatients({ facility, limit, offset })

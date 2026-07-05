@@ -1,4 +1,4 @@
-// Patient Directory live page (Batch E).
+// Patient EHR live page (Batch E).
 //
 // Route-connected wrapper around the existing PatientDirectoryPage
 // scaffold. Uses react-query to fetch search results + per-patient

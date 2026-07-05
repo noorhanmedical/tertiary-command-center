@@ -380,7 +380,7 @@ export async function listAdminSettings(
     : query.orderBy(desc(adminSettings.createdAt)).limit(safeLimit);
 }
 
-// ─── Patient Directory section access ───────────────────────────────────────
+// ─── Patient EHR section access ───────────────────────────────────────
 
 import {
   normalizeSectionAccessMatrix,
@@ -421,7 +421,7 @@ export async function savePatientDirectorySectionAccessMatrix(
       settingDomain: PATIENT_DIRECTORY_DOMAIN,
       settingKey: SECTION_ACCESS_KEY,
       settingValue: { matrix: normalized },
-      description: "Per-role access levels for Patient Directory chart sections.",
+      description: "Per-role access levels for Patient EHR chart sections.",
       active: true,
     });
   }

@@ -6,7 +6,7 @@ import { PatientChartSkeleton } from "@/components/patient-directory/PatientChar
 type ResolveResponse = { encodedKey: string; name: string; dob: string | null };
 
 /**
- * Portal wrapper that opens a patient's full Patient Directory EMR chart
+ * Portal wrapper that opens a patient's full Patient EHR chart
  * (the same workspace rendered on the /patient-directory page) from the
  * portal call list, which only carries a patientScreeningId.
  *

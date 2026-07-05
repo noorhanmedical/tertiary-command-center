@@ -3701,7 +3701,7 @@ export function TeamPortalShell({
               {/* Phase 1 Slice 1.1: the legacy hardcoded demo-patient
                   insurance / prior-ancillary / cooldown block was
                   removed. Real-feed Insurance / Cooldown / Prior
-                  Ancillary visibility lives in the Patient Directory
+                  Ancillary visibility lives in the Patient EHR
                   warning facts surfaces. */}
             </div>
             <div className="mt-4 flex justify-end gap-2">

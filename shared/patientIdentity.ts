@@ -1,5 +1,5 @@
 // Patient identity helper — single source of truth for matching across
-// Patient Directory, duplicate-warning engine, import preview, run
+// Patient EHR, duplicate-warning engine, import preview, run
 // comparison, engagement handoff, and audit lookup. Pure module, no
 // runtime deps beyond standard JS. Lives in `shared/` so the same
 // matcher runs on both client and server.

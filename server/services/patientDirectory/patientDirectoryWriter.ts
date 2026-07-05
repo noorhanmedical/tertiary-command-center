@@ -1,4 +1,4 @@
-// Patient Directory writer service (Batch B).
+// Patient EHR writer service (Batch B).
 //
 // Real storage-backed mutations. Every public function writes an
 // audit event via writePatientDirectoryEvent when the

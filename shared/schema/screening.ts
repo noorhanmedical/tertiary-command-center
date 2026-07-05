@@ -13,8 +13,8 @@ export const screeningBatches = pgTable("screening_batches", {
   facility: text("facility"),
   scheduleDate: text("schedule_date"),
   assignedSchedulerId: integer("assigned_scheduler_id"),
-  // Import-session tracking (task: Patient Directory import history).
-  // Non-null only for batches created by the Patient Directory bulk
+  // Import-session tracking (task: Patient EHR import history).
+  // Non-null only for batches created by the Patient EHR bulk
   // import flow. `importSourceFields` records the column headers
   // detected in the pasted file; `importKind` is "full" | "service"
   // (service = minimal-field import, e.g. Date of Service / Patient /

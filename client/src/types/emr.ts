@@ -1,4 +1,4 @@
-// EMR type layer for the premium Patient Directory chart.
+// EMR type layer for the premium Patient EHR chart.
 //
 // These interfaces describe the 15 API-ready data categories the EMR
 // chart renders. Every field is optional/nullable so the chart never

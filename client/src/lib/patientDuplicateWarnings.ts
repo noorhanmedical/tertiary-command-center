@@ -1,7 +1,7 @@
 // Duplicate warning engine (Batch B5).
 //
 // Pure module. Walks a current roster against one or more prior runs
-// + Patient Directory facts and returns a per-patient warning model
+// + Patient EHR facts and returns a per-patient warning model
 // the UI renders. No DB access; no fetches; callers wire it up.
 
 import {
@@ -63,7 +63,7 @@ export type DuplicatePatientFact = {
 };
 
 export type DuplicateFacts = {
-  /** Patients already sent to engagement (per Patient Directory). */
+  /** Patients already sent to engagement (per Patient EHR). */
   sentToEngagement: ReadonlyArray<DuplicatePatientFact & { sentAt: string | null }>;
   /** Active DNC patients. */
   doNotContact: ReadonlyArray<DuplicatePatientFact & { reason: string | null; setAt: string | null }>;
@@ -89,7 +89,7 @@ export type DuplicateWarningInput = {
   priorRunRoster: ReadonlyArray<RunSourceRow & DuplicatePatientFact>;
   /** Which runs to compare against. */
   selection: RunSelection;
-  /** Patient Directory facts. */
+  /** Patient EHR facts. */
   facts: DuplicateFacts;
   /** Tests considered restricted for "prior ancillary" warning. */
   restrictedTestNames?: ReadonlyArray<string>;

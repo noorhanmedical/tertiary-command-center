@@ -1,6 +1,6 @@
-// Patient Directory — type contracts.
+// Patient EHR — type contracts.
 //
-// "Patient Directory" is the future canonical source of truth for patient
+// "Patient EHR" is the future canonical source of truth for patient
 // identity. Today identity is duplicated across ~15 tables, anchored by
 // patient_screenings (which is a Plexus IQ episode, not a person).
 //

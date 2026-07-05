@@ -15,7 +15,7 @@ type SectionAccessResponse = {
 };
 
 /**
- * Runtime guard for Patient Directory chart sections.
+ * Runtime guard for Patient EHR chart sections.
  *
  * Resolves the effective access level (`hidden` | `summary` | `full`) for the
  * current user's role and a given section id. Admins always get `full` without

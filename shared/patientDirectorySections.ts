@@ -1,4 +1,4 @@
-// Patient Directory — canonical section registry + role-based access model.
+// Patient EHR — canonical section registry + role-based access model.
 //
 // This is the single source of truth for every chart section the Patient
 // Directory renders, and the default per-role visibility used when an admin

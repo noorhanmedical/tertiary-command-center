@@ -1,10 +1,10 @@
-// Patient Directory facts card — surfaces the canonical Patient
+// Patient EHR facts card — surfaces the canonical Patient
 // Directory snapshot inside the center canvas (PatientCommandCanvas).
 //
 // Background: the audit (PR A) flagged that PatientCommandCanvas
 // renders patient-level operational facts (latest call, next
 // appointment, document readiness, billing readiness) but does NOT
-// surface the canonical Patient Directory facts:
+// surface the canonical Patient EHR facts:
 //   - DNC / contact-restrictions
 //   - cooldown window (active + reason)
 //   - prior ancillaries that touched this patient
@@ -16,10 +16,10 @@
 // clicking a row sees the patient's restrictions before calling.
 //
 // This component is a READ-ONLY surface. The single canonical write
-// path for DNC / cooldown / prior-tests remains the Patient Directory
+// path for DNC / cooldown / prior-tests remains the Patient EHR
 // page; this card only mirrors the snapshot. We deliberately do not
 // add new routes — the underlying `/api/patient-directory/:id` route
-// already serves the same shape consumed by the Patient Directory
+// already serves the same shape consumed by the Patient EHR
 // page.
 
 import { useQuery } from "@tanstack/react-query";

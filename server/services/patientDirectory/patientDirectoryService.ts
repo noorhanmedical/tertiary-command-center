@@ -1,4 +1,4 @@
-// Patient Directory service scaffold (Batch B4).
+// Patient EHR service scaffold (Batch B4).
 //
 // Pure, dependency-injected projection over the existing schema. A
 // future approved batch will wire this scaffold into a route file

@@ -1,4 +1,4 @@
-// Patient Directory action dialogs (Parts 8 / 9 / 10).
+// Patient EHR action dialogs (Parts 8 / 9 / 10).
 //
 // Reachable from PatientDirectoryLivePage row menus / profile drawer:
 //   - BulkImportDialog (Part 8): paste CSV/TXT → preview classifier → confirm

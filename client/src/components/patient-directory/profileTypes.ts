@@ -1,4 +1,4 @@
-// Shared types + helpers for the EMR-style Patient Directory profile workspace.
+// Shared types + helpers for the EMR-style Patient EHR profile workspace.
 // The canonical data source is GET /api/patients/database/:encodedKey, whose
 // response shape is mirrored here as `DirectoryProfile`.
 

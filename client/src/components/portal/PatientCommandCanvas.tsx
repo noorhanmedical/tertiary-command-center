@@ -433,7 +433,7 @@ export function PatientCommandCanvas({
         </div>
       </Card>
 
-      {/* PR B — Patient Directory facts wired into the center canvas.
+      {/* PR B — Patient EHR facts wired into the center canvas.
           DNC / cooldown / prior ancillaries / engagement history come
           from the canonical /api/patient-directory/:id snapshot.
           Read-only. The card renders nothing when no facts apply. */}

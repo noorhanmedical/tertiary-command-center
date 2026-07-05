@@ -1,10 +1,10 @@
-// Patient Directory — per-role section access configuration.
+// Patient EHR — per-role section access configuration.
 //
 // GET is readable by any authenticated user so the client runtime guard can
 // resolve what the current user may see. PUT is admin-only and records an
 // audit_log entry. These routes are intentionally registered OUTSIDE the
 // USE_PATIENT_DIRECTORY_ACTIVATION flag gate — the section access model
-// applies to the always-on Patient Directory chart in the Patient Database.
+// applies to the always-on Patient EHR chart in the Patient Database.
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";

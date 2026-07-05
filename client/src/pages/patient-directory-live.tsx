@@ -1,5 +1,5 @@
-// Patient Directory live page route — renders PatientDirectoryLivePage
-// (route-connected wrapper) so the live Patient Directory is reachable
+// Patient EHR live page route — renders PatientDirectoryLivePage
+// (route-connected wrapper) so the live Patient EHR is reachable
 // at /patient-directory/live. The legacy /patient-directory route
 // continues to serve PatientDatabasePage so this is purely additive.
 

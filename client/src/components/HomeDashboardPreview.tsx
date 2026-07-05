@@ -396,7 +396,7 @@ export function HomeDashboardPreview({
               <HomeWorldClocks />
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
-                {/* Row 1: Mission Control | Patient Directory | Plexus IQ | Outreach / Engagement Center */}
+                {/* Row 1: Mission Control | Patient EHR | Plexus IQ | Outreach / Engagement Center */}
                 <SecondaryTile
                   href="/mission-control"
                   testId="tile-mission-control"

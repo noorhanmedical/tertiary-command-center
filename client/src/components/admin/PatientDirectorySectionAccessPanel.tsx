@@ -1,4 +1,4 @@
-// Admin-only editor for per-role access to Patient Directory chart sections.
+// Admin-only editor for per-role access to Patient EHR chart sections.
 //
 // Rows are the chart sections (registry order); columns are the four roles.
 // Each cell is a native <select> of hidden / summary / full. The admin column

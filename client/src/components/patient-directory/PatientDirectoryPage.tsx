@@ -1,4 +1,4 @@
-// Patient Directory page (Batch B11 scaffold).
+// Patient EHR page (Batch B11 scaffold).
 //
 // Standalone surface used by the new /patient-directory route. Until
 // the full GET /api/patient-directory/search endpoint lands, this page

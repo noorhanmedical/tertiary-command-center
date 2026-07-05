@@ -247,12 +247,12 @@ export async function registerRoutes(
   // `/api/patients/:id` parameterised handler.
   registerPatientDatabaseRoutes(app);
   registerPatientRoutes(app);
-  // Patient Directory routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
+  // Patient EHR routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
   registerPatientDirectoryRoutes(app);
   // Section-access config is NOT gated behind the activation flag — it applies
-  // to the always-on Patient Directory chart in the Patient Database.
+  // to the always-on Patient EHR chart in the Patient Database.
   registerPatientDirectorySectionAccessRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);

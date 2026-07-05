@@ -1,4 +1,4 @@
-// Projects the raw Patient Directory query results into the EMR chart shape
+// Projects the raw Patient EHR query results into the EMR chart shape
 // (client/src/types/emr.ts). No backend changes: every field is read from an
 // existing table/endpoint. Categories without a live source (labs, imaging,
 // vitals, encounters, ad campaigns) resolve to empty arrays so the chart

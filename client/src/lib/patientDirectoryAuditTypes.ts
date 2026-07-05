@@ -1,4 +1,4 @@
-// Patient Directory audit event types (Batch B10).
+// Patient EHR audit event types (Batch B10).
 //
 // Client-side mirror of the PatientDirectoryEvent shape exported by
 // server/services/patientDirectory/patientDirectoryService.ts.

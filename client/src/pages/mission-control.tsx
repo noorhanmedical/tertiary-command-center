@@ -659,7 +659,7 @@ export default function MissionControlPage() {
             <SheetTitle className="flex items-center gap-2">
               <Search className="w-4 h-4" /> Find patient
             </SheetTitle>
-            <SheetDescription>Search the patient directory by name, then open the record.</SheetDescription>
+            <SheetDescription>Search the patient EHR by name, then open the record.</SheetDescription>
           </SheetHeader>
           <div className="mt-5 space-y-4">
             <Input

@@ -1,4 +1,4 @@
-// Patient Directory — read-only service layer.
+// Patient EHR — read-only service layer.
 //
 // Re-exports the repo helpers as the public service surface. The two
 // exports below are the future canonical entry points for "who is this

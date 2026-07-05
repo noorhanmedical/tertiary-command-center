@@ -1,4 +1,4 @@
-// Patient Directory API routes (Batch C).
+// Patient EHR API routes (Batch C).
 //
 // Registration is gated on USE_PATIENT_DIRECTORY_ACTIVATION. When the
 // flag is OFF (default), the route file is imported but no endpoints

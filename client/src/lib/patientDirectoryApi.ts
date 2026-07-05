@@ -1,4 +1,4 @@
-// Patient Directory client API helper (Batch D).
+// Patient EHR client API helper (Batch D).
 //
 // Thin typed wrappers over the server routes added in Batch C. Every
 // helper returns a typed shape or throws a typed error so call sites

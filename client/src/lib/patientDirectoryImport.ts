@@ -1,4 +1,4 @@
-// Patient Directory import preview parsing + classification (Batch B12).
+// Patient EHR import preview parsing + classification (Batch B12).
 //
 // Pure module. Supports CSV/TXT today. DOC/DOCX/PDF parsing is not
 // included — see docs/architecture/patient-directory-runtime-blockers

@@ -1,6 +1,6 @@
 // Recent Imports panel (task #723).
 //
-// Collapsible panel on the Patient Directory page listing the last 30
+// Collapsible panel on the Patient EHR page listing the last 30
 // import sessions (screening_batches rows stamped with import metadata).
 // Each batch shows who imported it, when, which source fields the file
 // carried, and a preview of patient names. Admin-only actions:

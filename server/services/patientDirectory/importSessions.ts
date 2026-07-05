@@ -1,6 +1,6 @@
-// Patient Directory import-session tracking (task #723).
+// Patient EHR import-session tracking (task #723).
 //
-// Each bulk-import run through the Patient Directory is stamped onto a
+// Each bulk-import run through the Patient EHR is stamped onto a
 // screening_batches row (import_source_fields / import_kind /
 // import_created_by). Minimal-field ("service") imports submitted by
 // non-admin staff park their parsed preview in pending_import_payload
