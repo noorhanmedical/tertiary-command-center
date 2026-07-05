@@ -363,7 +363,7 @@ function WorklistCard({
           Status. Everything else (Clinic, Service, Category, Source, Last
           call result, Next action, full Status Trail) lives in the right
           detail panel. */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3 sm:items-center">
         <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
           <Checkbox
             checked={selected}
@@ -373,8 +373,10 @@ function WorklistCard({
           />
         </div>
 
+        {/* Patient · Call Type · Assigned To — stacked on narrow, inline on sm+ */}
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
         {/* Patient */}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 sm:flex-1">
           <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
             Patient
           </div>
@@ -399,7 +401,7 @@ function WorklistCard({
 
         {/* Call Type */}
         <div
-          className="hidden min-w-0 flex-1 sm:block"
+          className="min-w-0 sm:flex-1"
           data-testid="engagement-worklist-card-calltype"
         >
           <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
@@ -412,7 +414,7 @@ function WorklistCard({
 
         {/* Assigned To */}
         <div
-          className="hidden min-w-0 flex-1 sm:block"
+          className="min-w-0 sm:flex-1"
           data-testid="engagement-worklist-card-assigned"
         >
           <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
@@ -427,6 +429,7 @@ function WorklistCard({
               <span className="text-amber-700 dark:text-amber-400">—</span>
             )}
           </div>
+        </div>
         </div>
 
         {/* Status */}
