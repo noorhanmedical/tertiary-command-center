@@ -14,14 +14,66 @@
 //
 // Email and Notes are no longer tray tabs — they live in the tool dock.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { MessageSquare, Users, Send, Smartphone, Plus, X } from "lucide-react";
+import {
+  MessageSquare,
+  Users,
+  Send,
+  Smartphone,
+  Plus,
+  X,
+  Maximize2,
+  Minimize2,
+} from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 export type TrayTab = "patients" | "direct" | "team";
 
 export type TeamTaskThread = { id: number; title: string };
+
+// Selected patient SMS thread, lifted to the parent so the docked tray and the
+// expanded Playground chat stay in sync (Task #761).
+export type PatientTraySelection = {
+  phone: string | null;
+  name: string | null;
+  screeningId: number | null;
+};
+
+// Optional controlled-selection helper. When an `onChange` is supplied the
+// value is owned by the parent (so the docked tray + Playground chat share the
+// same selected thread); otherwise the tray keeps its own internal state and
+// nothing about the previous behavior changes.
+function useControllable<T>(
+  value: T | undefined,
+  onChange: ((v: T) => void) | undefined,
+  initial: T,
+) {
+  const [internal, setInternal] = useState<T>(initial);
+  const controlled = onChange !== undefined;
+  const current = controlled ? (value as T) : internal;
+  const set = useCallback(
+    (v: T) => {
+      if (!controlled) setInternal(v);
+      onChange?.(v);
+    },
+    [controlled, onChange],
+  );
+  return [current, set] as const;
+}
+
+// Focus a composer textarea when the parent bumps `focusNonce` (dock tile
+// click / expand). Never fires on the initial page load (nonce starts at 0),
+// so the slid-aside tray never steals focus on mount.
+function useComposerFocus(focusNonce: number) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (focusNonce > 0) {
+      ref.current?.focus();
+    }
+  }, [focusNonce]);
+  return ref;
+}
 
 type PlexusMessage = {
   id: number;
@@ -87,14 +139,25 @@ function initials(name: string): string {
 // patient_sms_messages; sends go through POST /api/portal/patient-messages/send
 // which only records "sent" after Twilio accepts. When Twilio isn't
 // connected we show an honest boundary — the composer never fakes a send.
-function PatientMessagesTab() {
-  const [activePhone, setActivePhone] = useState<string | null>(null);
-  const [activeName, setActiveName] = useState<string | null>(null);
-  const [activeScreeningId, setActiveScreeningId] = useState<number | null>(null);
+function PatientMessagesTab({
+  selection,
+  onSelectionChange,
+  focusNonce = 0,
+  expanded = false,
+}: {
+  selection: PatientTraySelection;
+  onSelectionChange: (s: PatientTraySelection) => void;
+  focusNonce?: number;
+  expanded?: boolean;
+}) {
+  const activePhone = selection.phone;
+  const activeName = selection.name;
+  const activeScreeningId = selection.screeningId;
   const [draft, setDraft] = useState("");
   const [picking, setPicking] = useState(false);
   const [search, setSearch] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useComposerFocus(focusNonce);
 
   const statusQuery = useQuery<SmsStatus>({
     queryKey: ["/api/portal/patient-messages/status"],
@@ -120,10 +183,13 @@ function PatientMessagesTab() {
 
   useEffect(() => {
     if (activePhone == null && threads.length > 0) {
-      setActivePhone(threads[0].patientPhone);
-      setActiveName(threads[0].patientName);
+      onSelectionChange({
+        phone: threads[0].patientPhone,
+        name: threads[0].patientName,
+        screeningId: null,
+      });
     }
-  }, [threads, activePhone]);
+  }, [threads, activePhone, onSelectionChange]);
 
   const patientsQuery = useQuery<{ patients: SmsPatientOption[] }>({
     queryKey: ["/api/portal/patient-messages/patients", search],
@@ -208,9 +274,11 @@ function PatientMessagesTab() {
             value={activePhone ?? ""}
             onChange={(e) => {
               const t = threads.find((x) => x.patientPhone === e.target.value);
-              setActivePhone(e.target.value || null);
-              setActiveName(t?.patientName ?? null);
-              setActiveScreeningId(null);
+              onSelectionChange({
+                phone: e.target.value || null,
+                name: t?.patientName ?? null,
+                screeningId: null,
+              });
             }}
             className="w-full flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 outline-none"
             data-testid="tray-patients-thread-select"
@@ -252,9 +320,11 @@ function PatientMessagesTab() {
                   key={`${p.patientScreeningId}-${p.phone}`}
                   type="button"
                   onClick={() => {
-                    setActivePhone(p.phone);
-                    setActiveName(p.name);
-                    setActiveScreeningId(p.patientScreeningId);
+                    onSelectionChange({
+                      phone: p.phone,
+                      name: p.name,
+                      screeningId: p.patientScreeningId,
+                    });
                     setPicking(false);
                     setSearch("");
                   }}
@@ -306,7 +376,9 @@ function PatientMessagesTab() {
                     </div>
                   ) : null}
                   <div
-                    className={`max-w-[78%] rounded-2xl px-3 py-1.5 text-xs shadow-sm ${
+                    className={`max-w-[78%] rounded-2xl px-3 py-1.5 shadow-sm ${
+                      expanded ? "text-sm" : "text-xs"
+                    } ${
                       outgoing
                         ? failed
                           ? "rounded-br-sm border border-rose-300 bg-rose-50 text-rose-700"
@@ -337,6 +409,7 @@ function PatientMessagesTab() {
       <div className="border-t border-white/30 bg-white/40 p-2">
         <div className="flex items-end gap-1.5">
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -357,9 +430,11 @@ function PatientMessagesTab() {
                   ? `Text ${activeLabel}…`
                   : "Pick a patient to text…"
             }
-            rows={2}
+            rows={expanded ? 3 : 2}
             disabled={!connected}
-            className="min-h-[38px] flex-1 resize-none rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-400"
+            className={`flex-1 resize-none rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-slate-800 outline-none placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-400 ${
+              expanded ? "min-h-[56px] text-sm" : "min-h-[38px] text-xs"
+            }`}
             data-testid="tray-patients-input"
           />
           <button
@@ -384,10 +459,22 @@ function PatientMessagesTab() {
 }
 
 // Real 1:1 direct messaging. Pick a teammate, read the full thread, send.
-function DirectMessagesTab({ currentUserId }: { currentUserId: string | null }) {
-  const [activeUserId, setActiveUserId] = useState<string | null>(null);
+function DirectMessagesTab({
+  currentUserId,
+  activeUserId,
+  onActiveUserIdChange,
+  focusNonce = 0,
+  expanded = false,
+}: {
+  currentUserId: string | null;
+  activeUserId: string | null;
+  onActiveUserIdChange: (id: string | null) => void;
+  focusNonce?: number;
+  expanded?: boolean;
+}) {
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useComposerFocus(focusNonce);
 
   const rosterQuery = useQuery<{ roster: RosterEntry[] }>({
     queryKey: ["/api/portal/direct-messages/roster"],
@@ -403,11 +490,11 @@ function DirectMessagesTab({ currentUserId }: { currentUserId: string | null }) 
 
   useEffect(() => {
     if (activeUserId == null && roster.length > 0) {
-      setActiveUserId(roster[0].id);
+      onActiveUserIdChange(roster[0].id);
     } else if (activeUserId != null && !roster.some((r) => r.id === activeUserId)) {
-      setActiveUserId(roster[0]?.id ?? null);
+      onActiveUserIdChange(roster[0]?.id ?? null);
     }
-  }, [roster, activeUserId]);
+  }, [roster, activeUserId, onActiveUserIdChange]);
 
   const activePerson = roster.find((r) => r.id === activeUserId) ?? null;
 
@@ -467,7 +554,7 @@ function DirectMessagesTab({ currentUserId }: { currentUserId: string | null }) 
       <div className="border-b border-white/30 p-2">
         <select
           value={activeUserId ?? ""}
-          onChange={(e) => setActiveUserId(e.target.value)}
+          onChange={(e) => onActiveUserIdChange(e.target.value)}
           className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 outline-none"
           data-testid="tray-direct-recipient-select"
         >
@@ -506,7 +593,9 @@ function DirectMessagesTab({ currentUserId }: { currentUserId: string | null }) 
                   </div>
                 ) : null}
                 <div
-                  className={`max-w-[78%] rounded-2xl px-3 py-1.5 text-xs shadow-sm ${
+                  className={`max-w-[78%] rounded-2xl px-3 py-1.5 shadow-sm ${
+                    expanded ? "text-sm" : "text-xs"
+                  } ${
                     mine
                       ? "rounded-br-sm bg-sky-500 text-white"
                       : "rounded-bl-sm bg-slate-200 text-slate-800"
@@ -526,6 +615,7 @@ function DirectMessagesTab({ currentUserId }: { currentUserId: string | null }) 
       <div className="border-t border-white/30 bg-white/40 p-2">
         <div className="flex items-end gap-1.5">
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -534,8 +624,10 @@ function DirectMessagesTab({ currentUserId }: { currentUserId: string | null }) 
               }
             }}
             placeholder={activePerson ? `Message ${activePerson.username}…` : "Message…"}
-            rows={2}
-            className="min-h-[38px] flex-1 resize-none rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none placeholder:text-slate-400"
+            rows={expanded ? 3 : 2}
+            className={`flex-1 resize-none rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-slate-800 outline-none placeholder:text-slate-400 ${
+              expanded ? "min-h-[56px] text-sm" : "min-h-[38px] text-xs"
+            }`}
             data-testid="tray-direct-input"
           />
           <button
@@ -559,20 +651,28 @@ function DirectMessagesTab({ currentUserId }: { currentUserId: string | null }) 
 function TeamChatTab({
   teamTasks,
   currentUserId,
+  activeTaskId,
+  onActiveTaskIdChange,
+  focusNonce = 0,
+  expanded = false,
 }: {
   teamTasks: TeamTaskThread[];
   currentUserId: string | null;
+  activeTaskId: number | null;
+  onActiveTaskIdChange: (id: number | null) => void;
+  focusNonce?: number;
+  expanded?: boolean;
 }) {
-  const [activeTaskId, setActiveTaskId] = useState<number | null>(teamTasks[0]?.id ?? null);
   const [draft, setDraft] = useState("");
+  const composerRef = useComposerFocus(focusNonce);
 
   useEffect(() => {
     if (activeTaskId == null && teamTasks.length > 0) {
-      setActiveTaskId(teamTasks[0].id);
+      onActiveTaskIdChange(teamTasks[0].id);
     } else if (activeTaskId != null && !teamTasks.some((t) => t.id === activeTaskId)) {
-      setActiveTaskId(teamTasks[0]?.id ?? null);
+      onActiveTaskIdChange(teamTasks[0]?.id ?? null);
     }
-  }, [teamTasks, activeTaskId]);
+  }, [teamTasks, activeTaskId, onActiveTaskIdChange]);
 
   const messagesQuery = useQuery<PlexusMessage[]>({
     queryKey: ["/api/plexus/tasks", activeTaskId, "messages"],
@@ -620,7 +720,7 @@ function TeamChatTab({
       <div className="border-b border-white/30 p-2">
         <select
           value={activeTaskId ?? ""}
-          onChange={(e) => setActiveTaskId(Number(e.target.value))}
+          onChange={(e) => onActiveTaskIdChange(Number(e.target.value))}
           className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 outline-none"
           data-testid="tray-team-task-select"
         >
@@ -649,7 +749,9 @@ function TeamChatTab({
                 data-testid={`tray-team-message-${m.id}`}
               >
                 <div
-                  className={`max-w-[80%] rounded-2xl px-3 py-1.5 text-xs ${
+                  className={`max-w-[80%] rounded-2xl px-3 py-1.5 ${
+                    expanded ? "text-sm" : "text-xs"
+                  } ${
                     mine
                       ? "rounded-br-sm bg-violet-600 text-white"
                       : "rounded-bl-sm bg-slate-200 text-slate-800"
@@ -677,8 +779,11 @@ function TeamChatTab({
               }
             }}
             placeholder="Message this task thread…"
-            rows={2}
-            className="min-h-[38px] flex-1 resize-none rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none placeholder:text-slate-400"
+            rows={expanded ? 3 : 2}
+            ref={composerRef}
+            className={`flex-1 resize-none rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-slate-800 outline-none placeholder:text-slate-400 ${
+              expanded ? "min-h-[56px] text-sm" : "min-h-[38px] text-xs"
+            }`}
             data-testid="tray-team-input"
           />
           <button
@@ -709,6 +814,16 @@ export function CommunicationTray({
   teamTasks,
   directUnread = 0,
   patientsUnread = 0,
+  expanded = false,
+  onExpand,
+  onCollapse,
+  focusNonce = 0,
+  directActiveUserId,
+  onDirectActiveUserIdChange,
+  teamActiveTaskId,
+  onTeamActiveTaskIdChange,
+  patientSelection,
+  onPatientSelectionChange,
 }: {
   activeTab: TrayTab;
   onTabChange: (tab: TrayTab) => void;
@@ -719,7 +834,40 @@ export function CommunicationTray({
   directUnread?: number;
   /** Total unread inbound patient texts (Task #648). */
   patientsUnread?: number;
+  /** When true, render the larger Playground layout (bigger bubbles/composer)
+   *  and show the Minimize2 control. (Task #761) */
+  expanded?: boolean;
+  /** Called when the docked tray's Maximize2 button is clicked. */
+  onExpand?: () => void;
+  /** Called when the expanded Playground chat's Minimize2 button is clicked. */
+  onCollapse?: () => void;
+  /** Bump to focus the composer for the active tab. Ignored when 0. */
+  focusNonce?: number;
+  /** Optional controlled selection so the docked tray and Playground chat
+   *  share the same active thread across all three tabs. */
+  directActiveUserId?: string | null;
+  onDirectActiveUserIdChange?: (id: string | null) => void;
+  teamActiveTaskId?: number | null;
+  onTeamActiveTaskIdChange?: (id: number | null) => void;
+  patientSelection?: PatientTraySelection;
+  onPatientSelectionChange?: (sel: PatientTraySelection) => void;
 }) {
+  const [directActive, setDirectActive] = useControllable<string | null>(
+    directActiveUserId,
+    onDirectActiveUserIdChange,
+    null,
+  );
+  const [teamActive, setTeamActive] = useControllable<number | null>(
+    teamActiveTaskId,
+    onTeamActiveTaskIdChange,
+    null,
+  );
+  const [patientSel, setPatientSel] = useControllable<PatientTraySelection>(
+    patientSelection,
+    onPatientSelectionChange,
+    { phone: null, name: null, screeningId: null },
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="communication-tray">
       <div className="flex items-center gap-1 border-b border-white/30 px-2 py-1.5">
@@ -753,15 +901,55 @@ export function CommunicationTray({
             </button>
           );
         })}
+        {!expanded && onExpand ? (
+          <button
+            type="button"
+            onClick={onExpand}
+            title="Expand to Playground"
+            className="ml-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/60 hover:text-slate-700"
+            data-testid="tray-expand"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+        {expanded && onCollapse ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            title="Collapse to tray"
+            className="ml-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/60 hover:text-slate-700"
+            data-testid="tray-collapse"
+          >
+            <Minimize2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab === "patients" ? (
-          <PatientMessagesTab />
+          <PatientMessagesTab
+            selection={patientSel}
+            onSelectionChange={setPatientSel}
+            focusNonce={focusNonce}
+            expanded={expanded}
+          />
         ) : activeTab === "direct" ? (
-          <DirectMessagesTab currentUserId={currentUserId} />
+          <DirectMessagesTab
+            currentUserId={currentUserId}
+            activeUserId={directActive}
+            onActiveUserIdChange={setDirectActive}
+            focusNonce={focusNonce}
+            expanded={expanded}
+          />
         ) : (
-          <TeamChatTab teamTasks={teamTasks} currentUserId={currentUserId} />
+          <TeamChatTab
+            teamTasks={teamTasks}
+            currentUserId={currentUserId}
+            activeTaskId={teamActive}
+            onActiveTaskIdChange={setTeamActive}
+            focusNonce={focusNonce}
+            expanded={expanded}
+          />
         )}
       </div>
     </div>

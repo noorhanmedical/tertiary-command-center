@@ -77,7 +77,7 @@ import { type CanonicalMonthCellSummary } from "@/calendar";
 // workspace settings.
 import { ToolDock, type DockTool, type DockGroup } from "@/components/portal/tools/ToolDock";
 import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
-import { CommunicationTray } from "@/components/portal/tools/CommunicationTray";
+import { CommunicationTray, type PatientTraySelection } from "@/components/portal/tools/CommunicationTray";
 import { WorkspaceSettingsDialog } from "@/components/portal/tools/WorkspaceSettingsDialog";
 import { useWorkspacePrefs, type TrayTab } from "@/components/portal/tools/workspacePrefs";
 import {
@@ -116,7 +116,7 @@ type WorkspaceRole =
 // New code should NOT extend this; use `WorkspaceRole` /
 // `PublicWorkspaceRole` and let the capability resolver drive gating.
 type Role = "technician" | "liaison";
-type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart" | "calendar";
+type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart" | "calendar" | "chat";
 
 type PortalTask = {
   id: number;
@@ -1123,6 +1123,17 @@ export function TeamPortalShell({
   // Communication tray tab (bottom half of Tools panel).
   const [trayTab, setTrayTab] = useState<TrayTab>(workspacePrefs.defaultTrayTab);
   const trayTabInitRef = useRef(false);
+  // Chat selection lifted to the shell so the docked tray and the expanded
+  // Playground chat share the same active thread across all three tabs. (#761)
+  const [chatDirectActiveUserId, setChatDirectActiveUserId] = useState<string | null>(null);
+  const [chatTeamActiveTaskId, setChatTeamActiveTaskId] = useState<number | null>(null);
+  const [chatPatientSelection, setChatPatientSelection] = useState<PatientTraySelection>({
+    phone: null,
+    name: null,
+    screeningId: null,
+  });
+  // Bumped on chat dock-tile click / expand to focus the active composer.
+  const [chatFocusNonce, setChatFocusNonce] = useState(0);
   // Playground floating widgets (sticky notes / email / team-chat).
   // Attributed to the REAL logged-in user, never the admin view-as target.
   const {
@@ -2317,6 +2328,29 @@ export function TeamPortalShell({
                     onSelectDate={(d) => setSelectedDate(d)}
                   />
                 </div>
+              ) : centerMode === "chat" ? (
+                <div
+                  className="mx-auto flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.12)]"
+                  data-testid="playground-chat"
+                >
+                  <CommunicationTray
+                    activeTab={trayTab}
+                    onTabChange={setTrayTab}
+                    currentUserId={currentUser?.id ?? null}
+                    teamTasks={trayTeamTasks}
+                    directUnread={directUnread}
+                    patientsUnread={patientsUnread}
+                    expanded
+                    focusNonce={chatFocusNonce}
+                    onCollapse={() => setCenterMode("playground")}
+                    directActiveUserId={chatDirectActiveUserId}
+                    onDirectActiveUserIdChange={setChatDirectActiveUserId}
+                    teamActiveTaskId={chatTeamActiveTaskId}
+                    onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
+                    patientSelection={chatPatientSelection}
+                    onPatientSelectionChange={setChatPatientSelection}
+                  />
+                </div>
               ) : centerMode === "consent" && selected ? (
                 <div className="h-full rounded-[28px] bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] overflow-y-auto" data-testid="expanded-consent">
                   <div className="flex items-start justify-between">
@@ -2758,6 +2792,17 @@ export function TeamPortalShell({
                       teamTasks={trayTeamTasks}
                       directUnread={directUnread}
                       patientsUnread={patientsUnread}
+                      focusNonce={chatFocusNonce}
+                      onExpand={() => {
+                        setCenterMode("chat");
+                        setChatFocusNonce((n) => n + 1);
+                      }}
+                      directActiveUserId={chatDirectActiveUserId}
+                      onDirectActiveUserIdChange={setChatDirectActiveUserId}
+                      teamActiveTaskId={chatTeamActiveTaskId}
+                      onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
+                      patientSelection={chatPatientSelection}
+                      onPatientSelectionChange={setChatPatientSelection}
                     />
                   </div>
                 </div>
@@ -2922,7 +2967,15 @@ export function TeamPortalShell({
                           id: "patients",
                           label: "Patients",
                           icon: Smartphone,
-                          onClick: () => setTrayTab("patients"),
+                          onClick: () => {
+                            setTrayTab("patients");
+                            // In the compact icon rail the docked tray is hidden,
+                            // so fall back to the full-size Playground chat; else
+                            // just peek the rail so the docked tray shows. (#761)
+                            if (leftNarrow) setCenterMode("chat");
+                            else setLeftRailPeek(true);
+                            setChatFocusNonce((n) => n + 1);
+                          },
                           active: trayTab === "patients",
                           badge: patientsUnread > 0 ? patientsUnread : undefined,
                           testId: "left-rail-tool-patients",
@@ -2931,7 +2984,12 @@ export function TeamPortalShell({
                           id: "direct",
                           label: "Direct",
                           icon: MessageSquare,
-                          onClick: () => setTrayTab("direct"),
+                          onClick: () => {
+                            setTrayTab("direct");
+                            if (leftNarrow) setCenterMode("chat");
+                            else setLeftRailPeek(true);
+                            setChatFocusNonce((n) => n + 1);
+                          },
                           active: trayTab === "direct",
                           badge: directUnread > 0 ? directUnread : undefined,
                           testId: "left-rail-tool-direct",
@@ -2940,7 +2998,12 @@ export function TeamPortalShell({
                           id: "teamChat",
                           label: "Team Chat",
                           icon: Users,
-                          onClick: () => setTrayTab("team"),
+                          onClick: () => {
+                            setTrayTab("team");
+                            if (leftNarrow) setCenterMode("chat");
+                            else setLeftRailPeek(true);
+                            setChatFocusNonce((n) => n + 1);
+                          },
                           active: trayTab === "team",
                           testId: "left-rail-tool-team-chat",
                         },
@@ -3113,6 +3176,17 @@ export function TeamPortalShell({
                       teamTasks={trayTeamTasks}
                       directUnread={directUnread}
                       patientsUnread={patientsUnread}
+                      focusNonce={chatFocusNonce}
+                      onExpand={() => {
+                        setCenterMode("chat");
+                        setChatFocusNonce((n) => n + 1);
+                      }}
+                      directActiveUserId={chatDirectActiveUserId}
+                      onDirectActiveUserIdChange={setChatDirectActiveUserId}
+                      teamActiveTaskId={chatTeamActiveTaskId}
+                      onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
+                      patientSelection={chatPatientSelection}
+                      onPatientSelectionChange={setChatPatientSelection}
                     />
                   </div>
                 )}

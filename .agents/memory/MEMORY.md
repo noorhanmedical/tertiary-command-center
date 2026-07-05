@@ -44,3 +44,4 @@
 - [Express middleware params typing](express-middleware-params-typing.md) — adding a middleware arg to app.post/patch flips TS overloads so req.params values become string|string[]; wrap with String() and re-run tsc.
 - [Dev DB migration lag](dev-db-migration-lag.md) — migrations are not auto-applied; older tables can be missing while try/catch event writers silently no-op, faking success.
 - [Server tests are vitest suites](server-tests-vitest.md) — never exec server __tests__ files via tsx (crashes); qa guards use `npx vitest run <file>`; live-DB tests stay tsx scripts in the vitest exclude list.
+- [CommunicationTray dual-mount](communication-tray-dual-mount.md) — chat tray renders in >1 mount at once; lift selection to shell + pass to all mounts or views desync; focusNonce>0 gates composer focus; chat center branch must precede the centerSrc branch.
