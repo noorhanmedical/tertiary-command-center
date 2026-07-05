@@ -36,6 +36,7 @@ type RosterPatient = {
   cooldownActiveCount: number;
   nextCooldownClearsAt: string | null;
   daysUntilNextClear: number | null;
+  plexusId: string | null;
 };
 
 type ClinicGroup = { clinic: string; patients: RosterPatient[] };
@@ -415,6 +416,11 @@ export default function PatientDatabasePage() {
                                 <p className="font-semibold text-xs truncate" data-testid={`text-patient-name-${p.encodedKey}`}>{p.name}</p>
                                 <CooldownBadge p={p} />
                               </div>
+                              {p.plexusId && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-mono font-medium text-slate-600 dark:text-slate-300 mt-0.5" data-testid={`badge-plexus-id-${p.encodedKey}`}>
+                                  {p.plexusId}
+                                </span>
+                              )}
                               <p className="text-[10px] text-muted-foreground truncate">
                                 {p.dob ? `DOB ${p.dob} · ` : ""}{fmtDate(p.lastVisit)}
                               </p>

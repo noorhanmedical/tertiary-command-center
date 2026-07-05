@@ -16,7 +16,7 @@ import { recomputeInvoiceTotals } from "../lib/invoiceRecompute";
 type TxClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export interface IInvoicesRepository {
-  listAll(): Promise<Invoice[]>;
+  listAll(clinicId?: number | null): Promise<Invoice[]>;
   getById(id: number): Promise<Invoice | undefined>;
   listLineItems(invoiceId: number): Promise<InvoiceLineItem[]>;
   createWithLineItems(invoice: InsertInvoice, lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[]): Promise<Invoice>;
@@ -30,8 +30,9 @@ export interface IInvoicesRepository {
 }
 
 export class DbInvoicesRepository implements IInvoicesRepository {
-  async listAll(): Promise<Invoice[]> {
-    return db.select().from(invoices).orderBy(desc(invoices.createdAt));
+  async listAll(clinicId?: number | null): Promise<Invoice[]> {
+    const cf = clinicId != null ? eq(invoices.clinicId, clinicId) : undefined;
+    return db.select().from(invoices).where(cf).orderBy(desc(invoices.createdAt));
   }
 
   async getById(id: number): Promise<Invoice | undefined> {

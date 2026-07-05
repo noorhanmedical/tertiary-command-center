@@ -15,8 +15,8 @@ export interface AppointmentFilters {
 
 export interface IAppointmentsRepository {
   create(record: InsertAncillaryAppointment): Promise<AncillaryAppointment>;
-  list(filters?: AppointmentFilters): Promise<AncillaryAppointment[]>;
-  upcoming(limit?: number): Promise<AncillaryAppointment[]>;
+  list(filters?: AppointmentFilters, clinicId?: number | null): Promise<AncillaryAppointment[]>;
+  upcoming(limit?: number, clinicId?: number | null): Promise<AncillaryAppointment[]>;
   cancel(id: number): Promise<AncillaryAppointment | undefined>;
   listByPatient(patientScreeningId: number): Promise<AncillaryAppointment[]>;
 }
@@ -27,8 +27,9 @@ export class DbAppointmentsRepository implements IAppointmentsRepository {
     return result;
   }
 
-  async list(filters?: AppointmentFilters): Promise<AncillaryAppointment[]> {
+  async list(filters?: AppointmentFilters, clinicId?: number | null): Promise<AncillaryAppointment[]> {
     const conditions = [];
+    if (clinicId != null) conditions.push(eq(ancillaryAppointments.clinicId, clinicId));
     if (filters?.facility) conditions.push(eq(ancillaryAppointments.facility, filters.facility));
     if (filters?.date) conditions.push(eq(ancillaryAppointments.scheduledDate, filters.date));
     if (filters?.testType) conditions.push(eq(ancillaryAppointments.testType, filters.testType));

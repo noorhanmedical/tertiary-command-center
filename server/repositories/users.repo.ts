@@ -65,6 +65,7 @@ export class DbUsersRepository implements IUsersRepository {
   async listAll(): Promise<Omit<User, "password">[]> {
     return db.select({
       id: users.id,
+      clinicId: users.clinicId,
       username: users.username,
       role: users.role,
       active: users.active,
@@ -74,6 +75,7 @@ export class DbUsersRepository implements IUsersRepository {
   async listByRole(role: string): Promise<Omit<User, "password">[]> {
     return db.select({
       id: users.id,
+      clinicId: users.clinicId,
       username: users.username,
       role: users.role,
       active: users.active,

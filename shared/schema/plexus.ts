@@ -1,9 +1,12 @@
 import { sql, pgTable, serial, text, varchar, integer, timestamp, jsonb, index, AnyPgColumn, createInsertSchema, z } from "./_common";
 import { users } from "./users";
 import { patientScreenings, screeningBatches } from "./screening";
+import { clinics } from "./clinics";
 
 export const plexusProjects = pgTable("plexus_projects", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   description: text("description"),
   projectType: text("project_type").notNull().default("operational"),

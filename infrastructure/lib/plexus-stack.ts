@@ -7,8 +7,10 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
+import * as ses from "aws-cdk-lib/aws-ses";
 
 export class PlexusStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -100,6 +102,10 @@ export class PlexusStack extends cdk.Stack {
       },
     });
 
+    // OpenAI API key — stored in Secrets Manager (created via CLI)
+    const openAiSecret = secretsmanager.Secret.fromSecretNameV2(this, "OpenAiKey", "plexus/openai-api-key");
+
+
     // Task definition
     const taskDef = new ecs.FargateTaskDefinition(this, "TaskDef", {
       memoryLimitMiB: 2048,
@@ -115,6 +121,14 @@ export class PlexusStack extends cdk.Stack {
     taskDef.taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        resources: ["*"],
+      })
+    );
+
+    // SES — allow sending email
+    taskDef.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ["ses:SendEmail", "ses:SendRawEmail"],
         resources: ["*"],
       })
     );
@@ -135,17 +149,21 @@ export class PlexusStack extends cdk.Stack {
         NODE_ENV: "development",
         DEPLOY_VERSION: "1781733963",
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
-        COOKIE_SECURE: "false",
+        COOKIE_SECURE: "true",
+        USE_PATIENT_DIRECTORY_ACTIVATION: "true",
         PGSSLMODE: "no-verify",
         PORT: "5000",
         STORAGE_PROVIDER: "s3",
         AWS_REGION: "us-east-1",
         S3_BUCKET_NAME: documentsBucket.bucketName,
         DATABASE_URL: "postgres://plexus:PlexusAdmin2026@plexuscommandcenter-databaseb269d8bb-xlpvrxyelcw8.colokwmoubvz.us-east-1.rds.amazonaws.com:5432/plexus",
-        AI_INTEGRATIONS_OPENAI_API_KEY: "sk-placeholder-will-replace-with-bedrock",
         SESSION_SECRET: "plexus-session-secret-replace-me-later-with-proper-value",
+        SMTP_HOST: "email-smtp.us-east-1.amazonaws.com",
+        SMTP_PORT: "587",
+        SMTP_FROM: "noreply@plexusclinical.com",
       },
       secrets: {
+        AI_INTEGRATIONS_OPENAI_API_KEY: ecs.Secret.fromSecretsManager(openAiSecret),
         // Pass the full RDS secret — contains host, port, dbname, username, password
         DB_SECRET: ecs.Secret.fromSecretsManager(database.secret!),
       },
@@ -186,10 +204,25 @@ export class PlexusStack extends cdk.Stack {
     // HTTP listener
     const httpListener = alb.addListener("HttpListener", {
       port: 80,
+      defaultAction: elbv2.ListenerAction.redirect({
+        protocol: "HTTPS",
+        port: "443",
+      }),
+    });
+
+    // HTTPS listener
+    const certificate = acm.Certificate.fromCertificateArn(this, "Cert",
+      "arn:aws:acm:us-east-1:374604322534:certificate/74c68c45-e554-46f8-9308-6453e4a951e5"
+    );
+
+    const httpsListener = alb.addListener("HttpsListener", {
+      port: 443,
+      certificates: [certificate],
+      sslPolicy: elbv2.SslPolicy.TLS12,
       open: true,
     });
 
-    httpListener.addTargets("EcsTarget", {
+    httpsListener.addTargets("EcsTarget", {
       port: 5000,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targets: [service],
@@ -239,6 +272,49 @@ export class PlexusStack extends cdk.Stack {
     new cdk.CfnOutput(this, "DbSecretArn", {
       value: database.secret!.secretArn,
       description: "RDS credentials secret ARN",
+    });
+
+    // =========================================================================
+    // SES — Email Domain Identity (creates DKIM records for plexusclinical.com)
+    // After deploy, add the DKIM CNAME records to GoDaddy DNS to verify.
+    // =========================================================================
+    new ses.EmailIdentity(this, "PlexusDomain", {
+      identity: ses.Identity.domain("plexusclinical.com"),
+    });
+
+    // =========================================================================
+    // GitHub Actions OIDC — CI/CD without stored AWS keys
+    // After deploy, copy the role ARN from outputs and add it as
+    // AWS_DEPLOY_ROLE_ARN secret in GitHub repo settings.
+    // =========================================================================
+    const githubProvider = new iam.OpenIdConnectProvider(this, "GitHubOidc", {
+      url: "https://token.actions.githubusercontent.com",
+      clientIds: ["sts.amazonaws.com"],
+    });
+
+    const deployRole = new iam.Role(this, "GitHubActionsDeployRole", {
+      roleName: "plexus-github-actions-deploy",
+      assumedBy: new iam.WebIdentityPrincipal(
+        githubProvider.openIdConnectProviderArn,
+        {
+          StringEquals: {
+            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          },
+          StringLike: {
+            "token.actions.githubusercontent.com:sub":
+              "repo:noorhanmedical/tertiary-command-center:ref:refs/heads/main",
+          },
+        }
+      ),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonEC2ContainerRegistryPowerUser"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonECS_FullAccess"),
+      ],
+    });
+
+    new cdk.CfnOutput(this, "GitHubActionsRoleArn", {
+      value: deployRole.roleArn,
+      description: "ARN for GitHub Actions OIDC deploy role — add as AWS_DEPLOY_ROLE_ARN secret in GitHub repo settings",
     });
   }
 }

@@ -1,11 +1,15 @@
 import { sql, pgTable, serial, text, varchar, timestamp, index, createInsertSchema, z } from "./_common";
 import { users } from "./users";
+import { clinics } from "./clinics";
+import { integer } from "./_common";
 
 export const PTO_STATUSES = ["pending", "approved", "denied"] as const;
 export type PtoStatus = typeof PTO_STATUSES[number];
 
 export const ptoRequests = pgTable("pto_requests", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   startDate: text("start_date").notNull(),
   endDate: text("end_date").notNull(),
