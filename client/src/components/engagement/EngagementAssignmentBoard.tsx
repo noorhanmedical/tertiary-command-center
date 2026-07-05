@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Building2,
   ChevronRight,
   Loader2,
-  Stethoscope,
   UserCog,
   ExternalLink,
   Shuffle,
@@ -30,13 +29,9 @@ import {
   type BoardRow,
   type SchedulerOption,
   type AssignedRole,
-  dueBucketOf,
-  dueLabel,
-  fmtRel,
-  callReasonOf,
-  targetTestOf,
   priorityOf,
-  PRIORITY_LABELS,
+  shortStatusOf,
+  SHORT_STATUS_TONE,
   coverageRelation,
   sortSchedulersByCoverage,
   commonFacility,
@@ -44,45 +39,6 @@ import {
   buildMemberLoadMap,
 } from "./engagementShared";
 import { formatDateHeader } from "@/lib/format";
-
-const PRIORITY_DOT: Record<string, string> = {
-  high: "bg-rose-500",
-  medium: "bg-amber-400",
-  normal: "bg-slate-300 dark:bg-slate-600",
-};
-
-const PRIORITY_TONE: Record<string, string> = {
-  high: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300",
-  medium: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  normal: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300",
-};
-
-// A compact labeled field used in the enriched worklist card grid.
-function CardField({
-  label,
-  icon,
-  children,
-}: {
-  label: string;
-  icon?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-        {label}
-      </div>
-      <div className="mt-0.5 flex items-center gap-1 truncate font-medium text-slate-700 dark:text-slate-200">
-        {icon ? (
-          <span className="shrink-0 text-slate-400 dark:text-slate-500">
-            {icon}
-          </span>
-        ) : null}
-        <span className="truncate">{children}</span>
-      </div>
-    </div>
-  );
-}
 
 // Small "Home" / "Covers" tag rendered next to a member who can serve the
 // case's facility.
@@ -380,10 +336,8 @@ function WorklistCard({
   onAssignOne: (schedulerId: number) => void;
   onRemove: () => void;
 }) {
-  const priority = priorityOf(row);
-  const target = targetTestOf(row);
   const psid = row.patientScreeningId;
-  const lastResult = row.lastCallOutcome ?? row.lastActivitySummary;
+  const status = shortStatusOf(row);
 
   return (
     <div
@@ -399,17 +353,18 @@ function WorklistCard({
       data-testid="engagement-worklist-card"
       data-execution-case-id={row.executionCaseId}
       data-active={active ? "true" : "false"}
-      className={`group cursor-pointer rounded-2xl border bg-white p-3 transition-all hover:shadow-md dark:bg-slate-900 ${
+      className={`group cursor-pointer rounded-xl border bg-white px-3 py-2.5 transition-all hover:shadow-md dark:bg-slate-900 ${
         active
           ? "border-slate-900 ring-1 ring-slate-900 dark:border-white dark:ring-white"
           : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700"
       }`}
     >
-      <div className="flex items-start gap-3">
-        <div
-          className="pt-0.5"
-          onClick={(e) => e.stopPropagation()}
-        >
+      {/* Simplified row — only 4 fields: Patient · Call Type · Assigned To ·
+          Status. Everything else (Clinic, Service, Category, Source, Last
+          call result, Next action, full Status Trail) lives in the right
+          detail panel. */}
+      <div className="flex items-center gap-3">
+        <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
           <Checkbox
             checked={selected}
             disabled={psid == null}
@@ -418,99 +373,72 @@ function WorklistCard({
           />
         </div>
 
+        {/* Patient */}
         <div className="min-w-0 flex-1">
-          {/* Title row */}
-          <div className="flex items-center gap-2">
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            Patient
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5">
             <span
-              className={`h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[priority]}`}
-              title={`${PRIORITY_LABELS[priority]} priority`}
-              aria-hidden
-            />
-            <span className="truncate text-sm font-semibold text-slate-900 dark:text-white">
-              {row.patientName}
-            </span>
-            <span
-              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${PRIORITY_TONE[priority]}`}
+              className="truncate text-sm font-semibold text-slate-900 dark:text-white"
+              data-testid="engagement-worklist-card-name"
             >
-              {PRIORITY_LABELS[priority]}
+              {row.patientName}
             </span>
             {row.missingInfo?.length ? (
               <span
-                className="inline-flex items-center gap-0.5 text-[10px] text-rose-600"
+                className="inline-flex shrink-0 items-center text-rose-600"
                 title={`Missing: ${row.missingInfo.join(", ")}`}
+                data-testid="engagement-worklist-card-missing"
               >
                 <AlertCircle className="h-3 w-3" />
               </span>
             ) : null}
           </div>
+        </div>
 
-          {/* Taxonomy grid: Clinic · Service · Category · Call Type · Source */}
-          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-3">
-            <CardField label="Clinic" icon={<Building2 className="h-3 w-3" />}>
-              {row.facility ?? "—"}
-            </CardField>
-            <CardField label="Service" icon={<Stethoscope className="h-3 w-3" />}>
-              {target.primary
-                ? `${target.primary}${target.extra > 0 ? ` +${target.extra}` : ""}`
-                : "—"}
-            </CardField>
-            <CardField label="Category">{row.category ?? "—"}</CardField>
-            <CardField label="Call Type">{row.callType ?? "—"}</CardField>
-            <CardField label="Source">{row.source ?? "—"}</CardField>
-            <CardField label="Assigned To">
-              {row.assignedName ? (
-                <span className="text-emerald-700 dark:text-emerald-300">
-                  {row.assignedName}
-                </span>
-              ) : (
-                <span className="text-amber-700 dark:text-amber-400">
-                  Unassigned
-                </span>
-              )}
-            </CardField>
+        {/* Call Type */}
+        <div
+          className="hidden min-w-0 flex-1 sm:block"
+          data-testid="engagement-worklist-card-calltype"
+        >
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            Call Type
           </div>
-
-          {/* Status trail */}
-          {row.statusTrail?.length ? (
-            <div
-              className="mt-2 flex flex-wrap items-center gap-1"
-              data-testid="engagement-worklist-status-trail"
-            >
-              {row.statusTrail.map((step, i) => (
-                <span key={`${step}-${i}`} className="flex items-center gap-1">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
-                      i === row.statusTrail.length - 1
-                        ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                        : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-                    }`}
-                  >
-                    {step}
-                  </span>
-                  {i < row.statusTrail.length - 1 ? (
-                    <ChevronRight className="h-3 w-3 text-slate-300 dark:text-slate-600" />
-                  ) : null}
-                </span>
-              ))}
-            </div>
-          ) : null}
-
-          {/* Last call result + next action */}
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
-            <span
-              className={`rounded-md px-1.5 py-0.5 font-medium ${
-                dueBucketOf(row.nextActionAt) === "overdue"
-                  ? "bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300"
-                  : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-              }`}
-              data-testid="engagement-worklist-due"
-            >
-              Next: {dueLabel(row.nextActionAt)}
-            </span>
-            <span className="truncate text-slate-500 dark:text-slate-400">
-              Last call: {lastResult ? `${lastResult} · ${fmtRel(row.lastActivityAt)}` : "—"}
-            </span>
+          <div className="mt-0.5 truncate text-[11px] font-medium text-slate-700 dark:text-slate-200">
+            {row.callType ?? "—"}
           </div>
+        </div>
+
+        {/* Assigned To */}
+        <div
+          className="hidden min-w-0 flex-1 sm:block"
+          data-testid="engagement-worklist-card-assigned"
+        >
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            Assigned To
+          </div>
+          <div className="mt-0.5 truncate text-[11px] font-medium">
+            {row.assignedName ? (
+              <span className="text-emerald-700 dark:text-emerald-300">
+                {row.assignedName}
+              </span>
+            ) : (
+              <span className="text-amber-700 dark:text-amber-400">—</span>
+            )}
+          </div>
+        </div>
+
+        {/* Status */}
+        <div className="shrink-0" data-testid="engagement-worklist-card-status">
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            Status
+          </div>
+          <span
+            className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${SHORT_STATUS_TONE[status]}`}
+          >
+            {status}
+          </span>
         </div>
 
         {/* Actions (reveal on hover / when active) */}
@@ -602,9 +530,19 @@ export function EngagementWorklist({
 }) {
   const { toast } = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  // Worklist groups are collapsed by default; clicking a header opens a single
-  // right-anchored flyout. Only one group's flyout is open at a time.
-  const [openGroupKey, setOpenGroupKey] = useState<string | null>(null);
+  // Worklist groups are collapsed by default; clicking a header expands the
+  // group INLINE (an accordion that pushes the list below it down). Multiple
+  // groups can be open at once.
+  const [openGroupKeys, setOpenGroupKeys] = useState<Set<string>>(new Set());
+
+  function toggleGroupOpen(key: string) {
+    setOpenGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const rowByCase = useMemo(() => {
     const m = new Map<number, BoardRow>();
@@ -878,15 +816,15 @@ export function EngagementWorklist({
           </div>
 
           {/* Date · facility groups — collapsed by default. Clicking a header
-              opens a single right-anchored flyout panel with the group's
-              patient cards + "assign all" picker, leaving the date list in a
-              fixed left column. */}
+              expands the group INLINE (accordion) directly below it, pushing
+              the rest of the list down. The expanded region holds the group's
+              "assign all" picker + the simplified patient rows. */}
           {grouped.map((group) => {
             const key = `${group.date ?? "no-date"}|${group.facility}`;
             const ids = groupSelectableIds(group);
             const groupAllSelected =
               ids.length > 0 && ids.every((id) => selectedIds.has(id));
-            const isOpen = openGroupKey === key;
+            const isOpen = openGroupKeys.has(key);
             return (
               <section
                 key={key}
@@ -894,63 +832,54 @@ export function EngagementWorklist({
                 data-group-date={group.date ?? "no-date"}
                 data-group-facility={group.facility}
               >
-                <Popover
-                  open={isOpen}
-                  onOpenChange={(o) => setOpenGroupKey(o ? key : null)}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggleGroupOpen(key)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleGroupOpen(key);
+                    }
+                  }}
+                  aria-expanded={isOpen}
+                  data-testid="engagement-group-toggle"
+                  className={`flex cursor-pointer items-center gap-2 border px-2 py-1.5 transition-colors ${
+                    isOpen
+                      ? "rounded-t-xl border-slate-900 bg-slate-100 dark:border-white dark:bg-slate-800"
+                      : "rounded-xl border-slate-200 bg-slate-50 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/40 dark:hover:border-slate-700"
+                  }`}
                 >
-                  <PopoverTrigger asChild>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setOpenGroupKey(isOpen ? null : key);
-                        }
-                      }}
-                      aria-expanded={isOpen}
-                      data-testid="engagement-group-toggle"
-                      className={`flex cursor-pointer items-center gap-2 rounded-xl border px-2 py-1.5 transition-colors ${
-                        isOpen
-                          ? "border-slate-900 bg-slate-100 dark:border-white dark:bg-slate-800"
-                          : "border-slate-200 bg-slate-50 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/40 dark:hover:border-slate-700"
-                      }`}
-                    >
-                      <ChevronRight
-                        className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
-                          isOpen ? "rotate-90" : ""
-                        }`}
-                      />
-                      <span onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={groupAllSelected}
-                          disabled={ids.length === 0}
-                          onCheckedChange={() => toggleGroupSelect(ids)}
-                          aria-label="Select all in group"
-                          data-testid="engagement-group-select"
-                        />
-                      </span>
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                        {group.date
-                          ? formatDateHeader(group.date)
-                          : "Unscheduled"}
-                      </h3>
-                      <span className="inline-flex items-center gap-1 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-300">
-                        <Building2 className="h-3 w-3" />
-                        {group.facility}
-                      </span>
-                      <span className="ml-auto rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                        {group.rows.length}
-                      </span>
-                    </div>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    side="right"
-                    align="start"
-                    sideOffset={8}
-                    collisionPadding={12}
-                    className="z-[60] flex max-h-[70vh] w-[440px] flex-col gap-2 overflow-hidden p-2.5"
-                    data-testid="engagement-group-flyout"
+                  <ChevronRight
+                    className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
+                      isOpen ? "rotate-90" : ""
+                    }`}
+                  />
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={groupAllSelected}
+                      disabled={ids.length === 0}
+                      onCheckedChange={() => toggleGroupSelect(ids)}
+                      aria-label="Select all in group"
+                      data-testid="engagement-group-select"
+                    />
+                  </span>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                    {group.date ? formatDateHeader(group.date) : "Unscheduled"}
+                  </h3>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-300">
+                    <Building2 className="h-3 w-3" />
+                    {group.facility}
+                  </span>
+                  <span className="ml-auto rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                    {group.rows.length}
+                  </span>
+                </div>
+
+                {isOpen ? (
+                  <div
+                    className="space-y-2 rounded-b-xl border border-t-0 border-slate-900 bg-white p-2.5 dark:border-white dark:bg-slate-900"
+                    data-testid="engagement-group-panel"
                   >
                     <div className="flex items-center gap-2 border-b border-slate-100 pb-2 dark:border-slate-800">
                       <h4 className="truncate text-xs font-semibold text-slate-700 dark:text-slate-200">
@@ -961,7 +890,7 @@ export function EngagementWorklist({
                           · {group.facility}
                         </span>
                       </h4>
-                      <div className="ml-auto">
+                      <div className="ml-auto" onClick={(e) => e.stopPropagation()}>
                         <SchedulerPicker
                           schedulers={schedulers}
                           busy={assigning}
@@ -973,7 +902,7 @@ export function EngagementWorklist({
                         />
                       </div>
                     </div>
-                    <div className="space-y-2 overflow-y-auto">
+                    <div className="space-y-2">
                       {group.rows.map((r) => (
                         <WorklistCard
                           key={r.executionCaseId}
@@ -996,8 +925,8 @@ export function EngagementWorklist({
                         />
                       ))}
                     </div>
-                  </PopoverContent>
-                </Popover>
+                  </div>
+                ) : null}
               </section>
             );
           })}

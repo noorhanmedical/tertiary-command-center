@@ -336,6 +336,68 @@ export function priorityOf(row: BoardRow): Priority {
   return "normal";
 }
 
+// ─── Short, human status label (worklist row) ───────────────────────
+//
+// The simplified worklist row shows a single short status instead of the
+// full derived status trail (which now lives only in the detail panel).
+// Everything is DERIVED from fields the row already carries — no schema,
+// no new columns. Unassigned is always "Awaiting assignment"; assigned
+// rows resolve to the most meaningful outcome-driven label. Gaps stay
+// honest — a freshly assigned case with no call yet reads "Assigned".
+export type ShortStatus =
+  | "Awaiting assignment"
+  | "Assigned"
+  | "On call list"
+  | "Review assignment"
+  | "Kept assigned"
+  | "Scheduled"
+  | "Declined"
+  | "Cooldown";
+
+export function shortStatusOf(row: BoardRow): ShortStatus {
+  if (row.assignedTeamMemberId == null) return "Awaiting assignment";
+  const status = (row.engagementStatus ?? "").toLowerCase();
+  const outcome = (row.lastCallOutcome ?? "").toLowerCase();
+  const summary = (row.lastActivitySummary ?? "").toLowerCase();
+  const both = `${status} ${outcome} ${summary}`;
+  if (/scheduled/.test(both)) return "Scheduled";
+  if (/declin/.test(both)) return "Declined";
+  if (
+    row.callType === "Repeat Test Due" ||
+    /cooldown|re[- _]?elig|eligible again|re-?qualif|repeat (test|screen)/.test(
+      both,
+    )
+  )
+    return "Cooldown";
+  if (/review|reassign/.test(both)) return "Review assignment";
+  if (/kept assigned|keep assigned/.test(both)) return "Kept assigned";
+  if (
+    /no[ _-]?answer|unable|unreachable|voicemail|attempt|call ?back|on call list|left (a )?message|\bvm\b/.test(
+      both,
+    )
+  )
+    return "On call list";
+  return "Assigned";
+}
+
+export const SHORT_STATUS_TONE: Record<ShortStatus, string> = {
+  "Awaiting assignment":
+    "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
+  Assigned:
+    "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300",
+  "On call list":
+    "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
+  "Review assignment":
+    "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
+  "Kept assigned":
+    "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+  Scheduled:
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
+  Declined: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300",
+  Cooldown:
+    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
+};
+
 export function matchesSmartFilter(row: BoardRow, key: SmartFilterKey): boolean {
   const status = (row.engagementStatus ?? "").toLowerCase();
   const summary = (row.lastActivitySummary ?? "").toLowerCase();
