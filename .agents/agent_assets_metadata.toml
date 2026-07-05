@@ -12,3 +12,9 @@ id = "yVlds9mly5RKy0yoXmrPu"
 uri = "file://.local/exports/git-state-findings.zip"
 type = "unspecified"
 title = "Git State Findings (for ChatGPT / Claude)"
+
+[[outputs]]
+id = "XIIVblD7xwXGdBHwPBSTy"
+uri = "file://.local/exports/plexus-iq-branch.tar.gz"
+type = "unspecified"
+title = "Plexus IQ branch source (tar.gz)"
