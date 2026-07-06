@@ -51,6 +51,7 @@ export class DbAnalysisJobsRepository implements IAnalysisJobsRepository {
         totalPatients: analysisJobs.totalPatients,
         completedPatients: analysisJobs.completedPatients,
         errorMessage: analysisJobs.errorMessage,
+        metadata: analysisJobs.metadata,
         startedAt: analysisJobs.startedAt,
         completedAt: analysisJobs.completedAt,
         batchName: screeningBatches.name,

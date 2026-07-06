@@ -16,6 +16,18 @@ export const screeningBatches = pgTable("screening_batches", {
   facility: text("facility"),
   scheduleDate: text("schedule_date"),
   assignedSchedulerId: integer("assigned_scheduler_id"),
+  // Import-session tracking (task: Patient EHR import history).
+  // Non-null only for batches created by the Patient EHR bulk
+  // import flow. `importSourceFields` records the column headers
+  // detected in the pasted file; `importKind` is "full" | "service"
+  // (service = minimal-field import, e.g. Date of Service / Patient /
+  // Procedure only); `importCreatedBy` is the importing user id;
+  // `pendingImportPayload` temporarily stores the parsed preview rows
+  // when a non-admin submits a minimal import for admin approval.
+  importSourceFields: jsonb("import_source_fields"),
+  importKind: text("import_kind"),
+  importCreatedBy: varchar("import_created_by"),
+  pendingImportPayload: jsonb("pending_import_payload"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
@@ -33,6 +45,8 @@ export type InsertScreeningBatch = z.infer<typeof insertScreeningBatchSchema>;
 
 export const patientScreenings = pgTable("patient_screenings", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   batchId: integer("batch_id").notNull().references(() => screeningBatches.id, { onDelete: "cascade" }),
   time: text("time"),
   name: text("name").notNull(),
