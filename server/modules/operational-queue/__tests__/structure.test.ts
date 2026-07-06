@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Operational queue — structural parity test fixture (Batch 11a).
 //
 // Runnable via:   npx tsx server/modules/operational-queue/__tests__/structure.test.ts
@@ -210,10 +211,12 @@ check(
   `Sample composite ids must be unique; got ${ids.length} items, ${uniq.size} unique`,
 );
 
-if (failures.length > 0) {
-  console.error("Operational queue structural test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Operational queue structural test passed.");
-}
+describe("Operational queue structural test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Operational queue structural test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

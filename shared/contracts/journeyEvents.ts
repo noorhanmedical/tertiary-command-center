@@ -48,6 +48,8 @@ export const PATIENT_JOURNEY_EVENT_TYPES = [
   "document_completed",
   "billing_payment_updated",
   "added_to_invoice",
+  // Manager-authored free-text note appended directly to the timeline.
+  "note_added",
 ] as const;
 
 export type PatientJourneyEventType = (typeof PATIENT_JOURNEY_EVENT_TYPES)[number];

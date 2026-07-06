@@ -1,0 +1,182 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Refactor the Team Member Portal Playground tab model and panel layout.
+
+Current issue:
+The Playground tab behavior needs to be patient-centered. If I am working Patient A and use their calendar, call, PDFs, overview, etc., those should all live under one patient tab. If I then search/click another patient from the left side or call list, that should open another patient tab. Do not create a separate top-level tab for every action.
+
+Core UX rule:
+Outer tabs = patients.
+Inner tabs/sections = actions for that patient.
+
+Required tab model:
+
+1. Playground outer tabs should be patient tabs:
+   - John Smith
+   - Maria Garcia
+   - Robert Lee
+
+2. Inside each patient tab, show inner sections:
+   - Overview
+   - Call
+   - Schedule
+   - PDFs
+   - Timeline
+   - Notes if available
+
+3. Click behavior:
+   - Patient name click opens/focuses that patient tab and selects Overview.
+   - Phone icon opens/focuses that patient tab and selects Call.
+   - Calendar icon opens/focuses that patient tab and selects Schedule.
+   - Push to Playground opens/focuses that patient tab and selects Overview or Case.
+   - Clicking another patient opens another patient tab.
+   - Existing patient tab should be focused instead of duplicated.
+
+4. Patient tab context must preserve:
+   - patientId
+   - executionCaseId
+   - patient name
+   - callReason
+   - target ancillary/workflow category
+   - sourcePortal ACS/PCS
+   - available Patient Directory data
+   - available Clinician PDF
+   - available Plexus PDF
+
+5. Patient name data:
+   - Do not invent patient data.
+   - Pull exact patient data from the Patient Directory/source already used in the app.
+   - Use graceful empty states if data is unavailable.
+
+6. Call section:
+   - Must be designed around real RingCentral calling.
+   - If RingCentral integration exists, use it.
+   - If not wired yet, show a real integration boundary saying RingCentral connection required.
+   - Do not pretend a call was placed.
+   - Still allow call result logging through existing canonical endpoint:
+     POST /api/engagement-center/call-result
+
+7. Schedule section:
+   - Must be a large Zocdoc-style scheduler.
+   - Left half: big calendar / day-week grid / slots.
+   - Right half: patient/case info and scheduling form.
+   - Include patient name, phone, call reason, target test, clinic/facility, insurance if available, Clinician PDF, Plexus PDF, appointment type, selected date/time, location, notes, confirm button.
+   - Do not use a tiny cramped modal as the primary scheduling experience.
+
+8. PDFs section:
+   - Show Clinician PDF and Plexus PDF if available.
+   - Show preview/open/download actions if existing.
+   - If missing, show:
+     “Clinician PDF not generated”
+     “Plexus PDF not generated”
+   - Do not invent documents.
+
+9. Overview section:
+   - Show patient summary, call reason, target test, qualification reason, supporting diagnoses/factors, PDFs, call/schedule shortcuts, journey timeline, notes, next action, status.
+
+Panel layout issue:
+When both left and right dropdown/panels are open, the Playground becomes hard to see. Fix the layout so the user can always see and use the Playground.
+
+Required panel behavior:
+
+1. Implement adaptive side panel modes:
+   - expanded
+   - compact rail
+   - collapsed
+
+2. Preserve a minimum usable Playground width.
+   Recommended minimum:
+   900px if feasible.
+
+3. If both side panels are expanded and the screen width is not enough, automatically convert one or both panels to compact rail mode instead of crushing the Playground.
+
+4. Left panel:
+   - Expanded shows search/list/filters.
+   - Compact rail shows icons only.
+   - Collapsed hides panel with a clear reopen control.
+
+5. Right panel:
+   - Expanded shows call-list tiles.
+   - Compact rail shows queue icon and count badges.
+   - Collapsed hides panel with a clear reopen control.
+
+6. Do not permanently make panels tiny.
+   The goal is not smaller panels.
+   The goal is adaptive behavior so the Playground always remains usable.
+
+7. Use a CSS grid/flex layout that protects the center Playground.
+   Do not overlay panels on top of the Playground unless explicitly opened as a temporary drawer.
+
+Visual style:
+- Bright
+- Bold
+- Premium
+- iOS-like
+- White cards
+- Strong spacing
+- Clear typography
+- Easy to use
+- No clutter
+- No tiny cramped UI
+
+Architecture rules:
+- Team Member Portal is the canonical destination for call-list work.
+- Engagement Center assigns work.
+- patient_execution_cases is the source of truth.
+- Patient Directory is the canonical patient identity/profile source.
+- Playground is the operational workspace.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not create a new source of truth.
+- Do not change schema unless absolutely required.
+- Do not break admin view-as behavior.
+- Do not break ACS/PCS call-list tiles.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Refine Playground patient tabs and adaptive panels
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

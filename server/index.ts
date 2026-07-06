@@ -4,7 +4,9 @@ import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { readFileSync } from "node:fs";
 import { errorHandler } from "./middleware/errorHandler";
+import { clinicContext } from "./middleware/clinicContext";
 import { validateEnv } from "./lib/validateEnv";
 import { startBackgroundServices, stopBackgroundServices } from "./lifecycle";
 
@@ -77,6 +79,10 @@ app.use(
     },
   }),
 );
+
+// Attach req.clinicId from session. Must run after session middleware.
+// Admin role gets null (bypasses all clinic filters); others get their clinic.
+app.use(clinicContext);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -159,21 +165,49 @@ process.on("uncaughtException", (err) => {
       // Each job acquires a Postgres advisory lock per tick so multiple ECS
       // tasks never double-fire.
       startBackgroundServices();
-      import("./integrations/fileStorage").then(({ getStorageProvider }) => {
-        if (getStorageProvider() !== "google_drive") {
-          log(`Storage provider: ${getStorageProvider()} — skipping Google Drive folder tree initialization`, "startup");
-          return;
-        }
-        import("./integrations/googleDrive").then(({ validateDriveCredentials, initializeDriveFolderTree }) => {
-          try {
-            validateDriveCredentials();
-          } catch {
-          }
-          initializeDriveFolderTree();
-        }).catch(() => {});
-      }).catch(() => {});
     },
   );
+
+  // ─── Dev orphan watchdog ──────────────────────────────────────────────────
+  // In dev the process tree is `sh -c` → tsx CLI wrapper → this node process.
+  // On restart the workflow manager kills an ancestor, but SIGKILL doesn't
+  // propagate down, so this node listener (and often the tsx wrapper) leak and
+  // keep holding port 5000 — the next start then fails with EADDRINUSE.
+  // We watch two signals and self-terminate on either so the port frees up:
+  //   1. our own parent changed (we were directly reparented), or
+  //   2. our parent's parent (grandparent) changed — an ancestor died and
+  //      leaked the whole wrapper+listener subtree while our direct ppid stays
+  //      intact (the case a ppid-only check misses).
+  // Dev-only: in production the orchestrator owns the process lifecycle.
+  if (process.env.NODE_ENV === "development") {
+    // Read a pid's parent pid from /proc. comm (field 2) may contain spaces or
+    // parens, so parse the fields after the final ')'.
+    const readPpidOf = (pid: number): number => {
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+        const fields = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+        return Number.parseInt(fields[1], 10); // [0]=state, [1]=ppid
+      } catch {
+        return -1;
+      }
+    };
+    const originalPpid = process.ppid;
+    const originalGrandparentPid = readPpidOf(originalPpid);
+    const orphanWatch = setInterval(() => {
+      const reparented = process.ppid !== originalPpid;
+      const grandparentChanged =
+        originalGrandparentPid > 0 &&
+        readPpidOf(process.ppid) !== originalGrandparentPid;
+      if (reparented || grandparentChanged) {
+        console.error(
+          `[watchdog] Ancestor process changed (ppid ${originalPpid}→${process.ppid}, ` +
+            `grandparent ${originalGrandparentPid}); process orphaned. Exiting to release port.`,
+        );
+        process.exit(0);
+      }
+    }, 2_000);
+    orphanWatch.unref();
+  }
 
   // ─── Graceful shutdown on SIGTERM ─────────────────────────────────────────
   // ECS sends SIGTERM with a configurable stopTimeout (default 30s). Drain
@@ -185,11 +219,16 @@ process.on("uncaughtException", (err) => {
     shuttingDown = true;
     log(`${signal} received. Draining HTTP server...`, "shutdown");
 
-    // Force exit after 25s so we exit comfortably before ECS's default 30s stopTimeout.
+    const isDev = process.env.NODE_ENV !== "production";
+
+    // Force exit as a safety net. In dev keep it short so a workflow restart
+    // never overlaps the old listener with the new one (EADDRINUSE on port
+    // 5000); in production allow a longer drain that still stays comfortably
+    // before ECS's default 30s stopTimeout.
     const forceExit = setTimeout(() => {
       console.error("[shutdown] Graceful shutdown timed out — force exiting.");
       process.exit(1);
-    }, 25_000);
+    }, isDev ? 10_000 : 25_000);
     forceExit.unref();
 
     httpServer.close(async (err) => {
@@ -217,6 +256,22 @@ process.on("uncaughtException", (err) => {
       clearTimeout(forceExit);
       process.exit(0);
     });
+
+    // httpServer.close() above only fires its callback once all open
+    // connections have ended. In dev, Vite's HMR holds a long-lived connection
+    // open, which would otherwise keep the callback from running and leave the
+    // process holding port 5000 across a workflow restart. Drop active
+    // connections so the drain completes promptly. Dev-only so production
+    // requests are allowed to finish draining naturally. (Upgraded WebSocket
+    // sockets aren't guaranteed covered by this API, hence the force-exit net.)
+    if (isDev) {
+      if (typeof httpServer.closeIdleConnections === "function") {
+        httpServer.closeIdleConnections();
+      }
+      if (typeof httpServer.closeAllConnections === "function") {
+        httpServer.closeAllConnections();
+      }
+    }
   };
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));

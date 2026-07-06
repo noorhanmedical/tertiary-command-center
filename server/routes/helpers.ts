@@ -136,6 +136,8 @@ export const addPatientSchema = z.object({
   noPreviousTests: z.boolean().optional(),
   patientType: z.string().optional(),
   notes: z.string().optional(),
+  qualifyingTests: z.array(z.string()).optional(),
+  reasoning: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const updatePatientSchema = z.object({
@@ -147,6 +149,7 @@ export const updatePatientSchema = z.object({
   phoneNumber: z.string().nullable().optional(),
   insurance: z.string().nullable().optional(),
   diagnoses: z.string().nullable().optional(),
+  reasoning: z.record(z.string(), z.unknown()).nullable().optional(),
   history: z.string().nullable().optional(),
   medications: z.string().nullable().optional(),
   previousTests: z.string().nullable().optional(),

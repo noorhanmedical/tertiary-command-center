@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { storage, type PatientRosterAggregateRow } from "../storage";
 import { normalizePatientName, normalizeDob } from "../lib/patientKey";
 import { computeCooldowns } from "../services/cooldownCanonical";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
 
 const UNASSIGNED = "Unassigned";
 
@@ -27,6 +29,7 @@ function decodeRosterKey(encoded: string): { name: string; dob: string | null } 
 type RosterPatient = {
   key: string;
   encodedKey: string;
+  representativeScreeningId: number;
   name: string;
   dob: string | null;
   age: number | null;
@@ -41,6 +44,7 @@ type RosterPatient = {
   cooldownActiveCount: number;
   nextCooldownClearsAt: string | null;
   daysUntilNextClear: number | null;
+  plexusId: string | null;
 };
 
 type ClinicGroup = { clinic: string; patients: RosterPatient[] };
@@ -78,11 +82,13 @@ export function invalidatePatientDatabaseCache(): void {
   invalidatePatientDatabase();
 }
 
-function rosterFromAggregate(row: PatientRosterAggregateRow): RosterPatient {
+function rosterFromAggregate(row: PatientRosterAggregateRow, plexusIdMap?: Map<number, string>): RosterPatient {
   const encodedKey = encodeRosterKey(row.name, row.dob);
+  const plexusId = plexusIdMap?.get(row.representativeId) ?? null;
   return {
     key: encodedKey,
     encodedKey,
+    representativeScreeningId: row.representativeId,
     name: row.name,
     dob: row.dob,
     age: row.age,
@@ -97,7 +103,46 @@ function rosterFromAggregate(row: PatientRosterAggregateRow): RosterPatient {
     cooldownActiveCount: row.cooldownActiveCount,
     nextCooldownClearsAt: row.nextCooldownClearsAt,
     daysUntilNextClear: row.daysUntilNextClear,
+    plexusId,
   };
+}
+
+/**
+ * Lookup Plexus IDs for a set of representative screening IDs.
+ * Joins patient_screenings → patient_directory via patient_directory_id FK
+ * (when the column exists), falling back to a synthetic PLX-XXXXXX generated
+ * from the screening id when patient_directory rows are unavailable.
+ */
+async function lookupPlexusIds(representativeIds: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  if (representativeIds.length === 0) return out;
+
+  try {
+    // Try a direct lookup via the patient_directory_id FK on patient_screenings.
+    // This works when migration 0040 + the backfill have both run.
+    const rows = await db.execute<{ ps_id: number; plexus_id: string }>(sql`
+      SELECT ps.id AS ps_id, pd.plexus_id
+      FROM patient_screenings ps
+      INNER JOIN patient_directory pd ON pd.id = ps.patient_directory_id
+      WHERE ps.id = ANY(${sql`ARRAY[${sql.join(representativeIds.map((id) => sql`${id}`), sql`, `)}]::int[]`})
+        AND ps.patient_directory_id IS NOT NULL
+    `);
+    for (const r of rows.rows) {
+      out.set(r.ps_id, r.plexus_id);
+    }
+  } catch {
+    // Column doesn't exist yet — fall through to fallback.
+  }
+
+  // Fallback: generate deterministic PLX-XXXXXX from the screening id for
+  // any representatives that didn't get a real plexus_id.
+  for (const id of representativeIds) {
+    if (!out.has(id)) {
+      out.set(id, `PLX-${String(id).padStart(6, "0")}`);
+    }
+  }
+
+  return out;
 }
 
 export function registerPatientDatabaseRoutes(app: Express) {
@@ -132,10 +177,14 @@ export function registerPatientDatabaseRoutes(app: Express) {
         storage.getPatientHistoryImportReport(0),
       ]);
 
+      // Lookup Plexus IDs for representative screenings in this page.
+      const representativeIds = aggregate.rows.map((r) => r.representativeId);
+      const plexusIdMap = await lookupPlexusIds(representativeIds);
+
       const groupsMap = new Map<string, RosterPatient[]>();
       for (const row of aggregate.rows) {
         const clinic = row.clinic || UNASSIGNED;
-        const patient = rosterFromAggregate(row);
+        const patient = rosterFromAggregate(row, plexusIdMap);
         const arr = groupsMap.get(clinic);
         if (arr) arr.push(patient);
         else groupsMap.set(clinic, [patient]);
@@ -240,6 +289,27 @@ export function registerPatientDatabaseRoutes(app: Express) {
     }
   });
 
+  // Resolve a numeric patient_screenings id back to the roster (name, dob)
+  // group key so deep links like /patient-directory?patientId=123 (carrying a
+  // screening id from the call list) can select the correct roster patient.
+  // Registered before the single-segment :encodedKey route so the two-segment
+  // path never collides with it.
+  app.get("/api/patients/database/resolve/:screeningId", async (req, res) => {
+    try {
+      const id = parseInt(req.params.screeningId, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid screening id" });
+      }
+      const screening = await storage.getPatientScreening(id);
+      if (!screening) return res.status(404).json({ error: "Screening not found" });
+      const encodedKey = encodeRosterKey(screening.name, screening.dob ?? null);
+      res.json({ encodedKey, name: screening.name, dob: screening.dob ?? null });
+    } catch (error: any) {
+      console.error("[patient-database/resolve] error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Per-patient profile: fetches the (name, dob) group's full screening rows,
   // notes, and history with scoped queries — never the whole tables.
   app.get("/api/patients/database/:encodedKey", async (req, res) => {
@@ -330,9 +400,14 @@ export function registerPatientDatabaseRoutes(app: Express) {
           scheduleDate: n.scheduleDate,
         }));
 
+      // Lookup Plexus ID for this patient.
+      const profilePlexusMap = await lookupPlexusIds([primary.id]);
+      const profilePlexusId = profilePlexusMap.get(primary.id) ?? null;
+
       res.json({
         key: req.params.encodedKey,
         encodedKey: req.params.encodedKey,
+        plexusId: profilePlexusId,
         identity: {
           name: primary.name,
           dob: primary.dob ?? dob ?? null,

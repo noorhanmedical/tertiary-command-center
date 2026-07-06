@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Operational Queue ↔ Team Task projection parity test (Bundle 45).
 //
 // Runnable via:
@@ -428,10 +429,12 @@ for (const a of FIXTURES) {
   check(!threw, "§10: projections must not mutate input");
 }
 
-if (failures.length > 0) {
-  console.error("OperationalQueue ↔ TeamTask parity test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("OperationalQueue ↔ TeamTask parity test passed.");
-}
+describe("OperationalQueue ↔ TeamTask parity test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "OperationalQueue ↔ TeamTask parity test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

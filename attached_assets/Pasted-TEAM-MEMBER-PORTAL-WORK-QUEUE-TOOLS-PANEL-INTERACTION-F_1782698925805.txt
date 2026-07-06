@@ -1,0 +1,234 @@
+TEAM MEMBER PORTAL — WORK QUEUE / TOOLS PANEL INTERACTION FIX
+
+Current behavior:
+The Work Queue panel is close to correct:
+- Clicking the right side opens the smaller/narrow version.
+- Clicking the left side opens the extended/full version.
+- This behavior is good.
+
+Problem:
+The Tools panel is not behaving consistently. When Tools opens, the Work Queue disappears. That is wrong.
+
+Work Queue and Tools should be independent. Opening one should not close or remove the other.
+
+Core rule:
+The only thing that should move both side panels out of the way is clicking the center Playground/canvas area.
+
+Opening Work Queue should not make Tools disappear.
+Opening Tools should not make Work Queue disappear.
+Clicking away from a panel should not remove it from the DOM or fully hide it.
+Panels should slide aside, remain recoverable, and preserve their state.
+
+DESIRED INTERACTION MODEL
+
+There are three main zones:
+
+1. Left side / Tools side
+2. Center Playground / canvas
+3. Right side / Work Queue side
+
+Each side panel has two click zones:
+- Inner/left/right edge for compact mode
+- Outer/opposite edge for expanded mode
+
+WORK QUEUE BEHAVIOR
+
+The Work Queue is on the right side.
+
+Clicking the right side of the Work Queue control:
+- opens the smaller/narrow Work Queue version
+- keeps it visible and usable
+- does not affect Tools
+
+Clicking the left side of the Work Queue control:
+- opens the expanded/full Work Queue version
+- keeps it visible and usable
+- does not affect Tools
+
+Clicking the middle of the Work Queue pill/control:
+- toggles Work Queue open/closed
+- if open, it slides aside
+- if aside, it comes back
+- it should not fully disappear
+- it should not unmount
+- it should preserve filters, scroll position, selected patient, and queue state
+
+TOOLS BEHAVIOR
+
+The Tools panel is on the left side.
+
+It should mirror the Work Queue behavior.
+
+Clicking the left side of the Tools control:
+- opens the smaller/narrow Tools version
+- keeps it visible and usable
+- does not affect Work Queue
+
+Clicking the right side of the Tools control:
+- opens the expanded/full Tools version
+- keeps it visible and usable
+- does not affect Work Queue
+
+Clicking the middle of the Tools pill/control:
+- toggles Tools open/closed
+- if open, it slides aside
+- if aside, it comes back
+- it should not fully disappear
+- it should not unmount
+- it should preserve tool state
+
+CENTER PLAYGROUND BEHAVIOR
+
+Clicking the center Playground/canvas area should be the only action that moves both panels aside.
+
+When the user clicks the Playground:
+- Work Queue slides to the right side
+- Tools slides to the left side
+- both remain recoverable
+- both keep a visible edge/pill
+- both preserve their state
+- neither fully disappears
+
+Clicking the Playground again can toggle the panels back if that interaction already exists or is easy to implement.
+
+The key rule:
+Playground click = move both side panels out of the way.
+Work Queue click = only affects Work Queue.
+Tools click = only affects Tools.
+
+DO NOT COUPLE PANEL STATE
+
+Do not implement this as a single global “active panel” state where opening one panel closes the other.
+
+Wrong:
+- Open Tools → Work Queue disappears
+- Open Work Queue → Tools disappears
+
+Correct:
+- Open Tools → Tools changes only
+- Open Work Queue → Work Queue changes only
+- Click Playground → both slide aside
+
+PANEL STATES
+
+Each panel should have its own independent state.
+
+Recommended state model:
+
+Work Queue:
+- closedAside
+- compact
+- expanded
+
+Tools:
+- closedAside
+- compact
+- expanded
+
+Playground focus:
+- normal
+- focusMode
+
+When Playground enters focusMode:
+- set Work Queue to closedAside
+- set Tools to closedAside
+
+When user interacts with either side:
+- only update that side’s state
+
+SLIDE-ASIDE BEHAVIOR
+
+When a panel is closed/asided:
+- it should slide mostly offscreen
+- it should leave a visible edge/pill
+- the edge/pill should be clickable
+- optional opacity around 50% while idle
+- full opacity on hover/focus
+- it should not fully disappear
+- it should not be replaced by a random miniature toolbar
+
+ANIMATION REQUIREMENTS
+
+Work Queue and Tools should use the same animation system:
+- same timing
+- same easing
+- mirrored direction
+- same hover behavior
+- same opacity behavior
+- same restore behavior
+
+Do not make Tools animate differently from Work Queue.
+
+VISUAL REQUIREMENTS
+
+Keep the interaction premium and iOS-like:
+- smooth slide
+- subtle opacity
+- clean visible edge
+- no jitter
+- no disappearing panels
+- no layout jump
+- no compressed weird toolbar
+- no loss of patient or tool state
+
+VALIDATION SCENARIOS
+
+Scenario A:
+Click right side of Work Queue.
+Expected:
+Work Queue opens compact/narrow. Tools stays exactly as it was.
+
+Scenario B:
+Click left side of Work Queue.
+Expected:
+Work Queue opens expanded/full. Tools stays exactly as it was.
+
+Scenario C:
+Click middle of Work Queue control.
+Expected:
+Work Queue toggles aside/back. Tools stays exactly as it was.
+
+Scenario D:
+Click left side of Tools.
+Expected:
+Tools opens compact/narrow. Work Queue stays exactly as it was.
+
+Scenario E:
+Click right side of Tools.
+Expected:
+Tools opens expanded/full. Work Queue stays exactly as it was.
+
+Scenario F:
+Click middle of Tools control.
+Expected:
+Tools toggles aside/back. Work Queue stays exactly as it was.
+
+Scenario G:
+Click center Playground/canvas.
+Expected:
+Both Work Queue and Tools slide aside but remain visible/recoverable.
+
+Scenario H:
+Click Work Queue after Playground moved panels aside.
+Expected:
+Work Queue returns. Tools remains aside unless separately opened.
+
+Scenario I:
+Click Tools after Playground moved panels aside.
+Expected:
+Tools returns. Work Queue remains aside unless separately opened.
+
+Scenario J:
+Open patient in Playground.
+Expected:
+Patient workspace opens. Side panels slide aside if appropriate, but their visible controls remain accessible.
+
+DO NOT:
+- Do not make Tools close Work Queue.
+- Do not make Work Queue close Tools.
+- Do not fully remove either panel.
+- Do not unmount panel content when sliding aside.
+- Do not reset scroll/filter/selected patient state.
+- Do not use a single active panel state.
+- Do not replace full panels with random minimized toolbar icons.
+- Do not make the panel controls disappear.

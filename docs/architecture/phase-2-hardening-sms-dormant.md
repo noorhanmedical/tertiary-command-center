@@ -54,3 +54,27 @@ To enable SMS properly (NOT in scope here):
 4. Update `CommunicationTimeline` to use a real "Sent" label only
    for `kind: "sms"` (genuine send), keeping the scaffold suffix
    for `kind: "sms_scaffold"`.
+
+## Update — Task #648: SMS enabled via Twilio adapter
+
+The enablement path above has been executed:
+
+- `server/integrations/twilioSms.ts` is the single provider
+  integration point (Replit Twilio connector first, then
+  `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_PHONE_NUMBER`
+  env vars). When neither is configured, `getTwilioConfig()` returns
+  null and every surface shows an honest "not connected" boundary.
+- `server/routes/patientMessages.ts` exposes
+  `/api/portal/patient-messages/*` (status, threads, thread, send,
+  patient picker) plus the public Twilio inbound webhook
+  `POST /api/sms/twilio/inbound`. Sends are recorded as `sent` ONLY
+  after Twilio accepts; provider failures persist as `failed` with
+  the error message.
+- `communicationLogService` now accepts `kind: "sms"` for genuine
+  sends; `sms_scaffold` remains and is still labeled "not sent" by
+  `CommunicationTimeline`.
+- Message store: `patient_sms_messages`
+  (migration 0045, `shared/schema/patientSms.ts`).
+- The QA guard (`qa-phase-2-hardening-sms-dormant.mjs`) now enforces
+  the honesty invariants of the ENABLED state (single adapter,
+  gated config, honest failure recording, scaffold labeling).

@@ -1,0 +1,1152 @@
+We need to proceed in two phases:
+
+PHASE 1: Protect current work.
+PHASE 2: Build the full enterprise tile set exactly as specified below.
+
+Do not push to main.
+Do not merge.
+Do not reset.
+Do not rebase.
+Do not force push.
+Do not delete existing work.
+
+============================================================
+PHASE 1 — BACK UP CURRENT REPLIT WORK FIRST
+============================================================
+
+Current local branch:
+plexus-iq-admin-review-persistence-fix
+
+Current local HEAD from prior inspection:
+6bf2255240b49dc9bd4995ac1c39c5e5e352694b
+
+The current workspace was reported as 116 commits ahead of origin/main.
+The same-named GitHub branch may be diverged.
+
+Before any new coding, create a safety branch from the current local HEAD and push it to GitHub.
+
+Run:
+
+git status
+git branch --show-current
+git rev-parse HEAD
+git checkout -b replit-day-work-backup-2026-06-21
+git push -u origin replit-day-work-backup-2026-06-21
+
+Then open a Draft PR into main.
+
+PR title:
+Replit day work backup — 116 local commits
+
+PR body:
+This PR backs up the current Replit workspace work from local HEAD 6bf2255240b49dc9bd4995ac1c39c5e5e352694b.
+
+This is a safety backup PR only.
+Do not merge yet.
+
+Known context:
+- Local Replit branch was plexus-iq-admin-review-persistence-fix.
+- Local branch was 116 commits ahead of origin/main.
+- The same-named GitHub branch may have diverged.
+- This PR preserves the current Replit work before the enterprise tile build.
+
+After this backup PR is created, continue to Phase 2 on a new branch created from the backup branch.
+
+Create a new working branch:
+
+enterprise-ui-demo-tiles-2026-06-21
+
+Push that branch when done and open/update a Draft PR into main.
+
+============================================================
+PHASE 2 — READ THE REPO RULES BEFORE CODING
+============================================================
+
+Before coding, read and follow:
+
+- replit.md
+- design_guidelines.md
+- PLEXUS_PHASE1_FOUNDATION_NOTES.md
+- .agents/skills/ali-universal-rules/SKILL.md
+- .agents/skills/ali-architecture-rules/SKILL.md
+- .agents/skills/ali-product-rules/SKILL.md
+- .agents/skills/ali-uiux-rules/SKILL.md
+- .agents/skills/ali-integration-rules/SKILL.md
+- .agents/skills/ali-security-rules/SKILL.md
+- .agents/skills/ali-testing-rules/SKILL.md
+- .agents/skills/ali-refactor-rules/SKILL.md
+
+Follow these principles:
+- Extend the existing architecture.
+- Do not create orphan pages.
+- Do not duplicate existing routing/state systems.
+- Use existing shared components where possible.
+- Use shadcn/ui and existing design components.
+- Use TanStack Query for server state.
+- Keep API usage behind existing wrappers/helpers where possible.
+- Preserve loading, empty, error, and success states.
+- Use mock data only where backend endpoints are missing.
+- Do not break existing APIs.
+- Do not remove existing working features.
+- Keep TypeScript clean.
+- Run check/build before final report.
+
+============================================================
+BUILD THESE FOUR ENTERPRISE TILES
+============================================================
+
+Build and wire these four enterprise-grade modules:
+
+1. Mission Control
+2. Imaging Central
+3. Clinic Analytics
+4. Clinic Onboarding
+
+Product logic:
+- Clinic Analytics decides whether a clinic is valuable.
+- Clinic Onboarding prepares the clinic for launch.
+- Mission Control monitors live operations after launch.
+- Imaging Central handles imaging execution after launch, currently focused on ultrasound.
+- Plexus IQ/Admin Review handles qualification.
+- Engagement Center handles calls/outreach.
+- Scheduler handles scheduling.
+- Ancillary Documents handles document generation/packages.
+- Physician Signing handles signatures.
+- Billing handles billing readiness/claims.
+- Mission Control is executive monitoring, not qualification.
+- Imaging Central is imaging execution, not general ancillary qualification.
+
+Preferred routes:
+- /mission-control
+- /imaging-central
+- /clinic-analytics
+- /clinic-onboarding
+
+Compatibility routes:
+- /technician-central should redirect to /imaging-central if it exists.
+- /ultrasound-central should redirect to /imaging-central if it exists.
+- /analytics should still work and render Clinic Analytics.
+- Existing technician worker routes like /technician-portal can remain if they are role-specific.
+
+Navigation should show:
+- Mission Control
+- Imaging Central
+- Clinic Analytics
+- Clinic Onboarding
+
+============================================================
+FILES TO INSPECT AND UPDATE
+============================================================
+
+Inspect and update the actual files in this repo, using the repo’s current casing/names.
+
+Likely routing:
+- client/src/App.tsx
+
+Likely pages:
+- client/src/pages/mission-control.tsx
+- client/src/pages/ultrasound-central.tsx
+- client/src/pages/clinic-analytics.tsx
+- client/src/pages/clinic-onboarding.tsx
+- client/src/pages/home.tsx
+- client/src/pages/PlatformHome.tsx, if present
+
+Likely navigation / registry files:
+- client/src/lib/plexus/domainRegistry.ts, if present
+- client/src/lib/plexus/navigationRegistry.ts, if present
+- client/src/lib/plexus/moduleRegistry.ts, if present
+- client/src/lib/plexus/tileConfig.ts, if present
+- client/src/components/global-nav or sidebar files, if this repo uses those instead
+
+Workflow/shared components to reuse if present:
+- client/src/components/workflow/*
+- client/src/components/mission-control/*
+- client/src/components/ui/*
+- client/src/lib/workflow/*
+- client/src/lib/queryClient.ts
+
+Backend/API files to inspect before adding endpoints:
+- server/routes.ts
+- server/ensureTables.ts
+- shared/schema.ts
+
+Do not assume exact paths. Search the repo and update the correct actual files.
+
+============================================================
+TILE 1 — MISSION CONTROL
+============================================================
+
+Purpose:
+Create the executive/admin command center for the entire platform. This is the main owner/admin dashboard that monitors operations across all clinics.
+
+Mission Control must include:
+
+1. Executive KPI Header
+Show:
+- Total active clinics
+- Total patients in pipeline
+- Ready to call
+- Scheduled
+- Ancillary pending
+- Reports missing
+- Billing ready
+- Paid claims / revenue
+- Blocked items
+- Urgent alerts
+
+2. Operational Queue Tiles
+Create cards for:
+- Prescreen
+- Ready to Call
+- Follow-up
+- Callbacks
+- Pending Ancillary
+- No Report
+- Re-Eligible
+- Declined
+- Billing Ready
+- Blocked / Needs Admin Review
+
+Each card should show:
+- Count
+- Trend indicator
+- Status color
+- Click action that filters the workbench/table below
+
+3. Operational Lanes Table
+Create a main table showing live rows from the execution spine.
+
+Columns:
+- Patient
+- Clinic
+- Service / Ancillary
+- Current lane
+- Status
+- Owner
+- Last action
+- Next action
+- Blocker
+- Due date
+- Priority
+
+Statuses:
+- Watch
+- Blocked
+- Ready
+- In Progress
+- Complete
+
+4. Lane Workbench
+When a row is clicked, open a right-side detail drawer/panel showing:
+- Patient summary
+- Clinic
+- Service
+- Timeline
+- Current blocker
+- Next required action
+- Responsible team
+- Related documents
+- Related call result
+- Related imaging/report status
+- Billing readiness
+
+Buttons:
+- Mark Ready
+- Mark Blocked
+- Assign Owner
+- Send to Engagement Center
+- Send to Scheduler
+- Send to Billing
+- View Documents
+
+5. Alerts Section
+Create canonical alert cards:
+- Urgent scheduling issue
+- Missing report
+- Billing blocker
+- No-show
+- Failed outreach
+- Imaging coverage gap
+- Prior authorization issue
+- Clinic onboarding blocker
+
+Severity:
+- Critical
+- High
+- Medium
+- Low
+
+6. Mission Control Sections
+Create expandable sections for:
+- Ancillary Ops
+- Calls / Outreach
+- Clinic Operations
+- Patient Services
+- Finance / Revenue
+- Operations
+- Scheduling Triage
+- Clinic Success
+- RVU Tracking
+- Team Metrics
+
+Each section should have:
+- Summary metrics
+- Mini-table
+- Status badges
+- Clickable rows where appropriate
+
+7. Search and Filters
+Add:
+- Global patient search
+- Clinic filter
+- Service filter
+- Status filter
+- Priority filter
+- Date range filter
+
+8. Data Structure
+Use existing APIs/selectors if available:
+- mission control summary
+- queue counts
+- command center read model
+- outreach tasks
+- call list
+- scheduling triage
+- document packages
+- billing records
+- clinic profiles
+- ancillary instances
+- procedure exceptions
+
+Use realistic fallback mock data only if endpoints are missing or empty.
+
+Important boundary:
+Mission Control is not where qualification happens.
+Qualification belongs in Plexus IQ/Admin Review.
+Mission Control only monitors live operations after patients/services enter execution.
+
+============================================================
+TILE 2 — IMAGING CENTRAL
+============================================================
+
+Purpose:
+Create the imaging execution center. This tile manages imaging-related execution after launch, including ultrasound assignments, imaging/ultrasound report upload, QC, procedure completion, and billing readiness.
+
+Important:
+If there is an existing tile/page/module called Ultrasound Central or Technician Central, rename/upgrade that module to Imaging Central.
+Do not create a duplicate orphan page.
+Do not show “Technician Central” or “Ultrasound Central” as the main enterprise tile name.
+
+Keep:
+- Technician as a role/person label.
+- Ultrasound as a study/service type.
+
+Official module name:
+Imaging Central
+
+Imaging Central must include:
+
+1. KPI Header
+Show:
+- Total imaging tasks
+- Total ultrasound tasks
+- Assigned
+- In field
+- Uploaded
+- Needs review
+- Completed
+- Report ready
+- Procedure ready
+- Ready for billing
+- Coverage confirmed
+
+2. Imaging Statuses
+Use:
+- Assigned
+- In Field
+- Uploaded
+- Needs Review
+- Completed
+- No Show
+- Reschedule Needed
+- Cancelled
+
+3. Search and Filters
+Add:
+- Patient search
+- Clinic filter
+- Technician filter
+- Status filter
+- Imaging type filter
+- Ultrasound type filter
+- Date filter
+
+4. Global Imaging Coverage
+Create coverage section showing:
+- Clinic
+- Technician
+- Imaging type
+- Ultrasound type, when applicable
+- Date
+- Time window
+- Coverage status
+- Assigned count
+- Completed count
+
+5. Imaging Technician Roster
+Create technician cards/table with:
+- Technician name
+- Assigned clinics
+- Shift
+- Phone/extension
+- Online/offline status
+- Capacity today
+- Current assignment
+- Completion rate
+
+6. Imaging Work Queue
+Main table columns:
+- Patient
+- Clinic
+- Imaging study
+- Imaging type
+- Technician
+- Appointment date/time
+- Coverage status
+- Upload status
+- QC status
+- Procedure note status
+- Billing readiness
+- Last updated
+- Next action
+
+7. Imaging Action Workbench
+When a row is clicked, open right-side drawer/panel with:
+- Patient details
+- Clinic
+- Study type
+- Imaging type
+- Technician
+- Scheduled time
+- Report upload status
+- QC status
+- Procedure completion status
+- Billing readiness
+- Notes
+- Timeline
+
+Buttons:
+- Upload Imaging Report
+- Upload Ultrasound Report, when study type is ultrasound
+- Attach Report Metadata
+- Register Report Binary
+- QC Review
+- Complete Procedure
+- Mark No Show
+- Needs Reschedule
+- Cancelled
+- Send to Billing
+- View Document Package
+
+8. Imaging Readiness Queue
+Create queue showing:
+- Patient
+- Clinic
+- Study
+- Imaging type
+- Report uploaded yes/no
+- Procedure complete yes/no
+- Billing ready yes/no
+- Missing item
+- Next action
+
+9. Downstream Connections
+Structure code so actions can later update/invalidate:
+- imaging uploads
+- existing technician uploads API, if that is the current backend model
+- ultrasound uploads, if present
+- procedure exceptions
+- execution spine
+- global schedule bridge
+- scheduling triage
+- call list
+- document packages
+- billing readiness
+
+10. Critical Workflow Rule
+Imaging Central is for imaging execution.
+For the current version, it should manage ultrasound execution only unless other imaging services already exist in the codebase.
+
+Do not add BrainWave, VitalWave, EKG, PGX, CGX, or general ancillary documents into Imaging Central.
+Those belong in their own workflows/modules.
+
+============================================================
+TILE 3 — CLINIC ANALYTICS
+============================================================
+
+Purpose:
+Create the clinic due diligence, opportunity scoring, financial analytics, and ancillary revenue potential dashboard. This tile helps owners/admins decide whether a clinic is valuable and what services fit.
+
+Clinic Analytics must include:
+
+1. Clinic Selector
+Allow user to select a clinic profile.
+
+Clinic profile fields:
+- Clinic name
+- Location
+- Status
+- Providers
+- Exam rooms
+- Daily patient volume
+- Total patients
+- EMR
+- Specialty
+- Main contact
+- Phone
+- Start date / go-live date
+
+2. Clinic Profile Top Card
+Show:
+- Clinic name
+- Status
+- Providers
+- Exam rooms
+- Daily volume
+- Total patients
+- Active ancillary services
+- Overall opportunity score
+
+3. Payor Mix Card
+Show:
+- Medicare percentage
+- PPO percentage
+- Medicaid percentage
+- Cash/self-pay percentage
+- Commercial percentage
+- High-value ancillary indicator
+- Payor risk notes
+
+4. Financial Health Card
+Show:
+- Monthly revenue
+- Estimated ancillary revenue opportunity
+- AR days
+- Collection rate
+- Denial rate
+- Billing readiness score
+- Financial risk level
+
+5. Patient Demographics Card
+Show:
+- Total patients
+- Average age
+- Medicare eligible percentage
+- Chronic disease population
+- Common diagnoses
+- High-risk population count
+
+6. Clinic Capacity Card
+Show:
+- Providers
+- Exam rooms
+- Daily visit volume
+- Staff count
+- Ancillary capacity score
+- Ability to support BrainWave
+- Ability to support VitalWave
+- Ability to support Ultrasound
+- Implementation complexity
+
+7. Team Assessment Card
+Show:
+- Total staff
+- Office manager
+- Medical assistants
+- Billing contact
+- Turnover rate
+- Training need score
+- Operational maturity score
+
+8. Creditworthiness & Risk Card
+Show:
+- Creditworthiness score out of 100
+- Operational risk
+- Financial risk
+- Compliance risk
+- Staffing risk
+
+Recommendation options:
+- Approve
+- Approve with caution
+- Needs remediation
+- Do not onboard
+
+9. AI Due Diligence Summary
+Create summary panel with:
+- Strengths
+- Concerns
+- Revenue opportunities
+- Suggested ancillaries
+- Implementation risks
+- Final recommendation
+
+10. Medications & Drug Classes Database
+Create table with:
+- Medication
+- Drug class
+- Frequency
+- Monthly prescriptions
+- Trend
+- Ancillary relevance
+- Revenue signal
+
+Filter chips:
+- All
+- Antihypertensives
+- Antidiabetics
+- Neurological
+- Pain Management
+- Psychiatric
+- Cardiovascular
+
+11. ICD-10 Code Catalog
+Create table with:
+- ICD code
+- Description
+- Category
+- Frequency
+- Revenue opportunity
+- Qualifying ancillaries
+- Trend
+
+Filter chips:
+- All
+- Neurological
+- Cardiovascular
+- Metabolic
+- Mental Health
+
+12. CPT Code Database
+Create table with:
+- CPT code
+- Description
+- Service
+- Fee
+- Frequency per month
+- Total revenue
+- Payer acceptance
+- Related ancillary
+
+Filter chips:
+- All
+- BrainWave
+- VitalWave
+- Ultrasound
+- EKG
+- PGX/CGX
+
+13. Revenue Calculations
+Calculate:
+- Medication revenue impact
+- ICD revenue impact
+- CPT revenue impact
+- Total opportunity impact
+- Estimated Plexus share
+- Estimated clinic share
+
+14. Navigation Buttons
+Add buttons:
+- Send to Clinic Onboarding
+- View Billing
+- View Patient Database
+- View Team Ops
+- Export Clinic Report
+
+15. Data
+Use /api/clinic-profiles if available.
+Use realistic fallback mock data if backend is missing or empty.
+
+============================================================
+TILE 4 — CLINIC ONBOARDING
+============================================================
+
+Purpose:
+Create the full clinic implementation, onboarding, SOP, checklist, readiness, and go-live tile. This should take a clinic from signed/approved to fully operational.
+
+Clinic Onboarding must include:
+
+1. Clinic Selector
+Allow user to select clinic being onboarded.
+
+Show:
+- Clinic name
+- Status
+- Owner/admin contact
+- Go-live target date
+- Onboarding phase
+- Overall progress
+- Maturity score
+- Blockers
+
+2. Dashboard Metrics
+Show cards:
+- Completed checklist items
+- In progress items
+- Not started items
+- Overall progress percentage
+- Average maturity score
+- Sales process completion
+- Implementation process completion
+- Critical blockers
+- Go-live readiness
+
+3. Checklist Scoring System
+Each item should have:
+
+Status:
+- Not Started
+- In Progress
+- Completed
+
+Maturity score:
+- 0 = Not Present
+- 1 = Ad Hoc
+- 2 = Consistent
+- 3 = Optimized
+
+Phase:
+- Sales
+- Implementation
+
+Each checklist item should support:
+- Owner
+- Due date
+- Notes
+- Evidence/document upload placeholder
+- Blocker flag
+- Last updated
+
+4. Filters
+Add:
+- Search checklist
+- Phase filter: All, Sales, Implementation
+- Status filter: All, Not Started, In Progress, Completed
+- Section filter
+- Blockers only toggle
+- Expand all
+- Collapse all
+- Snapshot view
+- Detailed view
+
+5. Required Onboarding Sections
+Create these 25 sections:
+
+1. Ownership & Governance
+2. Systems & Logins
+3. Scheduling & Access
+4. Insurance & Payor Mix
+5. Front Desk & Check-In
+6. Documents & Faxes
+7. Referrals
+8. Prior Authorizations
+9. Medical Assistants
+10. Providers
+11. Ancillary Services
+12. Remote Teams
+13. Communication
+14. EMR Administration
+15. Automations
+16. Inventory & Equipment
+17. Billing & Clearinghouse
+18. Credentialing
+19. HR & Training
+20. Infection Control & OSHA
+21. Emergency & Downtime
+22. Telehealth & Virtual Care
+23. Patient Experience & Access
+24. Clinical Quality & Care Management
+25. Compliance & Risk
+
+6. Section Details
+
+Ownership & Governance:
+- Ownership structure
+- Decision makers
+- Operating agreement
+- Admin contacts
+- Escalation pathway
+- Reporting expectations
+
+Systems & Logins:
+- EMR access
+- Clearinghouse access
+- Phone system
+- Fax system
+- Shared drive
+- Email accounts
+- Admin dashboard access
+- Role permissions
+
+Scheduling & Access:
+- Appointment types
+- Provider schedules
+- Ancillary slots
+- Follow-up rules
+- No-show rules
+- Reschedule rules
+- Same-day visit policy
+
+Insurance & Payor Mix:
+- Payor list
+- Medicare percentage
+- PPO percentage
+- Medicaid percentage
+- Eligibility process
+- Verification process
+- Prior authorization rules
+
+Front Desk & Check-In:
+- Check-in workflow
+- ID/insurance collection
+- Consent collection
+- Copay workflow
+- Patient communication
+- Escalation rules
+
+Documents & Faxes:
+- Fax intake
+- Fax routing
+- Document scanning
+- Document naming rules
+- Upload workflow
+- Missing document process
+
+Referrals:
+- Referral intake
+- Referral tracking
+- Referral source management
+- Referral completion
+- Referral reporting
+
+Prior Authorizations:
+- PA requirements
+- PA owner
+- PA tracking
+- Denial workflow
+- Appeal workflow
+- Documentation requirements
+
+Medical Assistants:
+- Intake workflow
+- Vitals
+- Medication reconciliation
+- Diagnostic prep
+- Ancillary prep
+- Patient rooming
+- Task management
+
+Providers:
+- Ordering workflow
+- Documentation standards
+- Procedure notes
+- Signing workflow
+- Quality metrics
+- Clinical escalation
+
+Ancillary Services:
+- BrainWave readiness
+- VitalWave readiness
+- Ultrasound readiness
+- Imaging Central readiness
+- Report upload workflow
+- Order/procedure note workflow
+- Billing handoff
+
+Remote Teams:
+- Remote front desk
+- Remote billing
+- Remote prior auth
+- Remote outreach
+- Remote scheduling
+- Communication rules
+
+Communication:
+- Internal messaging
+- Escalation channels
+- Daily huddles
+- Weekly reporting
+- Owner/admin updates
+
+EMR Administration:
+- Templates
+- Order sets
+- Users
+- Roles
+- Permissions
+- Document categories
+- Billing setup
+
+Automations:
+- Outreach automation
+- Scheduling automation
+- Billing automation
+- Eligibility automation
+- Document automation
+- Reporting automation
+
+Inventory & Equipment:
+- Equipment list
+- Supplies
+- Diagnostic devices
+- Ultrasound equipment
+- Maintenance
+- Replacement workflow
+
+Billing & Clearinghouse:
+- CPT setup
+- ICD mapping
+- Claim submission
+- ERA/EOB workflow
+- Denial tracking
+- AR tracking
+- Billing contacts
+
+Credentialing:
+- Provider data
+- NPI
+- CAQH
+- Payor enrollment
+- Facility credentialing
+- Revalidation tracking
+
+HR & Training:
+- Staff list
+- Role descriptions
+- Training checklist
+- Attendance
+- SOP acknowledgment
+- Competency checks
+
+Infection Control & OSHA:
+- OSHA checklist
+- Infection control policy
+- PPE
+- Sharps
+- Logs
+- Safety training
+
+Emergency & Downtime:
+- Downtime policy
+- Emergency contacts
+- Backup systems
+- Data recovery
+- Communication plan
+
+Telehealth & Virtual Care:
+- Telehealth platform
+- Virtual visit workflow
+- Consent
+- Documentation
+- Billing rules
+
+Patient Experience & Access:
+- Appointment access
+- Phone access
+- Patient satisfaction
+- Complaint process
+- Wait times
+
+Clinical Quality & Care Management:
+- Quality metrics
+- Care gaps
+- Chronic care opportunities
+- Follow-up tracking
+- Population health
+
+Compliance & Risk:
+- HIPAA
+- Audit logs
+- Access review
+- Consent
+- Incident reporting
+- Compliance training
+
+7. Batch Patient Intake Runner
+Add admin panel:
+- Clinic ID optional
+- Patient UUID input
+- Max 50 patients
+- Run batch button
+
+Use existing patient intake API if present.
+If backend is not available, provide disabled/placeholder state and clear message.
+
+After successful run, prepare downstream invalidation placeholders for:
+- Outreach tasks
+- Call list
+- Scheduling triage
+
+8. Canonical Source Panels
+Add panels for:
+- Clinic profiles
+- Facilities
+- Ancillary registry
+
+9. Go-Live Readiness
+Create final readiness card:
+- Ready for go-live yes/no
+- Missing critical items
+- Open blockers
+- Required before launch
+- Recommended launch date
+- Admin signoff
+- Owner signoff
+
+============================================================
+DESIGN REQUIREMENTS FOR ALL FOUR TILES
+============================================================
+
+Use one unified enterprise design system:
+- Premium white / winter dashboard
+- Clean cards
+- Soft gray borders
+- Rounded corners
+- Strong spacing
+- Sticky or prominent KPI headers
+- Clear table layouts
+- Status badges
+- Search/filter bars
+- Right-side drawers/sheets for row details
+- Expandable sections
+- Progress bars where useful
+- Responsive layout
+- Loading skeletons
+- Empty states
+- Error states
+- Toast confirmation on mutations
+- No visual clutter
+
+The UI should be demo-ready for an AI engineer:
+- impressive
+- clean
+- navigable
+- purposeful
+- architecture-aware
+- not random mockup clutter
+
+============================================================
+BACKEND / API RULES
+============================================================
+
+Do not rename backend database tables just for UI naming.
+
+Keep backend compatibility:
+- Existing technician upload APIs can remain if that is the current backend model.
+- Existing procedure completion APIs remain.
+- Existing procedure exceptions remain.
+- Existing canonical spine/read-model APIs remain.
+
+If adding aliases:
+- Add lightweight alias endpoints only if necessary.
+- Example: /api/imaging-uploads can internally call the same service as /api/technician-uploads.
+- Do not break old routes.
+
+All new backend inputs must use validation if backend changes are made.
+Do not put external service calls directly in frontend.
+
+============================================================
+NAVIGATION REQUIREMENTS
+============================================================
+
+Update the app navigation/home tiles so these exist and are easy to open:
+
+- Mission Control
+- Imaging Central
+- Clinic Analytics
+- Clinic Onboarding
+
+Preferred enterprise navigation list should include:
+- Mission Control
+- Patient Flow
+- Schedule
+- Outreach Center
+- Imaging Central
+- Ancillary Documents
+- Billing
+- Team Ops
+- Clinic Analytics
+- Clinic Onboarding
+- Plexus Workspace
+- Patient Database
+- Task Brain
+- Plexus IQ
+
+============================================================
+ACCEPTANCE CHECKLIST
+============================================================
+
+Before finishing, verify:
+
+1. Current Replit work was first backed up to GitHub safety branch.
+2. New enterprise demo work is on its own branch.
+3. /mission-control works.
+4. /imaging-central works.
+5. /clinic-analytics works.
+6. /analytics still works.
+7. /clinic-onboarding works.
+8. If /technician-central exists, it redirects to /imaging-central.
+9. If /ultrasound-central exists, it redirects to /imaging-central.
+10. Platform home/navigation shows the four enterprise tiles.
+11. Mission Control is monitoring only, not qualification.
+12. Imaging Central is imaging execution, currently ultrasound-focused.
+13. Imaging Central does not include BrainWave/VitalWave/PGX/CGX general workflows.
+14. Clinic Analytics has all requested due diligence/revenue sections.
+15. Clinic Onboarding has all 25 onboarding sections.
+16. No existing working route is broken.
+17. TypeScript compiles.
+18. App builds.
+19. No duplicate orphan pages/modules were created.
+20. No user-facing main tile still says Technician Central or Ultrasound Central.
+
+============================================================
+RUN THESE CHECKS
+============================================================
+
+Run:
+
+npm run check
+npm run build
+
+If available, also run:
+
+npm run audit:tertiary-route-aliases
+npm run audit:tertiary-component-parity
+npm run ready:enterprise-ui
+
+If a script fails because it expects the old Technician Central or Ultrasound Central tile name, update the script intentionally to expect Imaging Central as the official enterprise tile name while preserving compatibility redirects.
+
+============================================================
+FINAL OUTPUT REQUIRED
+============================================================
+
+When done, give me:
+
+1. Safety backup branch name
+2. Safety backup PR link
+3. Enterprise UI demo branch name
+4. Enterprise UI demo PR link
+5. Latest commit SHA
+6. Files changed
+7. Routes added/changed
+8. Whether /mission-control works
+9. Whether /imaging-central works
+10. Whether /clinic-analytics works
+11. Whether /analytics still works
+12. Whether /clinic-onboarding works
+13. Whether old technician/ultrasound central routes redirect correctly
+14. What mock data remains
+15. What backend endpoints still use old technician naming for compatibility
+16. npm run check result
+17. npm run build result
+18. Any remaining issues or blockers

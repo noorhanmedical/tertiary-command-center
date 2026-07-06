@@ -1,0 +1,1340 @@
+You are working inside the existing Plexus EMR — Clinician Portal.
+
+Do not create a separate app.
+Do not create a separate Finance Portal.
+Do not create a separate Engagement Portal.
+Do not create a separate Billing Portal.
+Do not create a separate Admin Portal.
+
+This must remain inside the existing Clinician Portal shell, branding, top bar, clinic context, user context, and visual language.
+
+Goal:
+Redesign the existing Plexus EMR — Clinician Portal into a simplified 3-tile clinician command center.
+
+The Clinician Portal should have exactly 3 primary tiles:
+
+1. Finance
+2. Orders & Notes
+3. Plexus Engagement
+
+These are sections inside the Clinician Portal, not separate products.
+
+The current portal/spec has older tabs like:
+
+* Clinic Schedule
+* Ancillary Services Schedule
+* Notes
+* Results & Database
+* Patient Communication
+* Plexus Training
+* Analytics
+
+Consolidate those into the new 3-tile structure:
+
+* Analytics becomes Finance
+* Notes, Results, Orders, Documents, and signatures become Orders & Notes
+* Patient Communication, Call Lists, Qualifications, Outreach, and Schedule become Plexus Engagement
+* Training should not be one of the 3 main tiles. Move it to a secondary/help area only if needed.
+
+Build the entire thing in one pass. Do not build one tile at a time. I want a complete working front-end prototype with mocked data, clean state management, reusable components, responsive layout, realistic tables, filters, drawers, modals, and interaction flows.
+
+Use React + TypeScript if available.
+Use Tailwind or clean CSS.
+Make the UI premium, white, modern, iOS-style, calm, organized, and enterprise-grade.
+
+The final result should feel like:
+
+Plexus EMR — Clinician Portal
+│
+├── Dashboard Home
+│   ├── Finance tile
+│   ├── Orders & Notes tile
+│   └── Plexus Engagement tile
+│
+├── Finance interior page
+│   ├── Ancillary Services Financials
+│   └── Practice Financial Health
+│
+├── Orders & Notes interior page
+│   ├── Orders Queue
+│   ├── Notes Queue
+│   ├── Note Editor
+│   ├── Linked Documents
+│   └── Audit Trail
+│
+└── Plexus Engagement interior page
+├── Live Call List
+├── Qualifications Completed
+├── Today’s Engagement Activity
+├── Live Schedule
+└── Outreach Pipeline
+
+Global shell requirements:
+
+* Keep Plexus EMR — Clinician Portal as the parent shell.
+* Sticky top bar.
+* Top bar should include:
+
+  * Plexus logo/wordmark
+  * “Plexus EMR — Clinician Portal”
+  * Global search: Search patients, notes, orders, claims…
+  * Clinic context: TFP — Humble or Taylor Family Practice
+  * Date/date range
+  * User avatar: JT
+  * User name: Dr. J. Taylor
+  * Demo role selector: Clinician / Clinic Admin / Owner
+* Add subtle “Demo data only” label.
+* All interior pages should keep the same top bar and portal shell.
+* Add a back-to-dashboard button inside each tile page.
+* Do not create a separate navigation system outside the Clinician Portal.
+
+Design system:
+Use the existing Plexus visual language.
+
+Colors:
+
+* Obsidian/navy: #040F1A
+* Dendrite/dark navy: #0B1F30
+* Nucleus: #12324B
+* Plexus blue: #1C4666
+* Meridian: #355C7D
+* Synapse: #5E7A93
+* Fiber: #92A6BB
+* Mist: #BACAD9
+* Periwinkle interactive accent: #8FA9E2
+* Periwinkle soft: #E7ECF8
+* Pathology/alert red: #E2574F
+* Alert soft: #FBE7E5
+* Paper: #FFFFFF
+* Background: #EDF1F5
+* Line: #DCE4EC
+* Soft line: #EAEFF4
+
+Shape/style:
+
+* Border radius: 14px
+* Small radius: 9px
+* Shadow: subtle, premium, not heavy
+* White cards on soft gray background
+* Clean spacing
+* Dark navy headings
+* Periwinkle for active/selected/editing states
+* Red only for alerts or VitalWave service line
+* Avoid clutter
+* Tables should be dense but readable
+* Responsive for desktop and tablet widths
+
+Service-line colors:
+
+* BrainWave: purple #8B5CF6
+* VitalWave: red #E2574F
+* Ultrasound: green #2E9E6A
+
+Use these consistently for:
+
+* Qualification dots
+* Service chips
+* Note labels
+* Revenue bars
+* Pipeline stages
+* Schedule labels
+* Finance service-line breakdowns
+
+Main Clinician Portal Dashboard Home:
+Create 3 large premium command tiles.
+
+Tile 1: Finance
+Subtitle: Claims submitted, claims paid, practice financial health, and Plexus ancillary revenue.
+Show mini KPIs:
+
+* Claims Submitted MTD
+* Claims Paid MTD
+* Ancillary Revenue MTD
+* Pending Submitted Claims
+* Clinic Net
+* Payments Posted
+  Add tiny BrainWave/VitalWave/Ultrasound revenue mini-strip.
+
+Tile 2: Orders & Notes
+Subtitle: Sign orders, edit notes, review documents, and complete clinician documentation.
+Show mini KPIs:
+
+* Notes Needing Signature
+* Orders Pending Review
+* Draft Notes
+* Completed Studies Needing Notes
+* Linked Documents
+* Signed Today
+
+Tile 3: Plexus Engagement
+Subtitle: Live call lists, qualifications, scheduling, and patient engagement pipeline.
+Show mini KPIs:
+
+* Active Call List
+* Qualifications Completed Today
+* Calls Completed Today
+* Patients Reached
+* Scheduled Today
+* Pending Callbacks
+
+Clicking each tile opens its interior page inside the Clinician Portal.
+
+Important Finance Requirements:
+Finance must NOT include:
+
+* Denials
+* Rejections
+* Claim rejection workflows
+* Denial management
+* Billing readiness
+* Missing documentation dashboard
+* Documentation hold dashboard
+
+Finance should include only:
+
+* Claims submitted
+* Claims paid
+* Payments posted
+* Pending submitted claims
+* A/R aging
+* Payer mix
+* Provider financials
+* Ancillary service financials
+* Plexus split
+* Clinic net
+* Invoice status
+
+Finance page:
+Finance lives inside Clinician Portal.
+It is role gated:
+
+* Owner and Clinic Admin can see full Finance.
+* Clinician can see either limited finance summary or a restricted message.
+* Do not remove Finance from Clinician Portal just because it is role gated.
+
+Finance page header:
+
+* Title: Finance
+* Subtitle: Clinic revenue, submitted claims, paid claims, and Plexus ancillary performance
+* Owner/Admin badge if full access
+* Date range filter:
+
+  * Today
+  * 7 days
+  * MTD
+  * Prior Month
+  * Custom
+* Service filter:
+
+  * All
+  * BrainWave
+  * VitalWave
+  * Ultrasound
+* Provider filter:
+
+  * All clinicians
+  * Dr. J. Taylor
+  * Dr. M. Osei
+  * Dr. L. Park
+* Export button
+* Refresh button
+
+Finance KPI row:
+Create cards:
+
+1. Claims Submitted MTD
+
+   * Dollar amount
+   * Claim count
+   * Delta vs prior month
+2. Claims Paid MTD
+
+   * Dollar amount
+   * Claim count
+   * Delta vs prior month
+3. Ancillary Revenue MTD
+
+   * Dollar amount
+   * Studies count
+   * Service-line mini dots
+4. Pending Submitted Claims
+
+   * Submitted but not yet paid
+   * Amount
+   * Count
+5. Clinic Net
+
+   * Amount after Plexus split
+   * Percent retained
+6. Payments Posted
+
+   * Total posted payments
+   * Paid today
+   * MTD
+
+Finance should have two major sections:
+A. Ancillary Services Financials
+B. Practice Financial Health
+
+Finance Section A: Ancillary Services Financials
+
+This section is specifically for Plexus ancillary services:
+
+* BrainWave
+* VitalWave
+* Ultrasound
+* Future service lines later
+
+Create a card group called “Ancillary Services Financials.”
+
+Inside it include:
+
+1. Ancillary Revenue Summary
+
+Table columns:
+
+* Metric
+* Today
+* MTD
+* Prior Month
+
+Rows:
+
+* Gross ancillary revenue
+* Claims submitted
+* Claims paid
+* Pending submitted claims
+* Plexus share
+* Clinic net
+* Avg paid per claim
+* Avg days to payment
+
+2. Revenue by Service Line
+
+Table columns:
+
+* Service
+* Completed Studies
+* Claims Submitted
+* Claims Paid
+* Submitted $
+* Paid $
+* Pending $
+* Avg Paid
+* Clinic Net
+
+Rows:
+
+* BrainWave
+* VitalWave
+* Ultrasound
+
+Add a small horizontal bar visualization showing paid revenue by service line using the service-line colors.
+
+3. Ancillary Claims Submitted
+
+Table columns:
+
+* Submitted Date
+* Patient
+* MRN
+* Service
+* Claim #
+* Amount
+* Payer
+* Provider
+* Status
+
+Allowed statuses only:
+
+* Submitted
+* Accepted by clearinghouse
+* Accepted by payer
+* Pending payment
+* Paid
+
+Do not use denied, rejected, appeal, hold, or missing documentation.
+
+Filters above table:
+
+* Search patient/claim
+* Service line
+* Payer
+* Provider
+* Status
+* Date range
+
+Clicking a row opens a right-side claim detail drawer.
+
+Claim detail drawer:
+
+* Patient
+* MRN
+* Service line
+* Date of service
+* Claim number
+* Submitted date
+* Billed amount
+* Payer
+* Provider
+* Current status
+* Related order
+* Related note
+* Related report/document
+* Payment if paid
+* Timeline:
+
+  * Study completed
+  * Claim created
+  * Claim submitted
+  * Accepted by clearinghouse
+  * Accepted by payer
+  * Paid, if applicable
+
+No denied/rejected timeline events.
+
+4. Ancillary Claims Paid
+
+Table columns:
+
+* Paid Date
+* Patient
+* MRN
+* Service
+* Claim #
+* Billed Amount
+* Paid Amount
+* Payer
+* Provider
+* Payment Ref
+* Days to Pay
+
+Above it show summary cards:
+
+* Paid Today
+* Paid MTD
+* Avg Paid / Claim
+* Avg Days to Pay
+* Highest Paid Service
+
+5. Plexus Split / Invoice View
+
+Table columns:
+
+* Period
+* Gross Paid
+* Plexus Share
+* Clinic Share
+* Invoice #
+* Invoice Status
+* Actions
+
+Invoice statuses only:
+
+* Draft
+* Sent
+* Paid
+
+Actions:
+
+* View
+* Download
+* Export CSV
+
+Clicking an invoice opens side drawer:
+
+* Invoice number
+* Period
+* Gross paid
+* Plexus share
+* Clinic share
+* Service-line breakdown
+* Included claims
+* Payment status
+* Export buttons
+
+6. Ancillary Financial Pipeline
+
+Pipeline stages:
+Qualified → Called → Scheduled → Completed → Claim Submitted → Claim Paid
+
+Show:
+
+* Count per stage
+* Estimated value per stage
+* Conversion percentage between stages
+
+This pipeline should visually and logically connect to Plexus Engagement mock data. The same patients/services should appear across Engagement, Orders & Notes, and Finance where appropriate.
+
+Finance Section B: Practice Financial Health
+
+Create another major card group called “Practice Financial Health.”
+
+This is broader clinic-level finance from billing, simplified.
+
+Do not show denials.
+Do not show rejections.
+Do not show billing readiness.
+
+Include:
+
+1. Practice Overview
+
+Table columns:
+
+* Metric
+* Today
+* MTD
+* Prior Month
+
+Rows:
+
+* Total claims submitted
+* Total claims paid
+* Payments posted
+* A/R balance
+* Average days to payment
+* Pending submitted claims
+* Ancillary percentage of revenue
+* Non-ancillary practice revenue
+
+2. All Practice Claims Submitted
+
+Table columns:
+
+* Submitted Date
+* Patient
+* MRN
+* Visit Type
+* Claim #
+* Amount
+* Payer
+* Provider
+* Status
+
+Visit types:
+
+* Office visit
+* Follow-up
+* Annual wellness
+* BrainWave
+* VitalWave
+* Ultrasound
+* Procedure
+* Lab review
+
+Allowed statuses only:
+
+* Submitted
+* Accepted by clearinghouse
+* Accepted by payer
+* Pending payment
+* Paid
+
+No denied/rejected statuses.
+
+3. All Practice Claims Paid
+
+Table columns:
+
+* Paid Date
+* Patient
+* Claim #
+* Visit Type
+* Submitted Amount
+* Paid Amount
+* Payer
+* Provider
+* Days to Pay
+
+4. A/R Snapshot
+
+Show aging buckets:
+
+* 0–30 days
+* 31–60 days
+* 61–90 days
+* > 90 days
+
+For each bucket show:
+
+* Amount
+* Claim count
+* Percentage of total A/R
+
+Clicking a bucket filters a table below.
+
+A/R drilldown table columns:
+
+* Patient
+* Claim #
+* Payer
+* DOS
+* Submitted Date
+* Amount
+* Days Outstanding
+* Provider
+
+Do not show denial reason.
+
+5. Payer Mix
+
+Table columns:
+
+* Payer
+* Claims Submitted
+* Claims Paid
+* Paid Amount
+* Avg Days to Pay
+* % of Revenue
+
+Payers:
+
+* Medicare
+* BCBS
+* Aetna
+* Medicaid
+* UnitedHealthcare
+* Cash Pay
+
+6. Provider Financials
+
+Table columns:
+
+* Clinician
+* Claims Submitted
+* Claims Paid
+* Paid Amount
+* Pending Submitted
+* A/R
+* Avg Days to Pay
+
+Clinicians:
+
+* Dr. J. Taylor
+* Dr. M. Osei
+* Dr. L. Park
+
+Finance mock data model:
+Create centralized mock data for:
+
+Claim:
+
+* id
+* claimNumber
+* patientId
+* providerId
+* payerId
+* serviceType
+* serviceLine
+* visitType
+* dateOfService
+* submittedDate
+* billedAmount
+* status
+
+ClaimPayment:
+
+* id
+* claimId
+* paidDate
+* paidAmount
+* payerId
+* paymentReference
+* eraId
+* daysToPay
+
+Payer:
+
+* id
+* name
+* type
+* averagePaymentLag
+
+AncillaryStudyFinance:
+
+* studyId
+* patientId
+* serviceLine
+* completedDate
+* claimId
+* submittedAmount
+* paidAmount
+* clinicNet
+* plexusShare
+
+Invoice:
+
+* invoiceNumber
+* periodStart
+* periodEnd
+* grossPaid
+* plexusShare
+* clinicShare
+* status
+
+PracticeARSnapshot:
+
+* period
+* bucket
+* amount
+* claimCount
+
+FinanceRollup:
+
+* clinicId
+* dateRange
+* totalSubmitted
+* totalPaid
+* totalAR
+* avgPaymentLag
+
+Orders & Notes page:
+Orders & Notes lives inside Clinician Portal.
+Purpose:
+Clinician signs orders, edits notes, signs notes individually or in bulk, and views linked documents.
+
+Page header:
+
+* Title: Orders & Notes
+* Subtitle: Review orders, edit documentation, sign notes, and manage linked reports
+* Filters:
+
+  * All
+  * Needs signature
+  * Draft
+  * Pending order review
+  * Completed study
+  * Signed
+* Search patient/note/order
+* Bulk sign button
+* Refresh button
+
+Layout:
+Use split-page design:
+
+* Left side: queues and list
+* Right side: selected detail panel
+
+Sections:
+
+1. Orders Queue
+2. Notes Queue
+3. Bulk Sign
+4. Note Editor
+5. Linked Documents
+6. Audit Trail
+
+Orders Queue:
+Table columns:
+
+* Patient
+* MRN
+* Service
+* Source
+* Status
+* Date
+* Action
+
+Sources:
+
+* Plexus IQ
+* Admin Review
+* Visit qualification
+* Engagement Center
+
+Order statuses:
+
+* Pending clinician review
+* Ready to sign
+* Signed order
+* Sent to ancillary team
+* Scheduled
+* Completed
+* Report uploaded
+* Note generated
+* Cancelled / discontinued
+
+Actions:
+
+* Open
+* Sign
+* Edit
+* Send back
+* View documents
+
+Notes Queue:
+Table columns:
+
+* Checkbox
+* Patient
+* MRN
+* Service
+* Encounter Date
+* Author
+* Status
+* Action
+
+Note statuses:
+
+* Draft
+* Needs signature
+* Needs edit
+* Signed
+* Locked
+
+Clicking a note opens it in the right detail panel.
+
+Note detail panel:
+
+* Patient demographics
+* Encounter date/time
+* Linked service
+* Linked order
+* Linked report
+* SOAP note sections:
+
+  * Subjective
+  * Objective
+  * Assessment
+  * Plan
+* Vitals grid
+* Edit pencil button
+* Save draft button
+* Done editing button
+* Sign note button
+* Send back for correction button
+* Version history button
+
+Behavior:
+
+* Clicking edit makes SOAP sections editable
+* Save draft persists in local React state
+* Sign note changes status to Signed and Locked
+* Signed note cannot be edited unless “Create amendment” is clicked
+* Individual sign icon signs one note
+* Select all toggles all unsigned notes
+* Bulk sign signs selected notes after showing a confirmation modal
+* Confirmation modal should list selected patients and require checkbox attestation:
+  “I confirm I reviewed these notes and authorize electronic signature.”
+* After signing, add audit timeline entries
+* Signing should update Orders & Notes tile counts
+
+Linked Documents panel:
+For selected patient/order/note show:
+
+* Original order
+* Signed order
+* Report PDF
+* Procedure note
+* SOAP note
+* Clinician-facing PDF
+* Plexus-facing PDF
+
+Do not include billing readiness language.
+
+Each document row:
+
+* Document type
+* Service line
+* Status
+* Created date
+* Signed by
+* Action: View / Download
+
+Audit Trail:
+Show compact timeline events:
+
+* Qualification completed
+* Order created
+* Order signed
+* Study scheduled
+* Study completed
+* Report uploaded
+* Note generated
+* Note edited
+* Note signed
+* Document viewed
+* Claim submitted
+* Claim paid
+
+Orders & Notes mock data entities:
+Patient:
+
+* id
+* name
+* mrn
+* age
+* sex
+* initials
+* contact
+* doNotContact
+
+Order:
+
+* id
+* patientId
+* serviceLine
+* source
+* status
+* createdAt
+* signedAt
+* signedBy
+* linkedStudyId
+* linkedNoteId
+
+EncounterNote:
+
+* id
+* patientId
+* encounterDateTime
+* authorId
+* linkedOrderId
+* linkedService
+* status
+* signed
+* locked
+* subjective
+* vitals
+* objective
+* assessment
+* plan
+* version
+
+Document:
+
+* id
+* patientId
+* orderId
+* noteId
+* type
+* serviceLine
+* status
+* createdAt
+* signedBy
+* url
+
+AuditEvent:
+
+* id
+* entityType
+* entityId
+* action
+* user
+* timestamp
+* metadata
+
+Plexus Engagement page:
+Plexus Engagement lives inside Clinician Portal.
+Purpose:
+Clinic sees live patient outreach, call lists, completed qualifications, scheduled patients, and engagement progress.
+
+Page header:
+
+* Title: Plexus Engagement
+* Subtitle: Live call lists, qualification progress, scheduled patients, and today’s outreach activity
+* Filters:
+
+  * Today
+  * This week
+  * All
+  * BrainWave
+  * VitalWave
+  * Ultrasound
+  * Assigned staff
+  * Outcome
+* Search patient
+
+Top KPI cards:
+
+1. Active Call List
+2. Qualifications Completed Today
+3. Calls Completed Today
+4. Patients Reached
+5. Scheduled Today
+6. Pending Callbacks
+7. Escalations
+
+Sections:
+
+1. Live Call List
+2. Qualifications Completed
+3. Today’s Engagement Activity
+4. Live Schedule
+5. Outreach Pipeline
+6. Escalations
+
+Live Call List:
+Table columns:
+
+* Patient
+* MRN
+* Qualified For
+* Priority
+* Assigned To
+* Call Status
+* Last Outcome
+* Next Step
+* Action
+
+Priorities:
+
+* High
+* Medium
+* Low
+
+Call statuses:
+
+* Not called
+* In progress
+* Completed
+* Callback needed
+* Scheduled
+* Do not contact
+* Escalated
+
+Call outcomes:
+
+* Not called
+* Called, no answer
+* Left voicemail
+* Patient answered
+* Interested
+* Not interested
+* Scheduled
+* Needs clinician review
+* Wrong number
+* Do not contact
+* Insurance/billing question
+* Escalated
+
+Actions:
+
+* Open call detail
+* Mark as scheduled
+* Mark callback
+* Escalate
+* Do not contact
+
+Call detail drawer:
+
+* Patient
+* MRN
+* Qualified services
+* Qualification reason
+* Last appointment
+* Assigned staff
+* Call history timeline
+* Outcome selector
+* Notes field
+* Schedule button
+* Escalate button
+* Do not contact button
+
+Behavior:
+
+* Changing outcome updates row and KPI counts
+* Marking Scheduled should update schedule and pipeline
+* Marking Do Not Contact should update patient flag
+* Escalating creates escalation row
+* Updates should persist in local React state
+
+Qualifications Completed:
+Table columns:
+
+* Patient
+* MRN
+* Qualification
+* Source
+* Completed At
+* Status
+* Next Step
+
+Sources:
+
+* Plexus IQ
+* Admin Review
+* Visit
+* Batch qualification
+
+Statuses:
+
+* Ready for outreach
+* Added to call list
+* Needs clinician review
+* Scheduled
+* Deferred
+
+Today’s Engagement Activity:
+Timeline/table with:
+
+* Time
+* Patient
+* Activity
+* Outcome
+* Staff
+* Service line
+
+Activity examples:
+
+* Qualification completed
+* Added to call list
+* Call completed
+* Patient answered
+* Scheduled
+* Callback set
+* Escalated to clinician
+* Do-not-contact set
+
+Live Schedule:
+Table columns:
+
+* Time
+* Patient
+* Service
+* Technician
+* Status
+* Source
+
+Statuses:
+
+* Scheduled
+* Confirmed
+* Checked in
+* In progress
+* Completed
+* Cancelled
+
+Outreach Pipeline:
+Show pipeline:
+Qualified → Call List → Contacted → Scheduled → Completed → Claim Submitted → Claim Paid
+
+This pipeline should share mock data with Finance.
+
+Escalations:
+Table columns:
+
+* Patient
+* Reason
+* Service
+* Assigned To
+* Age
+* Action
+
+Reasons:
+
+* Needs clinician review
+* Insurance/billing question
+* Patient has clinical question
+* Conflicting schedule
+* Do-not-contact concern
+
+Plexus Engagement mock data entities:
+Qualification:
+
+* id
+* patientId
+* services
+* source
+* completedAt
+* status
+* reason
+
+CallTask:
+
+* id
+* patientId
+* qualifiedServices
+* priority
+* assignedTo
+* status
+* lastOutcome
+* nextStep
+* callHistory
+
+CallHistoryEvent:
+
+* id
+* callTaskId
+* timestamp
+* staff
+* outcome
+* notes
+
+EngagementActivity:
+
+* id
+* timestamp
+* patientId
+* activity
+* outcome
+* staff
+* serviceLine
+
+ScheduleItem:
+
+* id
+* patientId
+* serviceLine
+* time
+* technician
+* status
+* source
+
+Escalation:
+
+* id
+* patientId
+* reason
+* serviceLine
+* assignedTo
+* createdAt
+* status
+
+Cross-tile wiring:
+Make the mock data feel connected.
+
+Required cross-tile behavior:
+
+* Patients qualified in Plexus Engagement can appear as order candidates in Orders & Notes.
+* Scheduled/completed engagement items map to orders/notes.
+* Completed studies map to submitted claims in Finance.
+* Paid claims update Finance totals.
+* The same patient names, MRNs, and services should be reused across all tiles.
+* Pipeline stages are consistent:
+  Qualified → Call List → Contacted → Scheduled → Completed → Claim Submitted → Claim Paid
+* Updating a call outcome to Scheduled updates Engagement counts and schedule.
+* Signing a note updates Orders & Notes counts.
+* Claims submitted/paid update Finance totals.
+* Drawer/timeline views should show linked order, note, document, claim, and payment where available.
+
+Permissions:
+Create a mock role selector in the top bar:
+
+* Clinician
+* Clinic Admin
+* Owner
+
+Finance:
+
+* Owner/Admin get full Finance.
+* Clinician gets limited finance summary or restricted message.
+* Finance still stays inside Clinician Portal.
+
+Orders & Notes:
+
+* Clinician sees their own notes/orders.
+* Clinic Admin/Owner can filter all clinicians.
+
+Plexus Engagement:
+
+* Clinician can see patient engagement status.
+* Clinic Admin/Owner can see all call lists and assignments.
+
+Compliance:
+
+* Use synthetic data only.
+* Add subtle “Demo data only” text.
+* Audit signing/edit actions in state.
+* Signed notes lock after signing.
+* Do not expose full Finance unless role allows.
+* Do not include denials.
+* Do not include rejections.
+* Do not include billing readiness.
+
+Reusable components to create:
+
+* ClinicianPortalShell
+* TopBar
+* DashboardHome
+* CommandTile
+* FinancePage
+* FinanceKpiCards
+* AncillaryFinancials
+* PracticeFinancialHealth
+* ClaimsSubmittedTable
+* ClaimsPaidTable
+* ServiceLineRevenue
+* PlexusInvoicePanel
+* ARSnapshot
+* PayerMixTable
+* ProviderFinancialsTable
+* OrdersNotesPage
+* OrdersQueue
+* NotesQueue
+* NoteEditor
+* BulkSignModal
+* LinkedDocumentsPanel
+* AuditTimeline
+* PlexusEngagementPage
+* LiveCallList
+* QualificationTable
+* EngagementActivityFeed
+* LiveSchedule
+* OutreachPipeline
+* EscalationTable
+* SideDrawer
+* StatusPill
+* ServiceChip
+* StatCard
+* DataTable
+* FilterBar
+* EmptyState
+* RestrictedAccessCard
+
+Interaction requirements:
+
+* Dashboard tiles navigate to interior pages.
+* Back button returns to Clinician Portal dashboard home.
+* Tables have search/filter where specified.
+* Claim row opens detail drawer.
+* Invoice row opens invoice drawer.
+* Call task opens call drawer.
+* Note row opens note editor.
+* Edit note toggles editable fields.
+* Save draft updates state.
+* Sign note locks note.
+* Bulk sign modal signs selected notes.
+* Change call outcome updates row and counts.
+* Mark scheduled updates engagement pipeline.
+* Date/service/provider filters update visible rows where possible.
+* Role selector changes access level immediately.
+* App runs without console errors.
+
+Visual quality:
+
+* Premium white cards on soft gray background.
+* Clean spacing.
+* Rounded cards.
+* Subtle shadows.
+* Dark navy headings.
+* Periwinkle selected states.
+* Service-line chips/dots use fixed colors.
+* Avoid cluttered dashboard tiles.
+* Keep tables clean and readable.
+* Make it responsive.
+
+Deliverable:
+Create a working Replit app that I can run and click through.
+
+All 3 tiles must be implemented inside the existing Clinician Portal.
+
+At the end, provide:
+
+1. Short implementation summary
+2. Files/components created or modified
+3. How to run it
+4. Any known gaps
+
+Critical final check:
+Search the app for these words and remove them from Finance:
+
+* denial
+* denied
+* rejection
+* rejected
+* billing readiness
+* missing documentation
+* documentation hold
+
+Finance should only be claims submitted, claims paid, payments posted, pending submitted claims, A/R aging, payer mix, provider financials, ancillary financials, Plexus split, clinic net, and invoice status.

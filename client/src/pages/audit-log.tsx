@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Shield, Filter, ChevronRight } from "lucide-react";
+import { Shield, Filter } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Link } from "wouter";
 import type { AuditLog } from "@shared/schema";
 import { PageHeader } from "@/components/PageHeader";
 
@@ -34,8 +33,8 @@ function formatTimestamp(ts: string | Date) {
   });
 }
 
-export default function AuditLogPage() {
-  const [userFilter, setUserFilter] = useState("");
+export default function AuditLogPage({ embedded = false }: { embedded?: boolean } = {}) {
+  const [userFilter, setUserFilter] = useState("all");
   const [entityTypeFilter, setEntityTypeFilter] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -62,27 +61,12 @@ export default function AuditLogPage() {
     queryKey: ["/api/audit-log/users"],
   });
 
-  const filtered = userFilter
+  const filtered = userFilter && userFilter !== "all"
     ? logs.filter((l) => l.userId === userFilter)
     : logs;
 
-  return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-
-        <div className="flex items-center gap-2 text-sm text-slate-500">
-          <Link href="/admin" className="hover:text-slate-700 transition">Admin</Link>
-          <ChevronRight className="w-4 h-4" />
-          <span className="text-slate-700 font-medium">Audit Log</span>
-        </div>
-
-        <PageHeader
-          eyebrow="PLEXUS ANCILLARY · AUDIT"
-          icon={Shield}
-          title="Audit Log"
-          subtitle="A read-only record of who changed what and when."
-        />
-
+  const body = (
+    <>
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl">
           <div className="flex flex-wrap gap-3 items-end">
             <div className="flex items-center gap-2 text-slate-500">
@@ -97,7 +81,7 @@ export default function AuditLogPage() {
                   <SelectValue placeholder="All users" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All users</SelectItem>
+                  <SelectItem value="all">All users</SelectItem>
                   {users.map((u) => (
                     <SelectItem key={u.id} value={u.id}>{u.username}</SelectItem>
                   ))}
@@ -227,6 +211,21 @@ export default function AuditLogPage() {
         <p className="text-center text-xs text-slate-400">
           Showing the {filtered.length} most recent entries (max 200 per query).
         </p>
+    </>
+  );
+
+  if (embedded) return <div className="flex flex-col gap-6">{body}</div>;
+
+  return (
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          eyebrow="PLEXUS ANCILLARY · AUDIT"
+          icon={Shield}
+          title="Audit Log"
+          subtitle="A read-only record of who changed what and when."
+        />
+        {body}
       </div>
     </div>
   );

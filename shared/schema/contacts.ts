@@ -18,6 +18,8 @@ import {
   index, createInsertSchema, z,
 } from "./_common";
 import { users } from "./users";
+import { clinics } from "./clinics";
+import { integer } from "./_common";
 
 export const CONTACT_CATEGORIES = [
   "facility",
@@ -30,6 +32,8 @@ export type ContactCategory = (typeof CONTACT_CATEGORIES)[number];
 
 export const contacts = pgTable("contacts", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   category: text("category").notNull(),
   name: text("name").notNull(),
   role: text("role"),

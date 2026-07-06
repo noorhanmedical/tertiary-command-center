@@ -1,3 +1,4 @@
+import { it } from "vitest";
 import assert from "node:assert/strict";
 import {
   getAncillarySnapshot,
@@ -60,4 +61,6 @@ async function main() {
   console.log("Ancillary read-model test passed.");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+it("Ancillary read-model", async () => {
+  await main();
+});

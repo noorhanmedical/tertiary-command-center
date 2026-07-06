@@ -129,7 +129,7 @@ if (failures.length > 0) {
 }
 
 const testAbs = path.join(root, TEST_REL);
-const result = spawnSync("npx", ["tsx", testAbs], {
+const result = spawnSync("npx", ["vitest", "run", testAbs], {
   cwd: root,
   stdio: "inherit",
   env: process.env,

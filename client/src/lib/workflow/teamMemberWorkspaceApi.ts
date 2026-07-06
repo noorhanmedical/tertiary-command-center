@@ -27,6 +27,17 @@ export type TeamWorkspaceClinicVisit = {
   executionCaseId?: number | null;
 };
 
+export type AncillaryReadinessItemState = "complete" | "missing" | "not_required";
+
+export type AncillaryReadinessSummary = {
+  informedConsent: AncillaryReadinessItemState;
+  screeningForm: AncillaryReadinessItemState;
+  brainwavePdf: AncillaryReadinessItemState;
+  report: AncillaryReadinessItemState;
+  informedConsentDocId: number | null;
+  screeningFormDocId: number | null;
+};
+
 export type TeamWorkspaceAncillaryAppointment = {
   id: string | number;
   patientName?: string | null;
@@ -39,6 +50,7 @@ export type TeamWorkspaceAncillaryAppointment = {
   assignedUserId?: string | null;
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
+  readiness?: AncillaryReadinessSummary | null;
 };
 
 export type TeamWorkspaceCallListItem = {
@@ -54,7 +66,74 @@ export type TeamWorkspaceCallListItem = {
   qualificationStatus?: string | null;
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
+  /** Target ancillary/workflow services on the execution case (drives the
+   *  human-readable call reason). */
+  selectedServices?: string[] | null;
+  /** Most recent call outcome — used to refine the call reason (e.g. a
+   *  missed-call follow-up vs. a fresh outreach). */
+  lastCallOutcome?: string | null;
+  /** Engagement bucket: 'visit' | 'outreach' | 'scheduling_triage'. */
+  engagementBucket?: string | null;
 };
+
+// Short, human-readable explanation of why a patient is on the call list,
+// derived entirely from existing execution-case fields (no new backend data).
+// Examples: "BrainWave outreach", "VitalWave follow-up", "Ultrasound
+// scheduling", "Missed call follow-up", "Order follow-up".
+export function deriveCallReason(item: TeamWorkspaceCallListItem): string {
+  const outcome = (item.lastCallOutcome ?? "").toLowerCase();
+  const services = (item.selectedServices ?? []).filter(Boolean);
+  const primary = services[0] ?? null;
+
+  const niceService = (s: string): string => {
+    const v = s.toLowerCase();
+    if (v.includes("brainwave") || v.includes("brain")) return "BrainWave";
+    if (v.includes("vitalwave") || v.includes("vital")) return "VitalWave";
+    if (
+      v.includes("ultrasound") ||
+      v.includes("duplex") ||
+      v.includes("doppler") ||
+      v.includes("echo") ||
+      v.includes("carotid")
+    )
+      return "Ultrasound";
+    return s;
+  };
+
+  // Outcome-driven reasons take priority — they describe the next action.
+  if (outcome) {
+    if (outcome.includes("no_answer") || outcome.includes("missed"))
+      return "Missed call follow-up";
+    if (outcome.includes("voicemail")) return "Voicemail follow-up";
+    if (outcome.includes("callback")) return "Patient requested callback";
+    if (outcome.includes("reschedule")) return "Reschedule follow-up";
+    if (outcome.includes("needs_records") || outcome.includes("document"))
+      return "Document follow-up";
+  }
+
+  const bucket = (item.engagementBucket ?? "").toLowerCase();
+  if (bucket === "scheduling_triage") return "Scheduling follow-up";
+
+  if (primary) {
+    const label = niceService(primary);
+    if (label === "Ultrasound") return "Ultrasound scheduling";
+    const verb =
+      item.engagementStatus === "contacted" ? "follow-up" : "outreach";
+    return `${label} ${verb}`;
+  }
+
+  // Fallbacks based on engagement status when no service is attached.
+  switch ((item.engagementStatus ?? "").toLowerCase()) {
+    case "new":
+      return "New outreach";
+    case "contacted":
+      return "Follow-up call";
+    case "scheduled":
+      return "Confirm appointment";
+    default:
+      return "Outreach call";
+  }
+}
 
 type ScheduleParams = {
   facilityId?: string | null;
@@ -232,6 +311,10 @@ export async function fetchPatientScheduleDayContext(params: {
 export async function schedulePatientAncillary(input: {
   executionCaseId?: number | null;
   patientScreeningId?: number | null;
+  // For brand-new patients with no case yet: the server creates a minimal
+  // execution case stub when neither id resolves but a name is provided.
+  patientName?: string | null;
+  patientDob?: string | null;
   serviceType: string;
   startsAt: string;
   endsAt?: string | null;
@@ -247,6 +330,8 @@ export async function schedulePatientAncillary(input: {
     body: JSON.stringify({
       executionCaseId: input.executionCaseId ?? null,
       patientScreeningId: input.patientScreeningId ?? null,
+      patientName: input.patientName ?? null,
+      patientDob: input.patientDob ?? null,
       serviceType: input.serviceType,
       startsAt: input.startsAt,
       endsAt: input.endsAt ?? null,
@@ -271,7 +356,11 @@ export async function schedulePatientAncillary(input: {
 
 // /api/scheduler-portal/cases doesn't support startDate/endDate, so we
 // fetch by facility/assigned and filter `nextActionAt` client-side when
-// a date window is supplied.
+// a date window is supplied. Cases with NO next-action date are assigned
+// backlog (the Engagement Center shows them with no date) — they must
+// always appear in the member's call list rather than being dropped by
+// the day window. Only cases that DO carry a scheduled next-action date
+// are narrowed to the selected window.
 export async function fetchWorkspaceCallList(
   params: CallListParams = {},
 ): Promise<TeamWorkspaceCallListItem[]> {
@@ -290,7 +379,7 @@ export async function fetchWorkspaceCallList(
     const startMs = params.startDate ? new Date(params.startDate).getTime() : -Infinity;
     const endMs = params.endDate ? new Date(params.endDate).getTime() : Infinity;
     out = out.filter((row) => {
-      if (!row.nextActionAt) return false;
+      if (!row.nextActionAt) return true;
       const t = new Date(row.nextActionAt).getTime();
       return Number.isFinite(t) && t >= startMs && t <= endMs;
     });
@@ -307,6 +396,14 @@ export type ViewAsTeamMember = {
   username: string;
   role: string;
   active: boolean;
+  /** The clinic the roster member belongs to. */
+  facility?: string | null;
+  /** Optional linked login account (null when the roster member has no
+   *  login). Used to target the workspace profile during view-as. */
+  userId?: string | null;
+  /** Soft per-day assignment target set in the Engagement Center; null
+   *  when no target has been set. Surfaced in the view-as picker. */
+  dailyTarget?: number | null;
 };
 
 export async function fetchTeamMembersForWorkspace(

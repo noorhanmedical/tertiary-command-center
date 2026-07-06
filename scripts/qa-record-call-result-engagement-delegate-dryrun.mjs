@@ -43,7 +43,7 @@ requireText(TEST, [
 // are pinned by qa-record-call-result-engagement-delegation.mjs.
 
 if (failures.length === 0) {
-  try { execSync(`npx tsx ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] }); }
+  try { execSync(`npx vitest run ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] }); }
   catch { failures.push("Engagement delegate dry-run test FAILED"); }
 }
 

@@ -51,12 +51,7 @@ const ADMIN_SECTIONS = [
     title: "Clinic Settings", desc: "Facility-level configuration, operating hours, and scheduling constraints.", available: false },
 ];
 
-export default function AdminPage() {
-
-  const [stoveRegion, setStoveRegion] = useState("Southwest");
-  const [stoveFacility, setStoveFacility] = useState("NWPG - Spring");
-  const [stoveKnob, setStoveKnob] = useState<"low" | "mediumLow" | "medium" | "mediumHigh" | "high">("medium");
-
+export function TestFixtureCard() {
   const { toast } = useToast();
   const [lastResult, setLastResult] = useState<any>(null);
 
@@ -85,28 +80,8 @@ export default function AdminPage() {
     },
   });
 
-  const stoveOptions = [
-    { key: "low", label: "Low / Simmer", description: "Keeping food warm, gentle simmer", flames: 1 },
-    { key: "mediumLow", label: "Medium-Low", description: "Slow cooking, sauces", flames: 2 },
-    { key: "medium", label: "Medium", description: "General cooking", flames: 3 },
-    { key: "mediumHigh", label: "Medium-High", description: "Sauteing, pan frying", flames: 4 },
-    { key: "high", label: "High", description: "Boiling water, searing", flames: 5 },
-  ] as const;
-
-  const activeStoveOption =
-    stoveOptions.find((option) => option.key === stoveKnob) ?? stoveOptions[2];
-
   return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-        <PageHeader
-          eyebrow="PLEXUS ANCILLARY · ADMIN"
-          icon={Shield}
-          title="Admin"
-          subtitle="System configuration, access control, and administrative surfaces."
-        />
-
-        <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow">
+    <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow">
           <div className="flex items-start gap-4">
             <div className="rounded-2xl bg-fuchsia-100 p-3 text-fuchsia-700 shrink-0"><Bot className="h-5 w-5" /></div>
             <div className="flex-1">
@@ -162,6 +137,21 @@ export default function AdminPage() {
             </div>
           </div>
         </Card>
+  );
+}
+
+export default function AdminPage() {
+  return (
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          eyebrow="PLEXUS ANCILLARY · ADMIN"
+          icon={Shield}
+          title="Admin"
+          subtitle="System configuration, access control, and administrative surfaces."
+        />
+
+        <TestFixtureCard />
 
         <div className="grid gap-4 md:grid-cols-2">
           {ADMIN_SECTIONS.map(({ href, icon: Icon, iconBg, title, desc, available }) => {

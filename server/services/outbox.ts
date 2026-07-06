@@ -29,24 +29,6 @@ export async function enqueueDriveFile(input: EnqueueDriveFileInput): Promise<Ou
   return row;
 }
 
-/**
- * Coalesce sheet-sync requests: if a pending item of this kind already exists, skip.
- */
-export async function enqueueSheetSync(kind: "sheet_billing" | "sheet_patients", isTest = false): Promise<OutboxItem | null> {
-  const existing = await db
-    .select()
-    .from(outboxItems)
-    .where(and(eq(outboxItems.kind, kind), inArray(outboxItems.status, ["pending", "failed"])))
-    .limit(1);
-  if (existing[0]) return existing[0];
-  const [row] = await db.insert(outboxItems).values({
-    kind,
-    status: "pending",
-    isTest,
-  } as InsertOutboxItem).returning();
-  return row;
-}
-
 export async function listOutboxItems(filter?: { status?: string; kind?: OutboxKind; isTest?: boolean }): Promise<OutboxItem[]> {
   const where = [] as any[];
   if (filter?.status) where.push(eq(outboxItems.status, filter.status));
@@ -91,37 +73,10 @@ async function processDriveFile(item: OutboxItem): Promise<void> {
   const data = await readBlob(item.blobId);
   if (!data) throw new Error(`Blob ${item.blobId} not found on disk`);
 
-  const { getFileStorage, getStorageProvider } = await import("../integrations/fileStorage");
-  const provider = getStorageProvider();
+  const { getFileStorage } = await import("../integrations/fileStorage");
 
-  let folder: string;
-  if (provider === "google_drive") {
-    const { ensureStructuredFacilityFolderTree, getFacilityFolderId, getOrCreateFolder, getUncachableGoogleDriveClient } =
-      await import("../integrations/googleDrive");
-
-    if (item.facility && item.patientName && item.ancillaryType) {
-      const tree = await ensureStructuredFacilityFolderTree(item.facility, item.patientName, item.ancillaryType);
-      const docKind = item.docKind ?? "report";
-      const map: Record<string, string | undefined> = {
-        report: tree.reportFolderId,
-        informed_consent: tree.informedConsentFolderId,
-        screening_form: tree.screeningFormFolderId,
-        order_note: tree.orderNoteFolderId,
-        procedure_note: tree.procedureNoteFolderId,
-        billing_doc: tree.billingDocFolderId,
-        generated_note: tree.orderNoteFolderId,
-      };
-      folder = map[docKind] || tree.reportFolderId;
-    } else if (item.facility) {
-      folder = await getFacilityFolderId(item.facility);
-    } else {
-      const drive = await getUncachableGoogleDriveClient();
-      folder = await getOrCreateFolder(drive, "Plexus Ancillary Platform");
-    }
-  } else {
-    const safePatient = (item.patientName ?? "unassigned").replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim().slice(0, 80) || "unassigned";
-    folder = `${item.facility ?? "general"}/${item.ancillaryType ?? "misc"}/${safePatient}/${item.docKind}`;
-  }
+  const safePatient = (item.patientName ?? "unassigned").replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim().slice(0, 80) || "unassigned";
+  const folder = `${item.facility ?? "general"}/${item.ancillaryType ?? "misc"}/${safePatient}/${item.docKind}`;
 
   const fileStorage = getFileStorage();
   const result = await fileStorage.uploadFile({
@@ -150,24 +105,6 @@ async function processDriveFile(item: OutboxItem): Promise<void> {
   await markCompleted(item.id, result.id, result.viewUrl ?? null);
 }
 
-async function processSheetBilling(item: OutboxItem): Promise<void> {
-  const { runBillingSyncWithLock } = await import("./syncService");
-  const result = await runBillingSyncWithLock(true);
-  if (!result) {
-    // Another sync absorbed it; treat as completed.
-    await markCompleted(item.id);
-    return;
-  }
-  await markCompleted(item.id, result.spreadsheetId, result.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${result.spreadsheetId}` : null);
-}
-
-async function processSheetPatients(item: OutboxItem): Promise<void> {
-  const { runPatientsSyncWithLock } = await import("./syncService");
-  const result = await runPatientsSyncWithLock(true);
-  if (!result) { await markCompleted(item.id); return; }
-  await markCompleted(item.id, result.spreadsheetId, result.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${result.spreadsheetId}` : null);
-}
-
 export interface DrainResult {
   attempted: number;
   succeeded: number;
@@ -192,9 +129,7 @@ export async function drainOutbox(opts?: { ids?: number[]; onlyFailed?: boolean;
     try {
       await markUploading(item.id);
       if (item.kind === "drive_file") await processDriveFile(item);
-      else if (item.kind === "sheet_billing") await processSheetBilling(item);
-      else if (item.kind === "sheet_patients") await processSheetPatients(item);
-      else throw new Error(`Unknown outbox kind: ${item.kind}`);
+      else throw new Error(`Unsupported outbox kind: ${item.kind}`);
       result.succeeded++;
     } catch (err: any) {
       const msg = err?.message || String(err);

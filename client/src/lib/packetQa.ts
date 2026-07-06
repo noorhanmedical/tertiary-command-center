@@ -32,7 +32,13 @@ export type PacketQaBlockerKind =
   | "analysis_failure_only"
   | "no_qualifying_tests"
   | "test_missing_clinician_reasoning"
-  | "test_missing_talking_points";
+  | "test_missing_talking_points"
+  // Admin Review persistence — corrective patch:
+  // The operator changed assigned evidence on this ancillary or test
+  // (via attach/detach) but has not yet regenerated. The canonical
+  // per-test reasoning is therefore older than the staged state.
+  // Block printing until regeneration runs to keep packets honest.
+  | "stale_admin_review";
 
 export type PacketQaWarningKind =
   | "missing_phone"
@@ -196,6 +202,41 @@ export function auditPacketPatient(
       kind: "no_qualifying_tests",
       message: "patient has no qualifyingTests",
     });
+  }
+
+  // Admin Review persistence — corrective patch:
+  // Block if any `reasoning["adminReview:<ancillary>"]` or
+  // `reasoning["adminReview:test:<n>"]` block carries `stale: true`.
+  // The stale flag is written by attach/detach in AdminReviewDialog
+  // and cleared by a successful regenerate. While stale, the
+  // canonical test reasoning the PDF would print is older than the
+  // operator's staged evidence — the packet would lie.
+  if (reasoning && typeof reasoning === "object") {
+    const blob = reasoning as Record<string, unknown>;
+    for (const key of Object.keys(blob)) {
+      if (!key.startsWith("adminReview:")) continue;
+      if (key === "adminReview:updates") continue;
+      const entry = blob[key];
+      if (
+        entry &&
+        typeof entry === "object" &&
+        (entry as Record<string, unknown>).stale === true
+      ) {
+        const label = key === "adminReview:brainwave"
+          ? "BrainWave"
+          : key === "adminReview:vitalwave"
+            ? "VitalWave"
+            : key === "adminReview:ultrasound"
+              ? "Ultrasound"
+              : key.startsWith("adminReview:test:")
+                ? `Ultrasound · ${key.slice("adminReview:test:".length)}`
+                : key.slice("adminReview:".length);
+        blockers.push({
+          kind: "stale_admin_review",
+          message: `${label} has changed evidence and must be regenerated before printing`,
+        });
+      }
+    }
   }
 
   if (patient.status !== "completed") {

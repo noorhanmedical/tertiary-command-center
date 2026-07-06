@@ -5,6 +5,7 @@ import {
 import { patientExecutionCases } from "./executionCase";
 import { patientScreenings } from "./screening";
 import { procedureEvents } from "./procedureEvents";
+import { clinics } from "./clinics";
 
 export const BILLING_READINESS_STATUSES = [
   "not_ready",
@@ -17,6 +18,8 @@ export type BillingReadinessStatus = typeof BILLING_READINESS_STATUSES[number];
 
 export const billingReadinessChecks = pgTable("billing_readiness_checks", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   executionCaseId: integer("execution_case_id").references(() => patientExecutionCases.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   procedureEventId: integer("procedure_event_id").references(() => procedureEvents.id, { onDelete: "set null" }),

@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement executor — fake-deps test (Batch 7 of split-brain run).
 //
 // Runnable via:
@@ -436,10 +437,12 @@ check(
   }
 }
 
-if (failures.length > 0) {
-  console.error("Engagement executor test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Engagement executor test passed.");
-}
+describe("Engagement executor test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement executor test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

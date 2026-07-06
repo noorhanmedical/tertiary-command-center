@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -13,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Popover,
   PopoverContent,
@@ -21,29 +20,27 @@ import {
 } from "@/components/ui/popover";
 import {
   Loader2,
-  ShieldCheck,
   AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Lightbulb,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
+  Pencil,
   Plus,
+  RefreshCw,
   Sparkles,
-  StickyNote,
   Trash2,
   X,
+  XCircle,
   Search,
+  BookOpen,
+  Check,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { PatientScreening } from "@shared/schema";
 import { computeAdminReview, type AdminApprovalStatus } from "@/lib/adminReviewStatus";
-import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import {
   openPatientPacketPrintPreview,
 } from "@/lib/pdfGeneration";
@@ -66,7 +63,34 @@ import type {
   AdminEvidenceChip,
   AdminDiagnosisSuggestion,
 } from "@shared/plexus-iq/adminReviewEvidence";
-import { evidenceForUltrasoundTest } from "@shared/plexus-iq/adminReviewEvidence";
+import {
+  evidenceForUltrasoundTest,
+  ALL_ULTRASOUND_SUBTYPES,
+} from "@shared/plexus-iq/adminReviewEvidence";
+import {
+  blockedAncillariesFromHistory,
+  type AncillaryWarning,
+} from "@shared/priorAncillaryHistory";
+import {
+  AdminReviewAiLogicDrawer,
+  AiEvidenceBubblesRow,
+  AiLogicSavePrompt,
+  ChipEvidenceMenuExtras,
+  CONF_DOT,
+  SOURCE_BADGE_TONE,
+  useCiChipDecision,
+  normalizeSourceType,
+  type AiAttachTarget,
+  type AiEvidenceItem,
+  type AiLogicPatientContext,
+  type AiRuleRationale,
+} from "./AdminReviewAiLogicDrawer";
+import {
+  ciRecordEvidence,
+  useClinicalIntelligenceLoaded,
+} from "@/lib/clinicalIntelligence/store";
+import { ciActorName } from "@/lib/clinicalIntelligence/permissions";
+import { useCurrentUser } from "@/hooks/api/auth";
 
 export type AdminReviewDialogProps = {
   open: boolean;
@@ -100,35 +124,16 @@ const REGENERATE_TEST_IDS: Record<AdminReviewAncillaryId, string> = {
   ultrasound: "admin-review-regenerate-ultrasound",
 };
 
-const STATUS_META: Record<
-  AdminApprovalStatus,
-  { label: string; pillClass: string }
-> = {
-  pending: {
-    label: "Pending",
-    pillClass: "bg-slate-100 text-slate-700 border border-slate-200",
-  },
-  approved: {
-    label: "Approved",
-    pillClass: "bg-emerald-50 text-emerald-800 border border-emerald-200",
-  },
-  needs_info: {
-    // Visible label kept short to avoid the legacy needs-info phrasing
-    // that lived on ancillary bars. The approval state itself remains
-    // `needs_info` for backend compat.
-    label: "Pending Info",
-    pillClass: "bg-amber-50 text-amber-800 border border-amber-200",
-  },
-  rejected: {
-    label: "Rejected",
-    pillClass: "bg-rose-50 text-rose-800 border border-rose-200",
-  },
-};
-
 // Audit/change-log entry shown in the bottom "Updates Made In Patient"
 // box. This is a thin trace surface, not a second clinical truth
 // layer — every entry mirrors an action the admin took during this
 // review session.
+// Canonical ultrasound subtype names offered by the manual "Add Ancillary"
+// control. These match the qualifying-test strings used across scheduling /
+// PDF surfaces (with CPT codes) so a hand-added test dedupes against an
+// AI-qualified one. Generic "Ultrasound Studies" is offered separately.
+const ADD_ULTRASOUND_SUBTYPES: readonly string[] = ALL_ULTRASOUND_SUBTYPES;
+
 export type AdminReviewUpdateType =
   | "diagnosis_added"
   | "medication_added"
@@ -136,7 +141,9 @@ export type AdminReviewUpdateType =
   | "icd_added"
   | "suggestion_accepted"
   | "qualifying_factor_removed"
+  | "ancillary_added"
   | "ancillary_removed"
+  | "ultrasound_child_added"
   | "ultrasound_child_removed"
   | "regenerate"
   | "pdf_previewed"
@@ -155,6 +162,168 @@ export type AdminReviewUpdateEntry = {
   by?: string | null;
   metadata?: Record<string, unknown>;
 };
+
+// ────────────────────────────────────────────────────────────────────
+// Updates grouping — the bottom "Updates" box groups change entries by
+// ancillary (BrainWave / VitalWave / Ultrasound) instead of a flat
+// chronological list. Only per-ancillary clinical changes appear here;
+// session-meta entries (approvals, notes, regenerate, pdf, icd search)
+// are intentionally excluded.
+// ────────────────────────────────────────────────────────────────────
+const UPDATE_CHANGE_TYPES: ReadonlySet<AdminReviewUpdateType> = new Set([
+  "diagnosis_added",
+  "medication_added",
+  "symptom_added",
+  "qualifying_factor_removed",
+  "ancillary_added",
+  "ancillary_removed",
+  "ultrasound_child_added",
+  "ultrasound_child_removed",
+]);
+
+function ancillaryOfUpdateEntry(
+  entry: AdminReviewUpdateEntry,
+): AdminReviewAncillaryId | null {
+  const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+  const direct = meta.ancillary;
+  if (direct === "brainwave" || direct === "vitalwave" || direct === "ultrasound") {
+    return direct;
+  }
+  const t = (meta.target ?? meta.from) as
+    | { type?: string; ancillaryId?: string }
+    | undefined;
+  if (t && typeof t === "object") {
+    if (
+      t.type === "ancillary" &&
+      (t.ancillaryId === "brainwave" || t.ancillaryId === "vitalwave")
+    ) {
+      return t.ancillaryId;
+    }
+    if (t.type === "ultrasound-parent" || t.type === "ultrasound-test") {
+      return "ultrasound";
+    }
+  }
+  if (entry.type === "ultrasound_child_removed") return "ultrasound";
+  return null;
+}
+
+// Short, clean change wording, e.g. "Removed PTSD" / "Added diabetes
+// mellitus". Strips the verbose "qualifying factor:" / "diagnosis:"
+// prefixes the audit log stores.
+function shortUpdateText(entry: AdminReviewUpdateEntry): string {
+  const label = entry.label ?? "";
+  const afterColon = label.includes(":")
+    ? label.slice(label.indexOf(":") + 1).trim()
+    : label.trim();
+  switch (entry.type) {
+    case "diagnosis_added":
+    case "medication_added":
+    case "symptom_added":
+      return `Added ${afterColon}`;
+    case "qualifying_factor_removed":
+    case "ultrasound_child_removed":
+      return `Removed ${afterColon}`;
+    case "ancillary_removed":
+      return "Removed ancillary";
+    default:
+      return label;
+  }
+}
+
+const UPDATE_GROUP_ORDER: AdminReviewAncillaryId[] = [
+  "brainwave",
+  "vitalwave",
+  "ultrasound",
+];
+
+const UPDATE_GROUP_ACCENT: Record<AdminReviewAncillaryId, string> = {
+  brainwave: "text-violet-700",
+  vitalwave: "text-rose-700",
+  ultrasound: "text-emerald-700",
+};
+
+const UPDATE_GROUP_DOT: Record<AdminReviewAncillaryId, string> = {
+  brainwave: "bg-violet-500",
+  vitalwave: "bg-rose-500",
+  ultrasound: "bg-emerald-500",
+};
+
+function groupUpdatesByAncillary(
+  updates: AdminReviewUpdateEntry[],
+): { ancillary: AdminReviewAncillaryId; entries: AdminReviewUpdateEntry[] }[] {
+  const byAncillary: Record<AdminReviewAncillaryId, AdminReviewUpdateEntry[]> = {
+    brainwave: [],
+    vitalwave: [],
+    ultrasound: [],
+  };
+  for (const entry of updates) {
+    if (!UPDATE_CHANGE_TYPES.has(entry.type)) continue;
+    const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+    const tgt = (meta.target ?? meta.from) as { type?: string } | undefined;
+    if (tgt && typeof tgt === "object" && tgt.type === "all") {
+      byAncillary.brainwave.push(entry);
+      byAncillary.vitalwave.push(entry);
+      byAncillary.ultrasound.push(entry);
+      continue;
+    }
+    const ancillary = ancillaryOfUpdateEntry(entry);
+    if (!ancillary) continue;
+    byAncillary[ancillary].push(entry);
+  }
+  return UPDATE_GROUP_ORDER.filter((a) => byAncillary[a].length > 0).map((a) => ({
+    ancillary: a,
+    entries: byAncillary[a],
+  }));
+}
+
+// Derive the set of regenerate target ids from the pending changes in the
+// Updates panel. Mirrors the same set surfaced by `groupUpdatesByAncillary`
+// but resolves ultrasound children to their specific `test:<name>` target so
+// a change under a single ultrasound test regenerates only that test.
+// Shape matches `readStaleTargetIds`: brainwave | vitalwave | ultrasound |
+// test:<testName>.
+function regenTargetIdsFromUpdates(
+  updates: AdminReviewUpdateEntry[],
+): string[] {
+  const ids = new Set<string>();
+  for (const entry of updates) {
+    if (!UPDATE_CHANGE_TYPES.has(entry.type)) continue;
+    const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+    const tgt = (meta.target ?? meta.from) as
+      | { type?: string; ancillaryId?: string; testName?: string }
+      | undefined;
+    if (tgt && typeof tgt === "object") {
+      if (tgt.type === "all") {
+        ids.add("brainwave");
+        ids.add("vitalwave");
+        ids.add("ultrasound");
+        continue;
+      }
+      if (
+        tgt.type === "ancillary" &&
+        (tgt.ancillaryId === "brainwave" || tgt.ancillaryId === "vitalwave")
+      ) {
+        ids.add(tgt.ancillaryId);
+        continue;
+      }
+      if (
+        tgt.type === "ultrasound-test" &&
+        typeof tgt.testName === "string" &&
+        tgt.testName
+      ) {
+        ids.add(`test:${tgt.testName}`);
+        continue;
+      }
+      if (tgt.type === "ultrasound-parent") {
+        ids.add("ultrasound");
+        continue;
+      }
+    }
+    const anc = ancillaryOfUpdateEntry(entry);
+    if (anc) ids.add(anc);
+  }
+  return Array.from(ids);
+}
 
 const CONFIDENCE_TONE: Record<string, string> = {
   high: "bg-emerald-50 text-emerald-800 border-emerald-200",
@@ -351,6 +520,18 @@ export function parseSymptomButtonsFromHx(history: string | null | undefined): S
   return out;
 }
 
+// Human label for an assignment target, recorded as `assignedAncillary`
+// on auto-recorded evidence. Matches the labels the bubble attach flow
+// already writes so the server-side dedupe merges them forward cleanly.
+function assignmentTargetLabel(target: AssignmentTarget): string {
+  if (target.type === "ancillary") {
+    return target.ancillaryId === "brainwave" ? "BrainWave" : "VitalWave";
+  }
+  if (target.type === "ultrasound-parent") return "Ultrasound (parent)";
+  if (target.type === "ultrasound-test") return target.testName;
+  return "All ancillaries";
+}
+
 // Merge rule-engine evidence into the parsed buttons, deduped.
 function mergeRuleEngineEvidence(
   base: SupportingButton[],
@@ -422,6 +603,8 @@ export type CanonicalReasoningCard = {
   pearls: string[];
   confidence: "high" | "medium" | "low" | null;
   approvalRequired: boolean;
+  adminAdded: boolean;
+  addedReason: string | null;
 };
 
 function reasoningAsObject(value: unknown): Record<string, any> {
@@ -443,6 +626,12 @@ export function buildCanonicalReasoningByAncillary(
     const category = getAncillaryCategory(test);
     if (category !== "brainwave" && category !== "vitalwave" && category !== "ultrasound") continue;
     const value = reasoning[test];
+    const adminMeta = reasoningAsObject(reasoning[`adminReview:test:${test}`]);
+    const adminAdded = !!adminMeta.adminAdded;
+    const addedReason =
+      typeof adminMeta.reason === "string" && adminMeta.reason.trim()
+        ? adminMeta.reason
+        : null;
     const empty: CanonicalReasoningCard = {
       testName: test,
       clinicianReasoning: "",
@@ -452,6 +641,8 @@ export function buildCanonicalReasoningByAncillary(
       pearls: [],
       confidence: null,
       approvalRequired: false,
+      adminAdded,
+      addedReason,
     };
     if (value == null) {
       grouped[category].push(empty);
@@ -476,6 +667,8 @@ export function buildCanonicalReasoningByAncillary(
             ? value.confidence
             : null,
         approvalRequired: !!value.approvalRequired,
+        adminAdded,
+        addedReason,
       });
     }
   }
@@ -546,6 +739,161 @@ function seedAssignmentsFromReasoning(
 
 function chipKeyForAssignment(b: SupportingButton): string {
   return buttonKey(b);
+}
+
+// Admin Review persistence — corrective patch (b4b1569 follow-up).
+//
+// Build the next `reasoning` blob with `adminReview:<ancillary>` and
+// `adminReview:test:<testName>` keys updated to reflect the operator's
+// current `assignments` state.
+//
+// IMPORTANT: writer (this) and reader (`seedAssignmentsFromReasoning`)
+// must stay symmetrical. If this key shape changes,
+// close/reopen assignment persistence will break.
+//
+// Merge rules (preserve everything else):
+//   - Other `adminReview:<a>` keys not touched here are passed through.
+//   - Each touched key spreads its existing block then overwrites
+//     `assignedEvidence` only, so any other admin metadata
+//     (ancillaryId, ancillaryNote, regeneratedAt, regeneratedMode)
+//     survives.
+//   - Existing `reasoning[testName]` canonical entries are untouched.
+//   - `adminReview:updates` audit log is untouched.
+//
+// `staleAncillaries` (optional): a set of ancillary ids whose
+// `assignedEvidence` was just changed. The merge sets `stale: true`
+// + `staleReason` + `staleAt` on those blocks so the UI and packet QA
+// can block until regenerate runs. Other blocks' stale flags are left
+// alone.
+//
+// `clearedAncillaries` (optional): a set whose stale flags should be
+// cleared (used by the regenerate success handler).
+type AssignedEvidenceMergeOptions = {
+  staleAncillaries?: Set<string>;
+  staleReason?: string;
+  clearedAncillaries?: Set<string>;
+};
+
+function buildAssignedEvidenceReasoning(
+  prevReasoning: Record<string, unknown>,
+  assignments: AdminReviewAssignmentState,
+  options: AssignedEvidenceMergeOptions = {},
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...prevReasoning };
+  const staleSet = options.staleAncillaries ?? new Set<string>();
+  const clearedSet = options.clearedAncillaries ?? new Set<string>();
+  const staleReason = options.staleReason ?? "Evidence assignment changed";
+  const nowIso = new Date().toISOString();
+
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const key = `adminReview:${id}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    const newAssigned =
+      id === "ultrasound" ? assignments.ultrasound.parent : assignments[id];
+    const merged: Record<string, unknown> = {
+      ...existing,
+      ancillaryId: id,
+      assignedEvidence: newAssigned,
+    };
+    if (staleSet.has(id)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(id)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
+  }
+  // Ultrasound child tests live under their own key.
+  for (const [testName, assigned] of Object.entries(
+    assignments.ultrasound.byTestName,
+  )) {
+    const key = `adminReview:test:${testName}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    const childKey = `test:${testName}`;
+    const merged: Record<string, unknown> = {
+      ...existing,
+      testName,
+      assignedEvidence: assigned,
+    };
+    if (staleSet.has(childKey)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(childKey)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
+  }
+  return next;
+}
+
+/**
+ * Return the set of "target ids" that the writer is responsible for.
+ * Parents: `brainwave` / `vitalwave` / `ultrasound`.
+ * Ultrasound children: `test:<testName>`.
+ *
+ * Used by the corrective patch to mark exactly the touched targets as
+ * stale on attach/detach.
+ */
+function targetIdsForAssignmentTarget(
+  target: AssignmentTarget,
+): string[] {
+  if (target.type === "all") return ["brainwave", "vitalwave", "ultrasound"];
+  if (target.type === "ancillary") return [target.ancillaryId];
+  if (target.type === "ultrasound-parent") return ["ultrasound"];
+  if (target.type === "ultrasound-test") return [`test:${target.testName}`];
+  return [];
+}
+
+/**
+ * Read the stale target ids from a reasoning blob. Returns the same
+ * id shape (`brainwave|vitalwave|ultrasound|test:<n>`) the writer uses.
+ */
+function readStaleTargetIds(reasoning: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const block = reasoning[`adminReview:${id}`];
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(id);
+    }
+  }
+  for (const key of Object.keys(reasoning)) {
+    if (!key.startsWith("adminReview:test:")) continue;
+    const block = reasoning[key];
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(`test:${key.slice("adminReview:test:".length)}`);
+    }
+  }
+  return out;
+}
+
+function ancillaryLabelForTargetId(id: string): string {
+  if (id === "brainwave") return "BrainWave";
+  if (id === "vitalwave") return "VitalWave";
+  if (id === "ultrasound") return "Ultrasound";
+  if (id.startsWith("test:")) return `Ultrasound · ${id.slice("test:".length)}`;
+  return id;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -646,7 +994,21 @@ export function AdminReviewDialog({
     () => seedAssignmentsFromReasoning(reasoningObject),
   );
   const [adminNote, setAdminNote] = useState<string>("");
+  // AI Logic knowledge-layer prototype (localStorage-backed; additive —
+  // never blocks or alters the existing review/approve flow).
+  const [aiLogicOpen, setAiLogicOpen] = useState(false);
+  const [aiPromptLabel, setAiPromptLabel] = useState<string | null>(null);
   const [ancillaryNotes, setAncillaryNotes] = useState<Record<string, string>>({});
+  // Manual "Add Ancillary" control state.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addReason, setAddReason] = useState("");
+  // Set when an add attempt found no qualifying evidence — surfaces the
+  // honest "no qualifying evidence" state plus the required-reason override.
+  const [overrideTarget, setOverrideTarget] = useState<{
+    ancillaryId: AdminReviewAncillaryId;
+    testName: string;
+    candidates: string[];
+  } | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Per-ultrasound-child dropdown collapse state — defaults closed.
   const [ultrasoundChildExpanded, setUltrasoundChildExpanded] = useState<
@@ -669,6 +1031,29 @@ export function AdminReviewDialog({
   // AI ICD search state (added results live in this list until the user assigns them).
   const [icdSearchQuery, setIcdSearchQuery] = useState("");
   const [aiIcdButtons, setAiIcdButtons] = useState<SupportingButton[]>([]);
+
+  // Source Data popover edit mode — allows inline editing of Hx/Dx/Rx
+  // with a Save → Regenerate flow.
+  const [sourceEditMode, setSourceEditMode] = useState(false);
+  const [sourceEditHx, setSourceEditHx] = useState("");
+  const [sourceEditDx, setSourceEditDx] = useState("");
+  const [sourceEditRx, setSourceEditRx] = useState("");
+  const [sourceDataSaved, setSourceDataSaved] = useState(false);
+
+  // Local mirrors of Hx/Dx/Rx that update immediately when source data
+  // is saved, so evidence buttons re-parse without waiting for the parent
+  // to propagate the updated patient prop back down.
+  const [localHx, setLocalHx] = useState(() => patient.history ?? "");
+  const [localDx, setLocalDx] = useState(() => patient.diagnoses ?? "");
+  const [localRx, setLocalRx] = useState(() => patient.medications ?? "");
+
+  // Sync local mirrors when the active patient changes (sibling navigation).
+  useEffect(() => {
+    setLocalHx(patient.history ?? "");
+    setLocalDx(patient.diagnoses ?? "");
+    setLocalRx(patient.medications ?? "");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.id]);
 
   const icdSearchMutation = useMutation<
     { ok: boolean; results: IcdSearchResult[]; error?: string; detail?: string },
@@ -730,14 +1115,6 @@ export function AdminReviewDialog({
   // SupportingButton only after the admin clicks accept.
   const [acceptedSuggestions, setAcceptedSuggestions] = useState<SupportingButton[]>([]);
 
-  // Layout state — left/right panels default open, collapsible via
-  // header toggle buttons. Source tab is the default left tab.
-  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [leftTab, setLeftTab] = useState<
-    "source" | "patient-directory" | "cooldown" | "insurance" | "history" | "engagement"
-  >("source");
-
   // Engagement assignment for THIS patient — drives the scheduler
   // routing chip on the right panel and the highlight in the
   // Engagement tab call list.
@@ -766,222 +1143,12 @@ export function AdminReviewDialog({
     staleTime: 30_000,
   });
 
-  // Scheduler-grouped call list — backed by /api/engagement/assignment-board,
-  // grouped CLIENT-SIDE by assignedName since the backend returns a flat
-  // list (no scheduler-grouped endpoint exists today). Patients filtered
-  // to the current patient's facility so the call list shows the
-  // scheduler context the admin is actually reviewing.
-  //
-  // SOURCE MARKER: Engagement Center source of truth
-  // SOURCE MARKER: Scheduler call lists grouped by scheduler
-  type EngagementBoardRow = {
-    patientScreeningId: number | null;
-    executionCaseId: number;
-    patientName: string;
-    patientDob: string | null;
-    phoneNumber: string | null;
-    facility: string | null;
-    scheduleDate: string | null;
-    patientType: string | null;
-    engagementBucket: string | null;
-    engagementStatus: string | null;
-    commitStatus: string | null;
-    assignedTeamMemberId: number | null;
-    assignedRole: string | null;
-    assignedName: string | null;
-    assignedFacility: string | null;
-    nextActionAt: string | null;
-    lastActivityAt: string | null;
-    lastActivitySummary: string | null;
-    missingInfo: string[];
-    selectedServiceList: string[];
-  };
-  const engagementBoardQuery = useQuery<{ rows: EngagementBoardRow[] }>({
-    queryKey: [
-      "/api/engagement/assignment-board",
-      patient.facility ?? "_all_",
-    ],
-    queryFn: async () => {
-      const url = patient.facility
-        ? `/api/engagement/assignment-board?facility=${encodeURIComponent(patient.facility)}`
-        : `/api/engagement/assignment-board`;
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`assignment-board ${res.status}`);
-      return res.json();
-    },
-    enabled: open && leftTab === "engagement",
-    staleTime: 30_000,
-  });
-
-  type SchedulerGroup = {
-    schedulerKey: string;
-    schedulerName: string;
-    rows: EngagementBoardRow[];
-  };
-
-  const schedulerGroups: SchedulerGroup[] = useMemo(() => {
-    const rows = engagementBoardQuery.data?.rows ?? [];
-    const map = new Map<string, SchedulerGroup>();
-    for (const r of rows) {
-      const key = r.assignedTeamMemberId != null
-        ? `id:${r.assignedTeamMemberId}`
-        : "__unassigned__";
-      const name = r.assignedName?.trim() || "Unassigned / Engagement Queue";
-      const existing = map.get(key);
-      if (existing) existing.rows.push(r);
-      else map.set(key, { schedulerKey: key, schedulerName: name, rows: [r] });
-    }
-    const ordered = Array.from(map.values());
-    ordered.sort((a, b) => {
-      if (a.schedulerKey === "__unassigned__") return 1;
-      if (b.schedulerKey === "__unassigned__") return -1;
-      return a.schedulerName.localeCompare(b.schedulerName);
-    });
-    return ordered;
-  }, [engagementBoardQuery.data]);
-
-  // Per-scheduler selected patient IDs (patient_screenings.id) for the
-  // scheduler-scoped Plexus / Clinician PDF buttons.
-  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
-  const [selectedByScheduler, setSelectedByScheduler] = useState<
-    Record<string, Set<number>>
-  >({});
   // Packet QA Gate — opened on per-scheduler PDF preview when audit
   // finds blockers. proceed() carries the printable subset forward.
   const [packetQa, setPacketQa] = useState<{
     report: PacketQaReport;
     proceed: () => void;
   } | null>(null);
-
-  function toggleSelectedForScheduler(schedulerKey: string, patientId: number) {
-    setSelectedByScheduler((prev) => {
-      const next = new Set(prev[schedulerKey] ?? []);
-      if (next.has(patientId)) next.delete(patientId);
-      else next.add(patientId);
-      return { ...prev, [schedulerKey]: next };
-    });
-  }
-
-  function setAllSelectedForScheduler(group: SchedulerGroup) {
-    setSelectedByScheduler((prev) => {
-      const existing = prev[group.schedulerKey] ?? new Set<number>();
-      const allIds = group.rows
-        .map((r) => r.patientScreeningId)
-        .filter((id): id is number => id != null);
-      // If everyone is already selected, clear. Otherwise select all.
-      const allSelected = allIds.length > 0 && allIds.every((id) => existing.has(id));
-      const next = new Set<number>(allSelected ? [] : allIds);
-      return { ...prev, [group.schedulerKey]: next };
-    });
-  }
-
-  // Scheduler-scoped PDF packet generation. Pulls full patient
-  // records for the selected ids, validates the facility/date
-  // packet, then opens the canonical print-preview popup. The
-  // operator hits "Print / Save as PDF" inside the popup to produce
-  // the file — html2pdf / html2canvas are not used here so the
-  // dialog stays responsive even on large selections.
-  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
-  // SOURCE MARKER: Admin Review packets use print preview
-  // SOURCE MARKER: Admin Review packet print preview avoids html2canvas
-  // SOURCE MARKER: Admin Review packet print preview opens printable popup
-  async function generateSchedulerScopedPdf(
-    group: SchedulerGroup,
-    patientIds: number[],
-    mode: "plexus" | "clinician",
-  ) {
-    if (patientIds.length === 0) {
-      // SOURCE MARKER: Admin Review print preview errors are surfaced
-      toast({
-        title: "Select patients first.",
-        description: `Pick at least one patient under ${group.schedulerName} to generate a packet.`,
-        variant: "destructive",
-      });
-      return;
-    }
-    try {
-      const fetched = await Promise.all(
-        patientIds.map(async (id) => {
-          const res = await fetch(`/api/patients/${id}`, { credentials: "include" });
-          if (!res.ok) return null;
-          return (await res.json()) as PatientScreening;
-        }),
-      );
-      const fullPatients = fetched.filter((p): p is PatientScreening => p != null);
-      if (fullPatients.length === 0) {
-        toast({
-          title: "PDF packet blocked",
-          description: "Could not load any of the selected patients.",
-          variant: "destructive",
-        });
-        return;
-      }
-      const validation = validateSameFacilityDatePacket(
-        fullPatients as PdfPacketSourcePatient[],
-        patient.facility ?? null,
-        scheduleDate ?? null,
-      );
-      if (!validation.ok) {
-        toast({
-          title: "PDF packet blocked",
-          description: validation.reason,
-          variant: "destructive",
-        });
-        return;
-      }
-      const batchName = `${validation.patients[0]?.facility ?? group.schedulerName} · ${
-        validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
-      }`;
-      // Packet QA Gate — audit before opening preview.
-      const openWithSubset = (subset: PatientScreening[]) => {
-        const result = openPatientPacketPrintPreview({
-          mode,
-          batchName,
-          patients: subset,
-          scheduleDate: validation.scheduleDate,
-          createdAt: null,
-        });
-        if (!result.ok && result.reason === "popup-blocked") {
-          // SOURCE MARKER: Admin Review print preview popup blocked is surfaced
-          toast({
-            title: "Popup blocked. Allow popups to print this packet.",
-            description:
-              "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
-            variant: "destructive",
-          });
-          return;
-        }
-        recordAdminReviewUpdate(
-          "pdf_previewed",
-          `Generated ${mode === "plexus" ? "Plexus" : "Clinician"} PDF for ${group.schedulerName} (${subset.length})`,
-          { scheduler: group.schedulerName, kind: mode },
-        );
-      };
-
-      const qaReport = auditPacketPatients(validation.patients, mode);
-      if (qaReport.blockedCount > 0) {
-        const printable = validation.patients.filter(
-          (p) => !qaReport.blockedPatients.some((b) => b.patientId === p.id),
-        );
-        setPacketQa({
-          report: qaReport,
-          proceed: () => {
-            setPacketQa(null);
-            openWithSubset(printable);
-          },
-        });
-        return;
-      }
-
-      openWithSubset(validation.patients);
-    } catch (err) {
-      toast({
-        title: "Could not open print preview",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
-    }
-  }
 
   // Audit log. Seeded from patient.reasoning["adminReview:updates"]
   // so prior persisted entries survive a dialog reopen. New entries
@@ -992,9 +1159,63 @@ export function AdminReviewDialog({
     return [];
   });
 
+  // Admin Review persistence — corrective patch refs.
+  //
+  // `assignmentsRef` mirrors `assignments` so handlers read the latest
+  // staged state synchronously without waiting for React to flush.
+  //
+  // `lastWrittenReasoningRef` is the authoritative local truth for
+  // "what reasoning blob have we sent to the parent so far". We rebase
+  // every attach/detach merge against this ref — NOT against
+  // `patient.reasoning` — so a still-in-flight PATCH response cannot
+  // overwrite a chained click's value.
+  //
+  // Both refs are RE-SEEDED inside the seed useEffect below whenever
+  // the dialog opens or the patient swaps.
+  const assignmentsRef = useRef<AdminReviewAssignmentState>(assignments);
+  const lastWrittenReasoningRef = useRef<Record<string, unknown>>(
+    reasoningAsObject(patient.reasoning),
+  );
+
+  // Clinical Intelligence wiring: attaching evidence to an ancillary is
+  // itself an approval, so assignToTarget auto-records the decision in
+  // the knowledge layer (server dedupes by patient + label + sourceType).
+  const { data: ciCurrentUser } = useCurrentUser();
+  const ciActor = ciActorName(ciCurrentUser ?? null);
+  const { state: ciState, isLoaded: ciLoaded } = useClinicalIntelligenceLoaded();
+
+  // Record an approved evidence decision for an attached chip. Fire-and-
+  // forget: the CI layer is a traceability mirror, never a gate on the
+  // attach itself.
+  function recordAttachEvidence(btn: SupportingButton, target: AssignmentTarget) {
+    void ciRecordEvidence({
+      patientId: patient.id ?? null,
+      patientName: patient.name || "Unnamed patient",
+      facility: patient.facility ?? facility ?? null,
+      scheduleDate: scheduleDate ?? null,
+      sourceType: normalizeSourceType(btn.source),
+      sourceText: btn.sourceText ?? btn.label,
+      label: btn.label,
+      confidence: btn.confidence ?? "medium",
+      assignedAncillary: assignmentTargetLabel(target),
+      status: "approved",
+      decidedBy: ciActor,
+    }).catch(() => {
+      // Non-blocking: assignment state is already persisted via
+      // patient.reasoning; a failed mirror write is retried on next open
+      // by the reconcile effect below.
+    });
+  }
+
   useEffect(() => {
     if (!open) return;
-    setAssignments(seedAssignmentsFromReasoning(reasoningAsObject(patient.reasoning)));
+    const freshAssignments = seedAssignmentsFromReasoning(
+      reasoningAsObject(patient.reasoning),
+    );
+    setAssignments(freshAssignments);
+    // Corrective patch: also seed the synchronous ref so the very
+    // first attach/detach after open uses the seeded snapshot as base.
+    assignmentsRef.current = freshAssignments;
     setAdminNote("");
     setAncillaryNotes({});
     setIcdSearchQuery("");
@@ -1006,9 +1227,204 @@ export function AdminReviewDialog({
       vitalwave: [],
       ultrasound: { parent: [], byTestName: {} },
     });
+    setSourceEditMode(false);
+    setSourceDataSaved(false);
     const stored = reasoningAsObject(patient.reasoning)["adminReview:updates"];
     setUpdatesLog(Array.isArray(stored) ? (stored as AdminReviewUpdateEntry[]) : []);
-  }, [open, patient.id, patient.reasoning]);
+    // Patch 1 (admin-review persistence fix):
+    //   `patient.reasoning` is intentionally EXCLUDED from this
+    //   dependency list. Per-ancillary regenerate updates
+    //   patient.reasoning during an active editing session; including
+    //   it here would re-run this seeder and wipe the operator's
+    //   staged assignments for ancillaries that haven't been
+    //   regenerated yet (e.g., regenerate BrainWave → VitalWave and
+    //   Ultrasound staged evidence resets to the pre-regen saved
+    //   state). The seeder is now an "entry-point only" reset: it
+    //   runs when the dialog opens or the patient id changes, then
+    //   yields to operator-driven state mutation until next
+    //   open / patient swap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patient.id]);
+
+  // Admin Review persistence — corrective patch.
+  //
+  // The previous patch (b4b1569) used a passive useEffect to persist
+  // assignments on every `assignments` change. Replit smoke-test showed
+  // that approach was insufficient: rapid attach clicks raced with
+  // React Query cache propagation, the closure-stale `patient.reasoning`
+  // used as merge base lost concurrent updates, and the
+  // `sameAssignedEvidenceState` skip masked legitimate diffs in some
+  // ordering paths.
+  //
+  // Corrective approach (this patch):
+  //   1. `assignmentsRef` mirrors `assignments` so handlers can read
+  //      the latest staged state synchronously without waiting for
+  //      React to flush a render.
+  //   2. `lastWrittenReasoningRef` is the authoritative local truth
+  //      for "what reasoning blob have we sent to the parent so far".
+  //      We rebase every attach/detach merge against this ref — NOT
+  //      against `patient.reasoning` — so a still-in-flight PATCH
+  //      response cannot overwrite a chained click's value.
+  //   3. Attach and detach handlers compute the next state
+  //      synchronously, update both refs, push to React state, and
+  //      call `onUpdate("reasoning", ...)` in the same tick. No
+  //      deferred effect.
+  //   4. Regenerate-success handlers MERGE the server-returned
+  //      `reasoning` with the live `lastWrittenReasoningRef.current`'s
+  //      `adminReview:<other>.assignedEvidence` blocks before pushing
+  //      out, so a server response that pre-dates a concurrent attach
+  //      cannot wipe other targets' staged evidence.
+  //
+  // The refs themselves are declared higher up in the file (right
+  // after `updatesLog` so they're in scope for the seed useEffect).
+  // The seed useEffect re-seeds BOTH `assignmentsRef` and
+  // `lastWrittenReasoningRef` on open / patient-swap.
+
+  // Keep assignmentsRef in lockstep with React state — guards against
+  // any code path that bypasses the handlers below.
+  useEffect(() => {
+    assignmentsRef.current = assignments;
+  }, [assignments]);
+
+  // Reconcile-on-open: assignments made before this feature (or whose
+  // mirror write failed) may exist in patient.reasoning without a
+  // matching evidence record. Once the CI store has loaded, record an
+  // approved evidence entry for each assigned chip that has none — the
+  // server dedupes by patient + label + sourceType, and we skip labels
+  // that already have a decision so we never overwrite a rejection or
+  // bump audit timestamps on every open.
+  const evidenceReconciledForPatientRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!open || !ciLoaded || !ciCurrentUser) return;
+    const pid = patient.id ?? null;
+    if (pid == null) return;
+    if (evidenceReconciledForPatientRef.current === pid) return;
+    evidenceReconciledForPatientRef.current = pid;
+
+    const existing = new Set(
+      ciState.evidence
+        .filter((e) => e.patientId === pid)
+        .map((e) => `${e.sourceType}::${e.label.toLowerCase()}`),
+    );
+    const queued = new Set<string>();
+    const reconcile = (btn: SupportingButton, target: AssignmentTarget) => {
+      const key = `${normalizeSourceType(btn.source)}::${btn.label.toLowerCase()}`;
+      if (existing.has(key) || queued.has(key)) return;
+      queued.add(key);
+      recordAttachEvidence(btn, target);
+    };
+    const a = assignmentsRef.current;
+    for (const b of a.brainwave) {
+      reconcile(b, { type: "ancillary", ancillaryId: "brainwave" });
+    }
+    for (const b of a.vitalwave) {
+      reconcile(b, { type: "ancillary", ancillaryId: "vitalwave" });
+    }
+    for (const b of a.ultrasound.parent) {
+      reconcile(b, { type: "ultrasound-parent" });
+    }
+    for (const [testName, list] of Object.entries(a.ultrasound.byTestName)) {
+      for (const b of list ?? []) {
+        reconcile(b, { type: "ultrasound-test", testName });
+      }
+    }
+    // recordAttachEvidence and ciState are intentionally read at run
+    // time only — this effect fires once per patient open, after the
+    // CI store has loaded and the user is known.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ciLoaded, ciCurrentUser, patient.id]);
+
+  // Re-seed the lastWrittenReasoningRef whenever the dialog opens or
+  // the patient swaps. The seed useEffect above resets `assignments`
+  // to match; we mirror the same reset here so subsequent attach/
+  // detach merges start from the real saved state.
+  useEffect(() => {
+    if (!open) return;
+    lastWrittenReasoningRef.current = reasoningAsObject(patient.reasoning);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patient.id]);
+
+  /**
+   * Persist a freshly-computed `assignments` snapshot through the
+   * existing `onUpdate("reasoning", ...)` path. The merge base is
+   * `lastWrittenReasoningRef.current` — NOT `patient.reasoning` from
+   * props — so rapid sequential clicks chain correctly even before
+   * React Query's cache catches up.
+   *
+   * `staleAncillaries` is the set of target ids whose `assignedEvidence`
+   * the operator just changed. They're flagged stale until the next
+   * regenerate runs.
+   */
+  function persistAssignmentsToReasoning(
+    nextAssignments: AdminReviewAssignmentState,
+    staleAncillaries: Set<string>,
+    staleReason: string,
+  ): void {
+    const base = lastWrittenReasoningRef.current;
+    const nextReasoning = buildAssignedEvidenceReasoning(
+      base,
+      nextAssignments,
+      { staleAncillaries, staleReason },
+    );
+    lastWrittenReasoningRef.current = nextReasoning;
+    onUpdate("reasoning", nextReasoning);
+  }
+
+  /**
+   * After a regenerate success, the server returns `data.patient.reasoning`.
+   * That response is reliable for the *regenerated* ancillary, but for
+   * OTHER ancillaries it reflects whatever was last persisted before
+   * the regenerate kicked off — which may NOT include attach/detach
+   * changes the operator made while the regenerate was in flight.
+   *
+   * Re-overlay the live `lastWrittenReasoningRef`'s
+   * `adminReview:<other>.assignedEvidence` blocks on top of the
+   * server's response, then clear the just-regenerated ancillary's
+   * stale flag. The result becomes the new authoritative local truth.
+   */
+  function mergeRegenerateResponseReasoning(
+    serverReasoning: Record<string, unknown>,
+    regeneratedTargetIds: Set<string>,
+  ): Record<string, unknown> {
+    const live = lastWrittenReasoningRef.current;
+    const merged: Record<string, unknown> = { ...serverReasoning };
+    // Carry forward every adminReview:* block that was newer locally
+    // (i.e., any block whose `assignedEvidence` array differs). The
+    // regenerated targets' blocks come from the server.
+    for (const key of new Set([...Object.keys(live), ...Object.keys(serverReasoning)])) {
+      if (!key.startsWith("adminReview:")) continue;
+      if (key === "adminReview:updates") {
+        // Audit log: prefer server if present, else local.
+        if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+        else if (live[key] !== undefined) merged[key] = live[key];
+        continue;
+      }
+      const targetId = key === "adminReview:ultrasound" ? "ultrasound"
+        : key === "adminReview:brainwave" ? "brainwave"
+        : key === "adminReview:vitalwave" ? "vitalwave"
+        : key.startsWith("adminReview:test:") ? `test:${key.slice("adminReview:test:".length)}`
+        : null;
+      if (targetId == null) continue;
+      if (regeneratedTargetIds.has(targetId)) {
+        // Trust server for the regenerated block.
+        if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+      } else {
+        // Carry forward local block (preserves operator's staged
+        // assignedEvidence + stale flag for non-regenerated targets).
+        if (live[key] !== undefined) merged[key] = live[key];
+      }
+    }
+    // Clear stale for the regenerated targets — overlay onto whichever
+    // block now wins.
+    const cleared = buildAssignedEvidenceReasoning(
+      merged,
+      assignmentsRef.current,
+      {
+        clearedAncillaries: regeneratedTargetIds,
+      },
+    );
+    return cleared;
+  }
 
   // recordAdminReviewUpdate — append to the session log and persist
   // to patient.reasoning["adminReview:updates"] so the audit trail
@@ -1028,8 +1444,13 @@ export function AdminReviewDialog({
     };
     setUpdatesLog((prev) => {
       const next = [entry, ...prev].slice(0, 200);
-      const reasoning = reasoningAsObject(patient.reasoning);
-      const nextReasoning = { ...reasoning, "adminReview:updates": next };
+      // Merge into the authoritative local reasoning ref — NOT
+      // patient.reasoning from props — so an audit-log write never
+      // clobbers freshly-written assignedEvidence / stale flags from a
+      // just-prior attach/detach/source-edit on the same tick.
+      const base = lastWrittenReasoningRef.current;
+      const nextReasoning = { ...base, "adminReview:updates": next };
+      lastWrittenReasoningRef.current = nextReasoning;
       onUpdate("reasoning", nextReasoning);
       return next;
     });
@@ -1038,17 +1459,19 @@ export function AdminReviewDialog({
   const apiEvidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
 
   // Build assignable button lists from raw source + rule engine + AI ICD additions.
+  // Use localDx/localRx/localHx so saves from the Source Data popover are
+  // reflected immediately without waiting for the parent to re-propagate.
   const dxButtons = useMemo(
-    () => parseDiagnosisButtonsFromDx(patient.diagnoses),
-    [patient.diagnoses],
+    () => parseDiagnosisButtonsFromDx(localDx),
+    [localDx],
   );
   const rxButtons = useMemo(
-    () => parseMedicationButtonsFromRx(patient.medications),
-    [patient.medications],
+    () => parseMedicationButtonsFromRx(localRx),
+    [localRx],
   );
   const hxButtons = useMemo(
-    () => parseSymptomButtonsFromHx(patient.history),
-    [patient.history],
+    () => parseSymptomButtonsFromHx(localHx),
+    [localHx],
   );
   const mergedDx = useMemo(
     () => mergeRuleEngineEvidence(dxButtons, apiEvidence),
@@ -1133,6 +1556,37 @@ export function AdminReviewDialog({
     for (const c of candidates) map.set(c.ancillaryId, c);
     return map;
   }, [candidates]);
+
+  // Plain-language rationale for each Rule Engine evidence chip, keyed by
+  // lowercase label. Targets come from the rule candidates that cite the
+  // chip's evidence id; the "why" comes from the chip's own detail text.
+  // Surfaced in the AI clue bubble popup so a Rule Engine suggestion is
+  // never a black box — the admin can read which rule fired, what it
+  // supports, and why it matched this patient.
+  const ruleRationaleByLabel = useMemo(() => {
+    const map = new Map<string, AiRuleRationale>();
+    for (const chip of apiEvidence) {
+      const targets = candidates
+        .filter((c) => c.evidenceIds.includes(chip.id))
+        .map((c) => c.label);
+      const kindLabel =
+        chip.kind === "diagnosis" || chip.kind === "icd"
+          ? "Diagnosis"
+          : chip.kind === "medication"
+            ? "Medication"
+            : chip.kind === "prior_test"
+              ? "Prior testing"
+              : "Symptom";
+      map.set(chip.label.toLowerCase(), {
+        name: `${kindLabel} rule: ${chip.label}`,
+        targets,
+        why:
+          chip.detail?.trim() ||
+          `The screening rule engine found "${chip.label}" in this patient's ${chip.source} data.`,
+      });
+    }
+    return map;
+  }, [apiEvidence, candidates]);
 
   const ageNumber: number | null =
     typeof patient.age === "number" ? patient.age : null;
@@ -1497,36 +1951,48 @@ export function AdminReviewDialog({
   // Assignment helper. A missing ICD code does NOT block assignment —
   // every diagnosis from patient.diagnoses is a valid SupportingButton.
   // ICD Search is an optional add-on, not a prerequisite.
-  function assignToTarget(target: AssignmentTarget, btn: SupportingButton) {
-    setAssignments((prev) => {
-      const next: AdminReviewAssignmentState = {
-        brainwave: [...prev.brainwave],
-        vitalwave: [...prev.vitalwave],
-        ultrasound: {
-          parent: [...prev.ultrasound.parent],
-          byTestName: { ...prev.ultrasound.byTestName },
-        },
-      };
-      const k = chipKeyForAssignment(btn);
-      const pushTo = (arr: SupportingButton[]) => {
-        if (!arr.some((c) => chipKeyForAssignment(c) === k)) arr.push(btn);
-      };
-      if (target.type === "all") {
-        pushTo(next.brainwave);
-        pushTo(next.vitalwave);
-        pushTo(next.ultrasound.parent);
-      } else if (target.type === "ancillary") {
-        pushTo(next[target.ancillaryId]);
-      } else if (target.type === "ultrasound-parent") {
-        pushTo(next.ultrasound.parent);
-      } else if (target.type === "ultrasound-test") {
-        const list = next.ultrasound.byTestName[target.testName] ?? [];
-        const arr = [...list];
-        pushTo(arr);
-        next.ultrasound.byTestName[target.testName] = arr;
-      }
-      return next;
-    });
+  function assignToTarget(
+    target: AssignmentTarget,
+    btn: SupportingButton,
+    opts?: { skipEvidenceRecord?: boolean },
+  ) {
+    // Corrective patch: compute the next snapshot ONCE using the
+    // synchronously-tracked ref (not React state) so rapid sequential
+    // clicks chain correctly even before React commits.
+    const prev = assignmentsRef.current;
+    const next: AdminReviewAssignmentState = {
+      brainwave: [...prev.brainwave],
+      vitalwave: [...prev.vitalwave],
+      ultrasound: {
+        parent: [...prev.ultrasound.parent],
+        byTestName: { ...prev.ultrasound.byTestName },
+      },
+    };
+    const k = chipKeyForAssignment(btn);
+    const pushTo = (arr: SupportingButton[]) => {
+      // Dedupe ONLY inside the target being changed.
+      if (!arr.some((c) => chipKeyForAssignment(c) === k)) arr.push(btn);
+    };
+    if (target.type === "all") {
+      pushTo(next.brainwave);
+      pushTo(next.vitalwave);
+      pushTo(next.ultrasound.parent);
+    } else if (target.type === "ancillary") {
+      pushTo(next[target.ancillaryId]);
+    } else if (target.type === "ultrasound-parent") {
+      pushTo(next.ultrasound.parent);
+    } else if (target.type === "ultrasound-test") {
+      const list = next.ultrasound.byTestName[target.testName] ?? [];
+      const arr = [...list];
+      pushTo(arr);
+      next.ultrasound.byTestName[target.testName] = arr;
+    }
+    // Sync ref + React state, then persist.
+    assignmentsRef.current = next;
+    setAssignments(next);
+    const stale = new Set(targetIdsForAssignmentTarget(target));
+    persistAssignmentsToReasoning(next, stale, "Evidence attached");
+
     const type: AdminReviewUpdateType =
       btn.kind === "icd_disease"
         ? "diagnosis_added"
@@ -1540,44 +2006,65 @@ export function AdminReviewDialog({
           ? `Added medication: ${btn.label}`
           : `Added symptom: ${btn.label}`;
     recordAdminReviewUpdate(type, label, { target });
+    // Attaching IS the approval — auto-record the evidence decision with
+    // its assigned ancillary so no separate "Approve evidence" click is
+    // needed. The bubble attach flow records its own (possibly edited)
+    // label, so it opts out to avoid a duplicate write.
+    if (!opts?.skipEvidenceRecord) {
+      recordAttachEvidence(btn, target);
+    }
+    // Subtle optional "save as future AI logic?" prompt (prototype).
+    setAiPromptLabel(btn.label);
   }
 
   function unassign(from: AssignmentTarget, btn: SupportingButton) {
-    setAssignments((prev) => {
-      const k = chipKeyForAssignment(btn);
-      const next: AdminReviewAssignmentState = {
-        brainwave: prev.brainwave.filter((c) => chipKeyForAssignment(c) !== k),
-        vitalwave: prev.vitalwave.filter((c) => chipKeyForAssignment(c) !== k),
-        ultrasound: {
-          parent: prev.ultrasound.parent.filter((c) => chipKeyForAssignment(c) !== k),
-          byTestName: { ...prev.ultrasound.byTestName },
+    // Corrective patch: same synchronous compute-and-persist pattern
+    // as `assignToTarget`. Detach scopes to the exact target the
+    // operator clicked; other targets keep the same evidence.
+    const prev: AdminReviewAssignmentState = assignmentsRef.current;
+    const k = chipKeyForAssignment(btn);
+    const filterOut = (arr: SupportingButton[]): SupportingButton[] =>
+      arr.filter((c: SupportingButton) => chipKeyForAssignment(c) !== k);
+    const next: AdminReviewAssignmentState = {
+      brainwave: [...prev.brainwave],
+      vitalwave: [...prev.vitalwave],
+      ultrasound: {
+        parent: [...prev.ultrasound.parent],
+        byTestName: { ...prev.ultrasound.byTestName },
+      },
+    };
+    if (from.type === "all") {
+      next.brainwave = filterOut(prev.brainwave);
+      next.vitalwave = filterOut(prev.vitalwave);
+      next.ultrasound = {
+        parent: filterOut(prev.ultrasound.parent),
+        byTestName: { ...prev.ultrasound.byTestName },
+      };
+    } else if (from.type === "ancillary") {
+      if (from.ancillaryId === "brainwave") {
+        next.brainwave = filterOut(prev.brainwave);
+      } else if (from.ancillaryId === "vitalwave") {
+        next.vitalwave = filterOut(prev.vitalwave);
+      }
+    } else if (from.type === "ultrasound-parent") {
+      next.ultrasound = {
+        parent: filterOut(prev.ultrasound.parent),
+        byTestName: { ...prev.ultrasound.byTestName },
+      };
+    } else if (from.type === "ultrasound-test") {
+      const list = prev.ultrasound.byTestName[from.testName] ?? [];
+      next.ultrasound = {
+        parent: [...prev.ultrasound.parent],
+        byTestName: {
+          ...prev.ultrasound.byTestName,
+          [from.testName]: filterOut(list),
         },
       };
-      if (from.type === "ancillary") {
-        next.brainwave = from.ancillaryId === "brainwave" ? prev.brainwave.filter((c) => chipKeyForAssignment(c) !== k) : prev.brainwave;
-        next.vitalwave = from.ancillaryId === "vitalwave" ? prev.vitalwave.filter((c) => chipKeyForAssignment(c) !== k) : prev.vitalwave;
-        next.ultrasound = prev.ultrasound;
-      } else if (from.type === "ultrasound-parent") {
-        next.brainwave = prev.brainwave;
-        next.vitalwave = prev.vitalwave;
-        next.ultrasound = {
-          parent: prev.ultrasound.parent.filter((c) => chipKeyForAssignment(c) !== k),
-          byTestName: prev.ultrasound.byTestName,
-        };
-      } else if (from.type === "ultrasound-test") {
-        const list = prev.ultrasound.byTestName[from.testName] ?? [];
-        next.brainwave = prev.brainwave;
-        next.vitalwave = prev.vitalwave;
-        next.ultrasound = {
-          parent: prev.ultrasound.parent,
-          byTestName: {
-            ...prev.ultrasound.byTestName,
-            [from.testName]: list.filter((c) => chipKeyForAssignment(c) !== k),
-          },
-        };
-      }
-      return next;
-    });
+    }
+    assignmentsRef.current = next;
+    setAssignments(next);
+    const stale = new Set(targetIdsForAssignmentTarget(from));
+    persistAssignmentsToReasoning(next, stale, "Evidence detached");
   }
 
   // Record a removed qualifying factor + unassign the button from the
@@ -1729,6 +2216,160 @@ export function AdminReviewDialog({
     );
   }
 
+  // Backend: add a manually-selected ancillary to this patient. The added
+  // test name lands in qualifyingTests so the whole downstream spine
+  // (execution case → call reason → PDFs) flows for free; admin-added
+  // provenance is stamped in adminReview:* metadata.
+  const addAncillaryMutation = useMutation<
+    {
+      ok: boolean;
+      qualified?: boolean;
+      patient?: PatientScreening;
+      ancillaryId: AdminReviewAncillaryId;
+      testName?: string;
+      addedTests?: string[];
+      alreadyPresent?: boolean;
+      narrativeGenerated?: boolean;
+      // qualified: false branch
+      requestedTestName?: string;
+      state?: "no_evidence" | "needs_reason" | "already_present" | "in_cooldown";
+      candidates?: string[];
+      cooldown?: {
+        previousDate: string | null;
+        intervalDays: number | null;
+        message: string;
+      };
+    },
+    Error,
+    {
+      ancillaryId: AdminReviewAncillaryId;
+      testName: string;
+      reason?: string;
+      override?: boolean;
+    }
+  >({
+    mutationFn: async (vars) => {
+      const res = await apiRequest(
+        "POST",
+        `/api/patient-screenings/${patient.id}/admin-review/add-ancillary`,
+        vars,
+      );
+      return res.json();
+    },
+    onSuccess: (data, vars) => {
+      // Honest empty-qualification state — nothing qualified. Surface the
+      // override affordance (required reason) rather than adding a bare service.
+      if (data.qualified === false) {
+        if (data.state === "needs_reason") {
+          toast({
+            title: "Reason required",
+            description: "Enter a qualification reason to override and add anyway.",
+            variant: "destructive",
+          });
+          return;
+        }
+        if (data.state === "already_present") {
+          // Every ultrasound sub-test is already on this patient — there is
+          // nothing for the generic option to add. No override affordance.
+          setOverrideTarget(null);
+          setAddReason("");
+          setAddOpen(false);
+          toast({
+            title: "All ultrasound tests already added",
+            description: "Every ultrasound study is already on this patient.",
+          });
+          return;
+        }
+        if (data.state === "in_cooldown") {
+          // Blocked by a within-window prior in the patient's history. No
+          // override affordance — surface an honest cooldown message.
+          setOverrideTarget(null);
+          setAddReason("");
+          setAddOpen(false);
+          const testLabel = data.requestedTestName ?? vars.testName;
+          const last = data.cooldown?.previousDate;
+          toast({
+            title: `${testLabel} is in cooldown`,
+            description: last
+              ? `Last performed ${last} — within the cooldown window.`
+              : data.cooldown?.message ??
+                "A recent prior test is on file within the cooldown window.",
+            variant: "destructive",
+          });
+          return;
+        }
+        setOverrideTarget({
+          ancillaryId: vars.ancillaryId,
+          testName: data.requestedTestName ?? vars.testName,
+          candidates: data.candidates ?? [],
+        });
+        setAddOpen(true);
+        return;
+      }
+
+      if (data.patient) {
+        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        if (Array.isArray(data.patient.qualifyingTests)) {
+          onUpdate("qualifyingTests", data.patient.qualifyingTests as string[]);
+        }
+      }
+      // Surface the affected bar so the operator sees the result of the add.
+      setExpanded((prev) => ({ ...prev, [vars.ancillaryId]: true }));
+      setOverrideTarget(null);
+      setAddReason("");
+      setAddOpen(false);
+
+      const addedTests = Array.isArray(data.addedTests) ? data.addedTests : [];
+      if (data.alreadyPresent && addedTests.length === 0) {
+        toast({
+          title: `${data.testName ?? vars.testName} already added`,
+          description: "Focused the existing entry — no duplicate created.",
+        });
+        return;
+      }
+      const addedLabel =
+        addedTests.length > 1
+          ? `${addedTests.length} ultrasound tests`
+          : addedTests[0] ?? data.testName ?? vars.testName;
+      toast({
+        title: `Added ${addedLabel}`,
+        description: data.narrativeGenerated
+          ? "Qualified against clinical data — reasoning generated."
+          : "Qualified — regenerate to populate clinical reasoning.",
+      });
+      for (const added of addedTests) {
+        const isChild =
+          vars.ancillaryId === "ultrasound" && added !== "Ultrasound Studies";
+        recordAdminReviewUpdate(
+          isChild ? "ultrasound_child_added" : "ancillary_added",
+          isChild ? `Added ultrasound test: ${added}` : `Added ${added}`,
+          { ancillary: vars.ancillaryId, testName: added, reason: vars.reason ?? null },
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not add ancillary",
+        description: err?.message ?? "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
+
+  function handleAddAncillary(
+    ancillaryId: AdminReviewAncillaryId,
+    testName: string,
+    override = false,
+  ) {
+    addAncillaryMutation.mutate({
+      ancillaryId,
+      testName,
+      reason: addReason.trim() || undefined,
+      override,
+    });
+  }
+
   // Backend: remove an entire ancillary from this patient.
   const removeAncillaryMutation = useMutation<
     { ok: boolean; patient: PatientScreening; ancillaryId: AdminReviewAncillaryId; removedTests: string[] },
@@ -1768,7 +2409,7 @@ export function AdminReviewDialog({
       recordAdminReviewUpdate(
         "ancillary_removed",
         `Removed ancillary: ${categoryLabels[vars.ancillary]}`,
-        { removed: data.removedTests ?? [] },
+        { removed: data.removedTests ?? [], ancillary: vars.ancillary },
       );
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
@@ -1923,9 +2564,12 @@ export function AdminReviewDialog({
           assignedEvidence: evidenceForCall,
           ancillaryNote: ancillaryNotes[ancillary] ?? "",
           adminNote,
-          diagnoses: patient.diagnoses ?? "",
-          medications: patient.medications ?? "",
-          history: patient.history ?? "",
+          // Use the local mirrors (updated synchronously on source save) so a
+          // Regenerate fired right after editing never sends stale Hx/Dx/Rx,
+          // even before the parent re-propagates the patient prop.
+          diagnoses: localDx,
+          medications: localRx,
+          history: localHx,
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
           priorQualifyingFactorsByTest,
@@ -1939,7 +2583,21 @@ export function AdminReviewDialog({
         description: "Canonical reasoning updated.",
       });
       if (data.patient) {
-        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        // Corrective patch: re-overlay other targets' staged
+        // assignedEvidence on top of the server response so a
+        // concurrent attach/detach that the regenerate request did NOT
+        // know about cannot be lost. Also clears the just-regenerated
+        // ancillary's stale flag.
+        const serverReasoning = (data.patient.reasoning ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const merged = mergeRegenerateResponseReasoning(
+          serverReasoning,
+          new Set([vars.ancillary]),
+        );
+        lastWrittenReasoningRef.current = merged;
+        onUpdate("reasoning", merged);
       }
       recordAdminReviewUpdate(
         "regenerate",
@@ -1991,9 +2649,12 @@ export function AdminReviewDialog({
           assignedEvidence: evidenceForCall,
           ancillaryNote: ancillaryNotes[`test:${testName}`] ?? "",
           adminNote,
-          diagnoses: patient.diagnoses ?? "",
-          medications: patient.medications ?? "",
-          history: patient.history ?? "",
+          // Use the local mirrors (updated synchronously on source save) so a
+          // Regenerate fired right after editing never sends stale Hx/Dx/Rx,
+          // even before the parent re-propagates the patient prop.
+          diagnoses: localDx,
+          medications: localRx,
+          history: localHx,
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
           priorQualifyingFactorsByTest,
@@ -2007,7 +2668,18 @@ export function AdminReviewDialog({
         description: "Canonical reasoning updated for this test.",
       });
       if (data.patient) {
-        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        // Corrective patch: merge server response with live staged
+        // assignedEvidence; clear stale for the just-regenerated test.
+        const serverReasoning = (data.patient.reasoning ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const merged = mergeRegenerateResponseReasoning(
+          serverReasoning,
+          new Set([`test:${vars.testName}`]),
+        );
+        lastWrittenReasoningRef.current = merged;
+        onUpdate("reasoning", merged);
       }
       recordAdminReviewUpdate("regenerate", `Regenerated ${vars.testName}`);
       setRegenErrors((prev) => ({ ...prev, [`test:${vars.testName}`]: null }));
@@ -2026,6 +2698,89 @@ export function AdminReviewDialog({
       setRegenInFlight((prev) => ({ ...prev, [`test:${vars.testName}`]: false }));
     },
   });
+
+  // Admin Review persistence — corrective patch: Regenerate Changed
+  //
+  // Sequentially regenerates every target whose `adminReview:<id>` block
+  // currently carries `stale: true`. Sequential (not parallel) so each
+  // call sees the previous call's server-side update; merges via
+  // `mergeRegenerateResponseReasoning` preserve other targets' staged
+  // evidence at every step. A per-target failure does NOT abort the
+  // queue — the target keeps its stale flag and its row-level error
+  // surfaces via `setRegenErrors` (existing UI).
+  const [regenChangedInFlight, setRegenChangedInFlight] = useState(false);
+  const regenerateChangedTargets = useCallback(async (): Promise<void> => {
+    // Regenerate both the stale targets (evidence attach/detach) and the
+    // targets of any pending change surfaced in the Updates panel (added/
+    // removed diagnosis, medication, symptom, qualifying factor, ancillary,
+    // or ultrasound child) — deduped so a change and a stale flag on the
+    // same test only regenerate once.
+    const staleIds = readStaleTargetIds(lastWrittenReasoningRef.current);
+    const changeIds = regenTargetIdsFromUpdates(updatesLog);
+    const targetIds = Array.from(new Set([...staleIds, ...changeIds]));
+    if (targetIds.length === 0) return;
+    setRegenChangedInFlight(true);
+    try {
+      for (const targetId of targetIds) {
+        try {
+          if (
+            targetId === "brainwave" ||
+            targetId === "vitalwave" ||
+            targetId === "ultrasound"
+          ) {
+            await regenerateAncillaryMutation.mutateAsync({ ancillary: targetId });
+          } else if (targetId.startsWith("test:")) {
+            const testName = targetId.slice("test:".length);
+            await regenerateTestMutation.mutateAsync({
+              testName,
+              ancillaryId: "ultrasound",
+            });
+          }
+        } catch {
+          // Per-target failure already surfaces via the mutation's
+          // onError handler — keep going so the operator sees per-row
+          // errors but successful targets clear their stale flag.
+        }
+      }
+    } finally {
+      setRegenChangedInFlight(false);
+    }
+  }, [regenerateAncillaryMutation, regenerateTestMutation, updatesLog]);
+
+  // The single Regenerate action surfaced in the Updates panel. Source-data
+  // edits invalidate every ancillary (we don't track which Hx/Dx/Rx line maps
+  // to which test), so they trigger a full re-analysis; evidence attach/detach
+  // changes regenerate only their stale targets. Both clear their own "needs
+  // regeneration" state on success so Approve/PDF unblock.
+  const regeneratePending = useCallback(async (): Promise<void> => {
+    if (sourceDataSaved) {
+      setRegenChangedInFlight(true);
+      const failures: string[] = [];
+      for (const ancillary of ANCILLARIES) {
+        try {
+          await regenerateAncillaryMutation.mutateAsync({ ancillary });
+        } catch {
+          failures.push(ancillary);
+        }
+      }
+      setRegenChangedInFlight(false);
+      if (failures.length === 0) {
+        setSourceDataSaved(false);
+        toast({ title: "Re-analysis complete", description: "All ancillaries regenerated with updated source data." });
+      } else {
+        // Spec: a failed regeneration must keep blocking. Leave
+        // sourceDataSaved=true so Approve + PDF stay locked until every
+        // ancillary regenerates cleanly.
+        toast({
+          title: failures.length < ANCILLARIES.length ? "Re-analysis incomplete" : "Re-analysis failed",
+          description: `${failures.join(", ")} could not be regenerated. Approval stays blocked until all ancillaries regenerate — try again.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    await regenerateChangedTargets();
+  }, [sourceDataSaved, regenerateAncillaryMutation, regenerateChangedTargets, toast]);
 
   const approvalMutation = useMutation<
     { ok: boolean; patient: PatientScreening },
@@ -2051,7 +2806,7 @@ export function AdminReviewDialog({
             ? bySettings
               ? `Routed to scheduler: ${schedulerName} · Scheduler Settings`
               : `Routed to scheduler: ${schedulerName}`
-            : "Routed to Engagement Queue (unassigned)"
+            : "Sent to Engagement Queue"
           : data.patient?.name ?? "",
       });
       // SOURCE MARKER: Admin Review navigation does not refetch full workspace
@@ -2098,36 +2853,200 @@ export function AdminReviewDialog({
     (b) => b.kind === "icd_disease" && b.requiresIcd,
   ).length;
 
-  // Grid template flexes to whichever panels are open. Collapsed
-  // panels collapse to a 40px rail with the toggle button.
-  const leftCol = leftPanelOpen ? "340px" : "44px";
-  const rightCol = rightPanelOpen ? "340px" : "44px";
+  // Ancillaries whose assigned evidence changed since the last
+  // regenerate. Computed once per render so the Updates Regenerate
+  // button, the Approve gate, the Blocking Rules message, and the
+  // Documents gate all read the same synchronous truth.
+  const staleTargetIds = readStaleTargetIds(lastWrittenReasoningRef.current);
+  // Source-data edits invalidate every ancillary; evidence attach/detach
+  // marks specific stale targets. Either blocks Approve + PDF until the
+  // single Updates-panel Regenerate clears it.
+  const needsRegeneration = staleTargetIds.length > 0 || sourceDataSaved;
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded-2xl"
-        data-testid={`dialog-admin-review-${patient.id}`}
-      >
+  // Targets of the pending changes currently listed in the Updates panel.
+  // The Regenerate button is enabled whenever there is any such change (not
+  // just when the system flagged a target "stale"), and clicking it
+  // regenerates only these changed test(s) plus any stale targets.
+  const pendingRegenTargetIds = regenTargetIdsFromUpdates(updatesLog);
+  const canRegenerate =
+    needsRegeneration || pendingRegenTargetIds.length > 0;
+  // Union of stale + change-derived targets, used for the tooltip so it
+  // names exactly what the button will regenerate.
+  const regenTargetLabels = Array.from(
+    new Set([...staleTargetIds, ...pendingRegenTargetIds]),
+  ).map(ancillaryLabelForTargetId);
+
+  // Presence of ancillaries already on the patient — drives the manual
+  // Add Ancillary menu so it never re-offers something already added.
+  const presentTestSet = new Set(
+    (patient.qualifyingTests ?? []).map((t) => String(t)),
+  );
+  const presentTestList = Array.from(presentTestSet);
+
+  // Prior-history cooldown gate. Tests that already appear in the
+  // patient's free-text previousTests within the cooldown window
+  // (6mo PPO / 12mo Medicare, falling back to per-test defaults) are
+  // blocked from being offered as something to add. Tests in history
+  // but outside the window remain addable.
+  const blockedByHistory: Map<string, AncillaryWarning> =
+    blockedAncillariesFromHistory(
+      ["BrainWave", "VitalWave", ...ADD_ULTRASOUND_SUBTYPES],
+      (patient as { previousTests?: string }).previousTests ?? "",
+      (patient as { previousTestsDate?: string }).previousTestsDate ?? "",
+      (patient as { insurance?: string }).insurance ?? "",
+    );
+  const cooldownTooltip = (testName: string): string => {
+    const w = blockedByHistory.get(testName);
+    if (!w) return "";
+    return w.previousDate
+      ? `In cooldown — last done ${w.previousDate}`
+      : "In cooldown — recent prior on file";
+  };
+
+  const canAddBrainwave =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "brainwave") &&
+    !blockedByHistory.has("BrainWave");
+  const canAddVitalwave =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "vitalwave") &&
+    !blockedByHistory.has("VitalWave");
+  const brainwaveBlockedByCooldown =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "brainwave") &&
+    blockedByHistory.has("BrainWave");
+  const vitalwaveBlockedByCooldown =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "vitalwave") &&
+    blockedByHistory.has("VitalWave");
+  const availableUltrasoundSubtypes = ADD_ULTRASOUND_SUBTYPES.filter(
+    (t) => !presentTestSet.has(t) && !blockedByHistory.has(t),
+  );
+  // Ultrasound subtypes that are absent from the patient but blocked by a
+  // within-window prior — rendered disabled with a cooldown tooltip so the
+  // operator can see why they can't be added.
+  const cooldownBlockedUltrasoundSubtypes = ADD_ULTRASOUND_SUBTYPES.filter(
+    (t) => !presentTestSet.has(t) && blockedByHistory.has(t),
+  );
+  // Generic ultrasound is only addable when there is at least one sub-test
+  // still missing. If every sub-test (or the generic sentinel) is already on
+  // the patient, there is nothing for "Add Ultrasound (generic)" to add.
+  const allUltrasoundSubtypesPresent = availableUltrasoundSubtypes.length === 0;
+  const canAddGenericUltrasound =
+    !presentTestSet.has("Ultrasound Studies") && !allUltrasoundSubtypesPresent;
+  const hasAnyAddableAncillary =
+    canAddBrainwave ||
+    canAddVitalwave ||
+    canAddGenericUltrasound ||
+    availableUltrasoundSubtypes.length > 0;
+  // Items that aren't addable purely because of a cooldown — surfaced as
+  // disabled rows so the operator can still open the menu to see why.
+  const hasAnyCooldownBlocked =
+    brainwaveBlockedByCooldown ||
+    vitalwaveBlockedByCooldown ||
+    cooldownBlockedUltrasoundSubtypes.length > 0;
+  const canOpenAddMenu = hasAnyAddableAncillary || hasAnyCooldownBlocked;
+
+  // ─── AI Logic knowledge-layer context (prototype) ───
+  // Snapshot of the live review used to prefill the AI Logic drawer and
+  // stamp learning items / evidence records with full traceability.
+  const aiLogicContext: AiLogicPatientContext = useMemo(() => {
+    const summary: string[] = [];
+    if (assignments.brainwave.length > 0) {
+      summary.push(`BrainWave: ${assignments.brainwave.map((b) => b.label).join(", ")}`);
+    }
+    if (assignments.vitalwave.length > 0) {
+      summary.push(`VitalWave: ${assignments.vitalwave.map((b) => b.label).join(", ")}`);
+    }
+    if (assignments.ultrasound.parent.length > 0) {
+      summary.push(`Ultrasound: ${assignments.ultrasound.parent.map((b) => b.label).join(", ")}`);
+    }
+    for (const [testName, chips] of Object.entries(assignments.ultrasound.byTestName)) {
+      if (chips.length > 0) summary.push(`${testName}: ${chips.map((b) => b.label).join(", ")}`);
+    }
+    const evidenceLabels = Array.from(
+      new Set([
+        ...assignments.brainwave.map((b) => b.label),
+        ...assignments.vitalwave.map((b) => b.label),
+        ...assignments.ultrasound.parent.map((b) => b.label),
+        ...Object.values(assignments.ultrasound.byTestName).flat().map((b) => b.label),
+      ]),
+    );
+    return {
+      patientId: patient.id ?? null,
+      patientName: patient.name || "Unnamed patient",
+      facility: patient.facility ?? facility ?? null,
+      scheduleDate: scheduleDate ?? null,
+      hx: localHx || null,
+      dx: localDx || null,
+      rx: localRx || null,
+      qualifyingTests: (patient.qualifyingTests ?? []).map((t) => String(t)),
+      assignmentsSummary: summary,
+      evidenceLabels,
+      adminNotes: adminNote || null,
+      approvalState:
+        (patient as { adminApprovalStatus?: string | null }).adminApprovalStatus ?? null,
+      updatesCount: updatesLog.length,
+    };
+  }, [
+    assignments,
+    patient,
+    facility,
+    scheduleDate,
+    localHx,
+    localDx,
+    localRx,
+    adminNote,
+    updatesLog.length,
+  ]);
+
+  // AI-identified clinical clue bubbles: symptoms/history + medication
+  // clues + diagnoses, straight from the same parsed SupportingButtons
+  // the popover rows use (no duplicate parsing logic).
+  const aiBubbleItems: AiEvidenceItem[] = useMemo(
+    () =>
+      availableButtons
+        .filter(
+          (b) =>
+            b.kind === "symptom" ||
+            b.kind === "history" ||
+            b.kind === "medication" ||
+            b.kind === "icd_disease",
+        )
+        .slice(0, 24)
+        .map((b) => ({
+          id: b.id,
+          label: b.label,
+          source: b.source,
+          kind: b.kind,
+          sourceText: b.sourceText ?? null,
+          icdCode: b.icdCode ?? null,
+          requiresIcd: b.requiresIcd,
+          confidence: b.confidence,
+          rule:
+            b.source === "Rule Engine"
+              ? ruleRationaleByLabel.get(b.label.toLowerCase()) ?? null
+              : null,
+        })),
+    [availableButtons, ruleRationaleByLabel],
+  );
+
+  // Bridge bubble attach actions onto the existing assignment engine.
+  const findButtonForBubble = (item: AiEvidenceItem): SupportingButton | null =>
+    availableButtons.find((b) => b.id === item.id) ?? null;
+
+  const shellChildren = (
+    <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
         <DialogHeader
-          className="px-6 pt-5 pb-4 border-b border-black/30 bg-black/70 backdrop-blur-md text-white"
+          className="px-5 py-2.5 border-b border-white/10 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <DialogTitle className="text-base font-semibold tracking-tight text-white">
-                Admin Review · {patient.name || "Unnamed patient"}
+                {patient.name || "Unnamed patient"}
               </DialogTitle>
               <DialogDescription className="sr-only">
                 Admin review for {patient.name || "patient"}
               </DialogDescription>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-                <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 ${STATUS_META[review.approval].pillClass}`}
-                >
-                  {STATUS_META[review.approval].label}
-                </span>
                 {isUnder16 && (
                   <span
                     className="inline-flex items-center gap-1 rounded-full bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
@@ -2139,6 +3058,15 @@ export function AdminReviewDialog({
                 )}
                 {patient.facility && <span className="text-white/70">{patient.facility}</span>}
                 {scheduleDate && <span className="text-white/70">· {scheduleDate}</span>}
+                {patient.dob && (
+                  <span className="text-white/70" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
+                )}
+                {patient.insurance && (
+                  <span className="text-white/70" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
+                )}
+                {patient.phoneNumber && (
+                  <span className="text-white/70" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
+                )}
                 {evidenceQuery.isFetching && (
                   <span className="text-white/60 inline-flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
@@ -2147,614 +3075,273 @@ export function AdminReviewDialog({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {/* Sibling navigation — Prev / counter / Next. Visible
-                  only when the caller passed a siblings list. Auto-
-                  advance on approve is handled in approvalMutation's
-                  onSuccess.
-                  SOURCE MARKER: Admin Review sibling navigation */}
-              {siblings && siblings.length > 1 && (
-                <div
-                  className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1 py-0.5"
-                  data-testid="admin-review-sibling-nav"
-                  data-active-index={activeIndex}
-                  data-total={totalSiblings}
-                  data-approve-pending={approvalMutation.isPending ? "true" : "false"}
-                >
-                  {/* SOURCE MARKER: Admin Review navigation disabled during approve */}
-                  <button
-                    type="button"
-                    onClick={() => goToSibling(-1)}
-                    disabled={!hasPrev || approvalMutation.isPending}
-                    aria-label="Previous patient"
-                    title="Previous patient"
-                    data-testid="admin-review-sibling-prev"
-                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <span
-                    className="text-[11px] font-medium text-white/85 tabular-nums px-1"
-                    data-testid="admin-review-sibling-counter"
-                  >
-                    {activeIndex + 1} of {totalSiblings}
-                    {dateLabel ? ` · ${dateLabel}` : ""}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => goToSibling(1)}
-                    disabled={!hasNext || approvalMutation.isPending}
-                    aria-label="Next patient"
-                    title={
-                      hasNext
-                        ? `Next patient (${remainingAfter} more${dateLabel ? ` in ${dateLabel}` : ""})`
-                        : "No more patients"
-                    }
-                    data-testid="admin-review-sibling-next"
-                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
+              {/* Sibling navigation moved to the bottom-center footer of
+                  the right panel per the Admin Review layout update. */}
               <button
                 type="button"
-                onClick={() => setLeftPanelOpen((v) => !v)}
-                aria-label={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
-                title={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
-                data-testid="admin-review-left-panel-toggle"
-                data-panel-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
+                onClick={() => setAiLogicOpen(true)}
+                aria-label="AI Logic for This Patient"
+                title="AI Logic for This Patient"
+                data-testid="admin-review-ai-logic-button"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-violet-200/80 hover:text-violet-100 hover:bg-white/15 transition-colors"
               >
-                {leftPanelOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
+                <Sparkles className="w-4 h-4" />
               </button>
               <button
                 type="button"
-                onClick={() => setRightPanelOpen((v) => !v)}
-                aria-label={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
-                title={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
-                data-testid="admin-review-right-panel-toggle"
-                data-panel-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
+                onClick={() => onOpenChange(false)}
+                aria-label="Close admin review"
+                title="Close"
+                data-testid="admin-review-close-button"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/85 hover:text-white hover:bg-white/15 transition-colors"
               >
-                {rightPanelOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+                <X className="w-4 h-4" />
               </button>
             </div>
           </div>
         </DialogHeader>
-
+        {/* ─── Two-panel body: LEFT ancillaries playground · RIGHT action column ─── */}
         <div
-          className="grid grid-cols-1 xl:grid-cols-[var(--left)_minmax(0,1fr)_var(--right)] gap-0 max-h-[calc(94vh-7.5rem)]"
+          className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 md:flex-row md:gap-4 md:p-4"
           style={{
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ['--left' as any]: leftCol,
-            ['--right' as any]: rightCol,
+            background:
+              "radial-gradient(1200px 600px at 0% 0%, #e7eefb 0%, transparent 55%), radial-gradient(1000px 700px at 100% 100%, #eaf2fb 0%, transparent 50%), linear-gradient(135deg, #eef3fb 0%, #f6f9fd 100%)",
           }}
-          data-testid="admin-review-three-column-layout"
-          data-left-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
-          data-right-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
+          data-testid="admin-review-two-panel-body"
         >
-            {/* ─── Column 1 — approved muted blue #7283B0, tabs, scrollable ─── */}
-            <aside
-              className="bg-[#7283B0] text-white border-r border-black/10 flex flex-col min-h-0"
-              data-testid="admin-review-left-column"
-              data-panel-style="admin-review-blue-left-panel"
-              data-panel-color="#7283B0"
-              style={{ backgroundColor: "#7283B0" }}
-            >
-              {!leftPanelOpen ? (
-                <div
-                  className="flex-1 flex items-start justify-center pt-3"
-                  data-testid="admin-review-left-panel-collapsed"
-                >
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
-                    Source
-                  </span>
-                </div>
-              ) : (
-                <div
-                  className="flex-1 min-h-0 flex flex-col"
-                  data-testid="admin-review-left-panel-open"
-                >
-                  <ScrollArea
-                    className="flex-1 min-h-0 px-4 py-4"
-                    data-testid="admin-review-left-panel-scroll"
-                  >
-                    <Tabs
-                      value={leftTab}
-                      onValueChange={(v) => setLeftTab(v as typeof leftTab)}
-                      className="w-full"
-                      data-testid="admin-review-left-tabs"
-                    >
-                      <TabsList className="bg-black/15 text-white grid grid-cols-3 w-full">
-                        <TabsTrigger
-                          value="source"
-                          data-testid="admin-review-left-tab-source"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Source
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="patient-directory"
-                          data-testid="admin-review-left-tab-patient-directory"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Directory
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="cooldown"
-                          data-testid="admin-review-left-tab-cooldown"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Cooldown
-                        </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-2 w-full mt-1">
-                        <TabsTrigger
-                          value="insurance"
-                          data-testid="admin-review-left-tab-insurance"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Insurance
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="history"
-                          data-testid="admin-review-left-tab-history"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          History
-                        </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-1 w-full mt-1">
-                        <TabsTrigger
-                          value="engagement"
-                          data-testid="admin-review-left-tab-engagement"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Engagement
-                        </TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent
-                        value="source"
-                        className="mt-3 space-y-3"
-                        data-testid="admin-review-source-tab-content"
-                      >
-                        <section className="space-y-2" data-testid="admin-review-clinical-source">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Clinical Source
-                          </div>
-                          <RawSourceCard
-                            label="Hx"
-                            value={patient.history}
-                            emptyText="No history entered"
-                            testId="admin-review-source-hx"
-                          />
-                          <RawSourceCard
-                            label="Dx"
-                            value={patient.diagnoses}
-                            emptyText="No diagnoses entered"
-                            testId="admin-review-source-dx"
-                          />
-                          <RawSourceCard
-                            label="Rx"
-                            value={patient.medications}
-                            emptyText="No medications entered"
-                            testId="admin-review-source-rx"
-                          />
-                          <RawSourceCard
-                            label="Previous Tests"
-                            value={
-                              typeof (patient as { previousTests?: unknown }).previousTests === "string"
-                                ? ((patient as { previousTests?: string }).previousTests ?? "")
-                                : ""
-                            }
-                            emptyText="No prior testing on file"
-                            testId="admin-review-source-prior"
-                          />
-                        </section>
-
-                        <section
-                          className="space-y-1.5 rounded-2xl border border-white/15 bg-black/15 p-3"
-                          data-testid="admin-review-icd-search-left"
-                        >
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Search ICD-10
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
-                </div>
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-                  <Input
-                    type="search"
-                    placeholder="Search any ICD-10 diagnosis..."
-                    value={icdSearchQuery}
-                    onChange={(e) => setIcdSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
-                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
-                      }
-                    }}
-                    className="h-8 text-xs"
-                    data-testid="admin-review-icd-ai-search"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={
-                      icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
-                    }
-                    onClick={() =>
-                      icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
-                    }
-                    data-testid="admin-review-icd-ai-search-button"
-                    className="h-8 px-2"
-                  >
-                    {icdSearchMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Search className="w-3 h-3" />
-                    )}
-                  </Button>
-                </div>
-
-                {icdSearchMutation.isPending && (
-                  <div
-                    className="text-[11px] text-slate-400 inline-flex items-center gap-1"
-                    data-testid="admin-review-icd-ai-search-loading"
-                  >
-                    <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
-                  </div>
-                )}
-                {icdSearchMutation.isError && (
-                  <div
-                    className="text-[11px] text-rose-700 inline-flex items-center gap-1"
-                    data-testid="admin-review-icd-ai-search-error"
-                  >
-                    <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
-                  </div>
-                )}
-                {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
-                  <div
-                    className="text-[11px] text-slate-400 italic"
-                    data-testid="admin-review-icd-ai-search-empty"
-                  >
-                    No matching ICD codes.
-                  </div>
-                )}
-                {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
-                  <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
-                    {(icdSearchMutation.data?.results ?? []).map((r) => (
-                      <button
-                        key={r.code}
-                        type="button"
-                        onClick={() => adoptIcdSearchResult(r)}
-                        data-testid="admin-review-icd-ai-search-result"
-                        className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
-                      >
-                        <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
-                        <div className="min-w-0">
-                          <div className="text-slate-800 truncate">{r.label}</div>
-                          {r.rationale && (
-                            <div className="text-[10px] text-slate-500 truncate">
-                              {r.rationale}
-                            </div>
-                          )}
-                        </div>
-                        <span
-                          className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
-                        >
-                          {r.confidence}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                        </section>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="patient-directory"
-                        className="mt-3"
-                        data-testid="admin-review-patient-directory-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Patient Directory
-                          </div>
-                          <div className="text-xs text-white/80">
-                            <div>{patient.name || "Unnamed patient"}</div>
-                            {patient.dob && <div className="text-white/60">DOB {patient.dob}</div>}
-                            {patient.phoneNumber && (
-                              <div className="text-white/60">{patient.phoneNumber}</div>
-                            )}
-                            {patient.facility && (
-                              <div className="text-white/60">{patient.facility}</div>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-white/50 italic">
-                            Full directory roster will appear here when the
-                            backend route is wired.
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="cooldown"
-                        className="mt-3"
-                        data-testid="admin-review-cooldown-tab-content"
-                      >
-                        <div
-                          className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1"
-                          data-testid="admin-review-patient-cooldown-summary"
-                        >
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Cooldown
-                          </div>
-                          <div className="text-xs text-white/80">
-                            No active cooldown rules detected for this patient.
-                          </div>
-                          <div className="text-[10px] text-white/50 italic">
-                            Cooldown engine wires here once the per-test
-                            cooldown route ships.
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="insurance"
-                        className="mt-3"
-                        data-testid="admin-review-insurance-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Insurance
-                          </div>
-                          <div className="text-xs text-white/80">
-                            {patient.insurance || (
-                              <span className="italic text-white/50">No insurance on file</span>
-                            )}
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="history"
-                        className="mt-3"
-                        data-testid="admin-review-history-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Patient History (chart)
-                          </div>
-                          <div className="text-xs text-white/80 whitespace-pre-wrap min-h-[3rem]">
-                            {patient.history || (
-                              <span className="italic text-white/50">No history entered</span>
-                            )}
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="engagement"
-                        className="mt-3"
-                        data-testid="admin-review-engagement-tab-content"
-                      >
-                        {/* Engagement Center source of truth: client-side
-                            grouping of /api/engagement/assignment-board
-                            (no dedicated grouped endpoint exists). Each
-                            scheduler group supports Select All + Plexus
-                            PDF + Clinician PDF scoped to selected rows.
-                            SOURCE MARKER: Engagement Center source of truth
-                            SOURCE MARKER: Scheduler call lists grouped by scheduler
-                            SOURCE MARKER: Plexus PDF by scheduler assignment
-                            SOURCE MARKER: Clinician PDF by scheduler assignment */}
-                        <div
-                          className="space-y-3"
-                          data-testid="admin-review-scheduler-call-lists"
-                        >
-                          {engagementBoardQuery.isLoading && (
-                            <div className="text-[11px] text-white/60 italic">
-                              Loading Engagement assignments…
-                            </div>
-                          )}
-                          {engagementBoardQuery.isError && (
-                            <div className="text-[11px] text-rose-200">
-                              Could not load Engagement Center: {String(engagementBoardQuery.error)}
-                            </div>
-                          )}
-                          {!engagementBoardQuery.isLoading &&
-                            !engagementBoardQuery.isError &&
-                            schedulerGroups.length === 0 && (
-                              <div className="text-[11px] text-white/60 italic">
-                                No Engagement assignment found for this facility yet.
-                              </div>
-                            )}
-                          {schedulerGroups.map((group) => {
-                            const selected = selectedByScheduler[group.schedulerKey] ?? new Set<number>();
-                            const eligibleIds = group.rows
-                              .map((r) => r.patientScreeningId)
-                              .filter((id): id is number => id != null);
-                            const allSelected =
-                              eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id));
-                            const selectedCount = selected.size;
-                            return (
-                              <section
-                                key={group.schedulerKey}
-                                className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2"
-                                data-testid="admin-review-scheduler-call-list"
-                                data-scheduler-name={group.schedulerName}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="text-[11px] font-semibold text-white">
-                                    {group.schedulerName}
-                                    <span className="ml-1.5 text-white/60 font-normal">
-                                      ({group.rows.length})
-                                    </span>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setAllSelectedForScheduler(group)}
-                                    data-testid="admin-review-select-all-scheduler-patients"
-                                    className="text-[10px] uppercase tracking-wider text-white/80 hover:text-white"
-                                  >
-                                    {allSelected ? "Clear" : "Select All"}
-                                  </button>
-                                </div>
-                                <div
-                                  className="text-[10px] text-white/60"
-                                  data-testid="admin-review-scheduler-selected-count"
-                                >
-                                  {selectedCount} selected
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "plexus",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-plexus-pdf"
-                                    data-print-preview-testid="admin-review-plexus-print-preview"
-                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Plexus PDF
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "clinician",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-clinician-pdf"
-                                    data-print-preview-testid="admin-review-clinician-print-preview"
-                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Clinician PDF
-                                  </button>
-                                </div>
-                                {/* Hidden surface-state markers for QA / e2e. */}
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-popup-blocked"
-                                  aria-hidden="true"
-                                >
-                                  Popup blocked. Allow popups to print this packet.
-                                </span>
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-error"
-                                  aria-hidden="true"
-                                >
-                                  Admin Review print preview error surface.
-                                </span>
-                                <ul className="space-y-1">
-                                  {group.rows.map((r) => {
-                                    const isCurrent =
-                                      r.patientScreeningId === patient.id;
-                                    const isChecked = r.patientScreeningId != null
-                                      ? selected.has(r.patientScreeningId)
-                                      : false;
-                                    return (
-                                      <li
-                                        key={r.executionCaseId}
-                                        className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${
-                                          isCurrent
-                                            ? "border-white/40 bg-white/15"
-                                            : "border-white/10 bg-black/10"
-                                        }`}
-                                        data-testid="admin-review-scheduler-call-list-patient"
-                                        data-patient-id={r.patientScreeningId ?? ""}
-                                        data-is-current={isCurrent ? "true" : "false"}
-                                        {...(isCurrent
-                                          ? { "data-current-marker": "admin-review-current-patient-in-call-list" }
-                                          : {})}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={isChecked}
-                                          disabled={r.patientScreeningId == null}
-                                          onChange={() => {
-                                            if (r.patientScreeningId != null) {
-                                              toggleSelectedForScheduler(
-                                                group.schedulerKey,
-                                                r.patientScreeningId,
-                                              );
-                                            }
-                                          }}
-                                          data-testid="admin-review-select-scheduler-patient"
-                                          className="mt-0.5"
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                          <div className="font-medium text-white truncate">
-                                            {r.patientName}
-                                            {isCurrent && (
-                                              <span
-                                                className="ml-1 text-[9px] uppercase tracking-wider text-white/70"
-                                                data-testid="admin-review-current-patient-in-call-list"
-                                              >
-                                                · current
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-white/60 truncate">
-                                            {[r.facility, r.scheduleDate, r.engagementStatus]
-                                              .filter(Boolean)
-                                              .join(" · ")}
-                                          </div>
-                                          {r.selectedServiceList?.length ? (
-                                            <div className="text-white/50 truncate">
-                                              {r.selectedServiceList.join(", ")}
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </section>
-                            );
-                          })}
-                        </div>
-                      </TabsContent>
-                    </Tabs>
-                  </ScrollArea>
-                </div>
-              )}
-            </aside>
-
-            {/* ─── Column 2 — Ancillary Playground (white) ─── */}
-            <main
-              className="bg-white min-h-0 flex flex-col"
-              data-testid="admin-review-middle-column"
-              data-panel-style="admin-review-ancillary-playground-white-panel"
-            >
-              <div className="px-5 pt-4 pb-2 border-b border-slate-100 flex items-center gap-2">
-                <span
-                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 text-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wider shadow-sm"
-                  data-testid="admin-review-ancillary-playground-pill"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  Ancillary Playground
-                </span>
-                {evidenceQuery.isFetching && (
-                  <span className="text-[10px] text-slate-400 inline-flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Refreshing rule engine
-                  </span>
-                )}
-              </div>
+          {/* ─── LEFT panel — Ancillaries playground ─── */}
+          <main
+            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/75 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            data-testid="admin-review-ancillary-panel"
+          >
               <ScrollArea className="flex-1 min-h-0 px-5 py-4">
                 <div
                   className="space-y-4"
                   data-testid="admin-review-ancillary-playground"
                 >
+              {/* Manual add-ancillary control. Hand-adds a service to
+                  qualifyingTests + stamps admin-added provenance. */}
+              <div
+                className="flex items-center justify-between gap-2"
+                data-testid="admin-review-add-ancillary-row"
+              >
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Ancillaries
+                </div>
+                <Popover
+                  open={addOpen}
+                  onOpenChange={(o) => {
+                    setAddOpen(o);
+                    if (!o) {
+                      setOverrideTarget(null);
+                      setAddReason("");
+                    }
+                  }}
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="admin-review-add-ancillary-trigger"
+                      disabled={addAncillaryMutation.isPending || !canOpenAddMenu}
+                      title={
+                        hasAnyAddableAncillary
+                          ? "Add an ancillary"
+                          : hasAnyCooldownBlocked
+                            ? "Remaining ancillaries are in cooldown"
+                            : "All ancillaries already added"
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-gradient-to-b from-sky-50 to-sky-100/60 text-sky-800 hover:from-sky-100 hover:to-sky-100 shadow-sm px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {addAncillaryMutation.isPending ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5" />
+                      )}
+                      Add Ancillary
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-72 p-2"
+                    align="end"
+                    data-testid="admin-review-add-ancillary-menu"
+                  >
+                    {overrideTarget ? (
+                      <div
+                        className="space-y-2"
+                        data-testid="admin-review-add-override"
+                      >
+                        <div
+                          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900"
+                          data-testid="admin-review-add-no-evidence"
+                        >
+                          <div className="font-semibold">No qualifying evidence found</div>
+                          <div className="mt-0.5">
+                            Nothing in this patient's Dx/Hx/Rx qualifies{" "}
+                            <span className="font-medium">{overrideTarget.testName}</span>.
+                            To add it anyway, enter a reason for the manual override.
+                          </div>
+                        </div>
+                        <Textarea
+                          value={addReason}
+                          onChange={(e) => setAddReason(e.target.value)}
+                          placeholder="Required: reason for manual override"
+                          rows={2}
+                          className="text-xs resize-none"
+                          data-testid="admin-review-add-override-reason"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={!addReason.trim() || addAncillaryMutation.isPending}
+                            onClick={() =>
+                              handleAddAncillary(
+                                overrideTarget.ancillaryId,
+                                overrideTarget.testName,
+                                true,
+                              )
+                            }
+                            data-testid="admin-review-add-override-confirm"
+                            className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Add anyway
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOverrideTarget(null);
+                              setAddReason("");
+                            }}
+                            data-testid="admin-review-add-override-cancel"
+                            className="inline-flex items-center rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                    <div className="space-y-2">
+                      <div className="space-y-1">
+                        {canAddBrainwave && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddAncillary("brainwave", "BrainWave")}
+                            data-testid="admin-review-add-brainwave"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-violet-50 text-violet-800 transition-colors"
+                          >
+                            Add BrainWave
+                          </button>
+                        )}
+                        {brainwaveBlockedByCooldown && (
+                          <button
+                            type="button"
+                            disabled
+                            title={cooldownTooltip("BrainWave")}
+                            data-testid="admin-review-add-brainwave-cooldown"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium text-slate-400 cursor-not-allowed flex items-center justify-between gap-2"
+                          >
+                            <span>Add BrainWave</span>
+                            <span className="text-[10px] uppercase tracking-wider text-amber-600">
+                              Cooldown
+                            </span>
+                          </button>
+                        )}
+                        {canAddVitalwave && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddAncillary("vitalwave", "VitalWave")}
+                            data-testid="admin-review-add-vitalwave"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-rose-50 text-rose-800 transition-colors"
+                          >
+                            Add VitalWave
+                          </button>
+                        )}
+                        {vitalwaveBlockedByCooldown && (
+                          <button
+                            type="button"
+                            disabled
+                            title={cooldownTooltip("VitalWave")}
+                            data-testid="admin-review-add-vitalwave-cooldown"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium text-slate-400 cursor-not-allowed flex items-center justify-between gap-2"
+                          >
+                            <span>Add VitalWave</span>
+                            <span className="text-[10px] uppercase tracking-wider text-amber-600">
+                              Cooldown
+                            </span>
+                          </button>
+                        )}
+                        {canAddGenericUltrasound && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddAncillary("ultrasound", "Ultrasound Studies")}
+                            data-testid="admin-review-add-ultrasound-generic"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-emerald-50 text-emerald-800 transition-colors"
+                          >
+                            Add Ultrasound (generic)
+                          </button>
+                        )}
+                      </div>
+                      {(availableUltrasoundSubtypes.length > 0 ||
+                        cooldownBlockedUltrasoundSubtypes.length > 0) && (
+                        <>
+                          <Separator className="my-1" />
+                          <div className="px-1 text-[10px] uppercase tracking-wider text-slate-500">
+                            Ultrasound subtype
+                          </div>
+                          <ScrollArea className="max-h-44">
+                            <div className="space-y-0.5 pr-1">
+                              {availableUltrasoundSubtypes.map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={() => handleAddAncillary("ultrasound", t)}
+                                  data-testid="admin-review-add-ultrasound-subtype"
+                                  data-test-name={t}
+                                  className="w-full text-left rounded-md px-2 py-1.5 text-[11px] hover:bg-emerald-50 text-emerald-900 transition-colors"
+                                >
+                                  {t}
+                                </button>
+                              ))}
+                              {cooldownBlockedUltrasoundSubtypes.map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  disabled
+                                  title={cooldownTooltip(t)}
+                                  data-testid="admin-review-add-ultrasound-subtype-cooldown"
+                                  data-test-name={t}
+                                  className="w-full text-left rounded-md px-2 py-1.5 text-[11px] text-slate-400 cursor-not-allowed flex items-center justify-between gap-2"
+                                >
+                                  <span>{t}</span>
+                                  <span className="text-[9px] uppercase tracking-wider text-amber-600 shrink-0">
+                                    Cooldown
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </>
+                      )}
+                      {!hasAnyAddableAncillary && !hasAnyCooldownBlocked && (
+                        <div
+                          className="px-2 py-3 text-center text-[11px] text-slate-400 italic"
+                          data-testid="admin-review-add-ancillary-empty"
+                        >
+                          All ancillaries are already on this patient.
+                        </div>
+                      )}
+                      {!hasAnyAddableAncillary && hasAnyCooldownBlocked && (
+                        <div
+                          className="px-2 py-3 text-center text-[11px] text-amber-600 italic"
+                          data-testid="admin-review-add-ancillary-all-cooldown"
+                        >
+                          Remaining ancillaries are within their cooldown window.
+                        </div>
+                      )}
+                    </div>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              </div>
               {/* BrainWave + VitalWave panels. Bar shows only qualifying-
                   factor chips + icon-only Regenerate/Delete. Status
                   labels, the services row, and the selected list were removed
@@ -2769,11 +3356,11 @@ export function AdminReviewDialog({
                 return (
                   <div
                     key={id}
-                    className={`rounded-2xl border overflow-hidden ${style.bg} ${style.border}`}
+                    className={`rounded-2xl border overflow-hidden shadow-sm ring-1 ring-black/5 transition-shadow hover:shadow-md ${style.bg} ${style.border}`}
                     data-testid="admin-review-ancillary-colored-panel"
                     data-ancillary={id}
                   >
-                    <div className="px-4 py-3 border-b border-white/40 bg-white/30 backdrop-blur-sm">
+                    <div className="px-4 py-3 border-b border-white/50 bg-gradient-to-b from-white/55 to-white/20 backdrop-blur-md">
                       <div className="flex items-center justify-between gap-3">
                         <button
                           type="button"
@@ -2786,8 +3373,8 @@ export function AdminReviewDialog({
                           ) : (
                             <ChevronRight className={`w-4 h-4 shrink-0 ${style.accent}`} />
                           )}
-                          <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${style.icon}`}>
-                            <Icon className="w-4 h-4" strokeWidth={2} fill="none" />
+                          <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${style.icon}`}>
+                            <Icon className="w-5 h-5" strokeWidth={2} fill="none" />
                           </div>
                           <div className="min-w-0 flex items-center gap-2 flex-wrap">
                             <div className={`font-semibold text-sm ${style.accent} shrink-0`}>
@@ -2951,10 +3538,10 @@ export function AdminReviewDialog({
                       ) : (
                         <ChevronRight className={`w-4 h-4 shrink-0 ${categoryStyles.ultrasound.accent}`} />
                       )}
-                      <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
+                      <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
                         {(() => {
                           const Icon = categoryIcons.ultrasound;
-                          return <Icon className="w-4 h-4" strokeWidth={2} fill="none" />;
+                          return <Icon className="w-5 h-5" strokeWidth={2} fill="none" />;
                         })()}
                       </div>
                       <div className="min-w-0 flex items-center gap-2 flex-wrap">
@@ -3196,92 +3783,332 @@ export function AdminReviewDialog({
               </div>
                 </div>
               </ScrollArea>
-            </main>
+          </main>
 
-            {/* ─── Column 3 — approved muted blue #7283B0 actions panel ─── */}
-            <aside
-              className="bg-[#7283B0] text-white border-l border-black/10 flex flex-col min-h-0"
-              data-testid="admin-review-right-column"
-              data-panel-style="admin-review-blue-right-panel"
-              data-panel-color="#7283B0"
-              style={{ backgroundColor: "#7283B0" }}
+          {/* ─── RIGHT panel — slim action rail. Reference + Actions sit in
+              the top scroll, the Updates premium glass panel takes the bottom
+              half, and a floating glass decision bar sits beneath it. Heavier
+              surfaces (documents, note, scheduler) collapse into popovers so
+              the column stays narrow. ─── */}
+          <aside
+            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            data-testid="admin-review-action-panel"
+          >
+            {/* Scrollable middle zone — Reference + AI clues + Changes. Keeping
+                this in one min-h-0 scroll region (instead of shrink-0 blocks)
+                guarantees the decision footer below stays visible on short
+                viewports instead of being pushed past the overflow clip. */}
+            <div
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+              data-testid="admin-review-rail-scroll-zone"
             >
-              {!rightPanelOpen ? (
-                <div
-                  className="flex-1 flex items-start justify-center pt-3"
-                  data-testid="admin-review-right-panel-collapsed"
-                >
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
-                    Actions
-                  </span>
-                </div>
-              ) : (
-              <ScrollArea
-                className="flex-1 min-h-0 px-4 py-4"
-                data-testid="admin-review-right-panel-scroll"
-              >
-              <div
-                className="space-y-4"
-                data-testid="admin-review-right-panel-open"
-              >
-              <section
-                className="space-y-2"
-                data-testid="admin-review-right-actions-panel"
-              >
-              {/* Top-right PDF action buttons. Labels match the PDF
-                  generator naming: "Plexus PDF" (the canonical Plexus
-                  packet) and "Clinician PDF" (the clinician-facing
-                  packet). The reasoning content area below carries
-                  Clinician Understanding / Patient Talking Points
-                  labels — those belong inside the reasoning cards,
-                  not on PDF action buttons. */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    recordAdminReviewUpdate("pdf_previewed", "Previewed Plexus PDF", { kind: "plexus" });
-                  }}
-                  data-testid="admin-review-pdf-preview-button-plexus"
-                  data-pdf-action="admin-review-pdf-action-plexus"
-                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
-                >
-                  Plexus PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    recordAdminReviewUpdate("pdf_previewed", "Previewed Clinician PDF", { kind: "clinician" });
-                  }}
-                  data-testid="admin-review-pdf-preview-button-clinician"
-                  data-pdf-action="admin-review-pdf-action-clinician"
-                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
-                >
-                  Clinician PDF
-                </button>
+            <div className="shrink-0 space-y-3 p-3" data-testid="admin-review-reference-scroll">
+              <div className="mb-1 flex items-center gap-2" data-testid="admin-review-workbench-header">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Review Workbench</span>
+                <span className="h-px flex-1 bg-slate-200/70" />
               </div>
-              <div data-testid="admin-review-pdf-actions-inline" className="bg-white rounded-xl p-2">
-                <PatientPdfActions
-                  patient={patient}
-                  facility={facility ?? patient.facility ?? null}
-                  scheduleDate={scheduleDate ?? null}
-                  compact
-                />
-              </div>
-              </section>
+                    {/* Reference surfaces — split into top-of-rail buttons */}
+                    <div data-testid="admin-review-reference-buttons-group">
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Source data */}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              data-testid="admin-review-reference-source-trigger"
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold shadow-sm transition-colors"
+                            >
+                              <BookOpen className="w-3.5 h-3.5" />
+                              Source data
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="end"
+                            className="w-[520px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
+                            data-testid="admin-review-source-popover"
+                          >
+                <div className="px-0 py-0" data-testid="admin-review-source-tab-content">
+                        <section className="space-y-2" data-testid="admin-review-clinical-source">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                              Clinical Source
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!sourceEditMode) {
+                                  // Seed from the freshest local mirrors (latest
+                                  // saved values), and DO NOT clear sourceDataSaved
+                                  // here — re-entering edit must not bypass the
+                                  // regeneration gate. It clears only on a fully
+                                  // successful regenerate.
+                                  setSourceEditHx(localHx);
+                                  setSourceEditDx(localDx);
+                                  setSourceEditRx(localRx);
+                                }
+                                setSourceEditMode((m) => !m);
+                              }}
+                              data-testid="admin-review-source-edit-toggle"
+                              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                                sourceEditMode
+                                  ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              <Pencil className="w-3 h-3" />
+                              {sourceEditMode ? "Cancel" : "Edit"}
+                            </button>
+                          </div>
 
-              <section
-                className="space-y-2 rounded-2xl border border-white/15 bg-black/15 p-3"
-                data-testid="admin-review-right-panel-buttons"
-              >
-                <div
-                  className="grid grid-cols-2 gap-2"
-                  data-testid="admin-review-right-panel-button-row"
-                >
+                          {sourceEditMode ? (
+                            <div className="space-y-2" data-testid="admin-review-source-edit-form">
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Hx</label>
+                                <Textarea
+                                  value={sourceEditHx}
+                                  onChange={(e) => setSourceEditHx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-hx"
+                                  placeholder="Patient history..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Dx</label>
+                                <Textarea
+                                  value={sourceEditDx}
+                                  onChange={(e) => setSourceEditDx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-dx"
+                                  placeholder="Diagnoses..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Rx</label>
+                                <Textarea
+                                  value={sourceEditRx}
+                                  onChange={(e) => setSourceEditRx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-rx"
+                                  placeholder="Medications..."
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onUpdate("history", sourceEditHx);
+                                  onUpdate("diagnoses", sourceEditDx);
+                                  onUpdate("medications", sourceEditRx);
+                                  // Update local mirrors immediately so evidence buttons
+                                  // re-parse without waiting for the parent re-render.
+                                  setLocalHx(sourceEditHx);
+                                  setLocalDx(sourceEditDx);
+                                  setLocalRx(sourceEditRx);
+                                  setSourceEditMode(false);
+                                  setSourceDataSaved(true);
+                                  recordAdminReviewUpdate(
+                                    "admin_note_updated",
+                                    "Source clinical data (Hx/Dx/Rx) updated",
+                                  );
+                                  toast({ title: "Source data saved", description: "Hx, Dx, and Rx have been updated." });
+                                }}
+                                data-testid="admin-review-source-save-button"
+                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-3 py-2 text-xs font-semibold transition-colors"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                Save Changes
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <RawSourceCard
+                                label="Hx"
+                                value={patient.history}
+                                emptyText="No history entered"
+                                testId="admin-review-source-hx"
+                              />
+                              <RawSourceCard
+                                label="Dx"
+                                value={patient.diagnoses}
+                                emptyText="No diagnoses entered"
+                                testId="admin-review-source-dx"
+                              />
+                              <RawSourceCard
+                                label="Rx"
+                                value={patient.medications}
+                                emptyText="No medications entered"
+                                testId="admin-review-source-rx"
+                              />
+                              {(() => {
+                                const prevTests = typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                                  ? ((patient as { previousTests?: string }).previousTests ?? "")
+                                  : "";
+                                return (
+                                  <RawSourceCard
+                                    label="Previous Tests"
+                                    value={prevTests}
+                                    emptyText="No prior testing on file"
+                                    testId="admin-review-source-prior"
+                                  />
+                                );
+                              })()}
+                            </>
+                          )}
+
+                          {sourceDataSaved && !sourceEditMode && (
+                            <div
+                              className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                              data-testid="admin-review-source-regenerate-section"
+                            >
+                              <div className="text-[11px] text-slate-600 font-medium inline-flex items-start gap-1.5">
+                                <RefreshCw className="w-3 h-3 mt-px shrink-0 text-slate-500" />
+                                Source data updated — press Regenerate in the Updates panel to re-analyze all ancillaries.
+                              </div>
+                            </div>
+                          )}
+                        </section>
+                </div>
+                          </PopoverContent>
+                        </Popover>
+                        {/* ICD search */}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              data-testid="admin-review-reference-icd-trigger"
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold shadow-sm transition-colors"
+                            >
+                              <Search className="w-3.5 h-3.5" />
+                              ICD search
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="end"
+                            className="w-[420px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
+                            data-testid="admin-review-icd-popover"
+                          >
+                <div className="px-0 py-0" data-testid="admin-review-icd-tab-content">
+                        <section
+                          className="space-y-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-3"
+                          data-testid="admin-review-icd-search-left"
+                        >
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                  Search ICD-10
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
+                </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+                  <Input
+                    type="search"
+                    placeholder="Search any ICD-10 diagnosis..."
+                    value={icdSearchQuery}
+                    onChange={(e) => setIcdSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
+                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
+                      }
+                    }}
+                    className="h-8 text-xs"
+                    data-testid="admin-review-icd-ai-search"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={
+                      icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
+                    }
+                    onClick={() =>
+                      icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
+                    }
+                    data-testid="admin-review-icd-ai-search-button"
+                    className="h-8 px-2"
+                  >
+                    {icdSearchMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Search className="w-3 h-3" />
+                    )}
+                  </Button>
+                </div>
+
+                {icdSearchMutation.isPending && (
+                  <div
+                    className="text-[11px] text-slate-400 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-loading"
+                  >
+                    <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
+                  </div>
+                )}
+                {icdSearchMutation.isError && (
+                  <div
+                    className="text-[11px] text-rose-700 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-error"
+                  >
+                    <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
+                  <div
+                    className="text-[11px] text-slate-400 italic"
+                    data-testid="admin-review-icd-ai-search-empty"
+                  >
+                    No matching ICD codes.
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
+                  <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
+                    {(icdSearchMutation.data?.results ?? []).map((r) => (
+                      <button
+                        key={r.code}
+                        type="button"
+                        onClick={() => adoptIcdSearchResult(r)}
+                        data-testid="admin-review-icd-ai-search-result"
+                        className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
+                      >
+                        <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
+                        <div className="min-w-0">
+                          <div className="text-slate-800 truncate">{r.label}</div>
+                          {r.rationale && (
+                            <div className="text-[10px] text-slate-500 truncate">
+                              {r.rationale}
+                            </div>
+                          )}
+                        </div>
+                        <span
+                          className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
+                        >
+                          {r.confidence}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                        </section>
+                </div>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                    </div>
+
+                {/* Reference content continues — Diagnosis / Medications / Symptoms / Prior Testing
+                    (single "Reference" header is provided by admin-review-reference-buttons-group above). */}
+                <div data-testid="admin-review-evidence-group">
+                  <section
+                    className="space-y-2"
+                    data-testid="admin-review-right-panel-buttons"
+                  >
+                    <div
+                      className="grid grid-cols-2 gap-2"
+                      data-testid="admin-review-right-panel-button-row"
+                    >
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 px-3 py-2 text-xs font-semibold hover:bg-blue-100 transition-colors"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
                         data-testid="admin-review-right-button-diagnosis"
                       >
                         Diagnosis
@@ -3304,6 +4131,30 @@ export function AdminReviewDialog({
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
+                          />
+                        )}
+                      />
+                      {/* Hx (symptoms / history) shown alongside Dx so the
+                          reviewer has both in one popover. */}
+                      <AvailableButtonsRow
+                        title="Hx (Symptoms / History)"
+                        testId="admin-review-available-buttons-dx-hx"
+                        emptyText="No symptoms recorded"
+                        items={availableButtons.filter(
+                          (b) => b.kind === "symptom" || b.kind === "history",
+                        )}
+                        renderItem={(b) => (
+                          <SupportingChipButton
+                            key={buttonKey(b)}
+                            btn={b}
+                            testId="admin-review-hx-button"
+                            tone="amber"
+                            prefix="Hx"
+                            ultrasoundTests={ultrasoundTests}
+                            isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                            onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
                           />
                         )}
                       />
@@ -3317,12 +4168,11 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-purple-200 bg-purple-50 text-purple-800 px-3 py-2 text-xs font-semibold hover:bg-purple-100 transition-colors"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
                         data-testid="admin-review-right-button-medications"
                       >
                         Medications
@@ -3348,17 +4198,17 @@ export function AdminReviewDialog({
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
                           />
                         )}
                       />
                     </PopoverContent>
                   </Popover>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-xs font-semibold hover:bg-amber-100 transition-colors"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
                         data-testid="admin-review-right-button-symptoms"
                       >
                         Symptoms
@@ -3370,302 +4220,367 @@ export function AdminReviewDialog({
                       data-testid="admin-review-right-popover-symptoms"
                     >
                       <AvailableButtonsRow
-                        title="Symptoms / History"
+                        title="Symptoms"
                         testId="admin-review-available-buttons-hx"
                         emptyText="No symptoms recorded"
                         items={availableButtons.filter(
-                          (b) => b.kind === "symptom" || b.kind === "history" || b.kind === "prior_test",
+                          (b) => b.kind === "symptom" || b.kind === "history",
                         )}
                         renderItem={(b) => (
                           <SupportingChipButton
                             key={buttonKey(b)}
                             btn={b}
-                            testId={b.kind === "prior_test" ? "admin-review-prior-button" : "admin-review-hx-button"}
-                            tone={b.kind === "prior_test" ? "teal" : "amber"}
-                            prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
+                            testId="admin-review-hx-button"
+                            tone="amber"
+                            prefix="Hx"
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
                           />
                         )}
                       />
                     </PopoverContent>
                   </Popover>
-
+                  {/* Prior Testing — actual completed prior tests ONLY.
+                      Never patient history (Dx/Hx). Sourced from
+                      prior_test evidence chips + the patient's own
+                      previousTests free text. */}
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 px-3 py-2 text-xs font-semibold hover:bg-emerald-100 transition-colors col-span-2"
-                        data-testid="admin-review-right-button-suggestions"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
+                        data-testid="admin-review-right-button-prior-testing"
                       >
-                        <span className="inline-flex items-center gap-1.5">
-                          <Lightbulb className="w-3 h-3" />
-                          Suggestions
-                          {visibleSuggestions.length > 0 && (
-                            <span className="inline-flex items-center justify-center rounded-full bg-emerald-200 text-emerald-900 text-[10px] px-1.5">
-                              {visibleSuggestions.length}
-                            </span>
-                          )}
-                        </span>
+                        Prior Testing
                       </button>
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[340px] p-3 space-y-2"
-                      data-testid="admin-review-right-popover-suggestions"
+                      className="w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
+                      data-testid="admin-review-right-popover-prior-testing"
                     >
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                        Diagnosis Suggestions
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        Medication-derived. Click to accept — suggestions are
-                        inactive until accepted.
-                      </div>
-                      {visibleSuggestions.length === 0 ? (
-                        <div className="text-[11px] text-slate-400 italic">
-                          No suggestions for this patient.
-                        </div>
-                      ) : (
-                        <DiagnosisSuggestionsSection
-                          suggestions={visibleSuggestions}
-                          onAccept={acceptDiagnosisSuggestion}
-                        />
-                      )}
+                      {(() => {
+                        const priorButtons = availableButtons.filter(
+                          (b) => b.kind === "prior_test",
+                        );
+                        const priorText =
+                          typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                            ? ((patient as { previousTests?: string }).previousTests ?? "").trim()
+                            : "";
+                        const noPrior = Boolean(
+                          (patient as { noPreviousTests?: unknown }).noPreviousTests,
+                        );
+                        if (noPrior || (priorButtons.length === 0 && !priorText)) {
+                          return (
+                            <div
+                              className="text-[11px] text-slate-400 italic"
+                              data-testid="admin-review-prior-testing-empty"
+                            >
+                              No prior testing found.
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="space-y-3">
+                            {priorText && (
+                              <div data-testid="admin-review-prior-testing-source">
+                                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                  Recorded prior tests
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700 whitespace-pre-wrap leading-snug">
+                                  {priorText}
+                                </div>
+                              </div>
+                            )}
+                            {priorButtons.length > 0 && (
+                              <AvailableButtonsRow
+                                title="Attach prior testing"
+                                testId="admin-review-available-buttons-prior"
+                                emptyText="No prior testing found."
+                                items={priorButtons}
+                                renderItem={(b) => (
+                                  <SupportingChipButton
+                                    key={buttonKey(b)}
+                                    btn={b}
+                                    testId="admin-review-prior-button"
+                                    tone="teal"
+                                    prefix="Prior"
+                                    ultrasoundTests={ultrasoundTests}
+                                    isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                                    onAssign={(target) => assignToTarget(target, b)}
+                                    evidenceContext={aiLogicContext}
+                                  />
+                                )}
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
                     </PopoverContent>
                   </Popover>
+                    </div>
+                  </section>
                 </div>
-              </section>
 
-              <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                  Blocking Rules
-                </div>
-                {isUnder16 && (
-                  <div
-                    className="rounded-md border border-rose-300 bg-rose-100 text-rose-900 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
-                    data-testid="admin-review-under-16-rule"
-                  >
-                    <AlertTriangle className="w-3 h-3 shrink-0" />
-                    Under 16 · Admin approval required
-                  </div>
-                )}
-                {totalMissingIcds > 0 && (
-                  <div className="rounded-md border border-amber-300 bg-amber-100 text-amber-900 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full">
-                    <AlertTriangle className="w-3 h-3 shrink-0" />
-                    Diagnosis missing ICD
-                  </div>
-                )}
-                {!isUnder16 && totalMissingIcds === 0 && (
-                  <div className="text-[11px] text-white/50 italic">No blocking rules.</div>
-                )}
-              </section>
-
-              {/* Admin note: circular icon button opens an inline
-                  popover with the note textarea — keeps the panel
-                  compact when the admin doesn't need a note. */}
-              <section className="flex items-center gap-2">
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label="Add admin note"
-                      title={adminNote ? "Admin note recorded" : "Add admin note"}
-                      data-testid="admin-review-admin-note-icon-button"
-                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-white/30 transition-colors ${
-                        adminNote
-                          ? "bg-white text-[#3d4a6b]"
-                          : "bg-black/15 text-white hover:bg-black/25"
-                      }`}
-                    >
-                      <StickyNote className="w-4 h-4" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="end"
-                    className="w-[300px] p-3 space-y-2"
-                    data-testid="admin-review-admin-note-popover"
-                  >
-                    <Label
-                      htmlFor={`admin-review-admin-note-${patient.id}`}
-                      className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-                    >
-                      Admin Note
-                    </Label>
-                    <Textarea
-                      id={`admin-review-admin-note-${patient.id}`}
-                      value={adminNote}
-                      rows={4}
-                      onChange={(e) => setAdminNote(e.target.value)}
-                      onBlur={() => {
-                        if (adminNote.trim()) {
-                          recordAdminReviewUpdate("admin_note_updated", "Admin note updated", {
-                            length: adminNote.length,
-                          });
-                        }
-                      }}
-                      placeholder="Optional context attached to this approval action"
-                      data-testid={`admin-review-admin-note-${patient.id}`}
-                    />
-                  </PopoverContent>
-                </Popover>
-                <div className="text-[11px] text-white/70">
-                  {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
-                </div>
-              </section>
-
-              <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                  Decision
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Button
-                    type="button"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "approved" });
-                      recordAdminReviewUpdate("approval_approved", "Approved review");
-                    }}
-                    data-testid="admin-review-approve-button"
-                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                    className="bg-emerald-500 text-white hover:bg-emerald-600 w-full"
-                  >
-                    {approvalMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                    )}
-                    {isUnder16 ? "Admin Override Approve" : "Approve"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "needs_info" });
-                      recordAdminReviewUpdate("approval_pended", "Pended review");
-                    }}
-                    data-testid="admin-review-pend-button"
-                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                    className="w-full bg-white/10 text-white border-white/20 hover:bg-white/20"
-                  >
-                    Pend
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "rejected" });
-                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
-                    }}
-                    data-testid={`admin-review-button-reject-${patient.id}`}
-                    className="w-full text-rose-200 border-rose-300/40 bg-rose-900/40 hover:bg-rose-900/60"
-                  >
-                    Reject
-                  </Button>
-                </div>
-                {/* Scheduler routing chip. The settings source is the
-                    canonical outreach_schedulers table (admin-edited
-                    via Settings → Scheduler Team). When that table
-                    has a scheduler matching this patient's facility,
-                    the chip lights up + the inline ribbon below
-                    reads "Assigned by Scheduler Settings". When no
-                    row matches, the chip falls back to the
-                    engagement queue and a comment marker in the
-                    backend documents the fallback path.
-                    SOURCE MARKER: Engagement Center uses assigned scheduler from scheduler settings
-                    SOURCE MARKER: Scheduler settings fallback is Unassigned Engagement Queue */}
-                <div
-                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-white/70 px-2 py-0.5 text-[10px]"
-                  data-testid="admin-review-scheduler-routing-chip"
-                  data-scheduler-state={
-                    engagementAssignmentQuery.data?.scheduler
-                      ? "assigned"
-                      : engagementAssignmentQuery.data
-                        ? "unassigned"
-                        : "pending"
-                  }
-                  data-settings-source={
-                    engagementAssignmentQuery.data?.scheduler
-                      ? "outreach-schedulers-table"
-                      : "missing"
-                  }
-                >
-                  <ShieldCheck className="w-3 h-3" />
-                  {engagementAssignmentQuery.isLoading
-                    ? "Loading scheduler routing…"
-                    : engagementAssignmentQuery.data?.scheduler
-                      ? `Scheduler: ${engagementAssignmentQuery.data.scheduler.name}`
-                      : engagementAssignmentQuery.data
-                        ? "Unassigned / Engagement Queue"
-                        : "Scheduler routes on approval"}
-                </div>
-                <div
-                  className="text-[10px] text-white/60"
-                  data-testid="admin-review-scheduler-settings-source"
-                  data-source-state={
-                    engagementAssignmentQuery.data?.scheduler
-                      ? "outreach-schedulers-table"
-                      : "missing"
-                  }
-                >
-                  {engagementAssignmentQuery.data?.scheduler ? (
-                    <span data-testid="admin-review-assigned-by-scheduler-settings">
-                      Assigned by Scheduler Settings · outreach_schedulers
-                    </span>
-                  ) : (
-                    <span>
-                      Scheduler settings source missing; using current scheduler runtime fallback
-                    </span>
-                  )}
-                </div>
-              </section>
-              </div>
-              </ScrollArea>
-              )}
-            </aside>
-          </div>
-
-          {/* ─── Bottom box — Updates Made In Patient ──────────── */}
-          <div
-            className="border-t border-slate-200 bg-slate-50 px-5 py-3"
-            data-testid="admin-review-updates-made-box"
-            data-record-helper="admin-review-record-update"
-          >
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                Updates Made In Patient
-              </div>
-              <span className="text-[10px] text-slate-400 tabular-nums">
-                {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
-              </span>
             </div>
-            {updatesLog.length === 0 ? (
-              <div className="text-[11px] text-slate-400 italic">
-                Audit log will populate as you make changes in this review.
+
+            {/* AI-identified clinical clue bubbles (knowledge-layer prototype).
+                Attach actions delegate to assignToTarget so the assignment
+                state stays the single source of truth. */}
+            <AiEvidenceBubblesRow
+              items={aiBubbleItems}
+              context={aiLogicContext}
+              ultrasoundTests={ultrasoundTests}
+              onAttach={(item, target) => {
+                const btn = findButtonForBubble(item);
+                // skipEvidenceRecord: the bubble attach flow records its
+                // own evidence decision (with any label edits) inside
+                // AiEvidenceBubblesRow — avoid a duplicate write here.
+                if (btn) assignToTarget(target, btn, { skipEvidenceRecord: true });
+              }}
+              isAttached={(item, target) => {
+                const btn = findButtonForBubble(item);
+                return btn ? isAssignedToTarget(btn, target, assignments) : false;
+              }}
+              onEvidenceDecision={(item, decision) => {
+                if (decision === "approved") setAiPromptLabel(item.label);
+              }}
+            />
+
+            {/* Changes — flex-1 tinted workbench card; fills remaining height */}
+            <div
+              className="mx-3 mb-2 flex min-h-[140px] flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70"
+              data-testid="admin-review-updates-group"
+            >
+              <div
+                className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200/60"
+                data-record-helper="admin-review-record-update"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+                    Changes
+                  </span>
+                  <span className="text-[10px] text-slate-400 tabular-nums">
+                    {updatesLog.length} {updatesLog.length === 1 ? "change" : "changes"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void regeneratePending()}
+                  disabled={regenChangedInFlight || !canRegenerate}
+                  aria-label="Regenerate"
+                  title={canRegenerate
+                    ? (sourceDataSaved
+                      ? "Regenerate all ancillaries with updated source data"
+                      : `Regenerate the changed test(s): ${regenTargetLabels.join(", ")}`)
+                    : "No changes pending — regeneration not needed"}
+                  data-testid="admin-review-regenerate-changed"
+                  data-stale-count={staleTargetIds.length}
+                  data-pending-change-count={pendingRegenTargetIds.length}
+                  data-needs-regeneration={needsRegeneration ? "true" : "false"}
+                  data-can-regenerate={canRegenerate ? "true" : "false"}
+                  className={`inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-[10px] font-semibold shadow-sm disabled:cursor-not-allowed transition-colors ${
+                    canRegenerate
+                      ? "bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-400 hover:to-emerald-600 text-white disabled:opacity-50"
+                      : "border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 disabled:opacity-100"
+                  }`}
+                >
+                  {regenChangedInFlight ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  Regenerate
+                </button>
               </div>
-            ) : (
-              <ScrollArea className="max-h-[110px]">
-                <ul className="space-y-1 pr-2">
-                  {updatesLog.map((entry) => (
-                    <li
-                      key={entry.id}
-                      className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
-                      data-testid="admin-review-updates-made-item"
-                      data-update-type={entry.type}
-                    >
-                      <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
-                        {entry.at.slice(11, 16)}
-                      </span>
-                      <span className="min-w-0">{entry.label}</span>
-                    </li>
-                  ))}
-                </ul>
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="px-4 py-3" data-testid="admin-review-updates-made-box">
+                  {(() => {
+                    const groups = groupUpdatesByAncillary(updatesLog);
+                    if (groups.length === 0) {
+                      return (
+                        <div
+                          className="flex flex-col items-center justify-center gap-1 py-4 text-center"
+                          data-testid="admin-review-updates-empty"
+                        >
+                          <RefreshCw className="h-4 w-4 text-slate-300" />
+                          <div className="max-w-[220px] text-[11px] italic text-slate-400">
+                            {sourceDataSaved
+                              ? "Source data edited — regenerate to apply across all ancillaries."
+                              : "Changes you make will appear here, grouped by ancillary."}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="space-y-3 pr-1">
+                        {groups.map((group) => (
+                          <div
+                            key={group.ancillary}
+                            data-testid={`admin-review-updates-group-${group.ancillary}`}
+                          >
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${UPDATE_GROUP_DOT[group.ancillary]}`}
+                              />
+                              <span
+                                className={`text-[10px] font-bold uppercase tracking-wider ${UPDATE_GROUP_ACCENT[group.ancillary]}`}
+                              >
+                                {categoryLabels[group.ancillary]}
+                              </span>
+                            </div>
+                            <ul className="space-y-1 pl-3">
+                              {group.entries.map((entry) => (
+                                <li
+                                  key={entry.id}
+                                  className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
+                                  data-testid="admin-review-updates-made-item"
+                                  data-update-type={entry.type}
+                                >
+                                  <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
+                                    {entry.at.slice(11, 16)}
+                                  </span>
+                                  <span className="min-w-0">{shortUpdateText(entry)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
               </ScrollArea>
-            )}
-          </div>
-      </DialogContent>
+            </div>
+            </div>
+
+            {/* Decision footer — sibling nav centered, decision buttons right (no tile) */}
+            <div
+              className="mx-2 mb-3 flex shrink-0 items-center gap-1.5 px-1"
+              data-testid="admin-review-decision-group"
+            >
+              <div className="flex-1" />
+              {siblings && siblings.length >= 1 && (
+                <div
+                  className="inline-flex items-center gap-1.5"
+                  data-testid="admin-review-sibling-nav"
+                  data-active-index={activeIndex}
+                  data-total={totalSiblings}
+                  data-approve-pending={approvalMutation.isPending ? "true" : "false"}
+                >
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(-1)}
+                    disabled={!hasPrev || approvalMutation.isPending}
+                    aria-label="Previous patient"
+                    title="Previous patient"
+                    data-testid="admin-review-sibling-prev"
+                    className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span
+                    className="text-[10px] font-medium text-slate-500 whitespace-nowrap leading-none tabular-nums"
+                    data-testid="admin-review-sibling-count"
+                  >
+                    {activeIndex + 1} of {totalSiblings}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(1)}
+                    disabled={!hasNext || approvalMutation.isPending}
+                    aria-label="Next patient"
+                    title={hasNext ? "Next patient" : "No more patients"}
+                    data-testid="admin-review-sibling-next"
+                    className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              <div className="flex-1 flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  disabled={approvalMutation.isPending}
+                  onClick={() => {
+                    approvalMutation.mutate({ status: "approved" });
+                    recordAdminReviewUpdate("approval_approved", "Approved review");
+                  }}
+                  aria-label={isUnder16 ? "Admin Override Approve" : "Approve"}
+                  title={isUnder16 ? "Admin Override Approve" : "Approve"}
+                  data-testid="admin-review-approve-button"
+                  data-bar-testid={`admin-review-button-approve-${patient.id}`}
+                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-emerald-600 text-white shadow-[0_8px_20px_rgba(5,150,105,0.4)] hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {approvalMutation.isPending ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Check className="w-5 h-5" strokeWidth={3} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={approvalMutation.isPending}
+                  onClick={() => {
+                    approvalMutation.mutate({ status: "needs_info" });
+                    recordAdminReviewUpdate("approval_pended", "Pended review");
+                  }}
+                  aria-label="Pend"
+                  title="Pend"
+                  data-testid="admin-review-pend-button"
+                  data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
+                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-amber-500 text-white shadow-[0_8px_20px_rgba(217,119,6,0.4)] hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Clock className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+                <button
+                  type="button"
+                  disabled={approvalMutation.isPending}
+                  onClick={() => {
+                    approvalMutation.mutate({ status: "rejected" });
+                    recordAdminReviewUpdate("approval_rejected", "Rejected review");
+                  }}
+                  aria-label="Reject"
+                  title="Reject"
+                  data-testid={`admin-review-button-reject-${patient.id}`}
+                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-rose-600 text-white shadow-[0_8px_20px_rgba(225,29,72,0.4)] hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <XCircle className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+        {/* AI Logic drawer + subtle save-as-logic prompt (prototype). */}
+        <AdminReviewAiLogicDrawer
+          open={aiLogicOpen}
+          onOpenChange={setAiLogicOpen}
+          context={aiLogicContext}
+        />
+        {aiPromptLabel && (
+          <AiLogicSavePrompt
+            itemLabel={aiPromptLabel}
+            context={aiLogicContext}
+            onDismiss={() => setAiPromptLabel(null)}
+          />
+        )}
+    </>
+  );
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent
+          className="flex flex-col w-[calc(100vw-0.75rem)] md:w-[calc(100vw-3rem)] max-w-[1040px] h-[min(96dvh,760px)] md:h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-3xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
+          overlayClassName="bg-slate-900/30 backdrop-blur-[2px]"
+          hideClose
+          data-testid={`dialog-admin-review-${patient.id}`}
+        >
+          {shellChildren}
+        </DialogContent>
+      </Dialog>
       <PacketQaBlockingDialog
         open={packetQa !== null}
         report={packetQa?.report ?? null}
@@ -3674,7 +4589,7 @@ export function AdminReviewDialog({
           packetQa?.proceed?.();
         }}
       />
-    </Dialog>
+    </>
   );
 }
 
@@ -3783,16 +4698,33 @@ function AvailableButtonsRow({
   );
 }
 
+// Human-readable label for the first ancillary this button is already
+// assigned to, so chip-level evidence records carry the assigned ancillary.
+function assignedAncillaryLabel(
+  isAlreadyAssigned: (target: AssignmentTarget) => boolean,
+  ultrasoundTests: string[],
+): string | null {
+  if (isAlreadyAssigned({ type: "ancillary", ancillaryId: "brainwave" })) return "BrainWave";
+  if (isAlreadyAssigned({ type: "ancillary", ancillaryId: "vitalwave" })) return "VitalWave";
+  if (isAlreadyAssigned({ type: "ultrasound-parent" })) return "Ultrasound Studies";
+  for (const t of ultrasoundTests) {
+    if (isAlreadyAssigned({ type: "ultrasound-test", testName: t })) return t;
+  }
+  return null;
+}
+
 function AssignMenu({
   btn,
   ultrasoundTests,
   isAlreadyAssigned,
   onAssign,
+  evidenceContext,
 }: {
   btn: SupportingButton;
   ultrasoundTests: string[];
   isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
+  evidenceContext?: AiLogicPatientContext | null;
 }) {
   function row(
     target: AssignmentTarget,
@@ -3884,7 +4816,53 @@ function AssignMenu({
         "admin-review-assign-all",
         "hover:bg-slate-100 font-semibold",
       )}
+      {evidenceContext && (
+        <ChipEvidenceMenuExtras
+          context={evidenceContext}
+          label={btn.label}
+          source={btn.source}
+          sourceText={btn.sourceText}
+          confidence={btn.confidence}
+          assignedAncillary={assignedAncillaryLabel(isAlreadyAssigned, ultrasoundTests)}
+          testIdSuffix={btn.id}
+        />
+      )}
     </PopoverContent>
+  );
+}
+
+// Shared chip decorations for the knowledge-layer prototype: source badge
+// (DX/HX/RX), confidence dot, and a check when the evidence has been
+// approved. Purely visual — assignment behavior is untouched.
+function ChipEvidenceBadges({
+  btn,
+  evidenceContext,
+  sourceBadge,
+}: {
+  btn: SupportingButton;
+  evidenceContext?: AiLogicPatientContext | null;
+  sourceBadge: string;
+}) {
+  const decision = useCiChipDecision(evidenceContext, btn.label, btn.source);
+  return (
+    <>
+      <span
+        className={`inline-flex items-center rounded-full border px-1 text-[9px] font-semibold ${
+          SOURCE_BADGE_TONE[sourceBadge] ?? "bg-slate-100 text-slate-600 border-slate-200"
+        }`}
+        data-testid={`chip-source-badge-${btn.id}`}
+      >
+        {sourceBadge}
+      </span>
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${CONF_DOT[btn.confidence ?? "medium"]}`}
+        title={`Confidence: ${btn.confidence ?? "medium"}`}
+        data-testid={`chip-confidence-${btn.id}`}
+      />
+      {decision === "approved" && (
+        <Check className="w-3 h-3 text-emerald-600" data-testid={`chip-approved-${btn.id}`} />
+      )}
+    </>
   );
 }
 
@@ -3893,16 +4871,18 @@ function IcdDiseaseButton({
   ultrasoundTests,
   isAlreadyAssigned,
   onAssign,
+  evidenceContext,
 }: {
   btn: SupportingButton;
   ultrasoundTests: string[];
   isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
+  evidenceContext?: AiLogicPatientContext | null;
 }) {
-  // Diagnoses without an ICD code are still assignable — the visible
-  // label is just the diagnosis name. The internal requiresIcd flag
-  // stays so the rule engine still surfaces the gap on the blocking
-  // panel; no visible ICD-status tag is rendered on the chip.
+  // Diagnoses without an ICD code are still assignable — the internal
+  // requiresIcd flag keeps the rule engine surfacing the gap on the
+  // blocking panel. The chip now also shows a compact DX badge,
+  // ICD-present/missing status, and confidence (knowledge-layer spec).
   if (btn.requiresIcd) {
     return (
       <Popover>
@@ -3915,7 +4895,9 @@ function IcdDiseaseButton({
             data-icd-needed-assignable="admin-review-icd-needed-diagnosis-assignable"
             data-requires-icd="true"
           >
+            <ChipEvidenceBadges btn={btn} evidenceContext={evidenceContext} sourceBadge="DX" />
             <span>{btn.label}</span>
+            <span className="text-[9px] font-medium text-rose-500">ICD missing</span>
             <Plus className="w-3 h-3 opacity-60" />
           </button>
         </PopoverTrigger>
@@ -3924,6 +4906,7 @@ function IcdDiseaseButton({
           ultrasoundTests={ultrasoundTests}
           isAlreadyAssigned={isAlreadyAssigned}
           onAssign={onAssign}
+          evidenceContext={evidenceContext}
         />
       </Popover>
     );
@@ -3938,7 +4921,12 @@ function IcdDiseaseButton({
           data-derived={btn.source === "Dx" ? "admin-review-dx-derived-diagnosis" : undefined}
           data-assigned="admin-review-icd-disease-assigned"
         >
-          {btn.icdCode && <span className="font-mono opacity-80">{btn.icdCode}</span>}
+          <ChipEvidenceBadges btn={btn} evidenceContext={evidenceContext} sourceBadge="DX" />
+          {btn.icdCode ? (
+            <span className="font-mono opacity-80">{btn.icdCode}</span>
+          ) : (
+            <span className="text-[9px] font-medium text-rose-500">ICD missing</span>
+          )}
           <span>· {btn.label}</span>
           <Plus className="w-3 h-3 opacity-60" />
         </button>
@@ -3948,6 +4936,7 @@ function IcdDiseaseButton({
         ultrasoundTests={ultrasoundTests}
         isAlreadyAssigned={isAlreadyAssigned}
         onAssign={onAssign}
+        evidenceContext={evidenceContext}
       />
     </Popover>
   );
@@ -3961,6 +4950,7 @@ function SupportingChipButton({
   ultrasoundTests,
   isAlreadyAssigned,
   onAssign,
+  evidenceContext,
 }: {
   btn: SupportingButton;
   testId: string;
@@ -3969,6 +4959,7 @@ function SupportingChipButton({
   ultrasoundTests: string[];
   isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
+  evidenceContext?: AiLogicPatientContext | null;
 }) {
   const toneClass =
     tone === "purple"
@@ -3982,6 +4973,8 @@ function SupportingChipButton({
       : btn.source === "Hx"
         ? "admin-review-hx-derived-symptom"
         : undefined;
+  const sourceBadge =
+    btn.source === "Rx" ? "RX" : btn.source === "Hx" ? "HX" : prefix.toUpperCase();
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -3991,7 +4984,11 @@ function SupportingChipButton({
           data-testid={testId}
           data-derived={derived}
         >
-          <span className="font-mono opacity-70">{prefix}</span>
+          <ChipEvidenceBadges
+            btn={btn}
+            evidenceContext={evidenceContext}
+            sourceBadge={sourceBadge}
+          />
           <span>{btn.label}</span>
           <Plus className="w-3 h-3 opacity-60" />
         </button>
@@ -4001,6 +4998,7 @@ function SupportingChipButton({
         ultrasoundTests={ultrasoundTests}
         isAlreadyAssigned={isAlreadyAssigned}
         onAssign={onAssign}
+        evidenceContext={evidenceContext}
       />
     </Popover>
   );
@@ -4192,8 +5190,33 @@ function CanonicalReasoningCardView({
               Approval required
             </span>
           )}
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
+              card.adminAdded
+                ? "border-sky-200 bg-sky-50 text-sky-800"
+                : "border-slate-200 bg-slate-50 text-slate-500"
+            }`}
+            data-testid="admin-review-source-badge"
+            data-source={card.adminAdded ? "admin_added" : "plexus_iq"}
+          >
+            {card.adminAdded ? "Admin-added" : "Plexus IQ"}
+          </span>
         </div>
       </div>
+
+      {card.adminAdded && card.addedReason && (
+        <div
+          className="rounded-md border border-sky-100 bg-sky-50/60 px-2 py-1.5"
+          data-testid="admin-review-added-reason"
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-700">
+            Qualification Reason
+          </div>
+          <div className="mt-0.5 text-xs text-slate-800 whitespace-pre-wrap">
+            {card.addedReason}
+          </div>
+        </div>
+      )}
 
       {hasFactors && (
         <div className="space-y-1" data-testid="admin-review-qualifying-factors-list">

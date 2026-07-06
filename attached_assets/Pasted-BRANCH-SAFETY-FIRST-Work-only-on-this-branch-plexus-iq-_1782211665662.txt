@@ -1,0 +1,286 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Upgrade the ACS/PCS Team Member Portal call-list actions into real tabbed Playground workflows.
+
+Current state:
+The ACS/PCS Team Member Portals now show call-list tiles with:
+- patient name
+- call reason
+- phone icon
+- calendar icon
+- push to Playground icon
+
+Problem:
+The actions are still too shallow. This is not just a call log or small date picker. The call list is the operational entry point for ACS/PCS users to call patients, understand why they are calling, review proof, access PDFs, use RingCentral, and schedule easily.
+
+Core product rule:
+The call list exists so ACS/PCS users can quickly know:
+- who to call
+- why they are calling
+- what test/procedure they are trying to schedule
+- what proof supports it
+- what to say
+- how to call via RingCentral
+- how to schedule with a simple premium calendar UI
+
+Architecture rules:
+- Team Member Portal is the canonical destination for call-list work.
+- Engagement Center assigns work.
+- patient_execution_cases is the source of truth for assigned call work.
+- Patient Directory is the source for patient profile/demographic data.
+- Clinician PDF and Plexus PDF are generated per patient/case and must be surfaced in the call workflow if available.
+- Playground is the detailed operational workspace.
+- Playground must support multiple tabs.
+- Do not route users to old Outreach Center, scheduler cards, or old outreach scheduler portal.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not create a new source of truth.
+- Do not invent fake patient data.
+
+PART 1 — Tabbed Playground behavior
+
+Implement or improve Playground so call-list actions open as tabs instead of replacing one generic panel.
+
+Required behavior:
+- Clicking patient name opens/adds a Patient tab for that patient/case.
+- Clicking phone icon opens/adds a Call tab or RingCentral call workspace for that patient/case.
+- Clicking calendar icon opens/adds a Schedule tab for that patient/case.
+- Clicking push-to-Playground icon opens/adds a Case Overview tab for that patient/case.
+- Multiple tabs can remain open.
+- Clicking another patient/action adds or focuses the matching tab.
+- Tabs should have clear labels, for example:
+  John Smith - Patient
+  John Smith - Call
+  John Smith - Schedule
+  John Smith - Case
+- Do not lose existing tabs when opening a new action.
+- Preserve patientId, executionCaseId, callReason, targetAncillary/workflow category, and sourcePortal ACS/PCS in the tab context.
+
+PART 2 — Patient name action
+
+When patient name is clicked:
+- Do not open a fake/invented patient panel.
+- Pull the exact patient data from Patient Directory/source already used by Patient Directory.
+- Open the patient in a Patient tab in Playground or route to Patient Directory if that is the existing canonical pattern.
+- The patient view should include real available fields only:
+  demographics
+  DOB
+  MRN
+  phone
+  insurance
+  clinic/facility
+  provider
+  diagnoses
+  documents
+  current execution case/workflow status
+- Do not invent missing values.
+- Use graceful empty states for unavailable data.
+
+PART 3 — RingCentral phone workflow
+
+The phone icon must be a real RingCentral call workflow, not just a call-result log.
+
+When phone icon is clicked:
+- Open/add a Call tab or RingCentral call workspace for that patient/case.
+- Show patient name, call reason, target ancillary/test, phone number(s), and proof/PDF links.
+- Integrate with existing RingCentral wiring if present.
+- The user should be able to initiate a call through RingCentral from this workflow.
+- If RingCentral SDK/API wiring already exists, use it.
+- If RingCentral wiring does not exist yet, create a clean integration boundary/component with a clear placeholder state:
+  “RingCentral connection required”
+  but still structure the UI exactly as the real call suite.
+- Do not pretend a call was placed if RingCentral is not connected.
+- After/during the call, allow logging:
+  reached
+  no_answer
+  left_voicemail
+  scheduled
+  declined
+  needs_follow_up
+  unable_to_contact
+  wrong_number
+- Call results must continue to use:
+  POST /api/engagement-center/call-result
+- Call results must update existing patient_execution_cases and patient_journey_events through existing backend logic.
+
+PART 4 — Zocdoc-style scheduling workflow
+
+The calendar icon should not open a tiny basic modal only.
+
+When calendar icon is clicked:
+- Open/add a Schedule tab in Playground.
+- Build a large premium scheduling workspace.
+
+Layout requirement:
+- Left half: large calendar/schedule grid.
+- Right half: patient/case/scheduling form panel.
+
+Left side should include:
+- large calendar
+- day/week style view if feasible
+- available slots or placeholder slot blocks
+- selected date/time state
+- clear empty state if availability data is not wired yet
+
+Right side should include:
+- patient name
+- phone number
+- call reason
+- target ancillary/test
+- clinic/facility
+- insurance if available
+- Clinician PDF link/preview if available
+- Plexus PDF link/preview if available
+- appointment type
+- selected date/time
+- location
+- notes
+- confirm schedule button
+
+Appointment/test types should include:
+- BrainWave
+- VitalWave
+- Ultrasound
+- follow-up call
+- document follow-up
+- order follow-up
+- patient callback
+
+The UI should feel like a simple Zocdoc-style scheduler:
+- big calendar
+- obvious slots
+- easy form
+- minimal clicks
+- clean premium layout
+
+Saving/scheduling should use existing scheduling/execution-case workflow if available.
+Do not create a new scheduling source of truth.
+If true schedule persistence is not fully wired, preserve selected data and show a clear integration boundary rather than faking persistence.
+
+PART 5 — PDFs/proof must be visible
+
+For any patient/case from the call list, surface available proof documents:
+- Clinician PDF
+- Plexus PDF
+
+These PDFs are central to the call-list workflow because they explain why the patient needs the test/procedure.
+
+Show them in:
+- Case Overview tab
+- Call tab
+- Schedule tab
+- Patient tab if appropriate
+
+For each document, show if available:
+- document name
+- preview/open button
+- download button if existing
+- last generated date if available
+
+If documents are missing:
+- show “Clinician PDF not generated”
+- show “Plexus PDF not generated”
+- do not invent documents
+
+PART 6 — Case Overview tab
+
+The push-to-Playground icon should open a full Case Overview tab with:
+- patient summary
+- call reason
+- target ancillary/test
+- qualification reason
+- supporting diagnoses/factors
+- Clinician PDF
+- Plexus PDF
+- phone numbers
+- quick RingCentral call action
+- quick schedule action
+- prior call attempts
+- scheduling history
+- journey timeline
+- notes
+- next action
+- status
+
+This tab should answer:
+“Why am I calling this patient, what do I say, and what needs to happen next?”
+
+PART 7 — Preserve existing call list
+
+Do not break the right-panel call-list tile.
+It should remain compact:
+- Patient Name
+- Call Reason
+- Phone icon
+- Calendar icon
+- Push to Playground icon
+
+But the actions now open real Playground tabs/workflows.
+
+PART 8 — Admin/view-as safety
+
+Preserve admin view-as behavior:
+- Admin can select a team member and see that person’s call list.
+- Normal ACS/PCS users cannot see other team members’ lists.
+- If admin acts while viewing a team member’s queue, the action should not falsely imply the team member performed it.
+- Case remains assigned to selected team member unless explicitly reassigned.
+
+DO NOT:
+- Do not create fake patient data.
+- Do not create fake PDFs.
+- Do not pretend RingCentral called if it is not wired.
+- Do not resurrect old Outreach Center.
+- Do not use old scheduler cards.
+- Do not route to old outreach pages.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not change schema unless absolutely required.
+- Do not broad-refactor unrelated modules.
+- Do not remove existing working call-list icons.
+- Do not merge to main.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Upgrade call-list Playground workflows
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

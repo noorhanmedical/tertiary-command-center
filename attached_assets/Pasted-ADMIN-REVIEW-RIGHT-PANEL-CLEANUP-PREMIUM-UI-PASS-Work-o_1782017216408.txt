@@ -1,0 +1,634 @@
+ADMIN REVIEW RIGHT PANEL CLEANUP + PREMIUM UI PASS
+
+Work only on the existing Plexus IQ Admin Review experience.
+
+This is a focused UI/UX cleanup.
+Do not create a new route.
+Do not create a prototype.
+Do not create Patient Journey.
+Do not add downstream statuses.
+Do not redesign the entire Plexus IQ page.
+Do not change database schema.
+Do not fake unsupported backend actions.
+
+Goal:
+Clean up the Admin Review panel so it is simpler, more premium, and operationally useful.
+
+================================================================================
+OVERALL ADMIN REVIEW LAYOUT
+===========================
+
+Keep the Admin Review as:
+
+Date panel | Patient name rail | Review panel
+
+Inside Review panel:
+
+Left side:
+Tests / Ancillaries
+
+Right side:
+Reference / ICD / Updates
+
+Remove unnecessary clutter and make this feel premium.
+
+Do not make it a full-screen modal.
+Do not add giant cards.
+Do not use bright toy-like colors.
+Do not use ugly pill-heavy UI.
+
+================================================================================
+REMOVE TOP CLUTTER
+==================
+
+Remove the “Ancillary Playground” section/header from the top.
+
+Remove unnecessary extra labels, redundant headers, and oversized controls.
+
+Navigation between patients should be simple.
+
+Replace verbose navigation like:
+
+“1 of 11 · Friday, June 19”
+
+with simple arrows only:
+
+←   →
+
+Do not show the date in the patient navigation control.
+
+================================================================================
+PATIENT NAVIGATION COUNT
+========================
+
+In Admin Review, simplify patient navigation.
+
+The top navigation should show only:
+
+←   →
+
+Directly under the arrows, show the Admin Review patient count/context.
+
+Example:
+
+←   →
+
+3 of 11 patients for Admin Review
+
+Rules:
+
+* Do not show the date here.
+* Do not show “Friday, June 19” here.
+* Do not show verbose batch text here.
+* Keep it compact and clean.
+* Count should refer to the current Admin Review patient set/list.
+* When the user clicks next/previous, update the count.
+* If only one patient is in the Admin Review set, show:
+  1 of 1 patient for Admin Review
+
+Preferred layout:
+
+```
+    ←        →
+```
+
+3 of 11 patients for Admin Review
+
+This belongs in the Review panel header area, not the patient row.
+
+================================================================================
+RIGHT PANEL SECTIONS
+====================
+
+The right panel should be clean and have only these main sections/tabs:
+
+1. Reference
+2. ICD
+3. Updates
+
+Remove the Engagement tab from Admin Review.
+
+Do not show:
+
+* Engagement
+* Not Sent
+* Assigned
+* Distributed
+* Scheduled
+* Billing
+* Invoice
+* Patient Journey
+
+This is Plexus IQ only.
+
+================================================================================
+REFERENCE SECTION
+=================
+
+The top/right panel should say:
+
+Reference
+
+When I click Reference, it should show source data from the patient.
+
+Reference should include source data sections:
+
+* Diagnosis
+* Medications
+* Symptoms
+* Prior Testing
+
+Do not call this “Evidence.”
+Do not call patient history “Evidence.”
+
+This data comes from source data.
+
+Reference should be organized cleanly.
+
+Use these labels:
+
+Diagnosis
+Medications
+Symptoms
+Prior Testing
+
+Do not use:
+
+* Evidence
+* Process
+* Updates Made in Patient
+* Patient History as Prior Testing
+
+================================================================================
+SOURCE DATA EDITING
+===================
+
+Each Reference section should have an Edit button if editing is supported.
+
+Editable source sections:
+
+* Diagnosis
+* Medications
+* Symptoms
+* Prior Testing
+
+When the user edits source data:
+
+* mark the section as Changed
+* mark affected ancillaries as needing regeneration
+* block Admin Approve until regeneration is completed
+* block packet/PDF generation until regeneration is completed
+* show a clear message that regeneration is required
+
+Important rule:
+If source data changes, the user must press Generate/Regenerate so the rest of the dependent reasoning updates consistently.
+
+Do not silently approve stale reasoning.
+
+================================================================================
+GENERATE / REGENERATE BEHAVIOR
+==============================
+
+Use simple wording.
+
+The button should be:
+
+Regenerate
+
+Do not overcomplicate the wording.
+
+If multiple ancillaries were changed, the Updates section should show one Regenerate button that regenerates the appropriate changed ancillaries.
+
+Regenerate should:
+
+* regenerate all applicable changed ancillaries
+* preserve assigned evidence
+* update clinician understanding
+* update patient talking points
+* update qualifying factors
+* update packet QA status
+* clear changed/stale state only after successful regeneration
+
+If regeneration fails:
+
+* keep the ancillary marked as needing regeneration
+* show a clear error
+* do not allow Admin Approve
+
+================================================================================
+PRIOR TESTING RULES
+===================
+
+Prior Testing is its own Reference section.
+
+Prior Testing means actual completed prior tests.
+
+Do not show patient history as prior testing.
+
+For example:
+If patient history says diabetes, PTSD, headache, craniotomy, hypertension, medications, or symptoms, that is not prior testing.
+
+Prior Testing should only contain actual prior test answers/results/dates when available.
+
+If no real prior testing exists, show:
+
+No prior testing found.
+
+Do not display unrelated patient history under Prior Testing.
+
+Do not treat Symptoms as Prior Testing.
+Do not treat Process as Symptoms.
+Do not treat patient history as Prior Testing.
+
+================================================================================
+REFERENCE SECTION LABELS
+========================
+
+Use these clean labels:
+
+Diagnosis
+Medications
+Symptoms
+Prior Testing
+
+Diagnosis comes from DX/source data.
+Medications comes from RX/source data.
+Symptoms comes from HX/source data when symptoms are present.
+Prior Testing comes only from actual previous test data.
+
+Do not call this “Evidence.”
+Do not call it “Patient History.”
+Do not call it “Process.”
+
+================================================================================
+UPDATES SECTION
+===============
+
+Updates is very important.
+
+The Updates section should live at the bottom of the right panel.
+
+It should take approximately the bottom one-third of the right panel minimum.
+
+Use title:
+
+Updates
+
+Do not call it:
+
+* Updates Made in Patient
+* Decision
+* Process
+* Patient History
+* Evidence
+
+Updates should show what the reviewer changed, grouped by ancillary.
+
+Do not show every action as first, second, third chronological noise.
+
+Group changes by ancillary.
+
+Example:
+
+Updates
+
+BrainWave
+
+* Removed PTSD
+* Removed craniotomy
+
+VitalWave
+
+* Added diabetes mellitus
+* Added hypertension
+
+Ultrasound
+
+* Removed hypertension
+* Added carotid bruit
+
+If I remove PTSD from BrainWave, it should say:
+
+BrainWave
+
+* Removed PTSD
+
+Do not say:
+
+* Removed qualifying factor PTSD
+
+Keep it short and clean.
+
+If I later remove craniotomy from BrainWave, it should group under BrainWave:
+
+BrainWave
+
+* Removed PTSD
+* Removed craniotomy
+
+If I add diabetes to VitalWave, group it under VitalWave:
+
+VitalWave
+
+* Added diabetes mellitus
+
+If I remove something from Ultrasound, group it under Ultrasound.
+
+================================================================================
+UPDATES + REGENERATE
+====================
+
+The Regenerate button belongs in or near the Updates section.
+
+Use simple label:
+
+Regenerate
+
+If there are pending changes, show:
+
+Updates
+
+BrainWave
+
+* Removed PTSD
+
+VitalWave
+
+* Added diabetes mellitus
+
+[Regenerate]
+
+Do not create a huge separate decision box for this.
+Do not take up excessive space with a large “Decision” panel.
+Do not create a giant box for “Regenerate Changed.”
+
+The Updates section should be compact but important.
+
+After successful regeneration:
+
+* keep a clean history of what changed if available
+* clear the “needs regeneration” warning
+* allow Admin Approve if no blockers remain
+
+================================================================================
+LEFT PANEL VISUAL CLEANUP
+=========================
+
+Make the left Tests / Ancillaries panel look premium.
+
+Keep the left panel white or very clean.
+
+Use a subtle light gray background for the full Admin Review area if needed.
+
+Avoid bright colors.
+Avoid harsh colors.
+Avoid bubbly cards.
+Avoid ugly pill-heavy layouts.
+
+Make BrainWave, VitalWave, and Ultrasound look organized and polished.
+
+Use deeper, more premium tones:
+
+* BrainWave: refined deep blue/purple tone
+* VitalWave: deeper red tone
+* Ultrasound: deeper green tone
+
+Do not use bright neon colors.
+
+Icons should be properly sized and aligned.
+
+VitalWave icon is currently too small. Make it visually balanced with BrainWave and Ultrasound.
+
+Each ancillary header should show:
+
+* icon
+* ancillary name
+* status
+* concise blocker/regeneration indicator if needed
+
+The header should look clean and premium, not like random pills.
+
+================================================================================
+ANCILLARY CARDS / DROPDOWNS
+===========================
+
+For BrainWave, VitalWave, and Ultrasound:
+
+* organize sections clearly
+* make icon and name prominent
+* reduce clutter
+* improve spacing
+* use cleaner borders
+* avoid excessive pill badges
+* make the dropdown readable
+
+Inside each ancillary dropdown, show:
+
+* status
+* qualifying factors
+* attached source data
+* clinician understanding
+* patient talking points
+* ICD codes
+* packet QA warning/blocker
+* regenerate action only if applicable
+
+Do not show Prior Testing under Ultrasound unless there is actual prior testing.
+
+If there is no real prior testing, show nothing or show “No prior testing found” only inside Reference/Prior Testing.
+
+================================================================================
+ICD SECTION
+===========
+
+ICD search is good enough.
+
+Keep ICD clean.
+
+ICD section should show:
+
+* search
+* selected ICD codes
+* ICD codes connected to each ancillary if available
+
+Do not overbuild ICD.
+Do not create fake ICD save behavior.
+Do not clutter the UI.
+
+================================================================================
+REMOVE ENGAGEMENT FROM ADMIN REVIEW
+===================================
+
+Remove Engagement from the Admin Review right panel.
+
+Admin Review should focus on:
+
+* Reference
+* ICD
+* Updates
+
+Do not show downstream workflow here.
+
+================================================================================
+SOURCE DATA CHANGE CONSISTENCY
+==============================
+
+If the user edits Reference source data or changes attached source items:
+
+* show the change in Updates
+* mark affected ancillary as changed
+* require Regenerate
+* block Admin Approve until regenerate succeeds
+* block PDFs until regenerate succeeds
+
+Example:
+User removes PTSD from BrainWave.
+
+Updates should show:
+
+BrainWave
+
+* Removed PTSD
+
+BrainWave should show Regeneration Required.
+
+Regenerate button should appear in Updates.
+
+After clicking Regenerate:
+
+* BrainWave reasoning is refreshed
+* Updates state clears or becomes completed
+* Admin Approve can proceed if no blockers remain
+
+================================================================================
+VISUAL STYLE
+============
+
+Make it look premium and clean.
+
+Use:
+
+* white panels
+* subtle light gray canvas background
+* clean borders
+* deeper premium colors
+* balanced icons
+* compact headers
+* better spacing
+* fewer pills
+* fewer loud badges
+* clean typography
+* clear hierarchy
+
+Avoid:
+
+* bright colors
+* bubbly panels
+* ugly pills everywhere
+* huge empty boxes
+* giant decision panels
+* excessive labels
+* excessive borders
+* dashboard tile look
+* childish UI
+
+================================================================================
+SPECIFIC CLEANUP ITEMS
+======================
+
+1. Remove Ancillary Playground from the top.
+2. Replace patient navigation text/date with simple arrows only: ← →
+3. Put number of Admin Review patients directly under arrows.
+4. Example: 3 of 11 patients for Admin Review
+5. Remove Engagement tab from Admin Review.
+6. Rename Evidence/Reference area to Reference.
+7. Reference should show:
+
+   * Diagnosis
+   * Medications
+   * Symptoms
+   * Prior Testing
+8. Prior Testing must show only actual previous completed tests.
+9. Do not show patient history as prior testing.
+10. Add Edit action for source data sections if supported.
+11. Any edit/change must require Regenerate before approval.
+12. Rename “Updates Made in Patient” to “Updates.”
+13. Put Updates at the bottom of the right panel, taking about bottom one-third minimum.
+14. Group Updates by ancillary, not by chronological sequence.
+15. Use simple update wording:
+
+* Added diabetes mellitus
+* Removed PTSD
+* Removed hypertension
+
+16. Put Regenerate button in/near Updates.
+17. Use simple button text: Regenerate.
+18. Make BrainWave/VitalWave/Ultrasound headers look premium.
+19. Make VitalWave icon properly sized.
+20. Use deeper red for VitalWave.
+21. Use deeper green for Ultrasound.
+22. Avoid ugly pill-heavy UI.
+23. Do not add Patient Journey.
+24. Do not add downstream statuses.
+
+================================================================================
+PLEXUS IQ ONLY
+==============
+
+This Admin Review is inside Plexus IQ.
+
+Do not add:
+
+* Patient Journey
+* Engagement Center workflow
+* Call results
+* Scheduling
+* Procedure completed
+* Report completed
+* Physician signing
+* Billing
+* Invoice
+* Payment
+* Distributed
+* Assigned
+* Not Sent
+
+Keep this strictly focused on:
+
+* Reference source data
+* ICD
+* Updates
+* Ancillary review
+* Regeneration
+* Admin approval readiness
+
+================================================================================
+VALIDATION
+==========
+
+After changes, run:
+
+npm run check
+npm run build
+
+Report:
+
+1. Files changed
+2. Whether Ancillary Playground was removed
+3. Whether patient navigation is arrows only
+4. Whether Admin Review patient count appears under arrows
+5. Whether Engagement tab was removed
+6. Whether Reference has Diagnosis/Medications/Symptoms/Prior Testing
+7. Whether Prior Testing only shows actual prior tests
+8. Whether source data edit marks changes and requires Regenerate
+9. Whether Updates is grouped by ancillary
+10. Whether Regenerate is in/near Updates
+11. Whether Admin Approve blocks stale changes
+12. Whether BrainWave/VitalWave/Ultrasound visual cleanup was done
+13. Whether VitalWave icon was resized/balanced
+14. Whether premium/deeper tones were applied
+15. Whether no downstream statuses were added
+16. check/build results
+17. Known limitations
+
+Do not push until Ali approves.

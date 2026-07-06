@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Outreach response-shape parity test (Batch 15).
 
 import {
@@ -22,9 +23,12 @@ check(OUTREACH_ONLY_OUTCOMES.includes("wants_more_info"), `§2: includes wants_m
 check(OUTREACH_ONLY_OUTCOMES.includes("reached"), `§2: includes reached`);
 check(OUTREACH_ONLY_OUTCOMES.includes("language_barrier"), `§2: includes language_barrier`);
 
-if (failures.length > 0) {
-  console.error("Outreach response-shape test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Outreach response-shape test passed.");
+describe("Outreach response-shape test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Outreach response-shape test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

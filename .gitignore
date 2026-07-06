@@ -19,3 +19,9 @@ artifacts/
 .env
 .env.*
 !.env.example
+
+# Generated/sensitive files
+cookies.txt
+infrastructure/cdk.out/
+infrastructure/cookies.txt
+import_remaining.sh

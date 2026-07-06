@@ -5,6 +5,7 @@ import {
 import { users } from "./users";
 import { patientExecutionCases } from "./executionCase";
 import { patientScreenings } from "./screening";
+import { clinics } from "./clinics";
 
 export const DOCUMENT_TYPES = [
   "informed_consent",
@@ -38,6 +39,8 @@ export type DocumentTrigger = typeof DOCUMENT_TRIGGERS[number];
 
 export const documentRequirements = pgTable("document_requirements", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   serviceType: text("service_type").notNull(),
   documentType: text("document_type").notNull(),
   required: boolean("required").notNull().default(true),
@@ -67,6 +70,8 @@ export type InsertDocumentRequirement = z.infer<typeof insertDocumentRequirement
 
 export const caseDocumentReadiness = pgTable("case_document_readiness", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   executionCaseId: integer("execution_case_id").references(() => patientExecutionCases.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   patientName: text("patient_name"),

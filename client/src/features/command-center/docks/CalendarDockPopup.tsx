@@ -1,40 +1,46 @@
-import React from "react";
+import React, { useState } from "react";
 import { CalendarDays } from "lucide-react";
+import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { PanelPopupCard } from "../components/PanelPopupCard";
 import { useCommandCenter } from "../context/CommandCenterContext";
+import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 
 export function CalendarDockPopup() {
   const { profile } = useCommandCenter();
-  const selectedDate = new Date().toISOString().slice(0, 10);
+  const [, navigate] = useLocation();
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  const { data: summary = [] } = useQuery<CalendarSummaryRow[]>({
+    queryKey: ["/api/screening-batches/calendar-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Calendar summary fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 15_000,
+  });
 
   const context = {
     sourceSurface: profile.surface,
     componentType: "calendarDate" as const,
-    selectedDate,
+    selectedDate: selectedDate ?? new Date().toISOString().slice(0, 10),
     facilityId: "all",
     title: "Calendar Date",
-    metadata: {
-      totalPatientCount: 18,
-      brainWaveCount: 6,
-      vitalWaveCount: 4,
-      ultrasoundCount: 8,
-      procedureCompleteCount: 3,
-    },
   };
 
   return (
     <PanelPopupCard title="Calendar" eyebrow="Date preview" icon={<CalendarDays className="h-5 w-5" />} context={context}>
-      <div className="space-y-3">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-          <div className="text-sm font-semibold text-slate-900">Today</div>
-          <div className="text-xs text-slate-500">18 qualifying patients</div>
-        </div>
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded-2xl bg-violet-50 p-3 text-violet-700">BrainWave 6</div>
-          <div className="rounded-2xl bg-rose-50 p-3 text-rose-700">VitalWave 4</div>
-          <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">Ultrasound 8</div>
-        </div>
-        <div className="rounded-2xl bg-green-50 p-3 text-xs font-semibold text-green-700">3 procedure-complete signals</div>
+      <div className="max-h-[60vh] overflow-y-auto" data-testid="command-left-rail-calendar-panel">
+        <PlexusIQCalendar
+          summary={summary}
+          onSelectDate={(isoDate) => setSelectedDate(isoDate)}
+          onAssignDate={() => navigate("/plexus-iq")}
+          selectedDate={selectedDate}
+          compact
+        />
       </div>
     </PanelPopupCard>
   );

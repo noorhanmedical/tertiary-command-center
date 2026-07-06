@@ -156,6 +156,8 @@ export type AddPatientInput = {
   noPreviousTests?: boolean;
   patientType?: string;
   notes?: string;
+  qualifyingTests?: string[];
+  reasoning?: Record<string, unknown>;
 };
 
 export function useAddPatient() {

@@ -22,6 +22,7 @@ import {
 import { patientScreenings } from "./screening";
 import { patientExecutionCases } from "./executionCase";
 import { users } from "./users";
+import { clinics } from "./clinics";
 
 export const PATIENT_NOTE_TYPES = [
   "quick_note",
@@ -34,6 +35,8 @@ export type PatientNoteType = (typeof PATIENT_NOTE_TYPES)[number];
 
 export const patientNotes = pgTable("patient_notes", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id")
     .notNull()
     .references(() => patientScreenings.id, { onDelete: "cascade" }),

@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Outreach delegation dry-run harness (Batch 18 of split-brain run).
 
 import {
@@ -132,9 +133,12 @@ check(
 eq(OUTREACH_CALL_RESULT_RESPONSE_CONTRACT.httpStatus, 201, "§4: 201 status");
 eq(OUTREACH_CALL_RESULT_RESPONSE_CONTRACT.envelope, "raw_row", "§4: raw_row envelope");
 
-if (failures.length > 0) {
-  console.error("Outreach delegate dry-run FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Outreach delegate dry-run passed.");
+describe("Outreach delegate dry-run", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Outreach delegate dry-run failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

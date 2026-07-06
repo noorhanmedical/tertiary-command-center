@@ -1,0 +1,420 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Redesign Patient Directory into a true premium EMR-style patient chart with full patient-data categories and cooldown/ad-automation visibility.
+
+Current problem:
+Patient Directory is too thin and does not feel like a real EMR. It needs to support the full patient record because future API integrations will bring in complete patient data. It also needs to make cooldown a major concept on the patient overview, because cooldown controls outreach, re-engagement, and automated ad/message eligibility.
+
+Architecture rules:
+- Patient Directory is the canonical patient identity/profile/chart area.
+- Patient Directory must display real patient data from existing patient directory/API sources.
+- Do not invent fake patient data.
+- Use graceful empty states for unavailable data.
+- Playground remains the operational workspace.
+- Team Member Portal remains the call-list workspace.
+- Mission Control remains the executive/admin oversight dashboard.
+- Do not use old Outreach Center.
+- Do not create a new source of truth.
+- Do not change schema unless absolutely required.
+- Build the UI to be API-integration-ready.
+
+Visual direction:
+- Premium EMR style
+- Bright and bold
+- iOS-like
+- Clean white cards
+- Large section headers
+- Organized tables
+- Timeline blocks
+- Minimal pills/badges
+- Stop relying on pill-heavy UI
+- No cramped side drawer
+- No cheap CRM panel
+- No clutter
+
+PART 1 — Patient Directory profile structure
+
+When a patient is selected, Patient Directory should show a full EMR-style patient chart/profile.
+
+Use a clear patient header:
+- patient name
+- DOB
+- age if available
+- gender if available
+- MRN
+- patient ID
+- phone
+- email if available
+- clinic/facility
+- provider
+- insurance summary
+- current active workflow/case status if available
+
+The profile must be organized into major EMR categories:
+
+1. Overview
+2. Demographics
+3. Insurance & Eligibility
+4. Providers / Care Team
+5. Diagnoses / Problem List
+6. Medications
+7. Allergies
+8. Labs
+9. Imaging
+10. Vitals
+11. Encounters / Notes
+12. Documents
+13. Plexus IQ
+14. Active Execution Cases
+15. Calls & Communication
+16. Scheduling
+17. Cooldown & Outreach Eligibility
+18. Ad Automation
+19. Journey Timeline
+20. Billing / Readiness
+
+Do not hide these categories just because data is missing.
+If data is unavailable, show a clean empty state:
+“No labs available from connected sources yet.”
+“No imaging available from connected sources yet.”
+“No medications available from connected sources yet.”
+
+PART 2 — Main Overview page must be useful
+
+The Overview should be the default main page and must include:
+
+- patient snapshot
+- active contact info
+- current call reason if patient is on a call list
+- active Plexus cases
+- next action
+- cooldown status
+- outreach eligibility
+- ad automation eligibility
+- Clinician PDF
+- Plexus PDF
+- recent calls
+- recent timeline
+- open tasks
+- billing readiness if available
+
+This overview should answer:
+- Who is this patient?
+- Why are we contacting them?
+- Can we contact them now?
+- What test/procedure are they tied to?
+- What proof do we have?
+- What is the next action?
+- Are ads/messages allowed right now?
+
+PART 3 — Cooldown must be a major concept
+
+Add a prominent “Cooldown & Outreach Eligibility” card/section on the Overview.
+
+Cooldown fields to support:
+- cooldown status
+- cooldown type
+- cooldown reason
+- cooldown start date
+- cooldown end date
+- next allowed contact date
+- last contact date
+- last contact outcome
+- allowed channels
+- blocked channels
+- phone outreach allowed/paused
+- SMS allowed/paused
+- email allowed/paused
+- ad automation allowed/suppressed
+- suppression reason
+- re-eligible date
+- manual review required flag
+
+Cooldown states to support:
+- clear
+- active cooldown
+- soft cooldown
+- hard cooldown
+- recently contacted
+- callback scheduled
+- declined
+- do not contact
+- ad-only eligible
+- re-eligible
+- manual review required
+
+If the backend does not have all fields yet:
+- create UI-ready types/helpers using existing data where possible
+- show honest empty states
+- do not invent fake dates/statuses
+- do not create a fake cooldown engine unless explicitly required
+
+PART 4 — Ad Automation section
+
+Add an “Ad Automation” section/card.
+
+This matters because the company will use cooldown to determine automated patient education/ad/message eligibility.
+
+Show:
+- campaign eligibility
+- current campaign if available
+- suggested campaign if available
+- last message/ad sent if available
+- next scheduled send if available
+- consent/channel status if available
+- suppression reason
+- cooldown impact
+- re-engagement eligibility
+- passive education eligibility
+
+Example display logic:
+- If cooldown blocks calls but allows passive ads, show:
+  “Phone outreach paused. Passive education campaign eligible.”
+- If do-not-contact blocks everything, show:
+  “All outreach suppressed.”
+- If clear, show:
+  “Eligible for outreach and automation.”
+
+Do not fake live campaigns if none exist. Show “No active automation campaign connected yet.”
+
+PART 5 — Labs section
+
+Add a Labs category ready for API-fed lab data.
+
+Display if available:
+- lab name
+- result
+- units
+- reference range
+- abnormal flag
+- collected date
+- resulted date
+- ordering provider
+- source system
+- trend if multiple values exist
+
+Use a clean table, not pills.
+
+Empty state:
+“No lab results available from connected sources yet.”
+
+PART 6 — Imaging section
+
+Add an Imaging category ready for API-fed imaging data.
+
+Display if available:
+- study type
+- body part
+- date
+- status
+- impression
+- report link
+- ordering provider
+- facility/source
+
+Empty state:
+“No imaging studies available from connected sources yet.”
+
+PART 7 — Documents and proof
+
+Documents must include both general EMR documents and Plexus-specific proof documents.
+
+Show:
+- Clinician PDF
+- Plexus PDF
+- orders
+- procedure notes
+- reports
+- consent forms
+- billing packets
+- insurance card
+- uploaded documents
+
+For Clinician PDF and Plexus PDF:
+- show available/missing status
+- open/preview action if existing
+- download action if existing
+- generated date if available
+- associated test/case if available
+
+These PDFs are critical because call-list users need proof for why they are calling and what test/procedure is needed.
+
+PART 8 — Plexus IQ section
+
+Show:
+- qualifying test/procedure
+- qualification reason
+- supporting diagnoses
+- supporting factors
+- Admin Review status
+- approval/rejection status
+- generated recommendations
+- regeneration history if available
+
+PART 9 — Active Execution Cases
+
+Show patient-specific operational cases from patient_execution_cases.
+
+For each case:
+- target test/procedure
+- call reason
+- case status
+- assigned team member
+- priority
+- next action
+- due date
+- cooldown impact
+- documents/PDFs
+- billing readiness
+- timeline shortcut
+
+PART 10 — Calls & Communication
+
+Show:
+- RingCentral call records if available
+- call attempts
+- outcomes
+- notes
+- who called
+- date/time
+- next follow-up
+- channel
+- communication log
+
+If RingCentral is not wired, show:
+“RingCentral connection required for live call records.”
+
+PART 11 — Scheduling
+
+Show:
+- upcoming appointments
+- completed appointments
+- missed appointments
+- reschedules
+- appointment type
+- location
+- assigned technician
+- scheduling notes
+- next scheduling action
+
+PART 12 — Billing / Readiness
+
+Show:
+- order present
+- procedure note present
+- report uploaded
+- diagnosis attached
+- insurance verified
+- prior auth status
+- billing packet status
+- ready to bill / not ready
+- missing items
+
+PART 13 — Navigation / category design
+
+Do not make this pill-heavy.
+
+Use one of:
+- left-side EMR category navigation
+- clean vertical section rail
+- top segmented section nav with large cards
+- sticky section index
+
+The selected category should feel premium and clear.
+
+PART 14 — Patient Directory deep linking
+
+Preserve or add safe deep linking:
+- clicking a patient name from Team Member Portal opens the correct patient in Patient Directory
+- support query param or route pattern if existing:
+  ?patientId=...
+  or existing patient profile route
+
+Do not open random side panels.
+Do not route patient name to Playground unless explicitly asked.
+
+PART 15 — Data/API readiness
+
+Because patient data will come from API integrations, define frontend types/helpers that can gracefully accept:
+- demographics
+- insurance
+- providers
+- diagnoses
+- medications
+- allergies
+- labs
+- imaging
+- vitals
+- encounters
+- documents
+- calls
+- scheduling
+- cooldown
+- ad automation
+- billing readiness
+
+Do not hardcode demo data.
+Do not fake connected API data.
+Use existing real fields where available.
+
+DO NOT:
+- Do not create fake labs.
+- Do not create fake imaging.
+- Do not create fake campaigns.
+- Do not invent patient data.
+- Do not use old Outreach Center.
+- Do not break Team Member Portal call list.
+- Do not break Playground.
+- Do not break Mission Control.
+- Do not change database schema unless absolutely required.
+- Do not make a broad unrelated refactor.
+- Do not make the UI pill-heavy.
+- Do not use a side drawer as the main patient profile.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Upgrade Patient Directory EMR chart and cooldown overview
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

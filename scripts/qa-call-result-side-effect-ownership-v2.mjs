@@ -48,7 +48,7 @@ const TEST = "server/services/callResult/__tests__/callResultCanonicalSideEffect
 requireFile(TEST);
 
 if (failures.length === 0) {
-  try { execSync(`npx tsx ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] }); }
+  try { execSync(`npx vitest run ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] }); }
   catch { failures.push("Side-effect ownership v2 test FAILED"); }
 }
 

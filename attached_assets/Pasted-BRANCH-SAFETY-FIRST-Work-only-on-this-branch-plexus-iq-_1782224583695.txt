@@ -1,0 +1,252 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Make Admin Review operationally support adding ancillaries, including Ultrasound, to a patient review case.
+
+Current need:
+In Admin Review, admin must be able to manually add additional ancillary services such as BrainWave, VitalWave, and Ultrasound. This must be operationally sound, meaning the added ancillary must persist, appear correctly in the review panel, generate/attach correct supporting factors, and flow into patient_execution_cases / Engagement Center / Team Member Portal call lists after approval.
+
+Architecture rules:
+- Admin Review is the checkpoint after Plexus IQ and before operational execution.
+- The right-side Admin Review panel is the source of truth for selected ancillaries and supporting factors.
+- patient_execution_cases is the source of truth for assigned operational work after approval.
+- Engagement Center assigns work.
+- Team Member Portal is where ACS/PCS works call lists.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not resurrect old Outreach Center.
+- Do not create duplicate ancillary cases.
+- Do not wipe existing ancillaries when adding or regenerating one ancillary.
+- Do not change schema unless absolutely required.
+
+PART 1 — Find current Admin Review ancillary model
+
+Before editing, inspect and report:
+- Admin Review route/page/component files
+- where selected ancillaries/services are stored in frontend state
+- where supporting diagnoses/factors are stored
+- how BrainWave/VitalWave/Ultrasound are represented currently
+- whether Ultrasound already exists as a service option somewhere
+- how right-side selected services are saved
+- how patient_execution_cases are created or updated after approval
+- how Clinician PDF / Plexus PDF generation reads selected services
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Add service picker in Admin Review
+
+In the Admin Review right-side panel, add a clean premium service/ancillary picker.
+
+Admin should be able to add:
+- BrainWave
+- VitalWave
+- Ultrasound
+
+If other ancillary services are already configured, preserve them.
+
+UI requirements:
+- Do not use a cluttered pill-heavy design.
+- Use clean service cards or rows.
+- Each selected ancillary should show:
+  service name
+  status
+  supporting diagnoses
+  supporting factors
+  qualification reason
+  PDF status if available
+  execution case status if available
+
+For Ultrasound:
+- Add Ultrasound as a selectable ancillary.
+- If ultrasound subtype support already exists, allow optional subtype.
+- If not, use generic Ultrasound with optional notes/reason field.
+- Do not invent unsupported clinical subtype logic.
+
+PART 3 — Prevent duplicates
+
+Prevent duplicate service entries for the same patient/review unless intentionally distinct by subtype.
+
+Rules:
+- Adding Ultrasound twice should not create duplicate Ultrasound rows.
+- Instead, focus the existing Ultrasound row and allow adding/editing supporting diagnoses/factors.
+- Same for BrainWave and VitalWave.
+- The same supporting button/factor may apply to multiple targets if clinically relevant.
+- Dedupe per target/service, not globally across all services.
+
+PART 4 — Preserve existing ancillaries
+
+Adding or editing one ancillary must not delete or overwrite others.
+
+Required behavior:
+- Add Ultrasound while BrainWave exists → BrainWave remains unchanged.
+- Add BrainWave while Ultrasound exists → Ultrasound remains unchanged.
+- Regenerate Ultrasound only → only Ultrasound factors/reason update.
+- Regenerate BrainWave only → only BrainWave factors/reason update.
+- Regenerate all → all selected ancillaries update.
+- Save review → all selected ancillaries persist.
+
+This is critical.
+
+PART 5 — Supporting diagnoses and factors
+
+Each ancillary must support:
+- supporting diagnoses
+- supporting factors
+- qualification reason
+- admin notes if available
+- source: generated by Plexus IQ vs added by admin
+
+If admin adds Ultrasound manually:
+- mark source as admin_added or equivalent if existing field supports it
+- require or strongly prompt for supporting reason/factors
+- do not fake diagnosis support if none is selected
+- allow admin to select/add supporting factors from existing available factors/buttons
+
+Derived qualifying_factors should come from the selected services in the right panel, not from stale generated data.
+
+PART 6 — Approval behavior
+
+When admin approves selected ancillaries:
+- create or update operational cases in patient_execution_cases for each approved service/ancillary
+- do not create duplicates
+- preserve existing execution cases
+- update existing cases if the service already exists
+- set the correct target ancillary/workflow category
+- include callReason based on service:
+  BrainWave outreach
+  VitalWave outreach
+  Ultrasound scheduling
+- include supporting diagnoses/factors if existing schema supports it
+- set status appropriate for Engagement Center assignment, such as ready_to_assign / pending_engagement / approved, based on current app conventions
+
+Do not invent new statuses if existing status constants exist.
+
+PART 7 — Engagement Center and Team Member Portal downstream
+
+After approval:
+- added Ultrasound must appear in Engagement Center as assignable work if it is approved and ready.
+- once assigned, it must appear in Team Member Portal right-panel call list.
+- call reason should clearly say Ultrasound scheduling or Ultrasound outreach.
+- Team Member Portal should continue showing:
+  patient name
+  call reason
+  phone icon
+  calendar icon
+  push to Playground icon
+
+Do not route Ultrasound work to old Outreach Center or scheduler cards.
+
+PART 8 — PDFs/proof
+
+Ensure Clinician PDF and Plexus PDF generation receives the selected approved services including manually added Ultrasound.
+
+If PDFs are per patient:
+- ensure the PDF includes all approved selected services.
+
+If PDFs are per patient + service:
+- ensure Ultrasound can have its own Clinician PDF and Plexus PDF status.
+
+Do not fake generated PDFs.
+If not generated, show:
+- Clinician PDF not generated
+- Plexus PDF not generated
+
+PART 9 — Audit and history
+
+If existing audit/history infrastructure exists, record:
+- service added by admin
+- service removed by admin
+- supporting factors changed
+- service approved/rejected
+- execution case created/updated
+
+Use existing patient_journey_events or admin review audit trail if available.
+Do not create a new audit source unless already needed.
+
+PART 10 — UI quality
+
+Make the Admin Review service section premium and easy:
+- clear selected service rows/cards
+- obvious Add Ancillary action
+- clean Ultrasound option
+- no clutter
+- no tiny pill explosion
+- clear save/approve state
+- clear per-service regenerate
+- clear regenerate all
+- clear missing-data warnings
+
+PART 11 — Validation checklist
+
+After implementation, verify and report:
+
+Scenario A:
+Patient has BrainWave selected.
+Admin adds Ultrasound.
+Save.
+Reload.
+Expected: BrainWave and Ultrasound both remain.
+
+Scenario B:
+Patient has BrainWave and Ultrasound.
+Regenerate Ultrasound only.
+Expected: BrainWave remains unchanged.
+
+Scenario C:
+Approve BrainWave and Ultrasound.
+Expected: patient_execution_cases has operational cases or case targets for both without duplicates.
+
+Scenario D:
+Assigned Ultrasound case appears in Engagement Center and can be assigned.
+
+Scenario E:
+Assigned Ultrasound case appears in Team Member Portal call list with call reason Ultrasound scheduling/outreach.
+
+Scenario F:
+Clinician/Plexus PDF payload or status includes Ultrasound if selected.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Add operational ancillary selection to Admin Review
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

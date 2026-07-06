@@ -1,8 +1,11 @@
 import { sql, pgTable, serial, text, integer, timestamp, jsonb, index, boolean, createInsertSchema, z } from "./_common";
 import { patientScreenings, screeningBatches } from "./screening";
+import { clinics } from "./clinics";
 
 export const generatedNotes = pgTable("generated_notes", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   patientId: integer("patient_id").notNull().references(() => patientScreenings.id, { onDelete: "cascade" }),
   batchId: integer("batch_id").notNull().references(() => screeningBatches.id, { onDelete: "cascade" }),
   facility: text("facility"),

@@ -21,13 +21,9 @@ import {
   ensureCanonicalSpineForScreening,
 } from "../services/patientCommitService";
 
-type BackgroundSyncPatients = () => void | Promise<void>;
-
 export function registerPatientRoutes(
   app: Express,
-  deps: { backgroundSyncPatients: BackgroundSyncPatients }
 ) {
-  const { backgroundSyncPatients } = deps;
 
   // Recently soft-deleted patients within the restore window. Used by
   // the Plexus IQ Recently Deleted card. Expired rows (delete_expires_at
@@ -90,6 +86,7 @@ export function registerPatientRoutes(
       if (data.phoneNumber !== undefined) updates.phoneNumber = data.phoneNumber || null;
       if (data.insurance !== undefined) updates.insurance = data.insurance || null;
       if (data.diagnoses !== undefined) updates.diagnoses = data.diagnoses || null;
+      if (data.reasoning !== undefined) updates.reasoning = data.reasoning;
       if (data.history !== undefined) updates.history = data.history || null;
       if (data.medications !== undefined) updates.medications = data.medications || null;
       if (data.previousTests !== undefined) updates.previousTests = data.previousTests || null;
@@ -103,6 +100,12 @@ export function registerPatientRoutes(
       if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
       if (data.appointmentStatus !== undefined) updates.appointmentStatus = data.appointmentStatus || "pending";
       if (data.patientType !== undefined) updates.patientType = data.patientType || "visit";
+
+      if (Object.keys(updates).length === 0) {
+        const current = await storage.getPatientScreening(id);
+        if (!current) return res.status(404).json({ error: "Patient not found" });
+        return res.json(current);
+      }
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
@@ -158,7 +161,6 @@ export function registerPatientRoutes(
             }));
             await storage.bulkInsertTestHistoryIfNotExists(records);
             invalidatePatientDatabase();
-            void backgroundSyncPatients();
           }
         } catch (e) {
           console.error("Auto test history capture on completion failed:", e);
@@ -558,6 +560,67 @@ export function registerPatientRoutes(
     },
   );
 
+  // Add a manually-selected ancillary to a patient by hand. Appends the
+  // canonical qualifying-test name to patient.qualifyingTests (deduped) and
+  // stamps admin-added provenance in the supplemental `adminReview:*`
+  // metadata keys. Canonical reasoning is created in an HONEST blank state
+  // (operator-selected factors only; AI narrative left empty so the UI/PDF
+  // render "not generated yet" rather than fabricated text).
+  //
+  // Delegated to server/services/plexusIq/adminReviewAddService.ts. Mirrors
+  // the validation order / status codes of remove-ancillary.
+  app.post(
+    "/api/patient-screenings/:id/admin-review/add-ancillary",
+    async (req, res) => {
+      try {
+        const id = parseInt(req.params.id);
+        const { addAdminReviewAncillary } = await import(
+          "../services/plexusIq/adminReviewAddService"
+        );
+        const outcome = await addAdminReviewAncillary(id, req.body);
+        if (!outcome.ok) {
+          if (outcome.error.kind === "invalid_id") {
+            return res.status(400).json({ error: "Invalid patient id" });
+          }
+          if (outcome.error.kind === "invalid_ancillary_id") {
+            return res.status(400).json({
+              error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
+            });
+          }
+          return res.status(404).json({ error: "Patient not found" });
+        }
+        if (!outcome.qualified) {
+          return res.json({
+            ok: true,
+            qualified: false,
+            ancillaryId: outcome.ancillaryId,
+            requestedTestName: outcome.requestedTestName,
+            state: outcome.state,
+            candidates: outcome.candidates,
+          });
+        }
+        res.json({
+          ok: true,
+          qualified: true,
+          patient: outcome.patient,
+          ancillaryId: outcome.ancillaryId,
+          testName: outcome.testName,
+          addedTests: outcome.addedTests,
+          alreadyPresent: outcome.alreadyPresent,
+          narrativeGenerated: outcome.narrativeGenerated,
+        });
+      } catch (error: any) {
+        console.error(
+          "[admin-review/add-ancillary] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({
+          error: error?.message ?? "Failed to add ancillary",
+        });
+      }
+    },
+  );
+
   // Sets the admin approval state on a patient_screenings row.
   // Backs the Admin Review modal on Plexus IQ patient cards.
   // Journey-event append is best-effort; if patient_journey_events /
@@ -655,6 +718,13 @@ export function registerPatientRoutes(
         let commitFailed = false;
         let commitError: string | null = null;
         if (isApproved) {
+          // Record which facility→scheduler mapping *exists* (for the audit
+          // trail / debugging) but do NOT treat its mere existence as a real
+          // assignment. A facility having a default scheduler does not mean
+          // this patient was routed to that person — only an actual auto-assign
+          // (or batch-level Smart Scheduler Assignment) counts. Naming the
+          // facility default here is what caused the toast to falsely claim
+          // "Routed to scheduler: X" while the patient sat unassigned.
           const { lookupSchedulerFromSettings } = await import(
             "../services/schedulerSettings"
           );
@@ -662,17 +732,20 @@ export function registerPatientRoutes(
             patient.facility ?? null,
           );
           routedSchedulerSettingsSource = settingsLookup.source;
-          if (settingsLookup.scheduler) {
-            routedSchedulerName = settingsLookup.scheduler.name;
-            routedByScheduledSettings = true;
-          }
           if (updated.commitStatus === "Draft") {
             try {
               const result = await commitPatient(id, userId, { auto: true });
               if (result.ok) {
                 routedToEngagement = true;
-                routedSchedulerName =
-                  routedSchedulerName ?? result.data.schedulerName ?? null;
+                // Only surface a scheduler name when the commit confirms an
+                // actual assignment. Otherwise the patient landed in the
+                // unassigned engagement queue.
+                if (result.data.autoAssigned && result.data.schedulerName) {
+                  routedSchedulerName = result.data.schedulerName;
+                  routedByScheduledSettings =
+                    settingsLookup.scheduler != null &&
+                    settingsLookup.scheduler.name === result.data.schedulerName;
+                }
               } else {
                 // commitPatient returned a structured failure; surface
                 // it without throwing. CommitError is a discriminated

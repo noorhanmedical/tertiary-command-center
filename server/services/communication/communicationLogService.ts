@@ -15,7 +15,10 @@
 
 import { appendJourneyEvent } from "../journey/appendJourneyEvent";
 
-export type LogCommunicationKind = "email" | "marketing_material" | "sms_scaffold";
+// "sms" is a GENUINE provider-accepted send (Twilio adapter, Task #648).
+// "sms_scaffold" remains the dormant/no-provider path and is still labeled
+// "not sent" by the CommunicationTimeline.
+export type LogCommunicationKind = "email" | "marketing_material" | "sms_scaffold" | "sms";
 
 export type LogCommunicationInput = {
   patientScreeningId: number;
@@ -45,6 +48,7 @@ export async function logPatientCommunicationEvent(
     email: "Email",
     marketing_material: "Marketing material",
     sms_scaffold: "SMS (scaffold)",
+    sms: "SMS",
   };
   const summary = `${kindLabel[input.kind]} sent${input.subject ? ` — ${input.subject}` : ""}`;
   await appendJourneyEvent({

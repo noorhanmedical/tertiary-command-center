@@ -209,7 +209,7 @@ if (failures.length > 0) {
 
 // 7. Run the parity test. The test is no-DB; tsx loads the .ts directly.
 const testAbs = path.join(root, TEST_REL);
-const result = spawnSync("npx", ["tsx", testAbs], {
+const result = spawnSync("npx", ["vitest", "run", testAbs], {
   cwd: root,
   stdio: "inherit",
   env: process.env,

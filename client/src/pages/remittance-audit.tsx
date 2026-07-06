@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { InvoiceFinancialPanel } from "@/components/billing/InvoiceFinancialPanel";
 
-export default function RemittanceAuditPage() {
+export default function RemittanceAuditPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [invoiceId, setInvoiceId] = useState("");
   const id = parseInt(invoiceId, 10);
   const valid = !isNaN(id) && id > 0;
@@ -17,7 +17,7 @@ export default function RemittanceAuditPage() {
     <div className="flex h-full w-full flex-col gap-3 overflow-y-auto p-6" data-testid="remittance-audit-page">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Remittance audit</h1>
+          {!embedded && <h1 className="text-xl font-semibold text-slate-900">Remittance audit</h1>}
           <p className="text-xs text-slate-500">
             Post payments, adjustments, denials, and remittance notes.
             Totals recompute automatically. "Paid" is honest — only

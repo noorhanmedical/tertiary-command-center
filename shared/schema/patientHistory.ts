@@ -1,7 +1,10 @@
-import { sql, pgTable, serial, text, timestamp, index, createInsertSchema, z } from "./_common";
+import { sql, pgTable, serial, text, integer, timestamp, index, createInsertSchema, z } from "./_common";
+import { clinics } from "./clinics";
 
 export const patientTestHistory = pgTable("patient_test_history", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   patientName: text("patient_name").notNull(),
   dob: text("dob"),
   testName: text("test_name").notNull(),
@@ -31,6 +34,8 @@ export type InsertTestHistory = z.infer<typeof insertTestHistorySchema>;
 
 export const patientReferenceData = pgTable("patient_reference_data", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   patientName: text("patient_name").notNull(),
   diagnoses: text("diagnoses"),
   history: text("history"),

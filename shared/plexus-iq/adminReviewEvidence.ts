@@ -296,6 +296,56 @@ export function evidenceForUltrasoundTest(
   return out;
 }
 
+// The ultrasound sub-tests the qualification engine is allowed to
+// auto-qualify on add. The three manual-only studies (Stress Echo,
+// Upper Extremity Arterial / Venous) are deliberately excluded — they
+// are never auto-qualified and can only be hand-added via an override.
+export const AI_QUALIFYING_ULTRASOUND_TESTS: readonly string[] = [
+  "Bilateral Carotid Duplex (93880)",
+  "Echocardiogram TTE (93306)",
+  "Renal Artery Doppler (93975)",
+  "Lower Extremity Arterial Doppler (93925)",
+  "Abdominal Aortic Aneurysm Duplex (93978)",
+  "Lower Extremity Venous Duplex (93971)",
+];
+
+// Every ultrasound sub-test the Admin Review picker can add — the 6
+// AI-qualifying studies plus the 3 manual-only ones. Used by both the picker
+// (to hide the generic "Ultrasound" option when nothing is left to add) and
+// the add service (to report an honest "already present" state).
+export const ALL_ULTRASOUND_SUBTYPES: readonly string[] = [
+  ...AI_QUALIFYING_ULTRASOUND_TESTS,
+  "Stress Echocardiogram (93350)",
+  "Upper Extremity Arterial Doppler (93930)",
+  "Upper Extremity Venous Duplex (93970)",
+];
+
+// Clinical (non-medication) support for an ultrasound test. Medications
+// are supporting context only and never qualify a study on their own, so
+// the add-on qualifier gates on this set rather than the full
+// evidenceForUltrasoundTest output.
+export function clinicalEvidenceForUltrasoundTest(
+  testName: string,
+  evidence: AdminEvidenceChip[],
+): AdminEvidenceChip[] {
+  return evidenceForUltrasoundTest(testName, evidence).filter(
+    (c) => c.kind !== "medication",
+  );
+}
+
+// Given the patient's built evidence, return the subset of the
+// AI-qualifying ultrasound sub-tests that have clinical (non-medication)
+// supporting evidence. Used when a generic "Ultrasound Studies" is added
+// to determine which specific studies actually qualify.
+export function qualifyingUltrasoundSubtests(
+  evidence: AdminEvidenceChip[],
+  candidateTests: readonly string[] = AI_QUALIFYING_ULTRASOUND_TESTS,
+): string[] {
+  return candidateTests.filter(
+    (t) => clinicalEvidenceForUltrasoundTest(t, evidence).length > 0,
+  );
+}
+
 export function buildAdminReviewEvidence(input: {
   age?: number | null;
   hx?: string | null;

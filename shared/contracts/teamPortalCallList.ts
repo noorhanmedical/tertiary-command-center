@@ -79,9 +79,9 @@ export type TeamPortalCallListItem = {
   id: string;
   /** Patient screening id (legacy column preserved verbatim — the
    *  product identifier is the canonical patientCanonicalId once
-   *  Patient Directory adoption ships per Bundle 49). */
+   *  Patient EHR adoption ships per Bundle 49). */
   patientScreeningId: number;
-  /** Canonical patient id when the Patient Directory shadow read is
+  /** Canonical patient id when the Patient EHR shadow read is
    *  enabled; otherwise null. */
   canonicalPatientId: string | null;
 

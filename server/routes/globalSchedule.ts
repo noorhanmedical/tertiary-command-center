@@ -15,6 +15,8 @@ import {
 import {
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
+  getQuickScheduleStubCase,
+  createQuickScheduleExecutionCase,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import {
@@ -77,6 +79,11 @@ const transitionBodySchema = z.object({
 const scheduleAncillaryBodySchema = z.object({
   executionCaseId: z.number().int().optional().nullable(),
   patientScreeningId: z.number().int().optional().nullable(),
+  // Quick-schedule for brand-new patients: when neither id resolves to an
+  // execution case, a non-empty patientName lets the server create a
+  // minimal case stub so the appointment can persist.
+  patientName: z.string().optional().nullable(),
+  patientDob: z.string().optional().nullable(),
   serviceType: z.string().min(1),
   startsAt: z.string().min(1),
   endsAt: z.string().optional().nullable(),
@@ -186,7 +193,22 @@ export function registerGlobalScheduleRoutes(app: Express) {
         if (!isNaN(d.getTime())) filters.endDate = d;
       }
       const rows = await listTechnicianLiaisonAncillarySchedule(filters, limit);
-      res.json(rows);
+      const { buildAncillaryReadinessSummaries } = await import(
+        "../services/ancillary/ancillaryReadinessSummary"
+      );
+      const readinessByRow = await buildAncillaryReadinessSummaries(
+        rows.map((r) => ({
+          id: r.id,
+          executionCaseId: r.executionCaseId ?? null,
+          patientScreeningId: r.patientScreeningId ?? null,
+          serviceType: r.serviceType ?? null,
+        })),
+      );
+      const enriched = rows.map((r) => ({
+        ...r,
+        readiness: readinessByRow.get(String(r.id)) ?? null,
+      }));
+      res.json(enriched);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -293,10 +315,43 @@ export function registerGlobalScheduleRoutes(app: Express) {
           executionCaseId = ec.id;
         }
       }
+      // Quick-schedule fallback: brand-new patients (walk-ins / not yet
+      // screened) carry no ids. If a patientName is supplied, create a
+      // minimal execution case stub so the appointment can persist.
+      let createdStubCase = false;
       if (!executionCase) {
-        return res.status(404).json({
-          error: "Could not resolve an execution case from executionCaseId or patientScreeningId",
-        });
+        // Trim + collapse internal whitespace so "Jon  Smith " stores as
+        // "Jon Smith" (matching stays case-insensitive in the repo).
+        const stubName = (data.patientName ?? "").trim().replace(/\s+/g, " ");
+        if (!stubName) {
+          return res.status(404).json({
+            error: "Could not resolve an execution case from executionCaseId or patientScreeningId (provide patientName to quick-schedule a new patient)",
+          });
+        }
+        const stubDob = (data.patientDob ?? "").trim() || null;
+        const stubFacility = data.facilityId ?? null;
+        // Double-submit protection: reuse ONLY a prior quick-schedule stub
+        // matched on name + DOB + facility. Never reuse arbitrary existing
+        // cases by name alone — a common-name collision could attach this
+        // appointment (and case status updates) to the wrong patient.
+        // Without a DOB there is no safe identity to match on, so a fresh
+        // stub is always created.
+        const existingStub = stubDob
+          ? await getQuickScheduleStubCase(stubName, stubDob, stubFacility)
+          : undefined;
+        if (existingStub) {
+          executionCase = existingStub;
+          executionCaseId = existingStub.id;
+        } else {
+          executionCase = await createQuickScheduleExecutionCase({
+            patientName: stubName,
+            patientDob: stubDob,
+            facilityId: stubFacility,
+            serviceType: data.serviceType,
+          });
+          executionCaseId = executionCase.id;
+          createdStubCase = true;
+        }
       }
 
       const facilityId = data.facilityId ?? executionCase.facilityId ?? null;
@@ -368,6 +423,7 @@ export function registerGlobalScheduleRoutes(app: Express) {
         ok: true,
         event,
         created,
+        createdStubCase,
         executionCase: updatedExecutionCase,
         journeyEvent,
       });

@@ -5,6 +5,9 @@ import {
   Sparkles,
   CalendarDays,
   Phone,
+  TrendingUp,
+  Search,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -43,8 +46,8 @@ export const DOCK_ITEMS: DockItem[] = [
     id: "tasks",
     label: "Tasks",
     Icon: CheckSquare,
-    kind: "link",
-    href: "/plexus-tasks",
+    kind: "panel",
+    panelId: "tasks",
     testId: "global-floating-dock-tasks",
   },
   {
@@ -64,6 +67,14 @@ export const DOCK_ITEMS: DockItem[] = [
     testId: "global-floating-dock-calendar",
   },
   {
+    id: "engagement",
+    label: "Engagement",
+    Icon: TrendingUp,
+    kind: "link",
+    href: "/engagement-center",
+    testId: "global-floating-dock-engagement",
+  },
+  {
     id: "communications",
     label: "Communications",
     Icon: Phone,
@@ -73,7 +84,64 @@ export const DOCK_ITEMS: DockItem[] = [
   },
 ];
 
-export const GLOBAL_NAV_ROUTES: string[] = ["/home"];
+// Simplified dock shown to portal users (scheduler / clinician). Four
+// focused items, all opening inline panels so the user never loses their
+// place. Admin / biller keep the full DOCK_ITEMS dock above.
+export const PORTAL_DOCK_ITEMS: DockItem[] = [
+  {
+    id: "portal-home",
+    label: "Home",
+    Icon: HomeIcon,
+    kind: "link",
+    href: "/home",
+    testId: "global-floating-dock-portal-home",
+  },
+  {
+    id: "portal-chat",
+    label: "Chat",
+    Icon: MessageSquare,
+    kind: "panel",
+    panelId: "portal-chat",
+    testId: "global-floating-dock-portal-chat",
+  },
+  {
+    id: "portal-search",
+    label: "Patient Search",
+    Icon: Search,
+    kind: "panel",
+    panelId: "portal-search",
+    testId: "global-floating-dock-portal-search",
+  },
+  {
+    id: "portal-tasks",
+    label: "Tasks",
+    Icon: CheckSquare,
+    kind: "panel",
+    panelId: "tasks",
+    testId: "global-floating-dock-portal-tasks",
+  },
+  {
+    id: "portal-plexus-iq",
+    label: "Plexus IQ",
+    Icon: Sparkles,
+    kind: "panel",
+    panelId: "portal-plexus-iq",
+    testId: "global-floating-dock-portal-plexus-iq",
+  },
+  {
+    id: "portal-team-ops",
+    label: "Team Ops",
+    Icon: CalendarClock,
+    kind: "panel",
+    panelId: "portal-team-ops",
+    testId: "global-floating-dock-portal-team-ops",
+  },
+];
+
+// Roles that get the simplified 4-item portal dock.
+export const PORTAL_DOCK_ROLES = new Set(["scheduler", "clinician"]);
+
+export const GLOBAL_NAV_ROUTES: string[] = ["/home", "/clinician-portal"];
 
 export function shouldShowGlobalNav(pathname: string): boolean {
   return GLOBAL_NAV_ROUTES.some(

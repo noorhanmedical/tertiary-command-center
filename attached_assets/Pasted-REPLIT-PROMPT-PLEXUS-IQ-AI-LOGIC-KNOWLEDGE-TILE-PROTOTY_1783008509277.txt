@@ -1,0 +1,718 @@
+REPLIT PROMPT — PLEXUS IQ AI LOGIC + KNOWLEDGE TILE PROTOTYPE
+
+You are working inside the existing Plexus IQ platform.
+
+Do NOT rebuild Plexus IQ.
+Do NOT rebuild Admin Review from scratch.
+Do NOT break the current workflow.
+
+The current platform already has:
+- Plexus IQ multi-day, multi-facility workspace
+- screening_batches as the source of truth
+- Add Patient(s)
+- bulk clinical import
+- batch analysis / Generate All
+- calendar drawer
+- facility/date grouping
+- patient cards/list view
+- Admin Review Dialog
+- HX/DX/RX parsing
+- supporting evidence buttons
+- per-ancillary assignments
+- BrainWave / VitalWave / Ultrasound logic
+- ultrasound parent/child assignment logic
+- regenerate buttons
+- admin notes
+- approval states
+- sibling navigation inside Admin Review
+
+Your job is to add an AI learning, rule, audit, and knowledge layer on top of the existing Admin Review and Plexus IQ.
+
+MAIN GOAL
+
+Add two connected pieces:
+
+1. A subtle AI Logic / Teach AI button inside the existing Admin Review Dialog
+2. A new Plexus IQ tile called Clinical Intelligence & Governance
+
+Admin Review should remain the patient-level workflow.
+
+Clinical Intelligence & Governance should become the system-level AI brain.
+
+ADMIN REVIEW ADDITIONS
+
+Inside the existing Admin Review Dialog, add a subtle non-abrasive button called:
+
+AI Logic
+
+or
+
+Teach AI
+
+This should be a small admin utility button, not a large distracting button.
+
+Good placement options:
+- top right of Admin Review header
+- near the existing evidence/supporting buttons area
+- near the admin notes / updates area
+- as a small icon button with Sparkles or Lightbulb
+
+Do not interrupt the existing Admin Review workflow.
+
+When clicked, open a popup/drawer called:
+
+AI Logic for This Patient
+
+The popup should use the current patient context already available in Admin Review:
+
+- patient name
+- facility
+- schedule date
+- HX
+- DX
+- RX
+- current qualifying tests
+- current BrainWave / VitalWave / Ultrasound assignments
+- current supporting buttons/evidence
+- current reasoning object
+- current admin notes
+- current approval state
+- current updates made in patient
+
+The admin should be able to type what the AI should learn.
+
+Fields in the popup:
+
+- AI instruction / learning note
+- rule name
+- trigger source
+- rule scope
+- affected ancillary
+- affected output area
+- evidence requirement
+- approval requirement
+- status
+
+Rule scope options:
+- Patient only
+- Clinic draft
+- Provider draft
+- Global draft
+
+Affected ancillary options:
+- BrainWave
+- VitalWave
+- Ultrasound
+- Multiple ancillaries
+- General documentation logic
+
+Affected output options:
+- Diagnosis mapping
+- Ancillary assignment
+- Medical necessity
+- Order note
+- Audit support
+- Evidence traceability
+
+Do NOT create separate manual actions called:
+- Add to clinician reasoning
+- Add to patient reasoning
+
+The system should automatically use approved structured evidence and rules to generate both clinician-facing and patient-facing reasoning.
+
+Use better actions:
+- Approve clinical evidence
+- Attach to ancillary
+- Use in downstream documentation
+- Create rule from this item
+- Save as AI logic
+- Apply to this patient only
+- Send to Knowledge Tile
+
+ADMIN REVIEW LOGIC BEHAVIOR
+
+When an admin approves or changes a clinical item, show a subtle optional prompt:
+
+Do you want to save this as future AI logic?
+
+Options:
+- Patient only
+- Save as draft rule
+- Send to Knowledge Tile
+- Test rule first
+- Not now
+
+This should support human-in-the-loop persistent learning.
+
+HX / DX / RX BEHAVIOR
+
+The Admin Review Dialog already parses HX, DX, and RX into supporting buttons.
+
+Enhance this visually and functionally:
+
+DX items:
+- should appear as clickable diagnosis/supporting chips
+- should show source badge: DX
+- should show whether ICD is present or missing
+- should show confidence
+
+HX items:
+- should appear as symptoms/history/risk-factor chips
+- should show source badge: HX
+- should show confidence
+
+RX items:
+- should appear as medication evidence chips
+- should show source badge: RX
+- should act as clinical clues
+
+Examples:
+- insulin can support diabetes context
+- gabapentin can support neuropathy context
+- antihypertensives can support cardiovascular history context
+
+Chip actions should include:
+- approve evidence
+- attach to BrainWave
+- attach to VitalWave
+- attach to Ultrasound parent
+- attach to specific Ultrasound child test
+- create rule from this item
+- save as AI logic
+
+Do not duplicate chips if the same evidence already exists.
+
+Keep the existing right-panel assignment logic as the source of truth.
+
+SYMPTOM / FINDING REVIEW BUBBLES
+
+Add small review bubbles for AI-identified symptoms, findings, risk factors, and clinical clues.
+
+Examples:
+- dizziness
+- syncope
+- edema
+- dyspnea
+- leg pain
+- claudication
+- neuropathy
+- diabetes history
+- hypertension history
+- hyperlipidemia history
+- PAD/PVD concern
+- memory loss
+- falls
+- abnormal gait
+
+Clicking a bubble should open a compact action popover.
+
+Bubble actions:
+- approve evidence
+- reject evidence
+- edit label
+- attach to BrainWave
+- attach to VitalWave
+- attach to Ultrasound parent
+- attach to specific Ultrasound child
+- use in downstream documentation
+- create rule from this item
+- save as AI logic
+
+DOWNSTREAM DOCUMENTATION
+
+Approved evidence should visually show that it flows into:
+
+- medical necessity
+- order note
+- clinician-facing reasoning
+- patient-facing reasoning
+- audit support
+
+But do not require the admin to manually choose clinician reasoning vs patient reasoning.
+
+The AI logic should determine how approved evidence applies to both.
+
+Use language like:
+
+Approved evidence will be used for downstream documentation, including clinician reasoning, patient explanation, order note support, and audit traceability.
+
+SOURCE TRACEABILITY
+
+Every approved evidence item should show:
+
+- source type: HX, DX, RX, Rule Engine, AI ICD Search, Prior Test, Future EMR Note, Future Lab, Future Imaging
+- source text
+- confidence
+- assigned ancillary
+- who approved it
+- timestamp
+- whether it was used in a rule
+
+CLINICAL INTELLIGENCE & GOVERNANCE TILE
+
+Add a new Plexus IQ tile called:
+
+Clinical Intelligence & Governance
+
+This tile should be the long-term AI brain.
+
+It should not replace Admin Review.
+
+It should receive draft AI logic and draft rules from Admin Review.
+
+The tile should include these modules:
+
+1. AI Learning Center
+2. Rule Builder
+3. Rule Library
+4. Diagnosis Mapping
+5. Symptom Library
+6. Medication Evidence Library
+7. Clinical Findings Library
+8. Ancillary Mapping
+9. Reasoning Library
+10. Order Note Library
+11. Evidence Traceability
+12. CMS & Regulatory Watch
+13. Audit Center
+14. EMR/API Data Wiring
+15. Rule Testing Sandbox
+16. Rule Version History
+17. Rule Analytics
+18. Approval Queue
+19. Compliance Guardrails
+20. Knowledge Objects / Knowledge Graph
+
+AI LEARNING CENTER
+
+Show learning items submitted from Admin Review.
+
+Each learning item card should show:
+
+- source patient
+- source facility
+- source date
+- source HX/DX/RX/evidence
+- admin instruction
+- affected ancillary
+- affected output area
+- rule scope
+- status
+- created date
+- created by
+- buttons:
+  - edit
+  - convert to rule
+  - test
+  - approve
+  - reject
+  - disable
+
+RULE BUILDER
+
+Create a front-end prototype rule builder.
+
+Rule fields:
+
+- rule name
+- rule description
+- trigger source
+- trigger condition
+- diagnosis trigger
+- symptom trigger
+- medication trigger
+- finding trigger
+- future lab trigger
+- future imaging trigger
+- future note trigger
+- target ancillary
+- target documentation output
+- evidence requirement
+- confidence threshold
+- scope
+- approval requirement
+- effective date
+- status
+
+Example rule:
+
+IF diagnosis includes diabetic neuropathy
+AND symptom includes burning feet or leg pain
+OR medication includes gabapentin
+THEN suggest VitalWave
+AND use approved source-linked evidence in downstream documentation
+AND require Admin Review before finalization.
+
+RULE LIBRARY
+
+Show saved rules as cards or table.
+
+Each rule should show:
+
+- rule name
+- rule type
+- trigger
+- scope
+- affected ancillary
+- affected output areas
+- status:
+  - draft
+  - pending physician review
+  - pending compliance review
+  - active
+  - inactive
+  - retired
+- version
+- usage count
+- last updated
+- conflict flags
+- buttons:
+  - edit
+  - test
+  - approve
+  - disable
+  - view history
+  - view audit
+
+DIAGNOSIS MAPPING
+
+Show relationships:
+
+Diagnosis → Symptoms → Medications → Findings → Ancillaries → Evidence → Documentation → Audit Support
+
+Examples:
+
+Diabetes:
+- neuropathy
+- burning feet
+- leg pain
+- insulin
+- gabapentin
+- VitalWave support
+
+Stroke history:
+- neurologic risk
+- memory change
+- dizziness
+- BrainWave support
+
+PAD/PVD:
+- leg pain
+- claudication
+- edema
+- vascular risk
+- VitalWave / Ultrasound support
+
+SYMPTOM LIBRARY
+
+Create symptom cards.
+
+Each symptom card should connect to:
+
+- related diagnoses
+- related medications
+- related findings
+- related ancillaries
+- documentation use
+- evidence strength
+- CMS/audit flags
+- rules using this symptom
+
+MEDICATION EVIDENCE LIBRARY
+
+Create medication evidence cards.
+
+Each medication should show:
+
+- medication name
+- likely clinical clue
+- related diagnoses
+- related ancillaries
+- evidence strength
+- rules using this medication
+
+Examples:
+- insulin → diabetes clue
+- gabapentin → neuropathy clue
+- donepezil → memory/cognitive diagnosis clue
+- antihypertensives → hypertension/cardiovascular clue
+
+REASONING LIBRARY
+
+Create sections for:
+
+- clinician-facing reasoning templates
+- patient-facing explanation templates
+- ancillary-specific reasoning
+- approved language
+- source-linked language
+
+Do not make admin manually add items separately to clinician reasoning or patient reasoning.
+
+The reasoning engine should generate both from approved evidence.
+
+ORDER NOTE LIBRARY
+
+Create sections for:
+
+- BrainWave order note language
+- VitalWave order note language
+- Ultrasound order note language
+- medical necessity statements
+- source-linked documentation language
+- provider-approved templates
+
+EVIDENCE TRACEABILITY
+
+Create an evidence traceability module.
+
+Show example chain:
+
+HX/DX/RX source → AI extraction → Admin Review → evidence approval → rule used → downstream documentation → order note → audit packet
+
+Evidence fields:
+- source type
+- source text
+- source date
+- patient
+- AI suggestion
+- admin action
+- assigned ancillary
+- final output
+- timestamp
+- user
+
+CMS & REGULATORY WATCH
+
+Create a prototype CMS & Regulatory Watch module.
+
+Monitored sources:
+- CMS
+- LCD/NCD
+- MAC articles
+- OIG
+- CPT/HCPCS updates
+- payer articles
+- documentation requirements
+- clinical guideline updates
+
+Show update cards with:
+
+- update title
+- source
+- date
+- affected ancillary
+- affected rule
+- suggested change
+- approval required
+
+Important:
+The system should never silently change active rules.
+
+It should:
+- detect update
+- summarize update
+- identify affected rules
+- suggest changes
+- require human approval
+
+AUDIT CENTER
+
+Create an Audit Center module.
+
+Show:
+
+- patient audit packet
+- source evidence
+- AI suggestions
+- admin actions
+- rule used
+- provider approval
+- final output
+- order note support
+- timestamps
+- user action log
+- rule version used
+
+Use wording:
+
+CMS audit-ready and legally defensible
+
+Do not use:
+
+audit proof
+
+EMR/API DATA WIRING
+
+Create a module showing current and future data sources.
+
+Current active:
+- HX
+- DX
+- RX
+
+Future/pending:
+- full progress notes
+- H&P notes
+- discharge summaries
+- labs
+- imaging
+- vitals
+- medication list
+- problem list
+- encounter history
+- prior orders
+- payer data
+- demographics
+
+Each data source should show:
+
+- status: active, pending, future, needs mapping
+- evidence use
+- rule use
+- reasoning use
+- order note use
+- audit use
+
+Add an AI guidance card:
+
+New EMR data detected. Review whether this data source should strengthen diagnosis mapping, ancillary logic, medical necessity, downstream documentation, or audit evidence.
+
+RULE TESTING SANDBOX
+
+Create a prototype sandbox where admin can test a rule before activation.
+
+Show:
+
+- sample patients affected
+- affected ancillaries
+- expected outputs
+- possible conflicts
+- weak evidence warnings
+- documentation risks
+- approval needed
+
+RULE VERSION HISTORY
+
+Every rule should show:
+
+- version number
+- created by
+- updated by
+- approved by
+- date created
+- date updated
+- change summary
+- active/inactive history
+
+RULE ANALYTICS
+
+Show:
+
+- most used rules
+- rejected rules
+- rules needing review
+- conflict-prone rules
+- rules improving admin speed
+- rules impacted by CMS updates
+
+APPROVAL QUEUE
+
+Show rules waiting for:
+
+- admin review
+- physician review
+- compliance review
+- CMS/regulatory review
+
+COMPLIANCE GUARDRAILS
+
+Prototype guardrails:
+
+- cannot finalize order note without supporting evidence
+- cannot activate global rule without approval
+- cannot use unsupported symptom for medical necessity
+- flag weak evidence
+- flag missing diagnosis support
+- flag rule conflicts
+- flag CMS update impact
+
+KNOWLEDGE OBJECTS / KNOWLEDGE GRAPH
+
+Create a visual concept where each clinical concept becomes a knowledge object.
+
+Example:
+
+Peripheral Neuropathy object:
+- related diagnoses
+- symptoms
+- medications
+- ancillaries
+- evidence sources
+- downstream documentation
+- active rules
+- audit considerations
+
+LOCALSTORAGE WORKABILITY
+
+Use localStorage so prototype actions persist.
+
+Minimum workable actions:
+
+- create draft AI logic from Admin Review
+- save draft rule
+- show draft rule in Clinical Intelligence & Governance tile
+- edit draft rule
+- test draft rule visually
+- approve draft rule
+- disable draft rule
+- show rule status changes
+- show source evidence attached to rule
+- show audit log entry for rule actions
+
+DESIGN STYLE
+
+Match the existing platform style.
+
+Use:
+- clean white / slate background
+- navy accents
+- subtle violet AI accents
+- rounded cards
+- small chips
+- compact popovers
+- drawers
+- source badges
+- confidence badges
+- status pills
+- non-abrasive buttons
+
+Avoid:
+- giant AI buttons
+- rebuilding existing Admin Review
+- breaking current Generate / Regenerate / Approval / PDF / Scheduler flow
+- duplicate clinician reasoning and patient reasoning manual actions
+
+CORE ARCHITECTURE TO REFLECT IN UI
+
+Admin Review answers:
+
+What should happen for this patient?
+
+Clinical Intelligence & Governance answers:
+
+How should the AI think for future patients?
+
+Admin Review creates draft learning.
+
+Clinical Intelligence & Governance manages approval, testing, versioning, CMS updates, auditability, EMR/API readiness, and long-term AI rules.
+
+FINAL REQUIREMENT
+
+Make this feel clickable and workable as a prototype, but keep it front-end/localStorage only unless existing endpoints already support the action.
+
+Do not remove existing Admin Review features.
+
+Do not change the current source of truth.
+
+Add this as an enhancement layer.

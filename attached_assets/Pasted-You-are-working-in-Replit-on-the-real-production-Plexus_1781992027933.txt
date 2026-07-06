@@ -1,0 +1,549 @@
+You are working in Replit on the real production Plexus IQ page.
+
+Route:
+`/plexus-iq`
+
+Goal:
+Make specific UI/UX improvements to the current Plexus IQ page with a clean look.
+
+This is NOT a full redesign.
+This is NOT a new shell.
+This is NOT a prototype.
+This is NOT Patient Journey.
+This is ONLY Plexus IQ.
+
+Do not touch:
+- `/plexus-iq-prototype`
+- prototype files
+- deleted v2 shell
+- `/plexus-iq?interior=v2`
+- schema
+- migrations
+- unrelated portals
+- Patient Journey
+- billing
+- scheduling
+- technician portals
+- physician portal
+
+Do not add downstream statuses.
+Do not show Not Sent.
+Do not show Assigned.
+Do not show Distributed.
+Do not show Scheduled.
+Do not show Billing Ready.
+Do not show Invoiced.
+Do not show Patient Journey statuses in Plexus IQ.
+
+Read first:
+`docs/architecture/PLATFORM_OPERATING_MODEL.md`
+
+Respect:
+- Patient is the spine.
+- Plexus IQ owns intake/list → qualification → review → admin approval → sent to engagement.
+- Plexus IQ does NOT own downstream journey.
+- Admin Review must persist saved evidence.
+- No local-only fake save.
+- No stale packet printing.
+- No hidden batch creation.
+
+================================================================================
+BRANCH
+================================================================================
+
+Start from the current branch:
+
+`plexus-iq-admin-review-persistence-fix`
+
+Create/use this Replit UI branch:
+
+`ui/plexus-iq-clean-operating-list`
+
+Commands:
+
+git fetch origin
+git checkout plexus-iq-admin-review-persistence-fix
+git pull
+git checkout -b ui/plexus-iq-clean-operating-list
+
+If the branch already exists, use it.
+
+Do not force reset if there are local Replit commits. Report first.
+
+================================================================================
+OVERALL UI DIRECTION
+================================================================================
+
+Keep the current Plexus IQ look and feel.
+
+Make it cleaner, simpler, and more operational.
+
+The page should be:
+
+Plexus IQ header/actions
+Date panel | List panel
+
+Do NOT add a separate Patient Journey area.
+Do NOT add downstream lifecycle tracking.
+Do NOT clutter the patient row.
+
+The main workflow is:
+
+Date → List → Review
+
+================================================================================
+PLEXUS IQ STATUSES ONLY
+================================================================================
+
+The patient row status must use ONLY these Plexus IQ statuses:
+
+- Pending Qualification
+- Qualification Running
+- Ready for Review
+- Admin Approved
+- Sent to Engagement
+- Failed / Needs Fix
+
+No other statuses on the patient row.
+
+Missing info is NOT a status.
+Stale evidence is NOT a status.
+Cooldown issue is NOT a status.
+Save failed is NOT a status.
+Packet blocker is NOT a status.
+
+Those are FLAGS only.
+
+================================================================================
+PATIENT ROW COLUMNS
+================================================================================
+
+Patient row columns must be only:
+
+Checkbox | Patient Name | DOB | Insurance | Plexus IQ Status | Flags | Review | Delete
+
+Example:
+
+[ ] Harriet Adler | 02/14/1942 | Medicare Adv. | Ready for Review | ⚠ 2 | Review | Delete
+[ ] Marcus DiAngelo | 07/08/1951 | Medicare | Admin Approved | — | Review | Delete
+[ ] Diana Eldridge | 11/22/1948 | BCBS | Pending Qualification | ⚠ 1 | Review | Delete
+
+Do NOT show:
+- Not Sent
+- Assigned
+- Distributed
+- Scheduling
+- Billing
+- Invoice
+- Journey status
+- separate Engagement Status column
+
+================================================================================
+FLAGS
+================================================================================
+
+Flags are small warning indicators only.
+
+If patient has missing/attention items, show:
+
+⚠ 1
+⚠ 2
+⚠ 3
+
+If no flags, show dash or blank.
+
+Clicking the flag opens a small popover.
+
+Popover title:
+`Needs Attention`
+
+Examples:
+- Missing demographics
+- Missing DOB
+- Missing phone
+- Missing insurance
+- Missing DX
+- Missing HX
+- Missing RX
+- Prior testing date unclear
+- Cooldown needs verification
+- Admin Review evidence changed
+- Packet QA blocker
+- Save failed
+
+Flags should not change the main Plexus IQ status.
+
+================================================================================
+DATE PANEL
+================================================================================
+
+Left panel title:
+
+`Date`
+
+Date panel should have expandable date groups.
+
+Example:
+
+▾ Tue, Jun 9, 2026
+  10:42 AM · 162 patients · Ready for Review
+  8:15 AM · 41 patients · Pending Qualification
+
+▸ Thu, Jun 18, 2026
+▸ Fri, Jun 19, 2026
+
+Rules:
+- Date parent rows expand/collapse.
+- Child rows represent real batch/import/list rows.
+- Child rows sorted newest first.
+- Date parents sorted newest first.
+- Child row label uses time/import time/batch created time.
+- Child row shows patient count.
+- Child row shows Plexus IQ batch status.
+- Selecting child row controls the List.
+- Selected child row remains highlighted.
+
+Do not use fake child rows.
+Do not label primarily as Run 1 / Run 2.
+
+================================================================================
+LIST BAR
+================================================================================
+
+Qualification status belongs on the List bar.
+
+Do NOT create a separate full-width qualification banner.
+Do NOT create a giant qualification job card.
+
+The List bar should show:
+
+- List title
+- selected batch time
+- selected patient count
+- qualification status
+- compact actions
+
+Example ready:
+
+List · 10:42 AM · 162 pts · Qualification Ready · 0 failed
+
+Example running:
+
+List · 10:42 AM · Qualification Running · 312/1000 complete · 41 skipped · 3 failed · ETA 8m
+
+Example failed:
+
+List · 10:42 AM · Completed with Errors · 3 failed · Retry Failed
+
+The List bar actions can include:
+
+- Select All
+- Clear
+- Delete Selected
+- Generate
+- Retry Failed
+- Clinician PDF
+- Plexus PDF
+
+Keep it compact.
+
+================================================================================
+LIST PANEL
+================================================================================
+
+The List panel should show only patients from the selected child batch.
+
+Keep the patient list clean.
+
+Remove clutter:
+- no row-level Clinician PDF button
+- no row-level Plexus PDF button
+- no duplicate facility labels
+- no duplicate date labels
+- no unnecessary ancillary icons
+- no extra downstream statuses
+
+The selected patient should remain highlighted.
+
+================================================================================
+REVIEW / ADMIN REVIEW
+================================================================================
+
+The patient row button should say:
+
+`Review`
+
+It opens the existing Admin Review workflow.
+
+Do not create a fake new Review system.
+
+The Review/Admin Review should not feel like a full-screen trap.
+
+Specific UI behavior:
+- Admin Review should not cover the entire screen.
+- Date panel should remain visible.
+- Patient list should remain partially visible.
+- When Review is open, the List should collapse into a narrow patient-name rail.
+- Patient-name rail remains clickable.
+- Clicking another patient in the rail updates Review to that patient.
+- Review should have a clear X close button.
+- X returns to the same Date/List context.
+
+================================================================================
+REVIEW OPEN LAYOUT
+================================================================================
+
+When Review is closed:
+
+Date panel | Full List panel
+
+When Review is open:
+
+Date panel | Patient-name rail | Review panel
+
+Patient-name rail width target:
+180px to 240px
+
+Patient-name rail should show:
+- patient name
+- small status indicator or abbreviated Plexus IQ status
+- selected patient highlight
+
+Example rail:
+
+List
+10:42 AM · 162 pts
+Qual Ready
+
+Harriet Adler
+Marcus DiAngelo
+Diana Eldridge
+Aaliyah Faruq
+
+Do not cover this rail.
+
+Review panel starts to the right of the patient-name rail.
+
+================================================================================
+2-PANEL REVIEW LAYOUT
+================================================================================
+
+Inside Review/Admin Review, use a 2-panel layout.
+
+Top:
+- patient banner
+- patient name
+- DOB
+- insurance
+- phone if available
+- Plexus IQ status
+- packet QA/save status if available
+- X close button
+
+Main body:
+
+Left panel:
+Tests / Ancillaries
+
+Right panel:
+Source / History / ICD / Engagement
+
+Footer:
+- blocker text
+- Needs Info
+- Reviewed
+- Admin Approve
+
+Do not make a 3-panel layout.
+Do not make a full-screen modal.
+Do not make a separate route.
+
+================================================================================
+LEFT REVIEW PANEL — ANCILLARY DROPDOWNS
+================================================================================
+
+Preserve the ancillary dropdowns.
+
+This is important.
+
+Do not ruin the dropdown/qualifier concept.
+
+Left panel should show reviewable targets as collapsible dropdown cards.
+
+Targets may include:
+- BrainWave
+- VitalWave
+- Ultrasound
+- ultrasound subtype if already supported
+
+Only show meaningful targets:
+- eligible
+- has qualifiers
+- has attached evidence
+- has Regeneration Required
+- has packet QA blocker
+- has prior-test/cooldown issue
+- manually added
+- held/removed but relevant
+
+Do not show empty BrainWave/VitalWave/Ultrasound bars with no content.
+
+Each dropdown should show:
+- target name
+- status
+- qualifiers
+- attached evidence
+- clinician understanding
+- patient talking points
+- ICD codes
+- packet QA
+- regenerate button if available
+
+Example:
+
+VitalWave
+Status: Regeneration Required
+
+Qualifiers
+- Diabetes mellitus
+- Hypertension
+- Vascular risk factors
+
+Attached Evidence
+DX · Diabetes mellitus
+DX · Hypertension
+RX · Aspirin
+
+Clinician Understanding
+Patient has diabetes and hypertension, increasing vascular risk...
+
+Patient Talking Points
+This test helps evaluate circulation and vascular health...
+
+ICD
+E11.9 · I10
+
+[Regenerate VitalWave]
+
+================================================================================
+RIGHT REVIEW PANEL — SOURCE TABS
+================================================================================
+
+Right panel tabs:
+
+- Source
+- History
+- ICD
+- Engagement
+
+Engagement tab can exist inside Review only, but do not show engagement status as a patient row column.
+
+Source tab groups:
+- DX
+- HX
+- RX
+- Prior Testing
+- Notes
+
+Each source row should show:
+- source type
+- source text
+- attached target chips
+- Attach button
+
+Example:
+
+DX
+Diabetes mellitus
+Attached to: VitalWave, Ultrasound
+[Attach]
+
+When user attaches evidence:
+- target becomes Regeneration Required
+- save state shows Saving then Saved
+- evidence persists before regeneration
+- Admin Approve blocked until regeneration
+- PDFs blocked until regeneration
+
+================================================================================
+SAVE STATE
+================================================================================
+
+When attaching/detaching evidence:
+
+- show Saving...
+- then Saved
+- if failed, show Save Failed
+
+If Saving:
+- disable X close or block close
+- disable Admin Approve
+- block packet buttons
+
+If Save Failed:
+- show visible warning
+- do not pretend save worked
+
+================================================================================
+REGENERATION REQUIRED
+================================================================================
+
+When evidence changes:
+- affected target becomes Regeneration Required
+- Regenerate Changed appears if multiple targets are stale
+- Admin Approve disabled
+- PDFs blocked
+
+Regenerate Changed should:
+- regenerate stale targets sequentially
+- preserve assignments
+- clear successful targets
+- leave failed targets stale with error
+
+================================================================================
+ADD PATIENT / IMPORT DESTINATION
+================================================================================
+
+If feasible in this UI pass, preserve selected child batch as destination.
+
+Add Patient should show:
+`Add patient to: Facility · Date · Batch Time`
+
+Paste/Import should show:
+`Import to: Facility · Date · Batch Time`
+
+Default should append to selected child batch.
+
+Do not silently create hidden new bucket.
+
+If this is too much for this UI pass, report it clearly as follow-up. Do not fake it.
+
+================================================================================
+VALIDATION
+================================================================================
+
+Run:
+
+npm run check
+npm run build
+
+Report:
+
+1. Branch name
+2. Files changed
+3. UI changes made
+4. Patient row columns implemented
+5. Exact Plexus IQ statuses used
+6. Flag behavior implemented
+7. Date dropdown behavior implemented
+8. List bar behavior implemented
+9. Review open/closed layout behavior
+10. 2-panel Review layout behavior
+11. Ancillary dropdowns/qualifiers preservation
+12. Save state behavior
+13. Regenerate Changed behavior
+14. Any APIs/backend touched
+15. Known limitations
+16. check/build results
+
+Do not push until Ali approves.

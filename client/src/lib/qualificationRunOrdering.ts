@@ -64,11 +64,67 @@ export function makeRunLabel(runNumber: number, runCreatedAt: string): string {
 const VISIT = "visit";
 const OUTREACH = "outreach";
 
+/**
+ * Robustly parse an appointment time into minutes-since-midnight.
+ *
+ * Handles the raw strings stored in `patient_screenings.time` — "9:00 AM",
+ * "9:00AM", "11.15 pm", "9 AM", "13:30", "0900" — as well as full ISO
+ * datetimes ("2026-06-12T10:00:00Z"), which are normalized to their local
+ * time-of-day so mixed formats within a list still compare consistently.
+ * Returns null when the value can't be understood as a time.
+ */
+export function parseAppointmentTimeMinutes(
+  raw: string | null | undefined,
+): number | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s) return null;
+
+  // "9:05 am" / "9.05am" / "13:30" / "9 am" / "9am"
+  let hour: number | null = null;
+  let minute = 0;
+  let meridiem: string | null = null;
+
+  let m = s.match(/^(\d{1,2})[:.](\d{2})\s*([ap])\.?\s*m?\.?$/i);
+  if (m) {
+    hour = parseInt(m[1], 10);
+    minute = parseInt(m[2], 10);
+    meridiem = m[3].toLowerCase();
+  } else if ((m = s.match(/^(\d{1,2})[:.](\d{2})$/))) {
+    hour = parseInt(m[1], 10);
+    minute = parseInt(m[2], 10);
+  } else if ((m = s.match(/^(\d{1,2})\s*([ap])\.?\s*m?\.?$/i))) {
+    hour = parseInt(m[1], 10);
+    meridiem = m[2].toLowerCase();
+  } else if ((m = s.match(/^(\d{2})(\d{2})$/))) {
+    // Military "0900"
+    hour = parseInt(m[1], 10);
+    minute = parseInt(m[2], 10);
+  }
+
+  if (hour != null) {
+    if (minute > 59) return null;
+    if (meridiem) {
+      if (hour < 1 || hour > 12) return null;
+      if (meridiem === "p" && hour !== 12) hour += 12;
+      if (meridiem === "a" && hour === 12) hour = 0;
+    } else if (hour > 23) {
+      return null;
+    }
+    return hour * 60 + minute;
+  }
+
+  // Full date/datetime strings — normalize to local time-of-day.
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime()) && /\d{4}/.test(s)) {
+    return d.getHours() * 60 + d.getMinutes();
+  }
+  return null;
+}
+
 function appointmentMs(row: RunSourceRow): number {
-  const t = row.appointmentTime;
-  if (!t) return Number.POSITIVE_INFINITY;
-  const d = new Date(t);
-  return Number.isNaN(d.getTime()) ? Number.POSITIVE_INFINITY : d.getTime();
+  const minutes = parseAppointmentTimeMinutes(row.appointmentTime);
+  return minutes == null ? Number.POSITIVE_INFINITY : minutes;
 }
 
 function compareByName(a: RunSourceRow, b: RunSourceRow): number {

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { SidebarTrigger } from "@/components/ui/sidebar";
-import { CalendarDays, Loader2, Plus } from "lucide-react";
+import { Loader2, ShieldCheck, Sparkles } from "lucide-react";
+import { Link } from "wouter";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -36,13 +35,22 @@ import {
   PlexusIQBulkImportModal,
   type ParsedRow,
 } from "@/components/plexus-iq/PlexusIQBulkImportModal";
+import { PlexusIQBatchFlowDialog } from "@/components/plexus-iq/PlexusIQBatchFlowDialog";
+import { PlexusIQActiveBatchHeader } from "@/components/plexus-iq/PlexusIQActiveBatchHeader";
+import {
+  setActiveBatchId,
+  setBatchSource,
+  type BatchSource,
+} from "@/lib/plexusIqBatchSession";
 import {
   importPlexusIqClinicalRows,
   startPlexusIqQualificationJob,
+  fetchPlexusIqQualificationJobStatus,
+  type QualificationJobStatus,
+  type PlexusIqBatchPlacement,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
 import {
-  PlexusIQQualificationJobsStatus,
   type ActiveQualificationJob,
 } from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
 
@@ -223,6 +231,13 @@ export default function PlexusIQPage() {
   // ───── Modals + drawer state ─────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  // BatchFlow session isolation (task #515). The "Plexus BatchFlow" tile
+  // opens this landing/history dialog first; choosing Start New / Continue
+  // / Resume sets the placement intent below and THEN opens the bulk
+  // import modal. Default placement is `newRun` so every fresh intake
+  // creates its own isolated, timestamped batch.
+  const [batchFlowOpen, setBatchFlowOpen] = useState(false);
+  const batchPlacementRef = useRef<PlexusIqBatchPlacement>({ mode: "newRun" });
   // 3-tile hub state. `addHubOpen` controls the chooser dialog; the
   // selected tile then opens either PlexusIQAddPatientModal (with a
   // pre-set patientType) or PlexusIQBulkImportModal.
@@ -232,6 +247,28 @@ export default function PlexusIQPage() {
   >("visit");
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [openDate, setOpenDate] = useState<string | null>(null);
+
+  // ───── Operating-list selection bridge ───────────────────────────────
+  // The operating list reports its active facility/date selection up so
+  // Add-Patient / Bulk-Import can default their destination to the list
+  // the user is currently viewing. `focusBatch` is the reverse channel:
+  // after an import we ask the operating list to select the batch the
+  // patients landed in.
+  const [operatingSelection, setOperatingSelection] = useState<{
+    facility: string | null;
+    scheduleDate: string | null;
+    batchId: number | null;
+  }>({ facility: null, scheduleDate: null, batchId: null });
+  const [focusBatch, setFocusBatch] = useState<{ id: number; facility: string } | null>(
+    null,
+  );
+  const handleFocusConsumed = useCallback(() => setFocusBatch(null), []);
+
+  // Destination defaults handed to the Add-Patient / Bulk-Import modals.
+  // An unscheduled (null date) selection falls back to today inside the
+  // modals; we only forward a concrete ISO date.
+  const addDefaultFacility = operatingSelection.facility ?? undefined;
+  const addDefaultScheduleDate = operatingSelection.scheduleDate ?? undefined;
 
   const batchesForOpenDate = useMemo(
     () => (openDate ? batches.filter((b) => b.scheduleDate === openDate) : []),
@@ -316,6 +353,8 @@ export default function PlexusIQPage() {
           description: `${input.facility} on ${input.scheduleDate}`,
         });
         refreshAll();
+        // Focus the operating list on the batch the patient landed in.
+        setFocusBatch({ id: targetBatchId, facility: input.facility });
         return true;
       } catch (err) {
         toast({
@@ -376,13 +415,66 @@ export default function PlexusIQPage() {
     }
   }, [activeQualificationJobs]);
 
+  // Headless job lifecycle. The always-on status banner used to be the only
+  // thing that pruned terminal jobs from `activeQualificationJobs`. With the
+  // banner removed, we still must poll each tracked job and drop it once it
+  // reaches a terminal state — otherwise its batchId would stay in
+  // `runningBatchIds` forever (it is localStorage-backed) and permanently
+  // disable Generate/Retry in the operating list. Polling stops per job once
+  // it is terminal, and the job is removed from the tracked list.
+  const qualificationJobQueries = useQueries({
+    queries: activeQualificationJobs.map((j) => ({
+      queryKey: ["plexus-iq-qualification-job", j.jobId] as const,
+      queryFn: () => fetchPlexusIqQualificationJobStatus(j.jobId),
+      refetchInterval: (q: { state: { data?: QualificationJobStatus } }) => {
+        const s = q.state.data?.status;
+        return s === "completed" || s === "failed" || s === "cancelled"
+          ? false
+          : 2500;
+      },
+    })),
+  });
+
+  useEffect(() => {
+    const terminal = new Set<number>();
+    qualificationJobQueries.forEach((q, idx) => {
+      const status = q.data?.status;
+      if (status === "completed" || status === "failed" || status === "cancelled") {
+        const job = activeQualificationJobs[idx];
+        if (job) terminal.add(job.jobId);
+      }
+    });
+    if (terminal.size === 0) return;
+    // A finished job should refresh the batch/patient data so the operating
+    // list reflects the qualified results before we drop it from tracking.
+    queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+    setActiveQualificationJobs((prev) => prev.filter((j) => !terminal.has(j.jobId)));
+  }, [qualificationJobQueries, activeQualificationJobs, queryClient]);
+
+  // Batch IDs with an actively-running qualification job. Drives the
+  // "Running" state in the facility operating list. Combines the async
+  // qualification jobs with the in-flight single-batch generate.
+  const runningBatchIds = useMemo(() => {
+    const s = new Set<number>();
+    for (const j of activeQualificationJobs) {
+      if (j.batchId != null) s.add(j.batchId);
+    }
+    if (analyzingBatchId != null) s.add(analyzingBatchId);
+    return s;
+  }, [activeQualificationJobs, analyzingBatchId]);
+
   const handleClinicalImport = useCallback(
     async (
       rows: PlexusIqClinicalImportRow[],
       defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+      source: BatchSource = "paste",
     ) => {
       if (rows.length === 0) return;
       setBulkPending(true);
+      // BatchFlow placement intent set by the landing dialog. Default
+      // `newRun` isolates every intake into its own timestamped batch;
+      // `append` (Resume / Append to current batch) reuses a target batch.
+      const placement = batchPlacementRef.current;
       try {
         const result = await importPlexusIqClinicalRows(
           rows.map((r) => ({
@@ -390,7 +482,7 @@ export default function PlexusIQPage() {
             // strip `raw` from the wire payload — the server doesn't need it
             raw: undefined,
           })),
-          defaults,
+          { ...defaults, placement },
         );
 
         // Refresh the workspace and calendar to show the new batches/patients.
@@ -413,6 +505,30 @@ export default function PlexusIQPage() {
             result.skippedCount > 0 ? ` Skipped ${result.skippedCount}.` : ""
           }`,
         });
+
+        // Record the source for every batch this import created/landed in
+        // so Batch History can show "Pasted list" vs "File import".
+        for (const id of result.batchIds) setBatchSource(id, source);
+
+        // Focus the operating list on the batch the patients landed in.
+        // Prefer the group matching the import defaults; otherwise the
+        // first group in the map.
+        const targetGroup =
+          result.batchPatientMap.find(
+            (g) =>
+              g.facility === defaults.facility &&
+              g.scheduleDate === defaults.scheduleDate,
+          ) ?? result.batchPatientMap[0];
+        if (targetGroup) {
+          setFocusBatch({ id: targetGroup.batchId, facility: targetGroup.facility });
+          // The batch the patients landed in becomes the active BatchFlow
+          // session batch. Subsequent qualification + Admin Review target
+          // exactly this batch.
+          setActiveBatchId(targetGroup.batchId);
+        }
+        // Reset placement so a later import defaults back to an isolated
+        // new batch unless the operator explicitly chooses Append again.
+        batchPlacementRef.current = { mode: "newRun" };
 
         // Kick off qualification jobs for every created batch. We poll
         // all of them concurrently in the banner; failed/incomplete
@@ -463,7 +579,7 @@ export default function PlexusIQPage() {
   );
 
   const handleBulkImport = useCallback(
-    async (rows: ParsedRow[]) => {
+    async (rows: ParsedRow[], source: BatchSource = "paste") => {
       if (rows.length === 0) return;
       setBulkPending(true);
 
@@ -479,10 +595,33 @@ export default function PlexusIQPage() {
       let processed = 0;
       const total = rows.length;
 
+      let firstBatch: { id: number; facility: string } | null = null;
+
+      // BatchFlow placement intent. `append` reuses a target batch (only
+      // valid for a single-group paste); `newRun` creates a fresh isolated
+      // batch per facility/date group.
+      const placement = batchPlacementRef.current;
+      const appendTargetId =
+        placement.mode === "append" && groups.size === 1
+          ? placement.targetBatchId ?? null
+          : null;
+
       try {
         for (const [, groupRows] of groups) {
           const first = groupRows[0];
-          const targetBatchId = await resolveBatchId(first.facility, first.scheduleDate);
+          const targetBatchId =
+            appendTargetId != null
+              ? appendTargetId
+              : placement.mode === "newRun"
+                ? ((await createBatchMut.mutateAsync({
+                    name: `${first.facility} - ${first.scheduleDate}`,
+                    facility: first.facility,
+                    scheduleDate: first.scheduleDate,
+                    placement: { mode: "newRun" },
+                  })) as { id: number }).id
+                : await resolveBatchId(first.facility, first.scheduleDate);
+          setBatchSource(targetBatchId, source);
+          if (!firstBatch) firstBatch = { id: targetBatchId, facility: first.facility };
 
           for (const r of groupRows) {
             await addPatientMut.mutateAsync({
@@ -513,6 +652,13 @@ export default function PlexusIQPage() {
           description: `Imported ${total} patient${total === 1 ? "" : "s"} into ${groups.size} batch${groups.size === 1 ? "" : "es"} across ${uniqueFacilities} facilit${uniqueFacilities === 1 ? "y" : "ies"}.`,
         });
         refreshAll();
+        // Focus the operating list on the first batch the patients landed in
+        // and make it the active BatchFlow session batch.
+        if (firstBatch) {
+          setFocusBatch(firstBatch);
+          setActiveBatchId(firstBatch.id);
+        }
+        batchPlacementRef.current = { mode: "newRun" };
         setBulkOpen(false);
       } catch (err) {
         toast({
@@ -525,7 +671,7 @@ export default function PlexusIQPage() {
         setBulkProgress(null);
       }
     },
-    [resolveBatchId, addPatientMut, toast, refreshAll],
+    [resolveBatchId, createBatchMut, addPatientMut, toast, refreshAll],
   );
 
   const handleAssignDate = useCallback(
@@ -556,12 +702,33 @@ export default function PlexusIQPage() {
   );
 
   // ───── Per-patient mutations (used by PatientCard inside workspace) ──
+  // Patient IDs whose most recent edit (e.g. evidence attach/detach in
+  // Admin Review) failed to persist. Drives the "Save failed" attention
+  // flag on the operating row. Cleared once a later edit succeeds.
+  const [saveFailedPatientIds, setSaveFailedPatientIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+
   const handleUpdatePatient = useCallback(
     (id: number, updates: Record<string, unknown>) => {
       updatePatientMut.mutate(
         { id, updates },
         {
+          onSuccess: () => {
+            setSaveFailedPatientIds((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          },
           onError: (err: unknown) => {
+            setSaveFailedPatientIds((prev) => {
+              if (prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.add(id);
+              return next;
+            });
             toast({
               title: "Update failed",
               description: err instanceof Error ? err.message : "Something went wrong",
@@ -733,73 +900,82 @@ export default function PlexusIQPage() {
 
   return (
     <div className="flex flex-col h-full w-full min-w-0">
-      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900" data-testid="text-plexus-iq-title">
-                Plexus IQ
-              </h1>
-              <p className="text-[11px] text-slate-500">
-                Multi-day, multi-facility workspace
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm"
-              onClick={() => setAddHubOpen(true)}
-              className="gap-1.5 rounded-xl"
-              data-testid="button-plexus-iq-add-patient"
-            >
-              <Plus className="w-4 h-4" />
-              Add Patient(s)
-            </Button>
-            <button
-              type="button"
-              onClick={() => setCalendarOpen(true)}
-              aria-label="Open calendar"
-              title="Calendar"
-              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-plexus-navy-800 text-white shadow-sm hover:bg-plexus-navy-700 transition-colors"
-              data-testid="button-plexus-iq-calendar"
-            >
-              <CalendarDays className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
       <main
         ref={mainScrollRef}
         className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
       >
-        {/* Facility-first overview: the first Plexus IQ surface shows
-            facility tiles only. Global stat cards, recent qualification
-            cards, and recently-deleted panels (PlexusIQDashboardRow /
-            PlexusIQRecentQualificationCards / PlexusIQRecentlyDeleted)
-            remain off the overview per the facility-first rule. */}
-        {/* BatchFlow qualification status — only renders WHILE jobs are
-            active. Conditional on activeQualificationJobs.length > 0 so
-            it never becomes a permanent dashboard panel. State is
-            backed by localStorage so it survives a refresh while jobs
-            are still running on the server. */}
-        {activeQualificationJobs.length > 0 && (
-          <div
-            className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3"
-            data-testid="plexus-iq-qualification-status-strip"
-            data-mount-gate="activeQualificationJobs.length > 0"
-          >
-            <PlexusIQQualificationJobsStatus
-              jobs={activeQualificationJobs}
-              onJobsChange={setActiveQualificationJobs}
-              onDismiss={() => setActiveQualificationJobs([])}
-            />
-          </div>
-        )}
-        <PlexusIQWorkspace
+        {/* Facility-first landing: the Plexus IQ page renders the
+            clinic-tile board only. No page title banner and no always-on
+            qualification-job status strip. Add Patient + Calendar entry
+            points live inside the operating-list view's inline toolbar
+            (relocated via onAddPatient / onOpenCalendar below). Jobs still
+            run; only the always-on status chrome is removed. */}
+        <PlexusIQActiveBatchHeader
+          batches={batches}
           summary={summary}
           batchDetails={batchDetails}
+          runningBatchIds={runningBatchIds}
+          onChangeBatch={() => setBatchFlowOpen(true)}
+          onViewBatch={(id, facility) => setFocusBatch({ id, facility })}
+        />
+        {/* Clinical Intelligence & Governance knowledge tile (prototype).
+            Pure navigation — no effect on batch/qualification flows. */}
+        <div className="px-4 pt-3">
+          <Link
+            href="/clinical-intelligence"
+            className="group flex items-center gap-3 rounded-2xl border border-violet-200/70 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
+            data-testid="tile-clinical-intelligence"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900">
+                Clinical Intelligence &amp; Governance
+              </span>
+              <span className="block truncate text-xs text-slate-500">
+                AI Logic knowledge layer — learning center, rule library, approvals, and audit. CMS audit-ready
+                and legally defensible.
+              </span>
+            </span>
+            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-700 sm:inline-flex">
+              <ShieldCheck className="h-3.5 w-3.5" /> Governance
+            </span>
+          </Link>
+        </div>
+        {/* Repeat Testing Review — prototype shell. Plexus IQ supports two
+            review types: Initial Qualification Review (the batch board below)
+            and Repeat Testing / Re-Eligibility Review (this queue). The repeat
+            queue is not wired yet; it will populate from repeat opportunities
+            created by Clinical Intelligence after report upload, opening ~1
+            month before the payer repeat-due date. Blueprint:
+            docs/architecture/clinical-intelligence-repeat-testing-loop.md */}
+        <div className="px-4 pt-3">
+          <Link
+            href="/clinical-intelligence"
+            className="group flex items-center gap-3 rounded-2xl border border-sky-200/70 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
+            data-testid="tile-repeat-testing-review"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900">Repeat Testing Review</span>
+              <span className="block truncate text-xs text-slate-500">
+                Re-eligibility queue for prior BrainWave / VitalWave / Ultrasound tests — payer interval,
+                repeat due date, and medical-necessity rationale. Separate from Initial Qualification.
+              </span>
+            </span>
+            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 sm:inline-flex">
+              Not connected yet
+            </span>
+          </Link>
+        </div>
+        <PlexusIQWorkspace
+          summary={summary}
+          batches={batches}
+          batchDetails={batchDetails}
+          runningBatchIds={runningBatchIds}
           analyzingBatchId={analyzingBatchId}
           analyzingPatients={analyzingPatients}
           onGenerateBatch={handleGenerateBatch}
@@ -809,6 +985,11 @@ export default function PlexusIQPage() {
           onUpdatePatient={handleUpdatePatient}
           onDeletePatient={handleDeletePatient}
           onAnalyzeOnePatient={handleAnalyzePatient}
+          onSelectionChange={setOperatingSelection}
+          focusBatch={focusBatch}
+          onFocusConsumed={handleFocusConsumed}
+          onAddPatient={() => setAddHubOpen(true)}
+          onOpenCalendar={() => setCalendarOpen(true)}
         />
       </main>
 
@@ -843,7 +1024,7 @@ export default function PlexusIQPage() {
         }}
         onPickBatchFlow={() => {
           setAddHubOpen(false);
-          setBulkOpen(true);
+          setBatchFlowOpen(true);
         }}
       />
 
@@ -853,6 +1034,34 @@ export default function PlexusIQPage() {
         onSubmit={handleAddPatient}
         pending={addPatientMut.isPending || createBatchMut.isPending}
         defaultPatientType={defaultPatientType}
+        defaultFacility={addDefaultFacility}
+        defaultScheduleDate={addDefaultScheduleDate}
+      />
+
+      <PlexusIQBatchFlowDialog
+        open={batchFlowOpen}
+        onClose={() => setBatchFlowOpen(false)}
+        batches={batches}
+        summary={summary}
+        batchDetails={batchDetails}
+        runningBatchIds={runningBatchIds}
+        onStartNew={() => {
+          // Fresh isolated intake: every import lands in a new batch.
+          batchPlacementRef.current = { mode: "newRun" };
+          setBatchFlowOpen(false);
+          setBulkOpen(true);
+        }}
+        onResume={(batchId) => {
+          // Continue an existing batch: imports append into it.
+          batchPlacementRef.current = { mode: "append", targetBatchId: batchId };
+          setActiveBatchId(batchId);
+          setBatchFlowOpen(false);
+          setBulkOpen(true);
+        }}
+        onViewBatch={(id, facility) => {
+          setFocusBatch({ id, facility });
+          setBatchFlowOpen(false);
+        }}
       />
 
       <PlexusIQBulkImportModal
@@ -862,6 +1071,8 @@ export default function PlexusIQPage() {
         onClinicalImport={handleClinicalImport}
         pending={bulkPending}
         progress={bulkProgress}
+        defaultFacility={addDefaultFacility}
+        defaultScheduleDate={addDefaultScheduleDate}
       />
 
       <PlexusIQDayModal

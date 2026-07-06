@@ -12,6 +12,7 @@ import { patientScreenings } from "./screening";
 import { patientExecutionCases } from "./executionCase";
 import { procedureEvents } from "./procedureEvents";
 import { invoices } from "./invoices";
+import { clinics } from "./clinics";
 
 export const INVOICE_READINESS_STATUSES = [
   "not_ready",
@@ -47,6 +48,8 @@ export type InvoiceReadinessBlocker = (typeof INVOICE_READINESS_BLOCKERS)[number
 
 export const invoiceReadinessSnapshots = pgTable("invoice_readiness_snapshots", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   executionCaseId: integer("execution_case_id").references(() => patientExecutionCases.id, { onDelete: "cascade" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   procedureEventId: integer("procedure_event_id").references(() => procedureEvents.id, { onDelete: "set null" }),

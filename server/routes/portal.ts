@@ -13,13 +13,16 @@ import {
   type DocumentKind,
   type AncillaryAppointment,
 } from "@shared/schema";
-import { and, eq, gte, lte, inArray } from "drizzle-orm";
+import { and, eq, gte, lte, inArray, sql } from "drizzle-orm";
 import {
   PORTAL_OUTREACH_BASE_CAP,
   PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD,
   PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR,
 } from "@shared/platformSettings";
 import { derivePatientType } from "@shared/patientType";
+import { listAssignableTeamMembers, resolveViewAsRosterMember } from "../services/teamMemberScope";
+import { directMessagesRepository } from "../repositories/directMessages.repo";
+import { insertDirectMessageSchema } from "@shared/schema/directMessages";
 
 type ConsentDoc = { id: number; sourceNotes: string | null; createdAt: Date | string; kind: string };
 
@@ -75,16 +78,26 @@ const SIGNED_BY_VALUES = new Set(["patient", "clinician", "technician", "liaison
 // this override (silently dropped — defense in depth).
 export async function allowedFacilities(
   req: Request,
-  opts: { viewAsUserId?: string | null } = {},
+  opts: { viewAsUserId?: string | null; viewAsRosterFacility?: string | null } = {},
 ): Promise<{ all: boolean; facilities: Set<string> }> {
   const isAdmin = (req.session.role ?? "") === "admin";
+  // Admin view-as: scope the response to the viewed-as team-member's
+  // facility allow-list EVEN THOUGH the caller is admin. The session role
+  // stays "admin" so writes still log the real admin identity.
+  //
+  // Preferred path is the roster facility (canonical: viewAsTeamMemberId
+  // carries an outreach_schedulers.id, and the roster is NOT linked to a
+  // login account in this org so userId matching never resolves). The
+  // legacy viewAsUserId path is kept for any caller still resolving a
+  // login-user view-as.
+  const viewAsFacility = isAdmin ? (opts.viewAsRosterFacility ?? null) : null;
+  if (viewAsFacility) {
+    return { all: false, facilities: new Set([viewAsFacility]) };
+  }
   const viewAs = isAdmin ? (opts.viewAsUserId ?? null) : null;
   if (viewAs) {
     const all = await storage.getOutreachSchedulers();
     const mine = all.filter((s) => s.userId === viewAs).map((s) => s.facility);
-    // Admin view-as: scope the response to the team-member's allow-list
-    // EVEN THOUGH the caller is admin. The session role stays "admin"
-    // so writes still log the real admin identity.
     return { all: false, facilities: new Set(mine) };
   }
   if (isAdmin) return { all: true, facilities: new Set() };
@@ -132,14 +145,36 @@ export async function resolveAdminViewAsUserId(
   return u.id;
 }
 
+// The View-as picker lists the actual clinic ROSTER (outreach_schedulers) —
+// the people who can receive assigned work — NOT login accounts filtered by
+// an exact role. This org has zero technician/liaison login accounts, so the
+// old role-filtered list was always empty even though call lists are
+// populated. Both PCS and ACS share the roster; the workspace label is kept
+// in the response only for display continuity. `id` is the roster id (the
+// canonical view-as token); `userId` is the optional linked login account.
 export async function listTeamMembersForWorkspace(
   workspace: ViewAsWorkspaceType,
-): Promise<Array<{ id: string; username: string; role: string; active: boolean }>> {
-  const expected = VIEWAS_WORKSPACE_TO_ROLE[workspace];
-  const users = await storage.getUsersByRole(expected);
-  return users
-    .filter((u) => u.active !== false)
-    .map((u) => ({ id: u.id, username: u.username, role: u.role, active: u.active }));
+): Promise<
+  Array<{
+    id: string;
+    username: string;
+    role: string;
+    active: boolean;
+    facility: string;
+    userId: string | null;
+    dailyTarget: number | null;
+  }>
+> {
+  const roster = await listAssignableTeamMembers();
+  return roster.map((m) => ({
+    id: m.id,
+    username: m.name,
+    role: workspace,
+    active: true,
+    facility: m.facility,
+    userId: m.userId,
+    dailyTarget: m.dailyTarget,
+  }));
 }
 
 function ensureFacility(allowed: { all: boolean; facilities: Set<string> }, facility: string | null): string | null {
@@ -206,8 +241,10 @@ export function registerPortalRoutes(app: Express) {
         return res.status(400).json({ error: "date must be YYYY-MM-DD" });
       }
       const q = req.query as Record<string, string | undefined>;
-      const viewAsUserId = await resolveAdminViewAsUserId(req, q.viewAsTeamMemberId);
-      const allowed = await allowedFacilities(req, { viewAsUserId });
+      const viewAsRoster = await resolveViewAsRosterMember(req, q.viewAsTeamMemberId);
+      const allowed = await allowedFacilities(req, {
+        viewAsRosterFacility: viewAsRoster?.facility ?? null,
+      });
       const denied = ensureFacility(allowed, facility || null);
       if (denied) return res.status(403).json({ error: denied });
 
@@ -705,6 +742,27 @@ export function registerPortalRoutes(app: Express) {
         throw innerErr;
       }
 
+      // ── Repeat Testing Loop trigger point (NOT YET WIRED) ──────────────
+      // This is the catch-all safety trigger for the Clinical Intelligence
+      // repeat-testing loop. When a report is uploaded for a BrainWave /
+      // VitalWave / Ultrasound test, the full implementation must (in order,
+      // and only from real data — never fabricated):
+      //   1. Confirm the report is saved + linked to patientScreeningId,
+      //      executionCaseId, and serviceType (report already saved above).
+      //   2. Run documentation reconciliation via the Ancillary Readiness
+      //      read model (server/services/ancillary/ancillaryReadModel.ts):
+      //      report / order_note / post_procedure_note Present|Missing.
+      //   3. Create a Clinical Intelligence result-review record
+      //      (ci_evidence_records) — extraction stays honest/placeholder
+      //      until an AI extractor is wired.
+      //   4. Create/update a repeat opportunity (proposed repeat_opportunities
+      //      table): payer interval PPO 6mo / Medicare 12mo, repeat due date,
+      //      admin-review-open date = due date − 1 month.
+      //   5. Append patient_journey_events (report_uploaded, procedure_note_*,
+      //      order_note_*, repeat_opportunity_created) where supported.
+      // Order note stays conceptually tied to SCHEDULING, not report upload;
+      // report upload only catches a MISSING order note.
+      // Full spec: docs/architecture/clinical-intelligence-repeat-testing-loop.md
       res.status(201).json({ id: doc.id, title: doc.title, filename: doc.filename });
     } catch (err: any) {
       console.error("[portal/uploads]", err);
@@ -920,8 +978,10 @@ export function registerPortalRoutes(app: Express) {
   app.get("/api/portal/my-facilities", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      const viewAsUserId = await resolveAdminViewAsUserId(req, q.viewAsTeamMemberId);
-      const allowed = await allowedFacilities(req, { viewAsUserId });
+      const viewAsRoster = await resolveViewAsRosterMember(req, q.viewAsTeamMemberId);
+      const allowed = await allowedFacilities(req, {
+        viewAsRosterFacility: viewAsRoster?.facility ?? null,
+      });
       if (allowed.all) {
         // Admin gets every facility ever used by an appointment.
         const rows = await db.selectDistinct({ facility: ancillaryAppointments.facility })
@@ -958,6 +1018,232 @@ export function registerPortalRoutes(app: Express) {
       res.json({ workspace, teamMembers: rows });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to list team members" });
+    }
+  });
+
+  // ─── Direct (1:1) messaging ────────────────────────────────────────────
+  // Real person-to-person chat between logged-in team members. Sender is
+  // always resolved from the session, never trusted from the client.
+
+  // Roster of people the current user can message: every active login user
+  // except themselves. Includes an unread count per person.
+  app.get("/api/portal/direct-messages/roster", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const [users, unread] = await Promise.all([
+        storage.getAllUsers(),
+        directMessagesRepository.unreadBySender(me),
+      ]);
+      const unreadMap = new Map(unread.map((u) => [u.fromUserId, u.count]));
+      const roster = users
+        .filter((u) => u.id !== me && u.active !== false)
+        .map((u) => ({
+          id: u.id,
+          username: u.username,
+          role: u.role ?? null,
+          unread: unreadMap.get(u.id) ?? 0,
+        }))
+        .sort((a, b) => a.username.localeCompare(b.username));
+      res.json({ roster });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load messaging roster" });
+    }
+  });
+
+  // Conversation with one other user (oldest-first). Marks their messages read.
+  app.get("/api/portal/direct-messages/:otherUserId", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const other = String(req.params.otherUserId);
+      if (!other || other === me) {
+        return res.status(400).json({ error: "Invalid conversation partner" });
+      }
+      const messages = await directMessagesRepository.listConversation(me, other);
+      await directMessagesRepository.markConversationRead(me, other);
+      res.json({ messages });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load conversation" });
+    }
+  });
+
+  // Send a direct message. Sender = session user.
+  app.post("/api/portal/direct-messages", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const parsed = insertDirectMessageSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid message", code: "VALIDATION" });
+      }
+      if (parsed.data.recipientUserId === me) {
+        return res.status(400).json({ error: "Cannot message yourself" });
+      }
+      const recipient = await storage.getUser(parsed.data.recipientUserId);
+      if (!recipient) {
+        return res.status(404).json({ error: "Recipient not found" });
+      }
+      const message = await directMessagesRepository.send({
+        senderUserId: me,
+        recipientUserId: parsed.data.recipientUserId,
+        body: parsed.data.body,
+      });
+      res.status(201).json({ message });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to send message" });
+    }
+  });
+
+  // ── Left-rail tool: Patient Search ─────────────────────────────────────────
+  // Name / DOB / phone / insurance lookup constrained to the user's assigned
+  // facilities (admins see everything). Effective facility is the screening's
+  // own facility with the batch facility as fallback — same rule as
+  // patientFacility() above.
+  app.get("/api/portal/patient-search", requirePortalRole, async (req, res) => {
+    try {
+      const query = String(req.query.query ?? "").trim();
+      if (query.length < 2) return res.json([]);
+      const facilityFilter = String(req.query.facility ?? "").trim();
+      const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 100);
+
+      const allowed = await allowedFacilities(req);
+      if (facilityFilter) {
+        const denied = ensureFacility(allowed, facilityFilter);
+        if (denied) return res.status(403).json({ error: denied });
+      }
+      if (!allowed.all && allowed.facilities.size === 0) return res.json([]);
+
+      const like = `%${query}%`;
+      const facilityConds = facilityFilter
+        ? sql`AND COALESCE(ps.facility, sb.facility) = ${facilityFilter}`
+        : allowed.all
+          ? sql``
+          : sql`AND COALESCE(ps.facility, sb.facility) IN (${sql.join([...allowed.facilities].map((f) => sql`${f}`), sql`, `)})`;
+
+      const result = await db.execute<{
+        id: number;
+        name: string;
+        dob: string | null;
+        facility: string | null;
+        insurance: string | null;
+        phone: string | null;
+        appointment_status: string | null;
+        commit_status: string | null;
+      }>(sql`
+        SELECT ps.id, ps.name, ps.dob,
+               COALESCE(ps.facility, sb.facility) AS facility,
+               ps.insurance, ps.phone_number AS phone,
+               ps.appointment_status, ps.commit_status
+        FROM patient_screenings ps
+        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        WHERE ps.deleted_at IS NULL
+          AND (
+            ps.name ILIKE ${like}
+            OR ps.dob ILIKE ${like}
+            OR ps.phone_number ILIKE ${like}
+            OR ps.insurance ILIKE ${like}
+          )
+          ${facilityConds}
+        ORDER BY ps.name ASC, ps.id DESC
+        LIMIT ${limit}
+      `);
+
+      res.json(result.rows.map((r) => ({
+        patientScreeningId: r.id,
+        name: r.name,
+        dob: r.dob,
+        facility: r.facility,
+        insurance: r.insurance,
+        phone: r.phone,
+        appointmentStatus: r.appointment_status,
+        commitStatus: r.commit_status,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Patient search failed" });
+    }
+  });
+
+  // ── Left-rail tool: My Patients ────────────────────────────────────────────
+  // Patients the session user has touched recently — sourced from
+  // outreach_calls (scheduler_user_id = me) and patient_journey_events
+  // (actor_user_id = me), newest activity first. Facility-scoped like
+  // patient-search so a technician/liaison never sees outside their clinics.
+  app.get("/api/portal/my-patients", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const query = String(req.query.query ?? "").trim();
+      const facilityFilter = String(req.query.facility ?? "").trim();
+      const limit = Math.min(parseInt(String(req.query.limit ?? "100"), 10) || 100, 200);
+
+      const allowed = await allowedFacilities(req);
+      if (facilityFilter) {
+        const denied = ensureFacility(allowed, facilityFilter);
+        if (denied) return res.status(403).json({ error: denied });
+      }
+      if (!allowed.all && allowed.facilities.size === 0) return res.json([]);
+
+      const facilityConds = facilityFilter
+        ? sql`AND COALESCE(ps.facility, sb.facility) = ${facilityFilter}`
+        : allowed.all
+          ? sql``
+          : sql`AND COALESCE(ps.facility, sb.facility) IN (${sql.join([...allowed.facilities].map((f) => sql`${f}`), sql`, `)})`;
+      const queryConds = query
+        ? sql`AND (ps.name ILIKE ${`%${query}%`} OR ps.dob ILIKE ${`%${query}%`})`
+        : sql``;
+
+      const result = await db.execute<{
+        id: number;
+        name: string;
+        dob: string | null;
+        facility: string | null;
+        appointment_status: string | null;
+        commit_status: string | null;
+        last_at: string | null;
+        last_type: string | null;
+        last_summary: string | null;
+      }>(sql`
+        WITH touches AS (
+          SELECT oc.patient_screening_id AS pid, oc.started_at AS at,
+                 'call'::text AS type, oc.outcome AS summary
+          FROM outreach_calls oc
+          WHERE oc.scheduler_user_id = ${me}
+          UNION ALL
+          SELECT pje.patient_screening_id, pje.created_at,
+                 pje.event_type, pje.summary
+          FROM patient_journey_events pje
+          WHERE pje.actor_user_id = ${me}
+            AND pje.patient_screening_id IS NOT NULL
+        ),
+        latest AS (
+          SELECT DISTINCT ON (pid) pid, at, type, summary
+          FROM touches
+          ORDER BY pid, at DESC
+        )
+        SELECT ps.id, ps.name, ps.dob,
+               COALESCE(ps.facility, sb.facility) AS facility,
+               ps.appointment_status, ps.commit_status,
+               l.at AS last_at, l.type AS last_type, l.summary AS last_summary
+        FROM latest l
+        JOIN patient_screenings ps ON ps.id = l.pid AND ps.deleted_at IS NULL
+        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        WHERE TRUE
+          ${facilityConds}
+          ${queryConds}
+        ORDER BY l.at DESC
+        LIMIT ${limit}
+      `);
+
+      res.json(result.rows.map((r) => ({
+        patientScreeningId: r.id,
+        name: r.name,
+        dob: r.dob,
+        facility: r.facility,
+        appointmentStatus: r.appointment_status,
+        commitStatus: r.commit_status,
+        lastActivityAt: r.last_at,
+        lastActivityType: r.last_type,
+        lastActivitySummary: r.last_summary,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load my patients" });
     }
   });
 }

@@ -1,17 +1,10 @@
 // Patient Care Specialist Workspace.
 //
-// This is one of the two team-member workspaces. It is intentionally
-// NOT Outreach / Engagement Center — the standalone Outreach surface is
-// available separately at /engagement-center.
-//
-// Both team-member workspaces (Patient Care Specialist + Ancillary Care
-// Specialist) share the same shell architecture provided by
-// ClinicWorkflowPortal → PortalShell. Workspace-specific customization
-// (default right-panel mode, visible label) is applied at the
-// ClinicWorkflowPortal boundary; internals stay unchanged in this batch.
+// Uses the Playground shell. Messaging is a left-rail tab, not a left-rail
+// button group, and the dock exposes a purple iMessage-style popup.
 
-import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
+import TeamMemberPortalPlayground from "@/components/portal/TeamMemberPortalPlayground";
 
 export default function PatientCareSpecialistPortalPage() {
-  return <ClinicWorkflowPortal role="patientCareSpecialist" />;
+  return <TeamMemberPortalPlayground role="patientCareSpecialist" />;
 }

@@ -7,7 +7,7 @@ import {
 } from "@shared/schema/billing";
 
 export interface IBillingRepository {
-  listAll(): Promise<BillingRecord[]>;
+  listAll(clinicId?: number | null): Promise<BillingRecord[]>;
   getByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined>;
   create(record: InsertBillingRecord): Promise<BillingRecord>;
   update(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined>;
@@ -15,8 +15,9 @@ export interface IBillingRepository {
 }
 
 export class DbBillingRepository implements IBillingRepository {
-  async listAll(): Promise<BillingRecord[]> {
-    return db.select().from(billingRecords).orderBy(desc(billingRecords.createdAt));
+  async listAll(clinicId?: number | null): Promise<BillingRecord[]> {
+    const cf = clinicId != null ? eq(billingRecords.clinicId, clinicId) : undefined;
+    return db.select().from(billingRecords).where(cf).orderBy(desc(billingRecords.createdAt));
   }
 
   async getByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined> {

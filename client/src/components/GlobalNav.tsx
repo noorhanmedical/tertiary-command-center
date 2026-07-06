@@ -9,7 +9,6 @@ import {
   Receipt,
   Users2,
   Database,
-  Shield,
   ChevronLeft,
   ChevronRight,
   CheckSquare,
@@ -17,6 +16,12 @@ import {
   Library,
   Stethoscope,
   HeartHandshake,
+  Shield,
+  Radar,
+  ScanLine,
+  BarChart3,
+  ClipboardCheck,
+  Landmark,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
@@ -30,7 +35,9 @@ type NavItemDef = {
 
 const NAV_ITEMS: NavItemDef[] = [
   { href: "/home",             label: "Home",             Icon: HomeIcon,     roles: ["admin", "clinician", "scheduler"] },
+  { href: "/mission-control",  label: "Mission Control",  Icon: Radar,        roles: ["admin"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
+  { href: "/imaging-central",  label: "Imaging Central",  Icon: ScanLine,     roles: ["admin", "clinician", "technician", "liaison"] },
   // Phase-1 team-portal correction: there is no standalone Scheduler
   // Portal product. The legacy /scheduler-portal route mounts the
   // OutreachPage (marketing / scheduler-coverage metrics) and is
@@ -43,15 +50,19 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
-  { href: "/patient-directory", label: "Patient Directory", Icon: Database,     roles: ["admin", "clinician", "biller"] },
+  { href: "/clinic-analytics", label: "Clinic Analytics", Icon: BarChart3,      roles: ["admin"] },
+  { href: "/clinic-onboarding", label: "Clinic Onboarding", Icon: ClipboardCheck, roles: ["admin"] },
+  { href: "/patient-directory", label: "Patient EHR", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   // Slice 1.5: legacy duplicate Patient-Directory-live nav item
   // removed. The /patient-directory/live URL still redirects to
   // /patient-directory for back-compat with existing bookmarks.
+  { href: "/plexus-bank",      label: "Plexus Bank",      Icon: Landmark,     roles: ["admin"] },
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
-  { href: "/drive",            label: "Plexus Drive",     Icon: FolderOpen,   roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
+  { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },
   { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
   { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  { href: "/admin/settings",   label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {
@@ -118,11 +129,24 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
   const isActive = (href: string) => {
     if (href === "/home") return location === "/home" || location === "/";
     if (href === "/schedule") return location === "/schedule";
+    if (href === "/admin/settings") {
+      return (
+        location === "/admin/settings" ||
+        location === "/admin" ||
+        location === "/admin-ops" ||
+        location.startsWith("/admin/") ||
+        location.startsWith("/admin-ops/") ||
+        location === "/audit-log" ||
+        location === "/call-list-audit" ||
+        location === "/settings" ||
+        location === "/billing/auditor" ||
+        location === "/billing/remittance"
+      );
+    }
     return location === href || location.startsWith(href + "/");
   };
 
   const visibleNavItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
-  const canSeeAdmin = userRole === "admin";
 
   return (
     <nav
@@ -130,22 +154,7 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
       data-testid="global-nav"
       aria-label="Global navigation"
     >
-      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-between px-3 py-3"} border-b border-finance-dark-3`}>
-        {collapsed ? (
-          <img
-            src="/plexus-logo-icon.png"
-            alt="Plexus Ancillary Services"
-            className="w-8 h-8 object-contain"
-            data-testid="img-nav-logo"
-          />
-        ) : (
-          <img
-            src="/plexus-logo.png"
-            alt="Plexus Ancillary Services"
-            className="h-8 w-auto object-contain rounded-md"
-            data-testid="img-nav-logo"
-          />
-        )}
+      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-end px-3 py-3"} border-b border-finance-dark-3`}>
         <button
           onClick={() => { setManualOverride(true); setCollapsed((c) => !c); }}
           className="text-slate-400 hover:text-white transition-colors rounded-lg p-1 hover:bg-finance-dark-3"
@@ -199,30 +208,6 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
       </div>
 
       <div className="border-t border-finance-dark-3 px-2 py-2 space-y-0.5">
-        {canSeeAdmin && (
-          <>
-            {!collapsed && (
-              <div className="px-2 pt-1 pb-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Settings</span>
-              </div>
-            )}
-            <Link href="/admin">
-              <div
-                className={`flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
-                  isActive("/admin") || isActive("/admin-ops") || isActive("/settings")
-                    ? "bg-white text-finance-text shadow-sm"
-                    : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
-                } ${collapsed ? "justify-center" : ""}`}
-                data-testid="nav-item-admin"
-                title={collapsed ? "Admin" : undefined}
-              >
-                <Shield className="w-4 h-4 shrink-0" strokeWidth={1.75} />
-                {!collapsed && <span className="text-[14px] font-medium truncate">Admin</span>}
-              </div>
-            </Link>
-          </>
-        )}
-
       </div>
     </nav>
   );

@@ -1,0 +1,174 @@
+CONFIRMED — Engagement Center Assignment Pool update
+
+1. Collapsed/expanded patient row fields
+
+Yes, simplify the visible row.
+
+Inside the expanded date accordion, each patient row should show ONLY:
+
+- Patient
+- Call Type
+- Assigned To
+- Status
+
+Keep it clean and operational.
+
+Do NOT clutter the row with:
+- Clinic
+- Service
+- Category
+- Source
+- Last Call Result
+- Next Action
+- full Status Trail
+
+Move those details to the right-hand detail panel when the patient is selected.
+
+Row examples:
+
+Patient: John Smith
+Call Type: Visit Patient Scheduling
+Assigned To: —
+Status: Awaiting assignment
+
+Patient: Mary Jones
+Call Type: Outreach Patient Scheduling
+Assigned To: Ashraful
+Status: Assigned
+
+Patient: Sam Wilson
+Call Type: Repeat Test Due
+Assigned To: Marge
+Status: On call list
+
+Patient: Lisa Brown
+Call Type: —
+Assigned To: —
+Status: Awaiting assignment
+
+If Call Type is missing because there is no backing data, show "—" honestly. Do not fabricate.
+
+2. Date dropdown behavior
+
+Yes.
+
+Keep the date + facility grouping headers, but make them expand INLINE as an accordion.
+
+Do NOT open a floating popup.
+
+When I click a date group, it should expand downward in the main center list and show the patient rows directly under that date.
+
+The layout should feel like:
+
+Thursday, July 2    Taylor Family Practice    11
+  Patient            Call Type                    Assigned To    Status
+  John Smith         Visit Patient Scheduling     —              Awaiting assignment
+  Mary Jones         Outreach Patient Scheduling  Ashraful       Assigned
+  Sam Wilson         Repeat Test Due              Marge          On call list
+
+The accordion should push content down naturally.
+
+3. Status wording
+
+Use simple human status labels.
+
+For unassigned:
+Awaiting assignment
+
+For assigned:
+Assigned
+
+For assigned and visible on call list:
+On call list
+
+For assigned but team member off:
+Review assignment
+
+For kept assigned despite issue:
+Kept assigned
+
+For scheduled:
+Scheduled
+
+For declined:
+Declined
+
+For cooldown:
+Cooldown
+
+Keep these short. The full chronological Status Trail belongs in the right detail panel, not on the row.
+
+4. Right-hand detail panel
+
+When a patient row is clicked, show the fuller detail there:
+
+- Patient
+- Clinic/facility
+- Service/ancillary
+- Category
+- Call Type
+- Source
+- Assigned To
+- Status
+- Compact Status Trail
+- Last Call Result
+- Next Action
+- History/timeline if available
+- Actions
+
+This is where the detail belongs, not in the center row.
+
+5. Patient Support flow
+
+Correct: Patient Support is not really wired yet because there is no backing field on patient_execution_cases today.
+
+For now:
+- Patient Support items should only show when real backing data exists.
+- Do not fabricate Patient Support classifications.
+- If no backing data exists, show Category/Call Type/Source as "—".
+- Assignment still works the same because assignment depends on assignedTeamMemberId, not taxonomy.
+
+A patient support case can still be assigned if it exists in patient_execution_cases, but if there is no real call-type data, the call type should show "—".
+
+Do not create fake Patient Support data just to fill the UI.
+
+6. Keep current Repository-style organization
+
+Do not redesign the whole screen.
+
+Keep:
+- top metrics
+- left Smart Filters
+- date/facility grouped center list
+- right detail panel
+- bulk action bar above date groups
+
+Just change the date group behavior so expansion is inline and the patient rows are cleaner.
+
+7. Distribution remains inside Assignment Pool
+
+Do not create a Distribution tab.
+
+Distribution remains an action inside Assignment Pool.
+
+Bulk actions stay above the date groups:
+- Select all
+- Distribute
+- Preview Distribution
+- Apply Distribution
+- Redistribute
+- Remove from Call List
+
+8. Validation
+
+Verify:
+- clicking a date group expands inline, not as a popup
+- expanded patient rows show only Patient, Call Type, Assigned To, Status
+- unassigned rows show "Awaiting assignment"
+- missing call type shows "—"
+- full detail appears in the right panel after selecting a patient
+- date grouping remains like the current Repository
+- no fake Patient Support data is created
+- no Distribution tab is created
+- npm run check passes
+- npm run build passes

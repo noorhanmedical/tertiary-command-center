@@ -1,0 +1,410 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report if available:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA if available
+   - risks
+   - whether I need to push from the Replit Git pane
+
+TASK:
+
+Make Patient Directory sections configurable by admin.
+
+Current need:
+Patient Directory is becoming a true EMR-style chart with many sections:
+
+- Demographics
+- Ancillary Overview
+- Cooldown Eligibility
+- Qualifying Tests
+- Diagnoses
+- Insurance & Eligibility
+- Providers
+- Medications
+- Allergies
+- Labs
+- Imaging
+- Vitals
+- Encounters / Notes
+- Calls & Comms
+- Scheduling
+- Documents
+- Billing / Readiness
+- Ad Automation
+
+Admin needs the ability to allow or restrict which sections appear for different user roles or portal types.
+
+Goal:
+Create admin-configurable Patient Directory section visibility and access rules.
+
+Architecture rules:
+- Patient Directory remains the canonical patient profile/chart area.
+- Do not remove sections from the codebase.
+- Do not hard-delete any patient data.
+- This is visibility/access configuration only.
+- Use real role/session information.
+- Do not expose restricted sections to unauthorized users.
+- Do not create fake patient data.
+- Do not break Team Member Portal deep links.
+- Do not break Patient Directory direct route.
+- Do not break admin access.
+- Do not change schema unless absolutely required.
+- If schema is required, add a proper migration.
+
+PART 1 — Inspect current Patient Directory section model
+
+Before editing, inspect and report:
+
+- Patient Directory route/page/component files
+- current section/nav component
+- current section IDs or labels
+- current role/session access logic
+- current Admin Settings/config infrastructure if any
+- whether Patient Directory section settings already exist
+- whether existing settings tables/config endpoints can be reused
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Section registry
+
+Create or formalize a Patient Directory section registry.
+
+Each section should have:
+
+- sectionId
+- label
+- description
+- defaultVisible
+- defaultAllowedRoles
+- category/group
+- sortOrder
+- sensitive flag if appropriate
+
+Use these section IDs:
+
+1. demographics
+2. ancillary_overview
+3. cooldown_eligibility
+4. qualifying_tests
+5. diagnoses
+6. insurance_eligibility
+7. providers
+8. medications
+9. allergies
+10. labs
+11. imaging
+12. vitals
+13. encounters_notes
+14. calls_comms
+15. scheduling
+16. documents
+17. billing_readiness
+18. ad_automation
+
+PART 3 — Default visibility by role
+
+Recommended default visibility:
+
+Admin / Super Admin:
+- all sections visible with full access
+
+PCS:
+- demographics
+- ancillary_overview
+- cooldown_eligibility
+- qualifying_tests
+- diagnoses
+- insurance_eligibility summary only
+- providers
+- calls_comms
+- scheduling
+- documents limited to Clinician PDF / Plexus PDF
+- ad_automation summary if needed
+
+ACS:
+- demographics
+- ancillary_overview
+- cooldown_eligibility
+- qualifying_tests
+- diagnoses
+- providers
+- calls_comms
+- scheduling
+- documents limited to Clinician PDF / Plexus PDF
+- billing_readiness limited operational readiness
+
+Billing:
+- demographics
+- insurance_eligibility
+- diagnoses
+- documents
+- billing_readiness
+- scheduling summary if needed
+
+Provider / Clinician:
+- demographics
+- ancillary_overview
+- qualifying_tests
+- diagnoses
+- medications
+- allergies
+- labs
+- imaging
+- vitals
+- encounters_notes
+- documents
+- billing_readiness if appropriate
+
+Manager:
+- demographics
+- ancillary_overview
+- cooldown_eligibility
+- qualifying_tests
+- diagnoses
+- providers
+- calls_comms
+- scheduling
+- documents summary
+- billing_readiness summary
+- ad_automation summary
+
+If the app has different role names, map to the closest existing role model.
+
+PART 4 — Admin configuration UI
+
+Add an admin configuration screen for Patient Directory section visibility.
+
+Preferred location:
+- Admin Settings
+- or Patient Directory Settings
+- or an admin-only configuration panel inside Patient Directory
+
+UI should allow admin to configure by role/team:
+
+- Admin
+- PCS
+- ACS
+- Billing
+- Provider / Clinician
+- Manager
+- Custom if existing app supports custom roles
+
+For each role, admin can configure:
+
+- hidden
+- summary access
+- full access
+- read-only if applicable
+
+UI should be clean and premium:
+
+- section rows/cards
+- role selector or role columns
+- clear toggles
+- clear save button
+- no clutter
+- no tiny pill-heavy design
+
+PART 5 — Apply configuration to Patient Directory left nav
+
+The Patient Directory left navigation should only show sections allowed for the current user.
+
+Rules:
+- If section is hidden, do not show it in the left nav.
+- If section is summary-only, show it but render only summary content.
+- If user tries to deep-link to a hidden section, show an access denied / section unavailable state.
+- Do not silently show restricted content.
+- Admin should be able to preview by role if existing admin preview pattern supports it.
+
+PART 6 — Apply configuration to section content
+
+Do not rely only on hiding nav items.
+
+Protect the actual content render.
+
+Examples:
+
+If user is not allowed to see Labs:
+- Labs nav item should not show.
+- Direct URL/deep-link should not render lab data.
+- Show: “This section is not available for your role.”
+
+If user is allowed summary-only:
+- Show only summary card.
+- Hide detailed table/results.
+
+If user has full access:
+- Show full section.
+
+PART 7 — Backend safety if needed
+
+If Patient Directory sections are backed by separate endpoints and sensitive data is fetched independently:
+
+- protect backend endpoints with role checks where practical
+- do not fetch restricted heavy sections for unauthorized users
+- avoid fetching hidden labs/imaging/medications for roles that cannot view them
+
+At minimum:
+- frontend must not render restricted sections
+- backend should not return sensitive details to unauthorized users if existing route structure allows control
+
+Do not broad-refactor backend routes unless required.
+
+PART 8 — Persistence
+
+Admin configuration must persist.
+
+Use existing settings/config infrastructure if available.
+
+If no settings store exists:
+- add a narrow additive table or config entry for patient_directory_section_access
+- include a migration
+- do not use localStorage for production-critical access settings
+
+Suggested data shape:
+
+- role
+- sectionId
+- accessLevel: hidden | summary | full
+- visible
+- updatedBy
+- updatedAt
+
+Settings must survive refresh.
+
+PART 9 — Defaults and fallback
+
+If no admin configuration exists:
+- apply safe default visibility by role
+- admin/super admin sees all
+- normal ACS/PCS see only operational sections needed for call/schedule work
+- do not accidentally expose every EMR section to every user
+
+PART 10 — Ancillary Overview special rule
+
+Ancillary Overview should be visible to ACS/PCS by default.
+
+This is their call/scheduling snapshot.
+
+It should include:
+- call reason
+- active ancillary targets
+- last tests/results summary
+- cooldown summary
+- next action
+- scheduling status
+- recent call outcome
+- Clinician/Plexus PDF status
+- Call / Schedule / PDFs quick actions
+
+Detailed reasoning remains behind info popups or in the Qualifying Tests section.
+
+PART 11 — Documents special rule
+
+Documents should support restricted sub-access where feasible.
+
+For ACS/PCS:
+- Clinician PDF
+- Plexus PDF
+- scheduling-related documents
+- consent if needed
+
+For billing:
+- billing packet
+- insurance card
+- order
+- procedure note
+- report
+- claim/readiness documents
+
+For provider:
+- clinical documents
+- reports
+- procedure notes
+- PDFs
+
+If sub-document permissions are too large for this pass:
+- implement section-level control first
+- leave sub-document permissions as a clearly marked future enhancement
+
+PART 12 — Audit
+
+If existing audit infrastructure exists, record when admin changes section visibility settings:
+
+- role changed
+- section changed
+- access level changed
+- changed by
+- changed at
+
+Do not create a new audit system if one already exists.
+
+PART 13 — Validation
+
+Verify and report:
+
+1. Admin can see all Patient Directory sections.
+2. Admin can open Patient Directory section settings.
+3. Admin can hide Labs for PCS.
+4. PCS user no longer sees Labs in the left nav.
+5. PCS direct deep-link to Labs does not render lab data.
+6. Admin can re-enable Labs for PCS.
+7. Demographics can be configured but remains enabled by default.
+8. Ancillary Overview remains visible to ACS/PCS by default.
+9. Billing user can see Billing / Readiness if role exists.
+10. Restricted sections are not fetched/rendered unnecessarily if feasible.
+11. Settings persist after refresh.
+12. npm run check passes.
+13. npm run build passes.
+
+DO NOT:
+- Do not delete Patient Directory sections.
+- Do not delete patient data.
+- Do not invent patient data.
+- Do not break Team Member Portal call list.
+- Do not break Patient Directory deep links.
+- Do not expose restricted sections through direct links.
+- Do not use localStorage for production-critical access settings.
+- Do not change unrelated modules.
+- Do not merge to main.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Add Patient Directory section access settings
+
+If you can push from this workspace, push to:
+origin plexus-iq-admin-review-persistence-fix
+
+If you cannot push, report that I need to push from the Replit Git pane.

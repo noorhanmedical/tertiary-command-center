@@ -3,6 +3,7 @@ import {
   createInsertSchema, z,
 } from "./_common";
 import { documents } from "./documents";
+import { clinics } from "./clinics";
 
 export const ANCILLARY_DOCUMENT_TYPES = [
   "informed_consent",
@@ -28,6 +29,8 @@ export type AncillaryDocumentApprovalStatus = typeof ANCILLARY_DOCUMENT_APPROVAL
 
 export const ancillaryDocumentTemplates = pgTable("ancillary_document_templates", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   serviceType: text("service_type").notNull(),
   documentType: text("document_type").notNull(),
   documentId: integer("document_id").references(() => documents.id, { onDelete: "set null" }),

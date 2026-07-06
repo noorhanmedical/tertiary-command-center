@@ -1,0 +1,102 @@
+IMPORTANT SETTINGS REQUIREMENT:
+
+Make the call distribution targets configurable in Admin Settings / Engagement Call Settings.
+
+Do not hardcode these as permanent values:
+- 100% workday = 30 completed calls
+- 50% workday = 15 completed calls
+- 25% workday = 7 completed calls
+- 0% workday = 0 completed calls
+- scheduled KPI = Math.round(completedKpi * 0.5)
+- visit call percentage
+- outreach call percentage
+
+These can be default values, but admin must be able to edit them.
+
+Required admin-configurable settings:
+
+1. Global defaults:
+- fullDayCompletedCallTarget, default 30
+- scheduledPatientTargetPercent, default 50%
+- defaultVisitCallPercent, default 75%
+- defaultOutreachCallPercent, default 25%
+- rounding mode for scheduled KPI:
+  - round
+  - floor
+  - ceil
+  Default: round
+
+2. Workday tiers:
+Admin should be able to configure workday percentage tiers, for example:
+- 100% → 30 completed calls
+- 50% → 15 completed calls
+- 25% → 7 completed calls
+- 0% → 0 completed calls
+
+Do not assume only these tiers forever.
+Allow future tiers like:
+- 75%
+- 33%
+- 20%
+
+3. Per-team-member overrides:
+Admin should be able to override per team member:
+- workingToday
+- callWorkdayPercent
+- completedCallKpi
+- scheduledPatientKpi
+- visitCallPercent
+- outreachCallPercent
+- facilities covered
+- active/inactive
+
+4. Calculation rules:
+Use this priority order:
+
+A. If admin sets a per-team-member explicit completedCallKpi, use that.
+B. Else if the selected workday percent matches a configured tier, use that tier’s completedCallKpi.
+C. Else calculate from fullDayCompletedCallTarget * callWorkdayPercent.
+
+For scheduledPatientKpi:
+A. If admin sets a per-team-member explicit scheduledPatientKpi, use that.
+B. Else calculate from completedCallKpi * scheduledPatientTargetPercent using the configured rounding mode.
+C. Default rounding mode is round.
+
+For visit/outreach:
+A. If admin sets per-member visit/outreach split, use it.
+B. Else use global defaults.
+C. Ensure visit + outreach = 100%.
+D. Use the same configured rounding rule or deterministic balancing so visit target + outreach target = completedCallKpi.
+
+5. Persistence:
+These settings must persist after refresh.
+Do not store production-critical settings only in localStorage.
+Use existing settings/config infrastructure if available.
+If new schema is needed, add a narrow additive migration.
+
+6. UI:
+Add this under Admin Settings / Engagement Call Settings or inside the Engagement Center Call Settings admin section if that is the current settings location.
+
+The UI should allow admin to edit:
+- global full-day call target
+- scheduled target percentage
+- rounding mode
+- default visit/outreach split
+- workday tiers
+- per-member overrides
+
+Make it premium and clean, not a raw ugly spreadsheet.
+
+7. Validation:
+Verify:
+- Default config gives:
+  100% → 30 completed / 15 scheduled
+  50% → 15 completed / 8 scheduled
+  25% → 7 completed / 4 scheduled with round mode
+  0% → 0 / 0
+- If admin changes scheduledPatientTargetPercent to 40%, scheduled KPI recalculates.
+- If admin changes rounding mode to floor, values update.
+- If admin overrides Brian to 7 completed / 3 scheduled, that explicit override wins.
+- If admin adds 75% tier, it can be used.
+- Settings persist after refresh.
+- Distribution uses configured settings, not hardcoded constants.

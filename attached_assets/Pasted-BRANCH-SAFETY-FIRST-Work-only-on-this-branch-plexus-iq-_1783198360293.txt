@@ -1,0 +1,473 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report if available:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+TASK:
+
+Redesign Engagement Center around three simple areas:
+
+1. Assignment Pool
+2. Call Results
+3. Call Settings
+
+Current problem:
+Engagement Center is conceptually confusing. Separate buckets like “Needs Assignment,” “Needs Redistribution,” “Carryover,” and “Assigned Today” are too hard to understand. A patient can be assigned, on a call list, carryover, overdue, or associated with an unavailable team member at the same time.
+
+Goal:
+Replace confusing hard-coded assignment buckets with one clear Assignment Pool that tells the patient’s assignment story chronologically. Keep Call Results and Call Settings separate.
+
+Core model:
+Engagement Center = Assignment Pool + Call Results + Call Settings.
+
+Architecture rules:
+- Admin Review approves patients/tests.
+- Approved patients enter Engagement Center Assignment Pool.
+- Assignment Pool is the main/default Engagement screen.
+- Engagement Center controls assignment, reassignment, distribution, and monitoring.
+- Team Member Portal remains where ACS/PCS actually work assigned call lists.
+- patient_execution_cases remains the source of truth for current assignment/work state.
+- patient_journey_events remains the source of history/timeline.
+- Do not automatically assign every approved patient to team members.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments for Engagement-assigned call work.
+- Do not use Google Calendar.
+- Do not show PDF/document status in Assignment Pool rows.
+- Do not change schema unless absolutely required. If schema is required, add a proper migration.
+
+PART 1 — Inspect current Engagement Center
+
+Before editing, inspect and report:
+- Engagement Center route/page/component files
+- current tabs/components
+- current Repository component
+- current assignment/distribution component
+- current Call Results/metrics component if any
+- current Call Settings component if any
+- data hooks/endpoints used by Engagement Center
+- how Admin Review-approved patients enter Engagement
+- how patient_execution_cases are created/updated
+- how assignedTeamMemberId is stored
+- how Team Member Portal reads assigned patients
+- how patient_journey_events are written/read
+- how call results are stored
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Engagement Center top-level structure
+
+Create or reorganize Engagement Center into exactly these main tabs/areas:
+
+1. Assignment Pool
+2. Call Results
+3. Call Settings
+
+Assignment Pool should be the default selected tab.
+
+Do not create separate confusing tabs like:
+- Needs Assignment
+- Needs Redistribution
+- Carryover
+- Assigned Today
+
+Those should be filters/states within the Assignment Pool, not separate main pages.
+
+PART 3 — Assignment Pool concept
+
+Rename/reframe Repository as:
+
+Assignment Pool
+
+Assignment Pool means:
+All Engagement-ready patients/cases in one pool, including:
+- newly approved patients from Admin Review
+- unassigned patients
+- assigned patients
+- patients currently on a team member call list
+- carryover patients
+- patients whose team member is off/unavailable
+- scheduled patients
+- completed patients
+- declined/cooldown patients
+
+Do not split them into separate hard-coded buckets.
+
+PART 4 — Assignment Pool row design
+
+Each row/card should show only assignment and call-work state.
+
+Each row should include:
+
+1. Patient name
+2. Clinic/facility
+3. Service / ancillary/test
+4. Assigned to
+5. Status Trail
+6. Last call result
+7. Next action
+8. Actions
+
+Do NOT show document/PDF status here.
+
+Remove/avoid labels like:
+- PDF Ready
+- Packet Ready
+- Clinician Packet Generated
+- Plexus Packet Generated
+- Missing PDF
+- Packet Print Ready
+
+Document status belongs in Patient Directory, Admin Review, Documents/Billing, or a detail drawer if needed — not in the main Assignment Pool row.
+
+PART 5 — Status Trail
+
+Do not show random flat tag soup.
+
+The Status Trail should tell the patient/case assignment story in chronological order.
+
+Use an arrow/path style.
+
+Examples:
+
+New unassigned patient:
+Admin Review Approved → In Assignment Pool → Not Assigned
+
+Assigned patient:
+Assigned → On Call List → Active
+
+Assigned patient whose team member is off:
+Assigned → On Call List → Team Member Off → Review Assignment
+
+Admin intentionally keeps patient assigned to that person:
+Assigned → On Call List → Team Member Off → Kept Assigned to Callista
+
+Carryover patient:
+Assigned Yesterday → Not Completed → Carryover Today → Follow-up Needed
+
+Overdue patient:
+Assigned → On Call List → Missed Due Time → Overdue
+
+Scheduled patient:
+Assigned → Patient Reached → Scheduled
+
+Completed patient:
+Assigned → Patient Reached → Scheduled → Completed
+
+Declined patient:
+Assigned → Patient Reached → Declined → Cooldown
+
+The Status Trail should be visually primary and easy to read.
+
+PART 6 — Detail labels
+
+If secondary labels are needed, keep them separate from the Status Trail.
+
+Allowed detail labels:
+- BrainWave
+- VitalWave
+- Ultrasound
+- Visit Call
+- Outreach Call
+- High Priority
+- TFP or clinic/facility short label
+- Callback
+- Cooldown
+
+Do not mix document status into these labels.
+Do not use “PDF Ready.”
+
+PART 7 — Assignment Pool actions
+
+Each row should have clear actions depending on state.
+
+Common actions:
+- Assign
+- Reassign
+- Return to Pool
+- Hold / Pause
+- Open Patient
+- View History
+
+Special action:
+If patient is assigned to a team member who is off/unavailable, show:
+
+Keep assigned to [Team Member Name]
+
+Examples:
+- Keep assigned to Callista
+- Keep assigned to Ashraful
+- Keep assigned to Marge
+
+Behavior:
+- patient remains assigned to the same team member
+- patient remains on that team member’s call list
+- patient is not redistributed automatically
+- status trail updates to:
+  Assigned → On Call List → Team Member Off → Kept Assigned to [Team Member Name]
+- record an event in patient_journey_events if existing event infrastructure supports it
+- admin can still later reassign if needed
+
+Important:
+Do not automatically force reassignment just because the team member is off.
+The system should flag the issue, then admin decides.
+
+PART 8 — Team member off / unavailable logic
+
+If a patient is assigned to a team member’s call list and the team member is not working/available, the row should show:
+
+Status Trail:
+Assigned → On Call List → Team Member Off → Review Assignment
+
+Actions:
+- Keep assigned to [Team Member Name]
+- Reassign
+- Return to Pool
+- Open Patient
+- View History
+
+Do not call this “Needs Redistribution” as a main bucket.
+If an internal tag/state is needed, use softer wording:
+Review Assignment
+
+Only use “Needs Reassignment” if:
+- admin explicitly marks it as needing reassignment
+- rules explicitly require reassignment
+- patient is urgent/overdue and current team member is unavailable
+- current team member is inactive/permanently unavailable
+
+PART 9 — Filters inside Assignment Pool
+
+At the top of Assignment Pool, show compact filters over the same pool.
+
+Filters can include:
+- All
+- Not Assigned
+- Assigned
+- On Call List
+- Review Assignment
+- Kept Assigned
+- Carryover
+- Overdue
+- Callback
+- Scheduled
+- Completed
+- Declined
+- Cooldown
+
+These are filters, not separate pages.
+
+Clicking a filter should filter the same Assignment Pool list.
+
+PART 10 — Assignment Pool data derivation
+
+Derive state from real data.
+
+Use patient_execution_cases and patient_journey_events.
+
+Suggested logic:
+- no assignedTeamMemberId → Not Assigned
+- assignedTeamMemberId exists → Assigned
+- assigned case visible in Team Member Portal call list → On Call List
+- assigned team member off/unavailable if platform data supports it → Team Member Off
+- admin chose keep assigned → Kept Assigned to [name]
+- incomplete prior-day assigned case → Carryover Today
+- nextActionAt before now and still active → Overdue
+- call result indicates scheduled → Scheduled
+- call result indicates declined → Declined
+- cooldown active if existing data supports it → Cooldown
+
+If a piece of data is not available, do not fake it.
+Show an honest fallback or omit that part of the trail.
+
+PART 11 — Call Results tab
+
+Call Results is separate from Assignment Pool.
+
+Purpose:
+Show what happened after work was assigned.
+
+Show metrics by team member:
+- team member name
+- role/team
+- facility coverage
+- assigned today
+- active queue
+- carryover
+- calls attempted
+- completed conversations
+- voicemail
+- no answer
+- scheduled patients
+- declined
+- follow-up needed
+- unable to contact
+- wrong number if available
+- remaining completed-call goal
+- remaining scheduled-patient goal
+- conversion percentage
+- last activity
+
+Important definition:
+Completed conversation means the patient was reached and discussion happened.
+
+Do not count as completed conversation:
+- voicemail
+- no answer
+- missed call
+- failed attempt
+
+Call Results should let admin see team performance without opening individual Team Member Portals.
+
+PART 12 — Call Settings tab
+
+Call Settings is separate from Assignment Pool and Call Results.
+
+Purpose:
+Control how much work each team member should get.
+
+Per team member, show/configure:
+- working today
+- facility coverage
+- daily completed-call target
+- scheduled-patient target
+- visit/outreach split
+- carryover
+- remaining new capacity
+- active/inactive
+
+Formula:
+remaining new capacity = daily completed-call target - incomplete carryover
+
+Example:
+Callista target: 30
+Carryover: 12
+New allowed today: 18
+
+No Google Calendar.
+If calendar availability is used, use platform calendar / TeamOps only, with admin override.
+
+PART 13 — Visual design
+
+Make Engagement Center feel:
+- premium
+- simple
+- operational
+- iOS-like
+- easy to understand
+
+Use:
+- three clear tabs
+- Assignment Pool as default
+- compact filters
+- clean patient rows
+- Status Trail as the main visual story
+- clear assigned-to field
+- clear next action
+- clear row actions
+
+Avoid:
+- confusing bucket wall
+- flat tag soup
+- PDF/document labels in Assignment Pool
+- too many status chips
+- old Outreach styling
+- duplicate patient lists
+- fake data
+- buried Repository tab
+
+PART 14 — Preserve existing logic
+
+Do not break:
+- Admin Review handoff
+- patient_execution_cases
+- patient_journey_events
+- Team Member Portal call lists
+- call result endpoint
+- admin view-as
+- role guards
+- existing assignment logic
+
+Do not move call-working into Engagement Center.
+ACS/PCS still work their lists in Team Member Portal.
+
+PART 15 — Validation
+
+Verify:
+
+1. Engagement Center opens to Assignment Pool by default.
+2. Main tabs are Assignment Pool, Call Results, Call Settings.
+3. Assignment Pool contains all Engagement-ready patients/cases in one list.
+4. Assignment Pool rows show patient, service, assigned to, status trail, last result, next action, actions.
+5. Assignment Pool does not show PDF/document tags.
+6. New unassigned patient shows:
+   Admin Review Approved → In Assignment Pool → Not Assigned
+7. Assigned patient shows:
+   Assigned → On Call List → Active
+8. Assigned patient whose team member is off shows:
+   Assigned → On Call List → Team Member Off → Review Assignment
+9. Button shows:
+   Keep assigned to [actual team member name]
+10. Clicking Keep assigned to Callista keeps the patient assigned to Callista.
+11. Kept patient shows:
+   Assigned → On Call List → Team Member Off → Kept Assigned to Callista
+12. Filters work over the same Assignment Pool, not separate pages.
+13. Call Results shows team member call outcomes separately.
+14. Call Settings shows capacity/carryover settings separately.
+15. Team Member Portal still receives assigned patients from patient_execution_cases.
+16. No old Outreach Center is used.
+17. No /api/scheduler-assignments is used for Engagement-assigned call work.
+18. No Google Calendar references are added.
+19. npm run check passes.
+20. npm run build passes.
+
+DO NOT:
+- Do not create separate confusing buckets.
+- Do not use “PDF Ready.”
+- Do not show document status in Assignment Pool rows.
+- Do not fake assignment states.
+- Do not auto-reassign patients just because a team member is off.
+- Do not auto-assign all approved patients to call lists.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments for Engagement-assigned call work.
+- Do not use Google Calendar.
+- Do not break Team Member Portal.
+- Do not break Admin Review.
+- Do not change schema unless absolutely required.
+- Do not merge to main.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA if available
+   - risks
+   - whether I need to push from the Replit Git pane
+
+Commit message:
+Simplify Engagement Center assignment pool

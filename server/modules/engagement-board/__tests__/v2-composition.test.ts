@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement Center v2 — composition test (Bundle 51).
 //
 // Runnable via:
@@ -181,10 +182,12 @@ const ROWS: EngagementBoardRow[] = [
   eq(r.nextCursor, null, "§9: empty input → nextCursor null");
 }
 
-if (failures.length > 0) {
-  console.error("Engagement Center v2 composition test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Engagement Center v2 composition test passed.");
-}
+describe("Engagement Center v2 composition test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement Center v2 composition test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

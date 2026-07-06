@@ -1,0 +1,814 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report:
+
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+TASK:
+
+Fix Engagement Center so Assignment Pool keeps the current Repository-style organization and utility, while adding the final Engagement model.
+
+This is NOT a total redesign.
+
+The current Repository screen layout is mostly correct and should be preserved.
+
+The Assignment Pool should look like the current Engagement Repository screen:
+
+- top Engagement Center header
+- top metric cards
+- top search / clinic / team member / status filters
+- left Smart Filters sidebar
+- center date-grouped repository list
+- right case detail panel
+- bulk action bar above the date groups
+
+Do NOT convert this into a new table-first page.
+Do NOT create a separate Distribution tab.
+Do NOT create a separate Distribution section.
+Do NOT flatten the date groups.
+Do NOT remove the Repository-style date organization.
+
+FINAL ENGAGEMENT CENTER STRUCTURE:
+
+Engagement Center should have exactly these main tabs:
+
+1. Assignment Pool
+2. Call Results
+3. Call Settings
+
+Assignment Pool replaces/renames the Repository conceptually, but it should keep the same Repository-style layout and date grouping.
+
+Distribution is NOT its own tab.
+
+Distribution is an action/workflow inside Assignment Pool.
+
+PART 1 — Inspect current wiring first
+
+Before editing, inspect and report:
+
+Frontend:
+- Engagement Center page/route file
+- current Repository component
+- current Baskets component if still used
+- current Distribution component if still used
+- current Call Settings component
+- current Live Metrics / Call Results component if any
+- current Smart Filters sidebar component
+- current bulk action bar component
+- current right case detail panel component
+- current hooks used by Engagement Center
+
+Backend / API:
+- endpoint used to load repository/engagement cases
+- endpoint used to assign/distribute cases
+- endpoint used to update assignedTeamMemberId
+- endpoint used by Team Member Portal to read assigned call list patients
+- endpoint used to write call results
+- endpoint used to read/write patient_journey_events
+- endpoint used to read team members / schedulers / ACS / PCS users
+- endpoint used to read call settings/capacity if available
+
+Data/storage:
+- where patient_execution_cases are created
+- how Admin Review-approved patients enter Engagement
+- how assignedTeamMemberId is stored
+- how assignment state is represented
+- how call results are stored
+- how patient_journey_events are written
+- whether current Repository date grouping is based on approved date, due date, createdAt, nextActionAt, or scheduled date
+
+Report exact files to touch before changing.
+
+PART 2 — Required wiring model
+
+Use the existing operational spine:
+
+Admin Review approved patient/test
+        ↓
+patient_execution_cases
+        ↓
+Engagement Center Assignment Pool
+        ↓
+Distribution action inside Assignment Pool
+        ↓
+patient_execution_cases.assignedTeamMemberId / assignment fields updated
+        ↓
+Team Member Portal call list
+        ↓
+call result submitted
+        ↓
+patient_execution_cases updated
+        ↓
+patient_journey_events written/read for history/status trail
+
+Source of truth rules:
+
+- patient_execution_cases is the source of truth for current assignment/work state.
+- patient_journey_events is the source of truth for timeline/status history.
+- Admin Review handoff must not break.
+- Team Member Portal call lists must continue reading assigned patients from patient_execution_cases or the existing canonical endpoint.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments for Engagement-assigned call work.
+- Do not use Google Calendar.
+- Do not change schema unless absolutely required.
+- If schema is required, add a proper migration.
+
+PART 3 — Assignment Pool layout
+
+Assignment Pool should keep the current Repository-style layout.
+
+Top area:
+- Engagement Center title
+- metric cards
+- search bar
+- clinic filter
+- team member filter
+- status filter
+
+Left sidebar:
+- Smart Filters with counts
+
+Center:
+- date-grouped repository list
+
+Right side:
+- selected case / selected date group / selected bulk selection details
+
+Bulk action bar:
+- above the date groups, same general placement as current Repository screen
+
+Do not create a new wide table as the primary layout.
+
+PART 4 — Date grouping is mandatory
+
+The center list must stay organized by date like the current Repository.
+
+Examples:
+
+- Thursday, July 2
+- Wednesday, June 24
+- Monday, June 22
+- Thursday, June 18
+- Wednesday, June 17
+- Sunday, June 14
+- Thursday, June 11
+- Monday, June 8
+- Unscheduled
+
+Each date group should show:
+
+- expand/collapse chevron
+- checkbox
+- date label
+- clinic/facility pill if applicable
+- count badge on the right
+
+When collapsed:
+show the date group row only.
+
+When expanded:
+show patient/case rows inside that date group.
+
+The default grouping should match the current Repository behavior if it already works.
+
+If available, prefer grouping by:
+
+Admin Review Approved Date
+
+If current data does not have a clean approved date, use the existing Repository grouping field and report what it is.
+
+Do not flatten this into one random list.
+
+PART 5 — Expanded patient/case rows
+
+Inside expanded date groups, each patient/case row should show:
+
+- Patient name
+- Clinic/facility
+- Service / ancillary
+- Category
+- Call Type
+- Source
+- Assigned To
+- Status Trail
+- Last Call Result
+- Next Action
+- Actions
+
+Do NOT show PDF/document status in Assignment Pool rows.
+
+Do NOT show:
+- Missing PDF
+- PDF Ready
+- Packet Ready
+- Clinician Packet Generated
+- Plexus Packet Generated
+- Packet Print Ready
+
+Documents belong in Documents, Patient Directory/Plexus EHR, Admin Review, or a detail panel, not in the main Assignment Pool row.
+
+PART 6 — Category and Call Type model
+
+Use exactly two top-level categories:
+
+1. Ancillary Scheduling
+2. Patient Support
+
+Ancillary Scheduling call types:
+
+- Visit Patient Scheduling
+- Outreach Patient Scheduling
+- Repeat Test Due
+- Return for Additional Testing
+- Reschedule Missed Test
+- Confirm Appointment
+- Pre-Test Instructions
+
+Patient Support call types:
+
+- Callback Requested
+- Insurance Question
+- Consent Needed
+- Document Needed
+- Order Issue
+- Result Question
+- Patient Wants More Information
+- Declined Service
+- Contact Issue
+- Cancellation Request
+- Billing Question
+- Escalation
+
+Important:
+
+Visit Patient Scheduling and Outreach Patient Scheduling both come from Admin Review.
+
+So for Admin Review-approved visit/outreach cases:
+
+Category:
+Ancillary Scheduling
+
+Call Type:
+Visit Patient Scheduling
+or
+Outreach Patient Scheduling
+
+Source:
+Admin Review
+
+Do NOT incorrectly use Visit Workflow or Outreach List as the source for those Admin Review-approved items unless the actual source data says that.
+
+Cooldown/re-engagement for repeat testing should map to:
+
+Category:
+Ancillary Scheduling
+
+Call Type:
+Repeat Test Due
+
+PART 7 — Source field
+
+Source should show where the item came from.
+
+Possible source values:
+
+- Admin Review
+- Patient Callback Request
+- Repeat Eligibility
+- Prior Test Completed
+- Report Upload
+- Document Workflow
+- Manual Admin Entry
+- Team Member Call List
+
+Visit and Outreach scheduling patients approved by Admin Review should use:
+
+Source: Admin Review
+
+Do not separate Visit/Outreach by source. Separate them by Call Type.
+
+PART 8 — Status Trail
+
+Status Trail should be chronological.
+
+It should tell the assignment/call story.
+
+Do not show random flat tag soup.
+
+Examples:
+
+Admin Review Approved → In Assignment Pool → Not Assigned
+
+Admin Review Approved → Visit Patient Scheduling → In Assignment Pool → Not Assigned
+
+Admin Review Approved → Outreach Patient Scheduling → In Assignment Pool → Not Assigned
+
+Cooldown Ended → Repeat Test Due → In Assignment Pool → Not Assigned
+
+Assigned → On Call List → Active
+
+Assigned → On Call List → Team Member Off → Review Assignment
+
+Assigned → On Call List → Team Member Off → Kept assigned to [Assigned Team Member Name]
+
+Assigned Yesterday → Not Completed → Carryover Today → Follow-up Needed
+
+Assigned → On Call List → Missed Due Time → Overdue
+
+Assigned → Patient Reached → Scheduled
+
+Assigned → Patient Reached → Declined → Cooldown
+
+Build the trail from real data where possible:
+
+- patient_execution_cases assignment fields
+- assignedTeamMemberId
+- case status
+- nextActionAt / due date if available
+- last call result
+- patient_journey_events
+- team member availability if available
+
+If data is missing, do not fake it. Show the honest available trail.
+
+PART 9 — Distribution is inside Assignment Pool
+
+Do NOT create a Distribution tab.
+
+Do NOT create a Distribution section.
+
+Distribution is an action/workflow inside Assignment Pool.
+
+Meaning:
+
+Selected patients from Assignment Pool get distributed to team member call lists.
+
+Bulk action bar should include:
+
+- Select all
+- Distribute
+- Preview Distribution
+- Apply Distribution
+- Redistribute
+- Remove from Call List
+
+Do not use:
+- Place on Call List
+- Run Daily Routing
+- Pause
+- Hold
+- Needs Assignment
+- Needs Redistribution
+
+Button meanings:
+
+Distribute:
+Open/select workflow to distribute selected unassigned patients to team member call lists.
+
+Preview Distribution:
+Show who would receive which patients before committing.
+
+Apply Distribution:
+Commit the preview and update patient_execution_cases assignment fields.
+
+Redistribute:
+Move already assigned patients to a different team member.
+
+Remove from Call List:
+Remove assignment/call list ownership and return item to Assignment Pool.
+
+Open Patient:
+Open Patient Directory/Plexus EHR patient profile if route exists.
+
+View History:
+Show timeline/history from patient_journey_events if available.
+
+PART 10 — Dynamic keep assigned behavior
+
+If a patient is assigned to a team member who is off/unavailable, show:
+
+Keep assigned to [Assigned Team Member Name]
+
+Examples only:
+- Keep assigned to Callista
+- Keep assigned to Ashraful
+- Keep assigned to Marge
+
+Do NOT hardcode Callista.
+
+The button label must dynamically use the actual assigned team member name.
+
+If the assigned team member name is unavailable, show:
+
+Keep current assignment
+
+Behavior:
+- patient remains assigned to the current assigned team member
+- patient remains on that team member’s call list
+- patient is not redistributed automatically
+- status trail updates to:
+  Assigned → On Call List → Team Member Off → Kept assigned to [Assigned Team Member Name]
+- write patient_journey_events if existing event infrastructure supports it
+
+Do not automatically force reassignment just because a team member is off.
+
+The system should flag the issue, then admin decides.
+
+PART 11 — Left Smart Filters
+
+Keep the left Smart Filters visual style like the current Repository screenshot.
+
+Keep useful operational filters:
+
+- All cases
+- Ready to Distribute
+- Due Today
+- Overdue
+- Due Soon
+- Follow-up
+- Callbacks
+- No Answer
+- Left Voicemail
+- Needs Scheduling
+- Blocked
+- Declined
+- Re-Eligible
+
+Remove Missing PDF from the main Assignment Pool filters.
+
+Document/PDF status should not be part of the main Assignment Pool filters.
+
+Add category/call type filters without destroying the sidebar layout.
+
+Use collapsible filter sections if needed:
+
+Category:
+- Ancillary Scheduling
+- Patient Support
+
+Ancillary Scheduling:
+- Visit Patient Scheduling
+- Outreach Patient Scheduling
+- Repeat Test Due
+- Return for Additional Testing
+- Reschedule Missed Test
+- Confirm Appointment
+- Pre-Test Instructions
+
+Patient Support:
+- Callback Requested
+- Insurance Question
+- Consent Needed
+- Document Needed
+- Order Issue
+- Result Question
+- Patient Wants More Information
+- Declined Service
+- Contact Issue
+- Cancellation Request
+- Billing Question
+- Escalation
+
+Assignment State:
+- Not Assigned
+- Assigned
+- On Call List
+- Review Assignment
+- Kept Assigned
+- Carryover
+- Overdue
+- Scheduled
+- Completed
+- Declined
+- Cooldown
+
+Filters should filter the same date-grouped Assignment Pool.
+
+Filters must not remove date grouping.
+
+PART 12 — Top filter bar
+
+Keep the current top search/dropdown layout.
+
+Keep:
+- search name, DOB, facility
+- clinic filter
+- team member filter
+- status filter
+
+Add only if clean and not cluttered:
+- category filter
+- call type filter
+- date range/grouping selector
+
+Do not make the top bar messy.
+
+PART 13 — Right detail panel
+
+Keep the right panel like the current Repository screenshot.
+
+When no case is selected:
+show a useful operational empty state, not just blank space.
+
+Suggested empty state:
+- no case selected
+- choose a date group or case
+- show total matching cases
+- show quick counts from current filters
+
+When a date group is selected:
+show:
+- date/group label
+- total cases
+- ready to distribute
+- already on call list
+- blocked
+- overdue
+- selected count
+- distribution actions
+
+When one patient is selected:
+show:
+- patient name
+- clinic/facility
+- service/ancillary
+- category
+- call type
+- source
+- assigned to
+- status trail
+- last call result
+- next action
+- actions
+
+When multiple patients are selected:
+show:
+- selected count
+- date groups included
+- clinics included
+- category breakdown
+- call type breakdown
+- assigned/unassigned count
+- preview distribution action
+
+PART 14 — Call Results tab
+
+Call Results is separate from Assignment Pool.
+
+It should show what happened after team members worked their call lists.
+
+Metrics by team member:
+
+- team member name
+- role/team
+- facility coverage
+- assigned today
+- active queue
+- carryover
+- calls attempted
+- completed conversations
+- voicemail
+- no answer
+- scheduled patients
+- declined
+- follow-up needed
+- unable to contact
+- wrong number if available
+- remaining completed-call goal
+- remaining scheduled-patient goal
+- conversion percentage
+- last activity
+
+Definition:
+Completed conversation means patient was reached and discussion happened.
+
+Do not count as completed conversation:
+- voicemail
+- no answer
+- missed call
+- failed attempt
+
+PART 15 — Call Settings tab
+
+Call Settings is separate from Assignment Pool.
+
+It controls distribution rules and team capacity.
+
+Per team member show/configure:
+
+- working today
+- facility coverage
+- daily completed-call target
+- scheduled-patient target
+- visit/outreach split
+- carryover
+- remaining new capacity
+- active/inactive
+
+Formula:
+remaining new capacity = daily completed-call target - incomplete carryover
+
+Example:
+Target: 30
+Carryover: 12
+New allowed: 18
+
+No Google Calendar.
+
+If availability is used, use platform calendar / TeamOps only, with admin override.
+
+PART 16 — Where it wires
+
+Wire this as follows:
+
+1. Admin Review approval
+   - Existing Admin Review approval should create/update patient_execution_cases.
+   - Visit Patient Scheduling and Outreach Patient Scheduling should enter Assignment Pool from Admin Review.
+   - Source should be Admin Review for those cases.
+
+2. Assignment Pool loading
+   - Assignment Pool should load Engagement-ready cases from patient_execution_cases using the existing Repository/Engagement endpoint if present.
+   - Keep the existing date grouping logic if it is already correct.
+   - If grouping field is unclear, report what field is used.
+
+3. Assignment Pool filtering
+   - Filters should operate on the loaded patient_execution_cases data.
+   - Filters should preserve the date-grouped display.
+
+4. Distribution action
+   - Distribution updates patient_execution_cases assignment fields, including assignedTeamMemberId or existing equivalent field.
+   - Distribution should not use /api/scheduler-assignments.
+   - Distribution should not use old Outreach Center.
+   - Distribution should not use scheduler cards.
+
+5. Team Member Portal
+   - Team Member Portal should continue reading assigned patients from patient_execution_cases or the existing canonical call list endpoint.
+   - After Distribution / Apply Distribution, the patient should appear on the assigned team member’s call list.
+
+6. Call results
+   - Team Member Portal call result submission should update patient_execution_cases and write/read patient_journey_events if existing infrastructure supports it.
+   - Call Results tab should aggregate from the same call result source.
+
+7. Status Trail
+   - Status Trail should derive from patient_execution_cases and patient_journey_events.
+   - Do not invent fake states.
+   - Use available real fields and report gaps.
+
+8. Team member names
+   - Keep assigned to [Assigned Team Member Name] should resolve from the team member roster/source currently used by Engagement or Team Member Portal.
+   - Do not hardcode any names.
+
+PART 17 — Validation
+
+Verify:
+
+1. Engagement Center has exactly three main tabs:
+   - Assignment Pool
+   - Call Results
+   - Call Settings
+
+2. No Distribution tab exists.
+
+3. No separate Distribution section/page exists.
+
+4. Assignment Pool keeps the current Repository-style layout.
+
+5. Top metrics remain.
+
+6. Left Smart Filters remain.
+
+7. Top search/dropdowns remain.
+
+8. Center list remains grouped by dates like the current Repository screenshot.
+
+9. Date groups have:
+   - chevron
+   - checkbox
+   - date label
+   - clinic/facility pill if available
+   - count badge
+
+10. Expanding a date group shows patient/case rows.
+
+11. Expanded rows show:
+   - Patient
+   - Clinic/facility
+   - Service/ancillary
+   - Category
+   - Call Type
+   - Source
+   - Assigned To
+   - Status Trail
+   - Last Call Result
+   - Next Action
+   - Actions
+
+12. Visit Patient Scheduling uses:
+   - Category: Ancillary Scheduling
+   - Source: Admin Review
+
+13. Outreach Patient Scheduling uses:
+   - Category: Ancillary Scheduling
+   - Source: Admin Review
+
+14. Distribution actions live inside Assignment Pool.
+
+15. Distribution updates patient_execution_cases assignment fields.
+
+16. Distributed patients appear in Team Member Portal call lists.
+
+17. Keep assigned to [Assigned Team Member Name] is dynamic and not hardcoded.
+
+18. Filters preserve date grouping.
+
+19. Missing PDF is removed from main Assignment Pool filters.
+
+20. No PDF/document status appears in Assignment Pool rows.
+
+21. No old Outreach Center is used.
+
+22. No scheduler cards are used.
+
+23. No /api/scheduler-assignments is used for Engagement-assigned call work.
+
+24. No Google Calendar is used.
+
+25. Admin Review handoff still works.
+
+26. Team Member Portal still works.
+
+27. Call Results tab still works or shows honest unavailable states.
+
+28. Call Settings tab still works or shows honest unavailable states.
+
+29. npm run check passes.
+
+30. npm run build passes.
+
+DO NOT:
+
+- Do not redesign the page away from the Repository screenshot layout.
+- Do not turn Assignment Pool into a wide table-first layout.
+- Do not flatten date groups.
+- Do not remove left Smart Filters.
+- Do not remove right detail panel.
+- Do not remove top metrics.
+- Do not create a Distribution tab.
+- Do not create a Distribution page.
+- Do not create a Distribution section.
+- Do not rename Distribution.
+- Do not use Place on Call List.
+- Do not use Run Daily Routing.
+- Do not use Pause.
+- Do not use Hold.
+- Do not hardcode Callista or any team member name.
+- Do not show PDF/document status in Assignment Pool rows.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments.
+- Do not use Google Calendar.
+- Do not break Admin Review.
+- Do not break Team Member Portal.
+- Do not change schema unless absolutely required.
+
+After implementation:
+
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+   - current branch
+   - files changed
+   - what changed
+   - where Assignment Pool loads from
+   - where Distribution writes to
+   - where Team Member Portal reads from
+   - where Status Trail is derived from
+   - check/build result
+   - latest commit SHA if available
+   - risks/gaps
+   - whether I need to push from Replit Git pane
+
+Commit message:
+Keep repository-style assignment pool with distribution actions

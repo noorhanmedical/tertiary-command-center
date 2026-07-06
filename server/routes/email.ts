@@ -110,7 +110,7 @@ export function registerEmailRoutes(app: Express) {
         body: parsed.data.body,
       });
       // PR 2.8 — communication timeline: append a journey event so
-      // every outbound email shows up in the Patient Directory +
+      // every outbound email shows up in the Patient EHR +
       // center-canvas timeline. Best-effort: log a warning on
       // failure but never block the send response.
       try {

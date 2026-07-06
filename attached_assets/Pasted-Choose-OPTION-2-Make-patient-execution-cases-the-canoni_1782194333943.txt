@@ -1,0 +1,120 @@
+Choose OPTION 2.
+
+Make patient_execution_cases the canonical source of truth for Engagement Center-assigned call work, and make Team Member Portal read from /api/operational-queue/me instead of relying on the legacy scheduler_assignments path for engagement work.
+
+Do NOT use scheduler_assignments as the main source for Engagement Center-assigned cases because it is the auto daily pool and may be released/wiped by buildDailyAssignments / morning rebuild logic.
+
+Architecture decision:
+
+patient_execution_cases = canonical operational case / assignment truth
+scheduler_assignments = legacy/auto visit daily pool only
+/api/operational-queue/me = Team Member Portal call list source for assigned engagement work
+outreach_calls = call history
+patient_journey_events = audit trail
+
+Implement Option 2:
+
+1. Fix scheduler-user mapping
+- Resolve logged-in user to outreach_schedulers.user_id.
+- If no mapping exists, return structured MISSING_SCHEDULER_USER_MAPPING response.
+- Add admin audit/dry-run repair to show unmapped schedulers and suggested user links.
+- Do not guess ambiguous mappings.
+
+2. Assignment path
+When Engagement Center assigns a case:
+- update patient_execution_cases.assigned_team_member_id
+- update assigned_role / engagement_status as appropriate
+- set next_action_at using a shared calculateNextActionAt function
+- append patient_journey_events audit
+- return visibility status showing whether assigned user can see the item in the operational queue
+
+Do NOT write scheduler_assignments for Engagement Center assignment unless later explicitly needed.
+
+3. Team Portal read path
+- Point Team Member Portal Call List to /api/operational-queue/me.
+- Ensure /api/operational-queue/me includes engagement-assigned patient_execution_cases for the logged-in mapped scheduler.
+- Return active assigned cases with patient, phone, clinic, service/ancillary, attempts, last outcome, next_action_at, priority, assigned_by, notes, and visibility status.
+- If missing mapping, show clear missing mapping banner.
+- If no active assigned calls, show true empty state.
+
+4. next_action_at policy
+Create or reuse calculateNextActionAt:
+- assignment with no callback = now/current queue time
+- callback requested = callback datetime required
+- no answer/voicemail = retry policy
+- wrong number = no next_action_at unless alternate number exists
+- declined/completed = inactive/null
+- scheduled = scheduled bucket/appointment workflow
+- needs admin review = remove from normal call list and flag admin review
+
+5. Call result logging
+Use/extend the existing call result path:
+- update patient_execution_cases
+- append outreach_calls
+- append patient_journey_events
+- update next_action_at
+- route scheduled/callback/needs admin review correctly
+- do not fake success unless mutation succeeds
+
+6. Admin audit stop-gap
+Add Call List Audit endpoint/panel showing:
+- assigned cases
+- assigned_team_member_id
+- mapped outreach_scheduler
+- mapped user_id / username
+- next_action_at
+- last call outcome
+- visibility status
+- visibility blocker
+- repair suggestion
+
+Visibility statuses:
+- visible
+- missing_user_mapping
+- missing_next_action_at
+- missing_patient
+- needs_admin_review
+- visible_but_overdue
+- assigned_scheduler_missing
+
+7. Dry-run repair
+Create dry-run repair for:
+- scheduler-user mapping suggestions
+- active cases with next_action_at NULL
+- orphan assigned_team_member_id values like scheduler id 23 with no scheduler row
+- assigned cases not visible in operational queue
+
+Do not apply destructive repair automatically.
+Dry-run first only.
+
+8. Documentation
+Create docs/architecture/call-list-engine-architecture.md explaining:
+- why Option 2 was chosen
+- patient_execution_cases as source of truth
+- scheduler_assignments kept as legacy auto daily pool
+- operational queue read path
+- scheduler-user mapping
+- next_action_at policy
+- call result propagation
+- admin audit/repair flow
+
+Run:
+npm run check
+npm run build
+
+Commit to:
+plexus-iq-admin-review-persistence-fix
+
+Push to GitHub and update PR #299.
+
+Final report:
+- files changed
+- endpoints changed
+- UI changed
+- schema changes yes/no
+- scheduler-user mapping behavior
+- operational queue behavior
+- next_action_at policy
+- dry-run repair result
+- check/build result
+- remaining risks

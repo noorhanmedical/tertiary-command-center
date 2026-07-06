@@ -1,0 +1,369 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Reimagine and redesign TeamOps as a premium calendar-first staffing, PTO, coverage, and technician scheduling command center.
+
+Current problem:
+TeamOps currently feels disjointed and low-quality. It has tabs like:
+- Dashboard
+- Staffing Calendar
+- PTO Coverage Assignments
+- Schedule Technician Schedule
+
+But there is no real calendar-first experience. That makes no sense. If this page is about schedules, staffing, PTO, and technicians, then the calendar must be central.
+
+Goal:
+Make TeamOps feel like a premium iOS-style staffing and clinic operations scheduler. The product should be intuitive, calendar-first, visually polished, and useful for admins/managers.
+
+Core purpose:
+TeamOps should answer:
+- Who is working today?
+- Who is off/PTO?
+- Who needs coverage?
+- Which clinic is short?
+- Which technician is assigned where?
+- Are there schedule conflicts?
+- Which clinics/services are at risk because of staffing gaps?
+- What coverage assignments need action?
+
+Architecture rules:
+- TeamOps is for staffing, PTO, coverage, and technician scheduling.
+- Mission Control is top-level operational oversight.
+- Engagement Center assigns patient outreach/call work.
+- Team Member Portal is where ACS/PCS work call lists.
+- Do not move call-list work into TeamOps.
+- Do not use old Outreach Center.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not change database schema unless absolutely required.
+- Use existing team/roster/schedule/PTO data sources where available.
+- Do not invent fake data.
+- Use graceful empty states if data is not wired yet.
+
+PART 1 — Locate current TeamOps
+
+Before editing, find and report:
+- TeamOps route
+- TeamOps page/component files
+- current tab component/file
+- current data hooks/endpoints
+- where staffing, PTO, coverage, and technician schedule data currently come from
+- whether the current TeamOps is static, partially wired, or fully wired
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Replace disjointed tabs with a calendar-first product
+
+Redesign the TeamOps page around a large central calendar.
+
+Preferred top-level sections:
+- Overview
+- Calendar
+- Coverage
+- PTO
+- Technicians
+- Conflicts
+
+These can be tabs or a segmented control, but the Calendar must be the primary experience.
+
+Do not keep disconnected tabs that show unrelated tables with no calendar.
+
+PART 3 — Premium command header
+
+Top header should include:
+- TeamOps title
+- subtitle: Staffing, coverage, PTO, and technician scheduling
+- clinic/facility filter
+- role filter
+- team member filter
+- date range selector
+- view toggle: Day / Week / Month
+- primary action button: Add Shift or Assign Coverage
+
+Add compact summary metrics:
+- Covered Today
+- PTO Today
+- Open Shifts
+- Technician Gaps
+- Clinics at Risk
+- Pending PTO
+
+Use a clean iOS-like style:
+- bright white cards
+- soft gray page background
+- large rounded panels
+- strong typography
+- subtle shadows/borders
+- no clutter
+
+PART 4 — Calendar-first workspace
+
+Create a main TeamOps calendar workspace.
+
+Calendar requirements:
+- Support Day / Week / Month view if feasible.
+- Show staff shifts as calendar blocks.
+- Show PTO/time-off as calendar blocks.
+- Show technician assignments as calendar blocks.
+- Show coverage gaps as visible warning blocks.
+- Show clinic/facility label on each assignment if available.
+- Show role label: PCS, ACS, Technician, Manager, Billing, Scheduler, Liaison, etc.
+- Allow selecting a date/day/block.
+- Selected day/block opens a right-side detail panel.
+
+If real schedule data is not available yet:
+- build the calendar structure with honest empty states
+- do not fake staff assignments
+- show “No staffing assignments available from connected sources yet.”
+
+PART 5 — Calendar block design
+
+Each calendar block should show:
+- team member name
+- role
+- clinic/facility
+- shift time
+- status:
+  scheduled
+  PTO
+  needs coverage
+  covered
+  conflict
+  technician assigned
+
+Keep blocks clean and readable. Do not make them tiny pills.
+
+Use visual hierarchy:
+- staff name bold
+- role/clinic smaller
+- status strip or subtle icon
+- warning style for conflicts/gaps
+
+PART 6 — Right-side selected-day detail panel
+
+When a user clicks a date or calendar item, show a detail panel with:
+
+For selected day:
+- working staff
+- PTO staff
+- technician assignments
+- open shifts
+- coverage gaps
+- conflicts
+- clinics at risk
+- notes
+- actions
+
+Actions:
+- Add shift
+- Assign coverage
+- Approve PTO
+- Move technician
+- Mark coverage resolved
+- Add note
+
+For selected staff/shift:
+- staff name
+- role
+- clinic
+- shift time
+- status
+- coverage requirement
+- assigned coverage person if any
+- related clinic/service risk if available
+
+PART 7 — Overview section
+
+Overview should be a clean staffing health dashboard.
+
+Show:
+- today’s coverage
+- clinics covered
+- clinics at risk
+- open shifts
+- PTO requests
+- absent team members
+- technician capacity
+- upcoming gaps
+- unresolved conflicts
+
+This should summarize calendar risk, not duplicate Mission Control.
+
+PART 8 — Coverage section
+
+Coverage should show:
+- absent team member
+- original role
+- original clinic/facility
+- date/time
+- coverage needed
+- coverage assigned
+- status
+- risk level
+- notes
+
+Actions:
+- assign coverage
+- change coverage
+- mark resolved
+
+PART 9 — PTO section
+
+PTO should show:
+- pending requests
+- approved PTO
+- denied PTO
+- PTO calendar
+- coverage required
+- coverage assigned
+- manager notes
+
+Actions:
+- approve
+- deny
+- assign coverage
+- request more info
+
+PART 10 — Technicians section
+
+Technician scheduling should be its own premium board/calendar.
+
+Show:
+- technician name
+- assigned clinic
+- date/time
+- service type:
+  BrainWave
+  VitalWave
+  Ultrasound
+  Other
+- capacity
+- completed/pending if available
+- coverage status
+- equipment/supply risk if available
+
+This section must include a calendar or timeline view, not just a table.
+
+PART 11 — Conflicts section
+
+Conflicts should show only operational problems:
+- double-booked staff
+- PTO without coverage
+- clinic with no coverage
+- technician missing
+- technician overloaded
+- shift gap
+- role gap
+- equipment/service risk if tied to staffing
+
+Each conflict should have:
+- severity
+- clinic
+- date/time
+- owner
+- suggested action
+- resolve action if existing logic supports it
+
+PART 12 — Adaptive layout
+
+TeamOps should remain usable on different screen widths.
+
+Use:
+- large center calendar
+- optional left filter rail
+- right detail panel
+- collapsible panels if needed
+- do not crush the calendar
+- do not hide the main calendar under dropdowns/panels
+
+PART 13 — Visual style
+
+Make TeamOps feel:
+- premium
+- bright
+- bold
+- iOS-like
+- enterprise-grade
+- easy to use
+- calendar-first
+
+Use:
+- large calendar surface
+- white rounded cards
+- soft gray background
+- clean role colors or accents
+- generous spacing
+- icon-supported actions
+- clear empty states
+- elegant segmented controls
+
+Avoid:
+- disconnected tabs
+- dense tables everywhere
+- no calendar
+- raw data dumps
+- tiny badges/pills everywhere
+- Windows 1999 styling
+- old scheduler-card/outreach UI
+
+PART 14 — Preserve existing behavior/data
+
+Use current data sources where available.
+If existing endpoints are incomplete, keep the UI ready and show honest empty states.
+
+Do not:
+- create fake schedules
+- create fake PTO
+- create fake technician assignments
+- break existing TeamOps routes
+- break Mission Control
+- break Engagement Center
+- break Team Member Portal
+- change schema unless absolutely required
+- create broad unrelated refactors
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Redesign TeamOps calendar command center
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

@@ -27,7 +27,7 @@ function sourceTone(src: string): "default" | "secondary" | "outline" {
   return "outline";
 }
 
-export default function BillingSettingsPage() {
+export default function BillingSettingsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [facilityId, setFacilityId] = useState("");
@@ -89,7 +89,11 @@ export default function BillingSettingsPage() {
     <div className="flex h-full w-full flex-col gap-4 overflow-y-auto p-6" data-testid="billing-settings-page">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Billing Settings</h1>
+          {embedded ? (
+            <h2 className="text-lg font-semibold text-slate-900">Billing Settings</h2>
+          ) : (
+            <h1 className="text-xl font-semibold text-slate-900">Billing Settings</h1>
+          )}
           <p className="text-xs text-slate-500">
             Settings-driven invoice schedule, recipients, pricing,
             readiness rules, approval, and payment terms.

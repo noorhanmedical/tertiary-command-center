@@ -1,14 +1,15 @@
 import type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem } from "./types";
-import { GoogleDriveFileStorage } from "./googleDriveFileStorage";
 import { S3FileStorage } from "./s3FileStorage";
 
 export type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem };
 
-export type StorageProvider = "google_drive" | "s3";
+// Google Drive storage has been removed. S3 is the only external file-storage
+// provider. Document bytes are always persisted locally (blobStore) + in the
+// documentBlobs table; this provider is only the optional external mirror.
+export type StorageProvider = "s3";
 
 export function getStorageProvider(): StorageProvider {
-  const p = process.env.STORAGE_PROVIDER || "google_drive";
-  return p === "s3" ? "s3" : "google_drive";
+  return "s3";
 }
 
 // Note: production-only `STORAGE_PROVIDER=s3` enforcement lives in
@@ -18,12 +19,7 @@ let _instance: IFileStorage | null = null;
 
 export function getFileStorage(): IFileStorage {
   if (_instance) return _instance;
-  const provider = getStorageProvider();
-  if (provider === "s3") {
-    _instance = new S3FileStorage();
-  } else {
-    _instance = new GoogleDriveFileStorage();
-  }
+  _instance = new S3FileStorage();
   return _instance;
 }
 

@@ -23,6 +23,7 @@
 // crash on the zod `z` object's null prototype.
 export * from "./appSettings";
 export * from "./session";
+export * from "./clinics";
 export * from "./users";
 export * from "./screening";
 export * from "./patientHistory";
@@ -44,6 +45,7 @@ export * from "./documents";
 export * from "./outbox";
 export * from "./pto";
 export * from "./executionCase";
+export * from "./engagement";
 export * from "./globalSchedule";
 export * from "./schedulingTriage";
 export * from "./insuranceEligibility";
@@ -58,4 +60,10 @@ export * from "./completedBillingPackages";
 export * from "./cashPricing";
 export * from "./projectedInvoices";
 export * from "./ancillaryDocumentTemplates";
+export * from "./clinicianPortal";
+export * from "./directMessages";
+export * from "./patientSms";
+export * from "./portalWidgets";
+export * from "./clinicalIntelligence";
+export * from "./portalPrefs";
 export * from "../models/chat";

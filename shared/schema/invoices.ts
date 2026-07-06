@@ -4,6 +4,7 @@ import {
 } from "./_common";
 import { users } from "./users";
 import { billingRecords } from "./billing";
+import { clinics } from "./clinics";
 
 export const INVOICE_STATUSES = ["Draft", "Sent", "Partially Paid", "Paid"] as const;
 export type InvoiceStatus = typeof INVOICE_STATUSES[number];
@@ -13,6 +14,8 @@ export type PaymentMethod = typeof PAYMENT_METHODS[number];
 
 export const invoices = pgTable("invoices", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   invoiceNumber: text("invoice_number").notNull().unique(),
   facility: text("facility").notNull(),
   invoiceDate: text("invoice_date").notNull(),

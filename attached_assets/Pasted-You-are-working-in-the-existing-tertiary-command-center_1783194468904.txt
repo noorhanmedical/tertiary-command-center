@@ -1,0 +1,259 @@
+You are working in the existing tertiary-command-center repo on branch:
+
+plexus-iq-admin-review-persistence-fix
+
+IMPORTANT FIRST STEP:
+Before implementing the new messaging UI, remove the accidental ChatGPT-added portal shell changes if they exist.
+
+Accidental commits/files to undo:
+- 42e11bfcf3f07cdc836f2eaf4349e39e7b2a2bb5
+- f11508278999d578133adcd474f1e73ee224ea68
+- 30317e74614a5e8453b8a8567d41352ae125b8f3
+
+Cleanup requirements:
+1. Delete this file if it exists:
+   client/src/components/portal/TeamMemberPortalPlayground.tsx
+
+2. Restore:
+   client/src/pages/patient-care-specialist-portal.tsx
+
+It should import ClinicWorkflowPortal and render:
+
+   <ClinicWorkflowPortal role="patientCareSpecialist" />
+
+3. Restore:
+   client/src/pages/ancillary-care-specialist-portal.tsx
+
+It should import ClinicWorkflowPortal and render:
+
+   <ClinicWorkflowPortal role="ancillaryCareSpecialist" />
+
+4. Do NOT replace the existing portal shell.
+5. Do NOT reroute PCS or ACS away from ClinicWorkflowPortal.
+6. Do NOT create a brand-new standalone portal page.
+7. Do NOT delete TeamPortalShell, ClinicWorkflowPortal, Work Queue, Admin View As, Clinic selector, right rail, dock, or existing portal functionality.
+
+After that cleanup, implement the actual requested change inside the existing Team Member Portal / Playground architecture.
+
+Goal:
+Add a real iMessage-style Messaging experience to the existing Team Member Portal / Playground.
+
+Messaging should NOT be a normal square tool button in the left panel.
+
+Messaging should be a TOP-LEVEL TAB in the left panel, and when selected it should show a live inbox-style messaging list directly inside the left panel.
+
+Left panel structure:
+The left panel should have top-level tabs/categories like:
+
+- Messaging
+- Notes & Docs
+- Work
+- System
+
+When Messaging is selected:
+1. Show an iMessage-style conversation inbox directly inside the left panel.
+2. Do NOT show Messaging as a square tool button.
+3. Do NOT show only a menu of buttons like Patients / Direct / Team Chat / Email.
+4. The Messaging tab should look like a live messaging app/inbox.
+
+Messaging tab UI requirements:
+At the top:
+- Search bar
+- Filter tabs or segmented control:
+  - All
+  - Direct
+  - Teams
+  - Patients
+
+Conversation list rows:
+Each row should include:
+- Avatar or initials
+- Conversation name
+- Last message preview
+- Timestamp
+- Unread badge/dot if unread
+- Type chip or subtle label for:
+  - Direct
+  - Team
+  - Patient
+- Optional patient/facility context chip when relevant
+
+The Messaging tab must visually support:
+1. Individual/direct messages
+2. Team/group messages
+3. Patient-related message threads
+
+Example direct conversations:
+- “Alhadheri Ayman”
+- “Viqar Hussain”
+- “Luz”
+- “Robert Billing”
+
+Example team conversations:
+- “PCS Team”
+- “ACS Team”
+- “Scheduling Team”
+- “Billing Team”
+- “Taylor Family Practice”
+
+Example patient-related conversations:
+- “Mary Bowerman”
+- “Jose Murillo”
+- “Shayna Kingbird”
+
+Team/group conversations:
+- Should look like group chats.
+- The thread should show sender names above incoming bubbles.
+- Team messages should not look like one single person chat.
+
+Patient-related conversations:
+- Should show patient/facility context in the header.
+- Example chips:
+  - Patient
+  - Taylor Family Practice
+  - PCS Follow-up
+  - ACS Scheduling
+
+Click behavior:
+1. Clicking any conversation row opens the conversation in a floating Messages window over the Playground.
+2. The window should behave like an app window/popup, not replace the whole portal page.
+3. It should preserve the existing Playground behind it.
+
+Bottom dock requirements:
+1. Add a Messages icon to the bottom dock.
+2. Use a chat bubble/message icon.
+3. Clicking the Messages dock icon opens the same floating Messages window.
+4. The Messages dock icon should show an unread badge count if there are unread messages.
+5. The dock styling should remain consistent with the existing portal dock.
+
+Floating Messages window:
+Make it look like the uploaded iMessage screenshot, but use purple instead of iMessage blue.
+
+Layout:
+- Mac/iMessage-style floating window
+- Rounded corners
+- Premium Apple-like styling
+- Left sidebar conversation list
+- Search bar at top of sidebar
+- Conversation rows in sidebar
+- Selected conversation highlighted
+- Main chat thread on right
+- Header with avatar/name
+- Header should show thread type:
+  - Direct
+  - Team
+  - Patient
+- Patient threads should show patient/facility context chip in header
+- Message bubbles in the thread
+- Input bar at bottom
+- Plus button near input
+- Send button
+- Optional video/phone icon in header if it fits the design
+
+Color:
+- Outgoing message bubbles should be purple with white text.
+- Selected conversation should be purple.
+- Unread badge/accent should be purple.
+- Incoming bubbles should be light gray with dark text.
+- Keep the rest clean, white, light gray, and Apple-like.
+
+Message bubble rules:
+Direct conversation:
+- Incoming bubbles can just show the other person’s message.
+- Outgoing bubbles align right.
+
+Team/group conversation:
+- Incoming bubbles should show sender name above the bubble.
+- Different senders should be visually understandable.
+- Outgoing bubbles align right.
+
+Patient conversation:
+- Header should show patient context.
+- Bubbles should look the same but include context chip in header.
+
+Data behavior:
+1. Use frontend/mock data for now if no real messaging backend exists.
+2. Do NOT invent backend endpoints.
+3. Do NOT wire to a real API unless existing messaging endpoints already exist.
+4. Keep mock data clean and structured so it can later be replaced by API data.
+5. Use types/interfaces like:
+
+Conversation:
+- id
+- type: "direct" | "team" | "patient"
+- name
+- initials/avatar
+- lastMessage
+- timestamp
+- unreadCount
+- facilityName optional
+- patientName optional
+- patientScreeningId optional
+- messages array
+
+Message:
+- id
+- senderId
+- senderName
+- fromMe boolean
+- body
+- timestamp
+
+Implementation constraints:
+1. Work inside existing TeamPortalShell / portal components.
+2. Do not create a new full portal shell.
+3. Do not reroute:
+   - patient-care-specialist-portal.tsx
+   - ancillary-care-specialist-portal.tsx
+   away from ClinicWorkflowPortal.
+4. Keep Admin View As working.
+5. Keep Clinic selector working.
+6. Keep Work Queue/right rail working.
+7. Keep existing dock items working.
+8. Keep existing left rail tools working.
+9. Keep existing center Playground behavior working.
+10. Do not modify unrelated pages.
+11. Do not touch database schema.
+12. Do not touch server routes unless an existing messaging endpoint already exists and is obviously intended for this.
+
+Files to inspect first:
+- client/src/pages/patient-care-specialist-portal.tsx
+- client/src/pages/ancillary-care-specialist-portal.tsx
+- client/src/components/workflow/ClinicWorkflowPortal.tsx
+- client/src/components/portal/TeamPortalShell.tsx
+- client/src/components/portal/leftRail/*
+- client/src/components/portal/WorkspaceModeSwitcher.tsx
+
+Preferred implementation:
+If TeamPortalShell already contains the left rail and dock, update it there.
+If left rail tools are separated into components, add a focused Messaging tab/component there.
+If a new component is needed, create something narrowly scoped like:
+
+client/src/components/portal/messaging/PortalMessagesPanel.tsx
+client/src/components/portal/messaging/PortalMessagesWindow.tsx
+client/src/components/portal/messaging/mockPortalMessages.ts
+
+Do NOT create a new top-level portal shell.
+
+Acceptance criteria:
+1. Messaging appears as a top-level left panel tab.
+2. Messaging tab shows an iMessage-style live inbox list.
+3. The inbox supports visual categories for:
+   - Direct
+   - Teams
+   - Patients
+4. Messaging is not a square left-panel tool button.
+5. Bottom dock has a Messages icon.
+6. Clicking Messages in dock opens the floating iMessage-style popup.
+7. Clicking a conversation in the Messaging tab opens the same popup with that conversation selected.
+8. Popup looks like iMessage, but purple instead of blue.
+9. Team/group messages show sender names.
+10. Patient threads show patient/facility context.
+11. Existing PCS/ACS portal routing stays through ClinicWorkflowPortal.
+12. No unrelated files changed.
+13. Run typecheck/build if available.
+14. Show the final git diff summary before committing.
+15. Commit only after confirming the diff is limited to the cleanup and messaging UI changes.
+
+Commit message:
+Add portal messaging tab and purple iMessage-style popup

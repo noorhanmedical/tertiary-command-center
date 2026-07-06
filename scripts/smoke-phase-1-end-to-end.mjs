@@ -61,7 +61,8 @@ function requireText(rel, needles) {
 }
 
 function runTest(testPath) {
-  execSync(`npx tsx ${testPath}`, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  // server/**/__tests__ files are vitest suites; run them via vitest.
+  execSync(`npx vitest run ${testPath}`, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 console.log("\nPhase 1 end-to-end smoke test\n=================================");

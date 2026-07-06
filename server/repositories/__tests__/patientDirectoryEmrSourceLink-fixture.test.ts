@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Patient Directory EMR source-link fixture — verdict test (Bundle 42).
 //
 // Runnable via:
@@ -145,10 +146,12 @@ for (const row of PATIENT_DIRECTORY_EMR_SOURCE_LINK_FIXTURE_ROWS) {
   );
 }
 
-if (failures.length > 0) {
-  console.error("Patient Directory EMR source-link fixture test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Patient Directory EMR source-link fixture test passed.");
-}
+describe("Patient Directory EMR source-link fixture test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Patient Directory EMR source-link fixture test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

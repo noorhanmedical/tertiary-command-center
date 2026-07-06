@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CalendarCheck,
@@ -26,6 +26,7 @@ import { orderPatientsWithinRun } from "@/lib/qualificationRunOrdering";
 import { orderPacketPatientsForDisplayAndPdf } from "@/lib/patientPacketOrdering";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import { PlexusIQOperatingList } from "@/components/plexus-iq/operating/PlexusIQOperatingList";
 import {
   openPatientPacketPrintPreview,
 } from "@/lib/pdfGeneration";
@@ -471,7 +472,9 @@ function WorklistGroupCard({
 
 export function PlexusIQWorkspace({
   summary,
+  batches,
   batchDetails,
+  runningBatchIds,
   analyzingBatchId,
   analyzingPatients,
   onGenerateBatch,
@@ -481,9 +484,16 @@ export function PlexusIQWorkspace({
   onUpdatePatient,
   onDeletePatient,
   onAnalyzeOnePatient,
+  onSelectionChange,
+  focusBatch,
+  onFocusConsumed,
+  onAddPatient,
+  onOpenCalendar,
 }: {
   summary: CalendarSummaryRow[];
+  batches: ScreeningBatch[];
   batchDetails: Record<number, BatchWithPatients>;
+  runningBatchIds: Set<number>;
   analyzingBatchId: number | null;
   analyzingPatients: Set<number>;
   onGenerateBatch: (batchId: number) => void;
@@ -493,6 +503,34 @@ export function PlexusIQWorkspace({
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
   onDeletePatient: (id: number) => void;
   onAnalyzeOnePatient: (id: number) => void;
+  /**
+   * Reports the currently-open facility (and its first dated schedule)
+   * up to the page so Add-Patient / Bulk-Import can default their
+   * destination to the facility the user is viewing. Emits null facility
+   * on the clinic-tile overview.
+   */
+  onSelectionChange?: (sel: {
+    facility: string | null;
+    scheduleDate: string | null;
+    batchId: number | null;
+  }) => void;
+  /**
+   * Imperative request to focus the facility a freshly added/imported
+   * batch landed in. Drills into that facility's interior, then calls
+   * onFocusConsumed.
+   */
+  focusBatch?: { id: number; facility: string } | null;
+  onFocusConsumed?: () => void;
+  /**
+   * Opens the Add Patient(s) hub. Relocated from the old page header into
+   * the operating-list view's inline toolbar.
+   */
+  onAddPatient?: () => void;
+  /**
+   * Opens the calendar drawer. Relocated from the old page header into the
+   * operating-list view's inline toolbar.
+   */
+  onOpenCalendar?: () => void;
 }) {
   // Active facilities (any patient count). Used both by the All Patients
   // accordion and as the base set for the status-derived worklists.
@@ -837,40 +875,46 @@ export function PlexusIQWorkspace({
     return { clinicGroups, patients: flatPatients };
   }, [allGroups, selectedClinicFacility]);
 
-  const clinicDetailFiltered = useMemo(() => {
-    const facilityHint = selectedClinicFacility;
-    const rows = clinicDetailRollup.patients;
-    // Hotfix: the completed-section visible list, the packet popup,
-    // and the PDF preview/save all use the same ordering source —
-    // outreach alphabetical, visit by appointment time. The raw rows
-    // from clinicDetailRollup come back in DB / batch order; we sort
-    // here so what the user sees on screen matches what gets handed to
-    // the packet popup + handlePacket + openPatientPacketPrintPreview.
-    let filtered: PatientScreening[];
-    switch (clinicStatusFilter) {
-      case "needs":
-        filtered = rows.filter(isIncomplete); break;
-      case "completed":
-        filtered = rows.filter(isFinalized); break;
-      case "missingInfo":
-        filtered = rows.filter((p) => isMissingEngagementInfo(p, facilityHint)); break;
-      case "readyForEngagement":
-        filtered = rows.filter((p) => isReadyForEngagement(p, facilityHint)); break;
-      case "sentToEngagement":
-        filtered = rows.filter(isSentToEngagement); break;
-      case "all":
-      default:
-        filtered = rows; break;
-    }
-    return orderPacketPatientsForDisplayAndPdf(filtered);
-  }, [clinicDetailRollup, clinicStatusFilter, selectedClinicFacility]);
-
   const clinicDetailScheduleDate = useMemo(() => {
     const dated = clinicDetailRollup.clinicGroups
       .map((g) => g.scheduleDate)
       .filter((d): d is string => !!d);
     return dated[0] ?? null;
   }, [clinicDetailRollup]);
+
+  // Report the currently-open facility (and its first dated schedule) up so
+  // the page can default Add-Patient / Bulk-Import to the facility the user is
+  // viewing. On the clinic-tile overview the facility is null. When the user
+  // has drilled into a facility interior, the embedded operating list owns the
+  // selection (it reports the precise date/batch in view), so this effect skips
+  // to avoid dueling updates that would reset the batch to null.
+  const operatingListOwnsSelection =
+    viewMode === "clinics" && !!selectedClinicFacility;
+  useEffect(() => {
+    if (operatingListOwnsSelection) return;
+    onSelectionChange?.({
+      facility: selectedClinicFacility,
+      scheduleDate: selectedClinicFacility ? clinicDetailScheduleDate : null,
+      batchId: null,
+    });
+  }, [
+    onSelectionChange,
+    operatingListOwnsSelection,
+    selectedClinicFacility,
+    clinicDetailScheduleDate,
+  ]);
+
+  // Apply an imperative focus request (e.g. after an add/import) by
+  // drilling into the requested facility's interior and switching to the
+  // "All" bucket so freshly landed patients are visible regardless of
+  // their qualification status, then clearing the request.
+  useEffect(() => {
+    if (!focusBatch) return;
+    setViewMode("clinics");
+    setSelectedClinicFacility(focusBatch.facility);
+    setClinicStatusFilter("all");
+    onFocusConsumed?.();
+  }, [focusBatch, onFocusConsumed]);
 
   if (grouped.length === 0) {
     return (
@@ -895,141 +939,37 @@ export function PlexusIQWorkspace({
   // the "All view" toggle so power users can browse the archive.
   if (viewMode === "clinics") {
     if (selectedClinicFacility) {
-      const summary =
-        clinicSummaries.find((c) => c.facility === selectedClinicFacility) ??
-        null;
-      // Plexus IQ facility bucket order:
-      //   1. Completed
-      //   2. Missing Info
-      //   3. Parsed
-      //   4. Admin Review Pending
-      //   5. Sent to Engagement
-      //   6. All Patients
-      // SOURCE MARKER: Plexus IQ facility bucket order
-      const tiles: Array<{
-        id: ClinicStatusFilter;
-        label: string;
-        count: number;
-        tone: "amber" | "emerald" | "rose" | "sky" | "slate";
-      }> = [
-        {
-          id: "completed",
-          label: PLEXUS_IQ_BUCKET_LABELS.completed,
-          count: summary?.finalizedCount ?? 0,
-          tone: "emerald",
-        },
-        {
-          id: "missingInfo",
-          label: PLEXUS_IQ_BUCKET_LABELS.missing_info,
-          count: summary?.missingInfoCount ?? 0,
-          tone: "rose",
-        },
-        {
-          id: "needs",
-          label: PLEXUS_IQ_BUCKET_LABELS.needs_completion,
-          count: summary?.incompleteCount ?? 0,
-          tone: "amber",
-        },
-        {
-          id: "readyForEngagement",
-          label: PLEXUS_IQ_BUCKET_LABELS.admin_review,
-          count: summary?.readyForEngagementCount ?? 0,
-          tone: "sky",
-        },
-        {
-          id: "sentToEngagement",
-          label: PLEXUS_IQ_BUCKET_LABELS.submitted_engagement,
-          count: summary?.sentToEngagementCount ?? 0,
-          tone: "slate",
-        },
-        {
-          id: "all",
-          label: "All Patients",
-          count: summary?.totalCount ?? 0,
-          tone: "slate",
-        },
-      ];
-      const toneStyles: Record<typeof tiles[number]["tone"], string> = {
-        amber: "bg-amber-50 border-amber-200 text-amber-900",
-        emerald: "bg-emerald-50 border-emerald-200 text-emerald-900",
-        rose: "bg-rose-50 border-rose-200 text-rose-900",
-        sky: "bg-sky-50 border-sky-200 text-sky-900",
-        slate: "bg-slate-50 border-slate-200 text-slate-900",
-      };
+      // Facility interior = the operating-list view scoped to this clinic.
+      // Filtering the batch list to the selected facility locks the embedded
+      // operating list to that clinic (its facility list derives from these).
+      const facilityBatches = batches.filter(
+        (b) => b.facility === selectedClinicFacility,
+      );
+      // Facility interior renders the standalone operating-list view with
+      // no "Back to clinics" pill-header wrapper and no qualification-job
+      // status chrome above it. Add Patient / Calendar live in the
+      // operating list's own inline toolbar; the back-to-tiles control is
+      // hosted there too (onBack) so the board stays one click away.
       return (
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
-          <div className="flex items-center gap-3" data-testid="plexus-iq-clinic-detail-header">
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedClinicFacility(null);
-                setClinicStatusFilter("completed");
-              }}
-              className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-medium text-slate-800"
-              data-testid="button-plexus-iq-clinic-back"
-            >
-              <ChevronRight className="h-3.5 w-3.5 rotate-180" />
-              Back to clinics
-            </button>
-            <div className="text-base font-semibold text-slate-900">
-              {selectedClinicFacility}
-            </div>
-            <div className="ml-auto">
-              <button
-                type="button"
-                onClick={() => setViewMode("all")}
-                className="text-[11px] text-slate-500 hover:text-slate-700"
-                data-testid="button-plexus-iq-legacy-full-view"
-              >
-                Legacy full view →
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" data-testid="plexus-iq-clinic-status-tiles">
-            {tiles.map((t) => {
-              const isActive = clinicStatusFilter === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setClinicStatusFilter(t.id)}
-                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                    isActive
-                      ? "ring-2 ring-offset-1 ring-slate-900 " + toneStyles[t.tone]
-                      : toneStyles[t.tone] + " hover:opacity-90"
-                  }`}
-                  data-testid={`plexus-iq-clinic-status-tile-${t.id}`}
-                >
-                  <div className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
-                    {t.label}
-                  </div>
-                  <div className="text-xl font-semibold">{t.count}</div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="rounded-2xl bg-white p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-            {clinicDetailFiltered.length === 0 ? (
-              <div className="text-xs text-slate-500 italic py-4 text-center">
-                No patients match this status in {selectedClinicFacility}.
-              </div>
-            ) : (
-              <ClinicDetailPackets
-                facility={selectedClinicFacility}
-                patients={clinicDetailFiltered}
-                clinicGroups={clinicDetailRollup.clinicGroups}
-                analyzingPatients={analyzingPatients}
-                onUpdatePatient={onUpdatePatient}
-                onDeletePatient={onDeletePatient}
-                onAnalyzeOnePatient={onAnalyzeOnePatient}
-                fallbackScheduleDate={clinicDetailScheduleDate}
-                statusLabel={tiles.find((t) => t.id === clinicStatusFilter)?.label ?? ""}
-              />
-            )}
-          </div>
-        </div>
+        <PlexusIQOperatingList
+          summary={summary}
+          batches={facilityBatches}
+          batchDetails={batchDetails}
+          runningBatchIds={runningBatchIds}
+          analyzingPatients={analyzingPatients}
+          onGenerateBatch={onGenerateBatch}
+          onDeleteAllForBatch={onDeleteAllForBatch}
+          onUpdatePatient={onUpdatePatient}
+          onDeletePatient={onDeletePatient}
+          onAnalyzeOnePatient={onAnalyzeOnePatient}
+          onSelectionChange={onSelectionChange}
+          onAddPatient={onAddPatient}
+          onOpenCalendar={onOpenCalendar}
+          onBack={() => {
+            setSelectedClinicFacility(null);
+            setClinicStatusFilter("completed");
+          }}
+        />
       );
     }
 
@@ -1458,512 +1398,6 @@ export function PlexusIQWorkspace({
           </Accordion>
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-// Clinic-detail patient list + per-facility/date packet headers.
-// Patients are grouped by (facility, scheduleDate); each group gets
-// a small header with "Plexus Packet" + "Clinician Packet" buttons.
-// A multi-clinic detail (shouldn't happen here, but the helper stays
-// safe) splits into multiple groups instead of generating a mixed
-// packet.
-// Approved Plexus IQ facility interior layout.
-//
-// Layout matches the approved preview:
-//   - LEFT: date rows render as a vertical tab rail. Each row stays
-//           visible so the user can see every date.
-//   - RIGHT: when a date is selected, the patient panel renders in a
-//           contained child column to the right of the rail. The
-//           panel is bounded by the facility-interior container, so
-//           it cannot fly off-screen. No Radix Popover, no side=right
-//           viewport-edge placement.
-//
-// Plexus IQ dropdown panel color #7283B0 — the muted blue used by
-// the Team Portal preview. Patient rows inside the panel stay on a
-// clean white surface so contrast holds.
-function ClinicDetailPackets({
-  facility,
-  patients,
-  clinicGroups,
-  analyzingPatients,
-  onUpdatePatient,
-  onDeletePatient,
-  onAnalyzeOnePatient,
-  fallbackScheduleDate,
-  statusLabel,
-}: {
-  facility: string;
-  patients: PatientScreening[];
-  clinicGroups: PlexusIQWorklistGroup[];
-  analyzingPatients: Set<number>;
-  onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
-  onDeletePatient: (id: number) => void;
-  onAnalyzeOnePatient: (id: number) => void;
-  fallbackScheduleDate: string | null;
-  statusLabel: string;
-}) {
-  const { toast } = useToast();
-
-  // Packet selection popup — pinned by the hotfix brief. When the
-  // user clicks "Plexus Packet" / "Clinician Packet" we open the
-  // PdfPatientSelectDialog FIRST. Only after the user confirms with
-  // their checkbox selection do we route to handlePacket(), which
-  // routes through the existing print-preview path. Default = all
-  // eligible patients pre-selected.
-  const [packetSel, setPacketSel] = useState<{
-    mode: "plexus" | "clinician";
-    scheduleDate: string | null;
-    patients: PdfPacketSourcePatient[];
-  } | null>(null);
-  // Packet QA Gate — opened when auditPacketPatients finds blockers.
-  // proceed() carries the printable subset forward without re-prompting.
-  const [packetQa, setPacketQa] = useState<{
-    report: PacketQaReport;
-    mode: "plexus" | "clinician";
-    scheduleDate: string | null;
-    facility: string;
-    printable: PdfPacketSourcePatient[];
-  } | null>(null);
-  const queryClient = useQueryClient();
-
-  // Single active key — only one date panel is open at a time. Click
-  // the same row again to close it. `null` = default closed (no panel
-  // showing). SOURCE MARKER: defaultClosedDropdowns / ?? true.
-  // SOURCE MARKER: Delete all per date is available to Plexus IQ users
-  const defaultClosedDropdowns: Record<string, boolean> = {};
-  void defaultClosedDropdowns;
-  const [activeKey, setActiveKey] = useState<string | null>(null);
-
-  function openPacketPicker(mode: "plexus" | "clinician", scheduleDate: string | null, eligible: PdfPacketSourcePatient[]) {
-    if (eligible.length === 0) {
-      toast({
-        title: "Select patients first.",
-        description: `No patients are eligible for the ${mode === "plexus" ? "Plexus" : "Clinician"} packet in this group.`,
-        variant: "destructive",
-      });
-      return;
-    }
-    setPacketSel({ mode, scheduleDate, patients: eligible });
-  }
-
-  function isDropdownClosed(key: string): boolean {
-    // Default-closed semantics: when there is no activeKey, every key
-    // is closed (`?? true` short-circuits to true). When activeKey is
-    // set, only that key is open.
-    const explicit: boolean | undefined = activeKey === null ? undefined : activeKey !== key;
-    return explicit ?? true;
-  }
-
-  // Map patient → schedule date via the originating worklist groups so
-  // packet grouping is always one (facility, scheduleDate) tuple.
-  const patientToScheduleDate = new Map<number, string | null>();
-  for (const g of clinicGroups) {
-    for (const p of g.patients) {
-      patientToScheduleDate.set(p.id, g.scheduleDate);
-    }
-  }
-
-  const groups = new Map<
-    string,
-    { scheduleDate: string | null; patients: PdfPacketSourcePatient[]; eligible: PdfPacketSourcePatient[] }
-  >();
-  // Build raw bucket lists first, then re-sort each bucket so the
-  // packet picker + handlePacket + PDF preview see the same outreach-
-  // alphabetical / visit-appointment-time ordering. Without this, the
-  // dialog displayed alphabetical names but its onGenerate handler
-  // re-filtered raw eligibles and shipped raw order to the PDF.
-  for (const p of patients) {
-    const sd = patientToScheduleDate.get(p.id) ?? fallbackScheduleDate ?? null;
-    const key = sd ?? "(no date)";
-    const cur = groups.get(key) ?? { scheduleDate: sd, patients: [], eligible: [] };
-    cur.patients.push(p as PdfPacketSourcePatient);
-    if (isPatientPdfEligible(p)) cur.eligible.push(p as PdfPacketSourcePatient);
-    groups.set(key, cur);
-  }
-  for (const cur of groups.values()) {
-    cur.patients = orderPacketPatientsForDisplayAndPdf(cur.patients) as PdfPacketSourcePatient[];
-    cur.eligible = orderPacketPatientsForDisplayAndPdf(cur.eligible) as PdfPacketSourcePatient[];
-  }
-
-  const ordered = Array.from(groups.entries()).sort((a, b) => {
-    const ad = a[1].scheduleDate ?? "";
-    const bd = b[1].scheduleDate ?? "";
-    if (!ad && !bd) return 0;
-    if (!ad) return 1;
-    if (!bd) return -1;
-    return bd.localeCompare(ad);
-  });
-
-  // Resolve the active group once so the right column can render it.
-  const activeEntry = ordered.find(([k]) => k === activeKey) ?? null;
-
-  function dateLabelFor(scheduleDate: string | null) {
-    return scheduleDate ? formatDateLabel(scheduleDate) : "Outreach (no date)";
-  }
-
-  function handleDeleteAllForDate(
-    key: string,
-    scheduleDate: string | null,
-    groupPatients: PdfPacketSourcePatient[],
-  ) {
-    if (groupPatients.length === 0) return;
-    const label = dateLabelFor(scheduleDate);
-    if (!confirm(`Delete all patients for ${label}?`)) return;
-    for (const p of groupPatients) onDeletePatient(p.id);
-    if (activeKey === key) setActiveKey(null);
-  }
-
-  // Plexus IQ packet buttons open a print-preview popup instead of
-  // running html2pdf/html2canvas inline. Print preview avoids the
-  // synchronous main-thread rasterization that froze the browser on
-  // larger packets, and the operator can still hit "Print / Save as
-  // PDF" inside the popup to produce a real PDF.
-  //
-  // SOURCE MARKER: Plexus IQ packets use print preview
-  // SOURCE MARKER: Plexus IQ multi-patient packets no longer use html2pdf by default
-  //
-  // Packet QA Gate hardening:
-  //   1. Refetch latest patient data so a still-open workbench tab
-  //      doesn't print stale rows after a qualification finished in
-  //      the background.
-  //   2. Run auditPacketPatients(mode) on the operator's selection. If
-  //      any patient has blockers, open PacketQaBlockingDialog with
-  //      the report. The operator chooses Cancel or "Print N safe
-  //      rows" — the dialog itself never auto-regenerates reasoning.
-  //   3. Only after a clean (or operator-confirmed-subset) audit do we
-  //      call openPatientPacketPrintPreview.
-  function openPreviewWithSubset(args: {
-    mode: "plexus" | "clinician";
-    scheduleDate: string | null;
-    patients: PdfPacketSourcePatient[];
-  }) {
-    const orderedEligible = orderPacketPatientsForDisplayAndPdf(
-      args.patients.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
-    ) as PdfPacketSourcePatient[];
-    const validation = validateSameFacilityDatePacket(
-      orderedEligible,
-      facility,
-      args.scheduleDate,
-    );
-    if (!validation.ok) {
-      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
-      toast({
-        title: "PDF packet blocked",
-        description: validation.reason,
-        variant: "destructive",
-      });
-      return;
-    }
-    const batchName = `${facility} · ${dateLabelFor(args.scheduleDate)}`;
-    try {
-      const result = openPatientPacketPrintPreview({
-        mode: args.mode,
-        batchName,
-        patients: validation.patients,
-        scheduleDate: validation.scheduleDate,
-        createdAt: null,
-      });
-      if (!result.ok && result.reason === "popup-blocked") {
-        // SOURCE MARKER: Plexus IQ print preview popup blocked error is surfaced
-        toast({
-          title: "Popup blocked. Allow popups to print this packet.",
-          description:
-            "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
-          variant: "destructive",
-        });
-      }
-    } catch (err) {
-      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
-      toast({
-        title: "Could not open print preview",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
-    }
-  }
-
-  async function handlePacket(
-    mode: "plexus" | "clinician",
-    scheduleDate: string | null,
-    eligible: PdfPacketSourcePatient[],
-  ) {
-    if (eligible.length === 0) {
-      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
-      toast({
-        title: "Select patients first.",
-        description: `No patients are eligible for the ${mode === "plexus" ? "Plexus" : "Clinician"} packet in this group.`,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Packet QA Gate — freshness step. Refetch the screening-batch
-    // tree so a stale tab can't print yesterday's reasoning.
-    try {
-      await queryClient.refetchQueries({
-        queryKey: ["/api/screening-batches"],
-      });
-    } catch {
-      // Refetch is best-effort. If the network blip, fall through to
-      // the audit; the in-memory copies are still real data, just
-      // possibly slightly older — and the user can still bail at the
-      // QA dialog if anything looks off.
-    }
-
-    const report = auditPacketPatients(eligible, mode);
-    if (report.blockedCount > 0) {
-      const printable = eligible.filter(
-        (p) => !report.blockedPatients.some((b) => b.patientId === p.id),
-      );
-      setPacketQa({
-        report,
-        mode,
-        scheduleDate,
-        facility,
-        printable,
-      });
-      return;
-    }
-
-    openPreviewWithSubset({ mode, scheduleDate, patients: eligible });
-  }
-
-  // Empty state: still surface the facility label.
-  if (ordered.length === 0) {
-    return (
-      <div className="text-xs text-slate-500 italic py-4 text-center">
-        No dates to display for {facility}.
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="grid grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)] gap-4"
-      data-testid="plexus-iq-clinic-detail-grid"
-    >
-      {/* LEFT — vertical date rail. Each row is a tab that stays
-          visible whether or not the panel is open. */}
-      <div
-        className="space-y-1.5"
-        data-testid="plexus-iq-date-rail"
-      >
-        {ordered.map(([key, group]) => {
-          const active = activeKey === key;
-          const dateLabel = dateLabelFor(group.scheduleDate);
-          const collapsed = isDropdownClosed(key);
-          void collapsed;
-          return (
-            <section
-              key={key}
-              className="relative"
-              data-testid={`plexus-iq-clinic-packet-group-${key}`}
-              data-dropdown-default-closed="?? true"
-            >
-              <div
-                className={`relative flex items-center justify-between gap-2 pl-4 pr-2 py-2 rounded-xl border border-slate-200/70 transition-colors ${
-                  active
-                    ? "bg-[#7283B0]/10 ring-1 ring-[#7283B0]/40"
-                    : "bg-white hover:bg-slate-50/80"
-                }`}
-              >
-                <span
-                  aria-hidden
-                  className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full transition-colors ${
-                    active ? "bg-[#7283B0]" : "bg-slate-200"
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setActiveKey(active ? null : key)}
-                  className="flex items-center gap-2 min-w-0 flex-1 text-left bg-transparent border-0 p-0"
-                  data-testid="plexus-iq-dropdown-trigger"
-                  data-group-trigger="plexus-iq-clinic-packet-group-trigger"
-                  aria-expanded={active}
-                >
-                  {active ? (
-                    <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-                  )}
-                  <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-slate-900 truncate">
-                      {dateLabel}
-                    </div>
-                    <div className="text-[10px] text-slate-500 truncate">
-                      {group.patients.length} {statusLabel.toLowerCase()}
-                    </div>
-                  </div>
-                </button>
-                {/* Delete all per date — visible trash icon on the
-                    actual facility-interior row the user sees. */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteAllForDate(key, group.scheduleDate, group.patients);
-                  }}
-                  disabled={group.patients.length === 0}
-                  aria-label={`Delete all patients for ${dateLabel}`}
-                  title={`Delete all patients for ${dateLabel}`}
-                  data-testid="plexus-iq-delete-date-group"
-                  data-delete-action="plexus-iq-delete-date-group-confirm"
-                  data-date-key={key}
-                  className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors disabled:opacity-40 shrink-0"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </section>
-          );
-        })}
-      </div>
-
-      {/* RIGHT — contained panel that opens for the active date.
-          Bounded by the facility-interior container so it cannot
-          fly off-screen. Plexus IQ dropdown panel color #7283B0. */}
-      <div
-        className="min-w-0"
-        data-testid="plexus-iq-dropdown-overlay"
-        data-overlay-style="contained-in-grid"
-      >
-        {activeEntry ? (
-          <div
-            className="rounded-2xl bg-[#7283B0] text-white p-3 shadow-[0_8px_24px_rgba(114,131,176,0.30)] max-h-[72vh] overflow-y-auto"
-            data-testid="plexus-iq-dropdown-panel"
-            data-panel-style="plexus-iq-dropdown-contained-panel"
-            data-indent-style="plexus-iq-dropdown-indented-panel"
-            data-panel-color="#7283B0"
-            style={{ backgroundColor: "#7283B0" }}
-          >
-            <div className="flex items-center gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/85">
-              <CalendarDays className="w-3 h-3 opacity-80" />
-              <span className="truncate">
-                {facility} · {dateLabelFor(activeEntry[1].scheduleDate)}
-              </span>
-              <span className="ml-auto text-white/70 tabular-nums">
-                {activeEntry[1].patients.length}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 px-1 pb-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={activeEntry[1].eligible.length === 0}
-                onClick={() =>
-                  openPacketPicker("plexus", activeEntry[1].scheduleDate, activeEntry[1].eligible)
-                }
-                className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
-                data-testid={`button-plexus-iq-clinic-packet-plexus-${activeEntry[0]}`}
-                data-print-preview-testid="plexus-iq-plexus-print-preview"
-              >
-                Plexus Packet
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={activeEntry[1].eligible.length === 0}
-                onClick={() =>
-                  openPacketPicker("clinician", activeEntry[1].scheduleDate, activeEntry[1].eligible)
-                }
-                className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
-                data-testid={`button-plexus-iq-clinic-packet-clinician-${activeEntry[0]}`}
-                data-print-preview-testid="plexus-iq-clinician-print-preview"
-              >
-                Clinician Packet
-              </Button>
-              {/* Hidden anchors carry the canonical preview-state
-                  testIds so QA / e2e can detect popup-blocked +
-                  error states regardless of whether a toast is
-                  currently visible. */}
-              <span
-                className="sr-only"
-                data-testid="plexus-iq-print-preview-popup-blocked"
-                aria-hidden="true"
-              >
-                Popup blocked. Allow popups to print this packet.
-              </span>
-              <span
-                className="sr-only"
-                data-testid="plexus-iq-print-preview-error"
-                aria-hidden="true"
-              >
-                Plexus IQ print preview error surface.
-              </span>
-              {activeEntry[1].eligible.length !== activeEntry[1].patients.length && (
-                <span className="text-[10px] text-white/70 ml-1">
-                  ({activeEntry[1].eligible.length} eligible for PDF)
-                </span>
-              )}
-            </div>
-            <div
-              className="rounded-xl bg-white p-2 shadow-[0_2px_6px_rgba(15,23,42,0.10)]"
-              data-testid="plexus-iq-dropdown-white-row"
-              data-row-surface="plexus-iq-dropdown-white-row"
-            >
-              <QualificationPatientCardsPane
-                title={dateLabelFor(activeEntry[1].scheduleDate)}
-                patients={activeEntry[1].patients}
-                analyzingPatients={analyzingPatients}
-                completedCount={activeEntry[1].eligible.length}
-                onUpdatePatient={onUpdatePatient}
-                onDeletePatient={onDeletePatient}
-                onAnalyzeOnePatient={onAnalyzeOnePatient}
-                onOpenScheduleModal={() => { /* no per-patient appointment modal here */ }}
-                schedulerName={null}
-                batchScheduleDate={activeEntry[1].scheduleDate}
-                groupByDate={false}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center text-xs text-slate-500 italic">
-            Select a date on the left to view its patients.
-          </div>
-        )}
-      </div>
-
-      {/* Hotfix: packet checkbox popup gates the Plexus / Clinician
-          packet generation. The packet only fires after the operator
-          confirms their selection in this dialog. */}
-      <PdfPatientSelectDialog
-        open={packetSel !== null}
-        mode={packetSel?.mode ?? null}
-        patients={(packetSel?.patients as unknown as PatientScreening[]) ?? []}
-        onClose={() => setPacketSel(null)}
-        onGenerate={(selected) => {
-          if (!packetSel) return;
-          // CRITICAL: re-order the filtered selection through the same
-          // shared helper so the PDF preview / saved PDF render in the
-          // same order the dialog displayed. Previously this line
-          // filtered the raw packetSel.patients which preserved DB
-          // order — the popup showed alphabetical but the PDF didn't.
-          const filteredRaw = packetSel.patients.filter((p) => selected.some((s) => s.id === p.id));
-          const filtered = orderPacketPatientsForDisplayAndPdf(filteredRaw);
-          setPacketSel(null);
-          // handlePacket is async (it refetches before audit). The
-          // fire-and-forget is intentional — operator already closed
-          // the picker; any failure surfaces via toast inside.
-          void handlePacket(packetSel.mode, packetSel.scheduleDate, filtered);
-        }}
-      />
-      <PacketQaBlockingDialog
-        open={packetQa !== null}
-        report={packetQa?.report ?? null}
-        onCancel={() => setPacketQa(null)}
-        onProceed={() => {
-          if (!packetQa) return;
-          const subset = packetQa.printable;
-          setPacketQa(null);
-          openPreviewWithSubset({
-            mode: packetQa.mode,
-            scheduleDate: packetQa.scheduleDate,
-            patients: subset,
-          });
-        }}
-      />
     </div>
   );
 }

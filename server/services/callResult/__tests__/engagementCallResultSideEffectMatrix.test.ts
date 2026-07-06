@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement side-effect matrix parity test (Batch 9).
 
 import { ENGAGEMENT_CALL_RESULT_SIDE_EFFECT_MATRIX } from "../../../../tests/fixtures/engagementCallResultSideEffectMatrix.fixture";
@@ -36,9 +37,12 @@ for (const m of ENGAGEMENT_CALL_RESULT_SIDE_EFFECT_MATRIX) {
   check(!json.includes("PlexusIq"), `§3: matrix must not include Plexus IQ surface (capitalised)`);
 }
 
-if (failures.length > 0) {
-  console.error("Engagement side-effect matrix test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Engagement side-effect matrix test passed.");
+describe("Engagement side-effect matrix test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement side-effect matrix test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

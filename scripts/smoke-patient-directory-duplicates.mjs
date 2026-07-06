@@ -48,7 +48,9 @@ function requireText(rel, needles) {
 }
 
 function runTest(rel) {
-  execSync(`npx tsx ${rel}`, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  // server/**/__tests__ files are vitest suites; tests/unit files remain tsx scripts.
+  const cmd = rel.includes("__tests__") ? `npx vitest run ${rel}` : `npx tsx ${rel}`;
+  execSync(cmd, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 console.log("\nPatient Directory + duplicate-warning smoke test\n================================================");

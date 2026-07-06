@@ -1,3 +1,4 @@
+import { it } from "vitest";
 // Unit test: RingCentral adapter facade behaves correctly with an
 // in-memory client. Default (dormant) client throws — confirms Phase 1
 // stays inert without explicit wiring.
@@ -47,4 +48,6 @@ async function main() {
   console.log("RingCentral adapter test passed.");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+it("RingCentral adapter", async () => {
+  await main();
+});

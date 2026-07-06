@@ -3,6 +3,8 @@ import {
   uniqueIndex, createInsertSchema, z,
 } from "./_common";
 import { users } from "./users";
+import { clinics } from "./clinics";
+import { integer } from "./_common";
 
 export const ADMIN_SETTING_DOMAINS = [
   "facility",
@@ -23,11 +25,14 @@ export const ADMIN_SETTING_DOMAINS = [
   "emr_integration",
   "ai",
   "audit",
+  "patient_directory",
 ] as const;
 export type AdminSettingDomain = typeof ADMIN_SETTING_DOMAINS[number];
 
 export const adminSettings = pgTable("admin_settings", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   settingDomain: text("setting_domain").notNull(),
   settingKey: text("setting_key").notNull(),
   settingValue: jsonb("setting_value").notNull().default({}),

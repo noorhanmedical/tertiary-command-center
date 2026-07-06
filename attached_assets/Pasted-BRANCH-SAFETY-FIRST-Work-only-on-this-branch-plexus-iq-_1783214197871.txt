@@ -1,0 +1,984 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report:
+
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components/endpoints that will be touched.
+2. Confirm whether this is frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+4. Confirm any schema change before doing it. Avoid schema changes unless absolutely required.
+5. Inspect current implementation and report findings before editing.
+
+TASK:
+
+Design and implement the architecture foundation for the full Clinical Intelligence + Repeat Testing + Report Upload + Plexus IQ Admin Review + Engagement Center loop.
+
+This is a major platform workflow.
+
+The purpose is to support the current ancillary workflow now, while also creating the foundation for the future business module where uploaded/API-imported documents, labs, imaging, echo reports, outside records, and ancillary reports are reviewed by AI to extract clinical findings, likely ICD opportunities, ancillary service opportunities, and repeat/re-eligibility opportunities.
+
+CORE CONCEPT:
+
+Clinical Intelligence is its own major platform area / tile.
+
+Clinical Intelligence is not just a small Plexus IQ feature.
+
+Clinical Intelligence reads clinical evidence.
+
+Plexus IQ qualifies services.
+
+Admin Review approves.
+
+Engagement operationalizes patient communication, reminders, and call lists.
+
+Team Portal performs calls, scheduling, document collection, report upload.
+
+Plexus EHR / Patient Directory stores the permanent patient chart, documents, reports, order notes, procedure notes, and repeat history.
+
+HIGH-LEVEL FLOW:
+
+Report uploaded or document imported
+        ↓
+Clinical Intelligence reviews the evidence
+        ↓
+Clinical findings / ICD opportunities / ancillary opportunities / repeat eligibility are extracted
+        ↓
+Documentation reconciliation checks order note + procedure note
+        ↓
+Repeat eligibility / cooldown / future review dates are calculated
+        ↓
+Plexus IQ Repeat Testing Review / Admin Review opens at the appropriate time
+        ↓
+Admin approves / edits / rejects / defers
+        ↓
+Scheduling reconciliation checks whether patient is already scheduled
+        ↓
+If not scheduled, Engagement starts outreach/reminder sequence
+        ↓
+Email / text / call-list workflow
+        ↓
+Team Portal sees full communication + scheduling history
+        ↓
+Patient schedules repeat test
+        ↓
+New order note pulls prior findings, DX/HX/RX, prior report, payer interval, and repeat rationale
+
+PART 1 — Inspect current wiring first
+
+Before editing, inspect and report the current implementation for:
+
+Routes / navigation:
+- homepage tiles
+- Plexus IQ route/tile/components
+- Admin Review route/components
+- Engagement Center route/components
+- Team Portal / Team Member Portal route/components
+- Patient Directory / Plexus EHR route/components
+- Documents / Document Library route/components
+- Ancillary Documents route/components if it still exists
+
+Report upload:
+- where report upload currently exists
+- report upload endpoint
+- report upload component
+- where uploaded reports are saved
+- how report upload links to patientId
+- how report upload links to patient_execution_case
+- how report upload links to ancillary/test type if supported
+- whether report upload currently triggers order note, procedure note, billing document, proof packet, or other generated documentation
+
+Order/procedure notes:
+- where order notes are generated
+- when order notes are generated
+- where procedure notes are generated
+- when procedure notes are generated
+- where these documents are stored
+- whether they link to patientId, ancillary/test, and patient_execution_case
+- whether missing documentation reconciliation already exists
+
+Plexus IQ / Admin Review:
+- how initial qualification enters Admin Review
+- where Admin Review approval creates/updates patient_execution_cases
+- whether Admin Review supports review types/categories
+- whether Admin Review can support repeat/re-eligibility review items
+- whether there is an existing queue/table/endpoint that can represent repeat review without schema change
+
+Engagement:
+- how Assignment Pool loads patient_execution_cases
+- how Engagement Assignment Pool date grouping currently works
+- how distribution updates assignment fields
+- how Team Member Portal receives distributed/assigned patients
+- whether communication events are tracked
+- whether email/text sending exists
+- whether online scheduling link/status exists
+- whether patient_journey_events are used for communication/scheduling timeline
+
+Scheduling:
+- where appointments/scheduled ancillaries are stored
+- how to identify if patient already has a scheduled BrainWave/VitalWave/Ultrasound
+- how appointment status is represented
+- how cancelled/missed/completed appointments are represented
+- whether online scheduling status exists
+
+Data models:
+- patient_execution_cases
+- patient_journey_events
+- patient documents
+- document library templates
+- report uploads
+- order notes
+- procedure notes
+- scheduling/appointments
+- call results
+- team member roster/call settings
+- any existing repeat/cooldown/re-eligibility fields
+
+Report exact files/endpoints to touch before editing.
+
+PART 2 — New platform concept: Clinical Intelligence tile
+
+Add or prepare a dedicated homepage/platform tile called:
+
+Clinical Intelligence
+
+Subtitle:
+AI review of reports, labs, imaging, documents, ICD opportunities, and repeat eligibility.
+
+Clinical Intelligence is a standalone business module.
+
+It should eventually support:
+- uploaded ancillary reports
+- uploaded PDFs/images/documents
+- API-imported labs
+- API-imported imaging reports
+- API-imported echo reports
+- API-imported outside records
+- consult notes
+- hospital records
+- medication lists
+- problem lists
+- prior test results
+
+Clinical Intelligence should NOT replace Plexus IQ.
+
+Clean boundary:
+
+Clinical Intelligence:
+- reads evidence
+- extracts findings
+- suggests ICDs
+- identifies ancillary opportunities
+- identifies repeat/re-eligibility opportunities
+- tracks prior results and cooldown/repeat timing
+- handles documentation reconciliation after report upload
+
+Plexus IQ:
+- turns evidence and findings into qualification/re-qualification logic
+- creates Initial Qualification Review and Repeat Testing Review items
+- routes to Admin Review
+
+Admin Review:
+- human review/approval before operational outreach
+
+Engagement Center:
+- communication/reminders/call-list workflow after approval
+
+Team Portal:
+- calls, schedules, uploads documents, uploads reports
+
+Plexus EHR / Patient Directory:
+- permanent source of truth for patient-specific documents/reports/notes/timeline
+
+Do not overload Engagement Center or Team Portal with Clinical Intelligence logic.
+
+PART 3 — Clinical Intelligence internal sections
+
+Inside Clinical Intelligence, create or plan these sections if feasible:
+
+1. Evidence Inbox
+   - newly uploaded reports
+   - imported documents
+   - imported labs/imaging/echo/records in the future
+   - items needing AI review
+
+2. Result Review
+   - AI-reviewed reports/documents
+   - extracted findings
+   - key abnormalities
+   - suggested ICDs
+   - confidence/needs review
+
+3. Ancillary Opportunities
+   - suggested BrainWave/VitalWave/Ultrasound or other services based on evidence
+   - links to supporting findings
+   - route to Plexus IQ/Admin Review
+
+4. Repeat Eligibility
+   - repeat opportunities created after prior testing/report upload
+   - payer interval
+   - due date
+   - admin review date
+   - cooldown state
+   - scheduling reconciliation state
+
+5. Documentation Reconciliation
+   - report uploaded
+   - order note present/missing
+   - procedure note present/missing
+   - generated/needs review/failed
+   - patient document saved/not saved
+   - billing/supporting documentation status if existing
+
+6. Evidence Timeline
+   - prior reports
+   - prior findings
+   - prior ICD suggestions
+   - prior repeat opportunities
+   - prior admin decisions
+   - prior outreach/scheduling communication events
+
+If building all of these is too large for this pass:
+- create the tile and route
+- create a clean shell with honest empty/unavailable states
+- wire the existing report upload/repeat eligibility workflow foundation
+- do not fake data
+
+PART 4 — Report upload trigger
+
+When a report is uploaded for BrainWave/VitalWave/Ultrasound or another ancillary:
+
+Required behavior:
+
+1. Save report to Patient Directory / Plexus EHR.
+2. Link report to patientId.
+3. Link report to patient_execution_case if available.
+4. Link report to ancillary/test type if available.
+5. Trigger documentation reconciliation.
+6. Trigger Clinical Intelligence result review.
+7. Create or update repeat eligibility opportunity if medically supported and data is available.
+8. Write patient_journey_events if existing event infrastructure supports it.
+
+Report upload should be a catch-all safety trigger.
+
+Correct timeline:
+- Order note should normally be generated when patient is scheduled.
+- Procedure note should normally be generated when report is uploaded.
+- If order note is missing at report upload, report upload should catch it and generate/flag missing order note.
+- Report upload should not imply order note normally happens after the procedure.
+- Report upload is a safety reconciliation point.
+
+PART 5 — Documentation reconciliation rules
+
+When report is uploaded, check:
+
+1. Is the report saved to the patient chart?
+   - If no, save it.
+   - If yes, link it.
+
+2. Does order note already exist for this patient + ancillary + execution case?
+   - If yes, mark order note present.
+   - If no, generate missing order note if generation infrastructure exists, or flag as Missing Order Note / Needs Review.
+
+3. Does procedure note exist?
+   - If yes, mark procedure note present.
+   - If no, generate procedure note if generation infrastructure exists, or flag as Missing Procedure Note / Needs Review.
+
+4. Does billing/supporting document exist if currently supported?
+   - If yes, preserve existing behavior.
+   - If no and generation exists, generate or flag.
+
+5. Write timeline events:
+   - Report uploaded
+   - Procedure note generated or missing
+   - Order note present or catch-up needed
+   - Clinical Intelligence review created
+   - Repeat opportunity created if applicable
+
+Do not fake generation if document generation infrastructure does not exist.
+
+Show honest states:
+- Present
+- Missing
+- Generated
+- Needs Review
+- Failed
+- Not supported yet
+
+PART 6 — AI report/result review
+
+Clinical Intelligence should read the report/result evidence if AI extraction infrastructure exists.
+
+If no AI extraction exists yet, create the structure and honest placeholder states.
+
+When supported, it should extract:
+
+- abnormal findings
+- relevant symptoms
+- clinically relevant history
+- relevant diagnoses
+- risk factors
+- medications if available
+- suggested ICD opportunities
+- prior test findings
+- worsening/progression indicators
+- follow-up/repeat testing rationale
+- whether repeat testing may be medically reasonable
+- source document references
+
+Do NOT fabricate ICD codes or findings.
+Only show suggestions when supported by report/chart evidence.
+All AI suggestions require admin/provider review before downstream action.
+
+PART 7 — Repeat eligibility logic for current workflow
+
+This is required for the current BrainWave/VitalWave/Ultrasound business workflow.
+
+When a BrainWave/VitalWave/Ultrasound report is uploaded:
+
+1. Clinical Intelligence reviews report.
+2. Extract prior findings and possible ICD opportunities if supported.
+3. Determine payer type if available.
+4. Calculate repeat interval:
+   - PPO/commercial: 6 months if medically supported
+   - Medicare: 12 months if medically supported
+5. Calculate repeat due date.
+6. Calculate Admin Review open date:
+   - default: 1 month before repeat due date
+7. Create Repeat Eligibility item / Repeat Opportunity.
+8. Do NOT immediately send to Engagement unless the repeat is due now and Admin approved.
+9. Store/derive cooldown state until due/review date.
+10. Route to Plexus IQ Repeat Testing Review when admin review date arrives.
+
+Important:
+Do not use language or logic that repeats everyone automatically.
+Repeat testing should be medically supported by:
+- prior abnormal findings
+- ongoing diagnoses
+- symptoms
+- risk factors
+- prior report findings
+- payer timing
+- admin/provider approval
+
+Allowed repeat states:
+- Future Repeat Pending
+- In Cooldown
+- Ready for Admin Review
+- Admin Approved
+- Admin Rejected
+- Deferred
+- Already Scheduled
+- Not Scheduled
+- Outreach Active
+- Scheduled
+- Completed
+- Cancelled
+- Missed
+- Needs Reschedule
+
+PART 8 — Repeat Opportunity object/concept
+
+Create or represent a Repeat Opportunity with these fields if supported by existing data:
+
+- patientId
+- patient name
+- ancillary/test type: BrainWave / VitalWave / Ultrasound
+- prior patient_execution_case id if available
+- prior report document id
+- prior test date
+- report uploaded date
+- payer type
+- repeat interval: 6 months / 12 months / custom / unknown
+- repeat due date
+- admin review open date
+- status
+- prior findings summary
+- suggested ICDs
+- supporting DX/HX/RX/symptoms if available
+- repeat medical necessity rationale
+- source: Clinical Intelligence
+- admin review status
+- engagement status
+- scheduling reconciliation status
+- next outreach step if any
+
+Avoid schema change if there is a safe existing place to represent this.
+If schema is required, propose the migration first.
+
+PART 9 — Plexus IQ Repeat Testing Review
+
+Inside Plexus IQ, create or plan a dedicated review queue/subtile:
+
+Repeat Testing Review
+
+This is not initial qualification.
+
+Plexus IQ should support at least two review types:
+
+1. Initial Qualification Review
+2. Repeat Testing / Re-Eligibility Review
+
+Repeat Testing Review should display items created by Clinical Intelligence after report upload or future API evidence review.
+
+Repeat review card should show:
+
+- Patient
+- Prior ancillary/test
+- Prior test date
+- Report uploaded date
+- Prior report link
+- Key prior findings
+- Suggested ICD opportunities
+- Existing diagnoses/history/risk factors if available
+- Payer type
+- Repeat interval
+- Repeat due date
+- Admin review open date
+- Medical necessity rationale
+- Scheduling reconciliation status if available
+- Actions:
+  - Approve Repeat
+  - Edit Rationale
+  - Reject
+  - Defer
+  - Open Patient
+  - Open Report
+
+Admin approval should not automatically place patient into call lists unless timing and scheduling rules allow it.
+
+PART 10 — Timing rule for Plexus IQ Admin Review
+
+For repeat testing:
+
+If repeat due date is in the future:
+- Item should stay in Future Repeat Pending / Cooldown.
+- It should populate into Plexus IQ Repeat Testing Review 1 month before due date.
+
+Example PPO:
+- BrainWave completed: Jan 1
+- Report uploaded: Jan 3
+- Repeat due: July 1
+- Plexus IQ Repeat Testing Review opens: June 1
+
+Example Medicare:
+- BrainWave completed: Jan 1
+- Report uploaded: Jan 3
+- Repeat due: Jan 1 next year
+- Plexus IQ Repeat Testing Review opens: Dec 1
+
+If already within review window or overdue:
+- It can appear in Repeat Testing Review immediately.
+
+PART 11 — After Admin approves repeat testing
+
+After admin approves a repeat test:
+
+Do NOT blindly send to Engagement call lists.
+
+First perform Scheduling Reconciliation.
+
+Workflow:
+
+Admin approves repeat
+        ↓
+Scheduling Reconciliation
+        ↓
+Already scheduled?
+        ↓
+If yes: mark Already Scheduled / no outreach needed unless confirmation needed
+If no: create Engagement repeat outreach item
+
+If approved but not yet due:
+- keep future-dated until outreach window
+- do not prematurely send active outreach
+
+If approved and due/within outreach window:
+- send to Engagement Assignment Pool as:
+  Category: Ancillary Scheduling
+  Call Type: Repeat Test Due
+  Source: Plexus IQ Repeat Testing Review or Clinical Intelligence
+  Status: Awaiting assignment / Not Scheduled
+
+PART 12 — Scheduling reconciliation
+
+This is required.
+
+Before any repeat-test email, text, or call-list placement, the system must check whether the patient is already scheduled.
+
+Check scheduling status by:
+
+- patientId
+- ancillary/test type
+- repeat due window
+- scheduled appointment date
+- appointment status
+- execution case linkage if available
+
+Possible scheduling states:
+
+- Not Scheduled
+- Already Scheduled
+- Scheduled Online
+- Scheduled by Team
+- Cancelled
+- Missed
+- Needs Reschedule
+- Completed
+
+Rules:
+
+1. If already scheduled:
+   - Do not send unnecessary outreach.
+   - Do not add to active call list unless confirmation/reschedule is needed.
+   - Status trail:
+     Plexus IQ Repeat Approved → Scheduling Reconciled → Already Scheduled
+
+2. If not scheduled:
+   - Start Engagement outreach sequence.
+   - Status trail:
+     Plexus IQ Repeat Approved → Scheduling Reconciled → Not Scheduled → Email Pending
+
+3. If patient schedules online after email/text:
+   - Stop remaining outreach steps.
+   - Do not send the text/call if already scheduled.
+   - Status trail:
+     Plexus IQ Repeat Approved → Email Sent → Patient Scheduled Online → Outreach Complete
+
+4. If cancelled:
+   - Move back to Engagement as Needs Reschedule.
+   - Call Type can be:
+     Reschedule Missed Test
+     or Repeat Test Due depending on context.
+
+5. If missed:
+   - Move back to Engagement as Reschedule Missed Test.
+
+Before every outreach step:
+- re-check schedule status
+- stop outreach if scheduled
+
+PART 13 — Engagement outreach sequence
+
+Engagement Center remains:
+
+1. Assignment Pool
+2. Call Results
+3. Call Settings
+
+Do NOT create a separate Distribution tab.
+
+Do NOT create a separate Clinical Intelligence section inside Engagement.
+
+For approved repeat testing items, Engagement manages the patient communication sequence.
+
+Default repeat outreach timeline:
+
+- 1 month before due date: email reminder
+- 1 week before due date: text reminder
+- 2 days before due date: call list item if still not scheduled
+
+This should be configurable later, but use these as default business rules.
+
+Communication sequence:
+
+Admin approved repeat
+        ↓
+Scheduling reconciliation
+        ↓
+If not scheduled:
+        ↓
+Email reminder 1 month before due date
+        ↓
+Recheck scheduling
+        ↓
+Text reminder 1 week before due date if still not scheduled
+        ↓
+Recheck scheduling
+        ↓
+Call list item 2 days before due date if still not scheduled
+
+Engagement Assignment Pool row for repeat testing:
+
+Category:
+Ancillary Scheduling
+
+Call Type:
+Repeat Test Due
+
+Source:
+Plexus IQ Repeat Testing Review
+or Clinical Intelligence
+
+Status:
+Awaiting assignment / Not Scheduled / Email Sent / Text Sent / On Call List / Scheduled
+
+PART 14 — Engagement status trails for repeat testing
+
+Use chronological status trails.
+
+Examples:
+
+Repeat approved but already scheduled:
+Plexus IQ Repeat Approved → Scheduling Reconciled → Already Scheduled
+
+Repeat approved, not scheduled:
+Plexus IQ Repeat Approved → Scheduling Reconciled → Not Scheduled → Email Pending
+
+Email sent:
+Plexus IQ Repeat Approved → Email Sent → Awaiting Response
+
+Patient scheduled online:
+Plexus IQ Repeat Approved → Email Sent → Patient Scheduled Online → Outreach Complete
+
+No response after email/text:
+Plexus IQ Repeat Approved → Email Sent → Text Sent → On Call List → Awaiting Call
+
+Patient replied to text:
+Plexus IQ Repeat Approved → Email Sent → Text Sent → Patient Replied → Follow-up Needed
+
+Patient cancelled:
+Already Scheduled → Cancelled → Needs Reschedule → Assignment Pool
+
+Missed appointment:
+Scheduled → Missed → Reschedule Missed Test → Assignment Pool
+
+Do not show random tag soup.
+
+PART 15 — Team Portal visibility
+
+When repeat testing reaches Team Portal call list, the team member should see:
+
+- Repeat Test Due
+- Ancillary/test type: BrainWave/VitalWave/Ultrasound
+- Prior test date
+- Repeat due date
+- Payer interval
+- Prior findings summary
+- Why repeat is medically reasonable
+- Email sent status
+- Email opened/clicked if available
+- Text sent status
+- Text reply status if available
+- Online scheduling status
+- Whether patient is already scheduled
+- Call reason
+- Next action
+
+Team member should know:
+- email was sent or not
+- text was sent or not
+- patient replied or not
+- patient scheduled online or not
+- why the call is needed
+
+Do not blindly call already scheduled patients.
+
+PART 16 — Patient communication event tracking
+
+If communication tracking exists, use it.
+
+If not, create honest states/placeholders and avoid fake send/open/click/reply.
+
+Track events if supported:
+
+- Email Pending
+- Email Sent
+- Email Delivered
+- Email Opened
+- Email Clicked
+- Email Failed
+- Text Pending
+- Text Sent
+- Text Delivered
+- Text Replied
+- Text Failed
+- Patient Scheduled Online
+- Patient Scheduled by Team
+- No Response
+- Added to Call List
+- Call Completed
+- Appointment Cancelled
+- Appointment Missed
+
+Write these to patient_journey_events if existing event infrastructure supports it.
+
+PART 17 — Order note for repeat testing
+
+When the repeat test is scheduled, the new order note should pull prior evidence from Clinical Intelligence.
+
+Repeat order note should include:
+
+- prior test type
+- prior test date
+- prior report findings
+- relevant ICDs
+- symptoms/history
+- medications/risk factors if available
+- payer timing interval
+- repeat due date
+- admin-approved repeat rationale
+- reason repeat testing is medically necessary now
+
+Example repeat rationale:
+
+Patient previously underwent [BrainWave/VitalWave/Ultrasound] testing on [prior test date], with findings reviewed in the uploaded report. Given the prior findings, ongoing clinical history, relevant diagnoses, symptoms, and continued risk factors, repeat testing is being ordered after the appropriate interval to reassess ongoing abnormality, progression, and continued clinical risk.
+
+For PPO/commercial:
+Repeat testing is being considered after a 6-month interval when medically supported by prior abnormal findings and ongoing clinical risk.
+
+For Medicare:
+Repeat testing is being considered after a 12-month interval when medically supported by prior abnormal findings and ongoing clinical risk.
+
+Do not say repeat is automatic.
+
+Do not create unsupported medical necessity.
+
+PART 18 — Patient Directory / Plexus EHR display
+
+Patient Directory / Plexus EHR should show the longitudinal evidence:
+
+- prior ancillary tests
+- uploaded reports
+- order notes
+- procedure notes
+- prior findings
+- suggested/approved ICDs
+- repeat eligibility date
+- cooldown state
+- next repeat test recommendation
+- admin decisions
+- outreach communication history
+- scheduled appointment status
+
+If not fully built, at least ensure all uploaded/generated documents and timeline events are saved/linked correctly so the EHR can display them later.
+
+PART 19 — Homepage / navigation
+
+Add Clinical Intelligence as a dedicated tile if homepage tile architecture supports it.
+
+Suggested tile:
+
+Title:
+Clinical Intelligence
+
+Subtitle:
+AI review of reports, labs, imaging, documents, ICD opportunities, and repeat eligibility.
+
+If adding tile is too disruptive in this pass:
+- create route and shell
+- report that homepage tile needs follow-up
+- do not break existing homepage tiles
+
+Clinical Intelligence should eventually sit alongside:
+
+- Mission Control
+- Plexus EHR
+- Plexus IQ
+- Clinical Intelligence
+- Engagement Center
+- Team Workspace
+- Imaging Central
+
+PART 20 — Data/source truth boundaries
+
+Use these boundaries:
+
+Clinical Intelligence:
+- report/document evidence review
+- extracted findings
+- ICD suggestions
+- repeat eligibility
+- documentation reconciliation
+- future review dates
+
+Plexus IQ:
+- qualification and re-qualification review
+- Initial Qualification Review
+- Repeat Testing Review
+- Admin Review routing
+
+Engagement:
+- outreach sequence
+- email/text/call list state
+- assignment/distribution to team members
+- call results
+
+Team Portal:
+- team work execution
+- calls
+- scheduling
+- informed consent
+- screening form
+- report upload
+
+Plexus EHR / Patient Directory:
+- permanent patient-specific documents
+- reports
+- notes
+- timeline/history
+- prior test/repeat evidence
+
+patient_execution_cases:
+- current operational work state
+- assignment/call-list state
+- active execution case
+
+patient_journey_events:
+- timeline/history/events
+
+Do not make Team Portal the permanent document source of truth.
+Do not make Document Library store patient-specific completed documents.
+Do not make Engagement the source of clinical evidence.
+
+PART 21 — Implementation approach
+
+This is large. Implement safely in layers.
+
+Minimum acceptable first pass:
+
+1. Add Clinical Intelligence tile/route/shell if possible.
+2. Wire/report upload trigger foundation.
+3. Add documentation reconciliation check at report upload if current note infrastructure exists.
+4. Create/represent repeat eligibility concept after report upload.
+5. Add Plexus IQ Repeat Testing Review area/shell.
+6. Add scheduling reconciliation logic or helper that checks existing appointments before outreach.
+7. Ensure Engagement can receive approved repeat items as:
+   Category: Ancillary Scheduling
+   Call Type: Repeat Test Due
+   Source: Plexus IQ Repeat Testing Review / Clinical Intelligence
+8. Add honest unavailable/placeholder states for AI extraction, email/text tracking, and online scheduling if not wired.
+
+Do not fake AI extraction.
+Do not fake email/text send status.
+Do not fake online scheduling status.
+Do not fake scheduling reconciliation.
+
+If a capability is not currently wired, show:
+Not connected yet
+Unavailable
+Needs integration
+or similar honest UI state.
+
+PART 22 — Validation
+
+Verify:
+
+1. Clinical Intelligence is represented as a dedicated tile/route/shell if feasible.
+2. Clinical Intelligence is separate from Plexus IQ but feeds Plexus IQ.
+3. Report upload saves report to Patient Directory / Plexus EHR.
+4. Report upload links to patientId.
+5. Report upload links to ancillary/test and execution case if available.
+6. Report upload triggers documentation reconciliation or honest placeholder.
+7. Procedure note is generated/checked at report upload if infrastructure exists.
+8. Missing order note is detected at report upload if infrastructure exists.
+9. Order note remains conceptually tied to scheduling, not report upload.
+10. Clinical Intelligence creates/represents repeat eligibility after uploaded BrainWave/VitalWave/Ultrasound report.
+11. PPO/commercial repeat interval defaults to 6 months if medically supported.
+12. Medicare repeat interval defaults to 12 months if medically supported.
+13. Repeat review opens in Plexus IQ 1 month before repeat due date.
+14. Plexus IQ has or plans Repeat Testing Review separate from Initial Qualification Review.
+15. Admin approval is required before Engagement outreach.
+16. After admin approval, scheduling reconciliation checks if patient is already scheduled.
+17. Already scheduled patients do not receive unnecessary outreach/call-list placement.
+18. Not scheduled patients enter Engagement repeat outreach sequence.
+19. Email 1 month / text 1 week / call list 2 days sequence is represented as default logic or planned config.
+20. Before each outreach step, scheduling status is rechecked.
+21. If patient schedules online after email/text, remaining outreach stops.
+22. If patient cancels/misses, they return as Needs Reschedule / Reschedule Missed Test.
+23. Engagement receives repeat items as:
+    Category: Ancillary Scheduling
+    Call Type: Repeat Test Due
+    Source: Plexus IQ Repeat Testing Review / Clinical Intelligence
+24. Team Portal can display repeat call context if available.
+25. Patient Directory / Plexus EHR can store/display uploaded report and generated notes.
+26. patient_journey_events are written/read where existing infrastructure supports it.
+27. No fake AI extraction.
+28. No fake email/text statuses.
+29. No fake online scheduling status.
+30. No Google Calendar.
+31. No old Outreach Center.
+32. No scheduler cards.
+33. No /api/scheduler-assignments for Engagement-assigned work.
+34. Admin Review initial qualification workflow still works.
+35. Engagement Assignment Pool still works.
+36. Team Portal still works.
+37. npm run check passes.
+38. npm run build passes.
+
+DO NOT:
+
+- Do not bury Clinical Intelligence only inside Plexus IQ.
+- Do not create repeat outreach without Admin Review approval.
+- Do not send already scheduled patients unnecessary reminders.
+- Do not place already scheduled patients on call lists unless confirmation/rescheduling is needed.
+- Do not assume all repeats are automatic.
+- Do not fabricate medical necessity.
+- Do not fabricate ICD codes.
+- Do not fabricate AI result extraction.
+- Do not fabricate email/text/open/click/reply status.
+- Do not fake online scheduling.
+- Do not use Google Calendar.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments for Engagement-assigned work.
+- Do not break existing report upload.
+- Do not break existing order/procedure note generation.
+- Do not break Patient Directory / Plexus EHR documents.
+- Do not break Plexus IQ initial qualification.
+- Do not break Admin Review.
+- Do not break Engagement Assignment Pool.
+- Do not break Team Portal.
+- Do not change schema unless absolutely required.
+- Do not touch unrelated files.
+
+PART 23 — Final report after implementation
+
+After implementation:
+
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+
+- current branch
+- files changed
+- what changed
+- what was only scaffolded vs fully wired
+- where Clinical Intelligence route/tile lives
+- where report upload triggers Clinical Intelligence/reconciliation
+- where report uploads save
+- where order note check/generation happens
+- where procedure note check/generation happens
+- how repeat eligibility is represented
+- how PPO 6-month / Medicare 12-month repeat interval is calculated
+- how Plexus IQ Repeat Testing Review is represented
+- how admin approval feeds Engagement
+- how scheduling reconciliation checks already-scheduled patients
+- how email/text/call-list sequence is represented
+- where Team Portal sees repeat context
+- where Patient Directory / Plexus EHR stores documents/results/history
+- where patient_journey_events are written/read
+- check/build result
+- latest commit SHA if available
+- risks/gaps
+- whether I need to push from Replit Git pane
+
+Commit message:
+Add Clinical Intelligence repeat testing loop

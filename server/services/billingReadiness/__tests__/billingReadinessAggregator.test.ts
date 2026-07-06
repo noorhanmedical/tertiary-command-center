@@ -1,3 +1,4 @@
+import { it } from "vitest";
 import assert from "node:assert/strict";
 import {
   computeBillingReadiness,
@@ -91,4 +92,6 @@ async function main() {
   console.log("Billing readiness aggregator test passed.");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+it("Billing readiness aggregator", async () => {
+  await main();
+});

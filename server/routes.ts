@@ -5,12 +5,15 @@ import { db, pool } from "./db";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
-import { registerGoogleRoutes } from "./routes/google";
 import { registerPlexusTasksRoutes } from "./routes/plexusTasks";
 import { registerBatchRoutes } from "./routes/batches";
 import { registerPatientRoutes } from "./routes/patients";
 import { registerPlexusIqClinicalImportRoutes } from "./routes/plexusIqClinicalImport";
 import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssignmentBoard";
+import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
+import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
+import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
+import { registerEngagementTeamMetricsRoutes } from "./routes/engagementTeamMetrics";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
@@ -24,15 +27,20 @@ import { registerAdminRoutes } from "./routes/admin";
 import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
+import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
 import { registerPortalRoutes } from "./routes/portal";
+import { registerPatientMessagesRoutes } from "./routes/patientMessages";
+import { registerPortalAssistantRoutes } from "./routes/portalAssistant";
 import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
 import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerContactsRoutes } from "./routes/contacts";
+import { registerPortalWidgetsRoutes } from "./routes/portalWidgets";
+import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
 import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
 import { registerInvoiceReadinessRoutes } from "./routes/invoiceReadiness";
 import { registerInvoiceBatchRoutes } from "./routes/invoiceBatches";
@@ -46,6 +54,7 @@ import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibilit
 import { registerCooldownRoutes } from "./routes/cooldown";
 import { registerAdminSettingsRoutes } from "./routes/adminSettings";
 import { registerDocumentReadinessRoutes } from "./routes/documentReadiness";
+import { registerPortalCaseReadinessRoutes } from "./routes/portalCaseReadiness";
 import { registerProcedureEventRoutes } from "./routes/procedureEvents";
 import { registerBillingReadinessRoutes } from "./routes/billingReadiness";
 import { registerBillingDocumentRoutes } from "./routes/billingDocuments";
@@ -55,12 +64,15 @@ import { registerProjectedInvoiceRoutes } from "./routes/projectedInvoices";
 import { registerPatientPacketRoutes } from "./routes/patientPacket";
 import { registerAncillaryDocumentTemplateRoutes } from "./routes/ancillaryDocumentTemplates";
 import { registerOperationalQueueRoutes } from "./routes/operationalQueue";
+import { registerCallListAuditRoutes } from "./routes/callListAudit";
+import { registerHomeStatsRoutes } from "./routes/homeStats";
+import { registerClinicianPortalRoutes } from "./routes/clinicianPortal";
+import { registerMissionControlRoutes } from "./routes/missionControl";
+import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
+import { registerClinicalIntelligenceRoutes } from "./routes/clinicalIntelligence";
+import { seedCiRulesIfEmpty } from "./repositories/clinicalIntelligence.repo";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
-import {
-  backgroundSyncPatients,
-  backgroundSyncBilling,
-} from "./services/syncService";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -128,7 +140,10 @@ export async function registerRoutes(
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.role = user.role;
-    return res.json({ id: user.id, username: user.username, role: user.role });
+    // Store clinicId in session so clinicContext middleware can populate req.clinicId.
+    // Admin role ignores this value (clinicContext forces null for admins).
+    req.session.clinicId = user.clinicId ?? null;
+    return res.json({ id: user.id, username: user.username, role: user.role, clinicId: user.clinicId ?? null });
   });
 
   app.post("/api/auth/logout", (req, res) => {
@@ -142,7 +157,7 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
-    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician" });
+    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician", clinicId: req.session.clinicId ?? null });
   });
 
   // ─── /api/healthz — pool telemetry (exempt from auth, debug-friendly) ────
@@ -167,6 +182,11 @@ export async function registerRoutes(
   });
 
   const requireAuth = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
+    // Twilio's inbound SMS webhook can't hold a session — it is validated
+    // by X-Twilio-Signature inside the route handler instead (Task #648).
+    if (req.path === "/sms/twilio/inbound" && req.method === "POST") {
+      return next();
+    }
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -220,9 +240,8 @@ export async function registerRoutes(
   });
 
   // ─── Domain route registrations ────────────────────────────────────────────
-  registerGoogleRoutes(app);
-  registerTestHistoryRoutes(app, { backgroundSyncPatients });
-  registerPatientReferenceRoutes(app, { backgroundSyncPatients });
+  registerTestHistoryRoutes(app);
+  registerPatientReferenceRoutes(app);
   registerGeneratedNotesRoutes(app);
   registerPlexusTasksRoutes(app);
   registerBatchRoutes(app);
@@ -230,14 +249,21 @@ export async function registerRoutes(
   // the static `/api/patients/database*` paths take precedence over the
   // `/api/patients/:id` parameterised handler.
   registerPatientDatabaseRoutes(app);
-  registerPatientRoutes(app, { backgroundSyncPatients });
-  // Patient Directory routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
+  registerPatientRoutes(app);
+  // Patient EHR routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
   registerPatientDirectoryRoutes(app);
+  // Section-access config is NOT gated behind the activation flag — it applies
+  // to the always-on Patient EHR chart in the Patient Database.
+  registerPatientDirectorySectionAccessRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
-  registerBillingRoutes(app, { backgroundSyncBilling });
+  registerEngagementBasketsRoutes(app);
+  registerEngagementCallSettingsRoutes(app, requireRole);
+  registerEngagementDistributionRoutes(app, requireRole);
+  registerEngagementTeamMetricsRoutes(app, requireRole);
+  registerBillingRoutes(app);
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);
   registerEmailRoutes(app);
@@ -252,10 +278,14 @@ export async function registerRoutes(
   registerMarketingMaterialRoutes(app);
   registerDocumentLibraryRoutes(app);
   registerPortalRoutes(app);
+  registerPatientMessagesRoutes(app);
+  registerPortalAssistantRoutes(app, requireRole);
   registerExecutionCaseRoutes(app);
   registerAcsWorkflowRoutes(app);
   registerPatientNotesRoutes(app);
   registerContactsRoutes(app);
+  registerPortalWidgetsRoutes(app);
+  registerPortalPrefsRoutes(app);
   registerBillingPolicyRoutes(app);
   registerInvoiceReadinessRoutes(app);
   registerInvoiceBatchRoutes(app);
@@ -270,6 +300,7 @@ export async function registerRoutes(
   registerCooldownRoutes(app);
   registerAdminSettingsRoutes(app);
   registerDocumentReadinessRoutes(app);
+  registerPortalCaseReadinessRoutes(app);
   registerProcedureEventRoutes(app);
   registerBillingReadinessRoutes(app);
   registerBillingDocumentRoutes(app);
@@ -279,6 +310,21 @@ export async function registerRoutes(
   registerPatientPacketRoutes(app);
   registerAncillaryDocumentTemplateRoutes(app);
   registerOperationalQueueRoutes(app);
+  registerCallListAuditRoutes(app, requireRole);
+  registerHomeStatsRoutes(app);
+  registerClinicianPortalRoutes(app);
+  registerMissionControlRoutes(app, requireRole);
+  registerPhysicianPortalRoutes(app);
+  registerClinicalIntelligenceRoutes(app, requireRole);
+
+  // Seed the Clinical Intelligence rule library once (empty table only) so
+  // the governance page is workable out of the box, mirroring the old
+  // localStorage prototype's first-load seeding.
+  try {
+    await seedCiRulesIfEmpty();
+  } catch (seedErr: any) {
+    console.error("[clinical-intelligence] Failed to seed rule library:", seedErr.message);
+  }
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {
