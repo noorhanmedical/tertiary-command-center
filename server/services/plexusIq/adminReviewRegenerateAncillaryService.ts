@@ -41,6 +41,7 @@
 import type { PatientScreening } from "@shared/schema";
 import { storage } from "../../storage";
 import { invalidatePatientDatabase } from "../../routes/patientDatabase";
+import { dedupeAssignedEvidence } from "@shared/plexus-iq/adminReviewEvidence";
 
 export type AdminReviewAncillaryId = "brainwave" | "vitalwave" | "ultrasound";
 
@@ -84,9 +85,13 @@ export async function regenerateAdminReviewAncillary(
     return { ok: false, error: { kind: "not_found" } };
   }
 
-  const assignedEvidence = Array.isArray(b.assignedEvidence)
-    ? b.assignedEvidence
-    : [];
+  // Server-side dedupe on the persisted assignedEvidence array. Same
+  // factor on the same target dedupes; cross-target reuse (e.g. the same
+  // ICD on both brainwave and vitalwave) is preserved because dedupe is
+  // scoped to this single array.
+  const assignedEvidence = dedupeAssignedEvidence(
+    Array.isArray(b.assignedEvidence) ? b.assignedEvidence : [],
+  );
   const ancillaryNote =
     typeof b.ancillaryNote === "string" ? b.ancillaryNote : "";
   const adminNote =

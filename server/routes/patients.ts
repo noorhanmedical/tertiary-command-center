@@ -90,6 +90,7 @@ export function registerPatientRoutes(
       if (data.phoneNumber !== undefined) updates.phoneNumber = data.phoneNumber || null;
       if (data.insurance !== undefined) updates.insurance = data.insurance || null;
       if (data.diagnoses !== undefined) updates.diagnoses = data.diagnoses || null;
+      if (data.reasoning !== undefined) updates.reasoning = data.reasoning;
       if (data.history !== undefined) updates.history = data.history || null;
       if (data.medications !== undefined) updates.medications = data.medications || null;
       if (data.previousTests !== undefined) updates.previousTests = data.previousTests || null;
@@ -103,6 +104,12 @@ export function registerPatientRoutes(
       if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
       if (data.appointmentStatus !== undefined) updates.appointmentStatus = data.appointmentStatus || "pending";
       if (data.patientType !== undefined) updates.patientType = data.patientType || "visit";
+
+      if (Object.keys(updates).length === 0) {
+        const current = await storage.getPatientScreening(id);
+        if (!current) return res.status(404).json({ error: "Patient not found" });
+        return res.json(current);
+      }
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
@@ -553,6 +560,52 @@ export function registerPatientRoutes(
         );
         res.status(500).json({
           error: error?.message ?? "Failed to remove ancillary",
+        });
+      }
+    },
+  );
+
+  // Add a manually-selected ancillary to a patient by hand. Appends the
+  // canonical qualifying-test name to patient.qualifyingTests (deduped) and
+  // stamps admin-added provenance in the supplemental `adminReview:*`
+  // metadata keys. Canonical reasoning is created in an HONEST blank state
+  // (operator-selected factors only; AI narrative left empty so the UI/PDF
+  // render "not generated yet" rather than fabricated text).
+  //
+  // Delegated to server/services/plexusIq/adminReviewAddService.ts. Mirrors
+  // the validation order / status codes of remove-ancillary.
+  app.post(
+    "/api/patient-screenings/:id/admin-review/add-ancillary",
+    async (req, res) => {
+      try {
+        const id = parseInt(req.params.id);
+        const { addAdminReviewAncillary } = await import(
+          "../services/plexusIq/adminReviewAddService"
+        );
+        const outcome = await addAdminReviewAncillary(id, req.body);
+        if (!outcome.ok) {
+          if (outcome.error.kind === "invalid_id") {
+            return res.status(400).json({ error: "Invalid patient id" });
+          }
+          if (outcome.error.kind === "invalid_ancillary_id") {
+            return res.status(400).json({
+              error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
+            });
+          }
+          if (outcome.error.kind === "not_found") {
+            return res.status(404).json({ error: "Patient not found" });
+          }
+          return res.status(500).json({ error: "Failed to add ancillary" });
+        }
+        invalidatePatientDatabase();
+        res.json(outcome);
+      } catch (error: any) {
+        console.error(
+          "[admin-review/add-ancillary] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({
+          error: error?.message ?? "Failed to add ancillary",
         });
       }
     },

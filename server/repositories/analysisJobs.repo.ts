@@ -12,6 +12,14 @@ export interface IAnalysisJobsRepository {
   update(id: number, updates: Partial<InsertAnalysisJob>): Promise<AnalysisJob | undefined>;
   incrementProgress(jobId: number): Promise<void>;
   latestByBatch(batchId: number): Promise<AnalysisJob | undefined>;
+  /**
+   * Plexus IQ runtime hardening — duplicate-job guard.
+   * Returns the most recent `status='running'` job for the batch, or
+   * undefined when none. Used by `startBatchAnalysis` to make Generate
+   * idempotent: a duplicate click while a job is in flight returns the
+   * existing jobId instead of starting another loop.
+   */
+  activeByBatch(batchId: number): Promise<AnalysisJob | undefined>;
   recent(limit: number): Promise<Array<AnalysisJob & { batchName: string }>>;
   failRunning(errorMessage: string): Promise<void>;
   purgeOld(olderThanDays: number): Promise<void>;
@@ -37,6 +45,17 @@ export class DbAnalysisJobsRepository implements IAnalysisJobsRepository {
   async latestByBatch(batchId: number): Promise<AnalysisJob | undefined> {
     const [result] = await db.select().from(analysisJobs)
       .where(eq(analysisJobs.batchId, batchId))
+      .orderBy(desc(analysisJobs.startedAt))
+      .limit(1);
+    return result;
+  }
+
+  async activeByBatch(batchId: number): Promise<AnalysisJob | undefined> {
+    const [result] = await db.select().from(analysisJobs)
+      .where(and(
+        eq(analysisJobs.batchId, batchId),
+        eq(analysisJobs.status, "running"),
+      ))
       .orderBy(desc(analysisJobs.startedAt))
       .limit(1);
     return result;
