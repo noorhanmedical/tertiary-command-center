@@ -11,6 +11,8 @@ import {
   outreachSchedulers,
 } from "@shared/schema";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import { listJourneyEvents } from "../repositories/executionCase.repo";
+import { calculateNextActionAt } from "../services/callList/nextActionPolicy";
 
 // No-duplicate-scheduler-per-date guard.
 //
@@ -106,7 +108,37 @@ async function findConflictingActiveAssignment(
 
 // Board-row shape lives in the shared contract so the client + server
 // agree on one canonical type. See shared/contracts/engagementBoard.ts.
-import type { EngagementBoardRow as BoardRow } from "@shared/contracts/engagementBoard";
+import {
+  type EngagementBoardRow as BoardRow,
+  deriveEngagementTaxonomy,
+} from "@shared/contracts/engagementBoard";
+
+// Decide how to scope a patient's journey-timeline lookup.
+//
+// Identity-scoped history (name + DOB) lets the timeline span every
+// execution case the same person has had — BatchFlow re-imports a
+// person across batches. But name alone is NOT a safe identity key:
+// two different patients can share a name, so matching on name-only
+// would merge their histories — a correctness bug AND a PHI
+// cross-patient leak. We therefore require BOTH name and DOB to scope
+// by identity; when DOB is missing we fall back to the unique
+// execution-case id, which never mixes patients (at the cost of not
+// spanning sibling cases for that one person).
+//
+// Exported (pure, no DB) so it can be regression-tested in isolation.
+// SOURCE MARKER: journey timeline identity scoping requires name AND dob
+export function journeyLookupFilter(args: {
+  executionCaseId: number;
+  patientName: string | null | undefined;
+  patientDob: string | null | undefined;
+}):
+  | { patientName: string; patientDob: string }
+  | { executionCaseId: number } {
+  const name = args.patientName?.trim() || null;
+  const dob = args.patientDob?.trim() || null;
+  if (name && dob) return { patientName: name, patientDob: dob };
+  return { executionCaseId: args.executionCaseId };
+}
 
 const assignBoardSchema = z.object({
   patientScreeningIds: z.array(z.number().int().positive()).min(1),
@@ -270,6 +302,14 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
           const facility =
             screening?.facility ?? batch?.facility ?? c.facilityId ?? null;
 
+          const taxonomy = deriveEngagementTaxonomy({
+            engagementBucket: c.engagementBucket ?? null,
+            engagementStatus: c.engagementStatus ?? null,
+            lastActivitySummary: latest?.summary ?? null,
+            lastCallOutcome: c.lastCallOutcome ?? null,
+            assignedTeamMemberId: c.assignedTeamMemberId ?? null,
+          });
+
           return {
             patientScreeningId: c.patientScreeningId ?? null,
             executionCaseId: c.id,
@@ -293,10 +333,15 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
               ? new Date(latest.createdAt).toISOString()
               : null,
             lastActivitySummary: latest?.summary ?? null,
+            lastCallOutcome: c.lastCallOutcome ?? null,
             missingInfo: computeMissingInfo(screening),
             selectedServices: Array.isArray(c.selectedServices)
               ? (c.selectedServices as string[])
               : [],
+            category: taxonomy.category,
+            callType: taxonomy.callType,
+            source: taxonomy.source,
+            statusTrail: taxonomy.statusTrail,
           };
         });
 
@@ -409,6 +454,206 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
     },
   );
 
+  // ─── Per-case journey timeline (read-only) ────────────────────────
+  // Returns the full chronological history of engagement events for the
+  // patient behind a given execution case — call outcomes, assignments/
+  // reassignments, notes, and every other journey-event kind. Events are
+  // matched by patient identity (name + DOB) so the timeline spans every
+  // execution case the same person has had (BatchFlow can re-import a
+  // person across batches), falling back to the execution case id when
+  // identity is missing. Returned newest-first.
+  app.get(
+    "/api/engagement/assignment-board/cases/:executionCaseId/journey",
+    async (req: Request, res: Response) => {
+      try {
+        const executionCaseId = Number(req.params.executionCaseId);
+        if (!Number.isInteger(executionCaseId) || executionCaseId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "Invalid executionCaseId", code: "bad_request" });
+        }
+
+        const [execCase] = await db
+          .select()
+          .from(patientExecutionCases)
+          .where(eq(patientExecutionCases.id, executionCaseId))
+          .limit(1);
+        if (!execCase) {
+          return res
+            .status(404)
+            .json({ error: "Execution case not found", code: "not_found" });
+        }
+
+        // Identity-scoped vs. case-scoped lookup — see journeyLookupFilter.
+        const events = await listJourneyEvents(
+          journeyLookupFilter({
+            executionCaseId,
+            patientName: execCase.patientName,
+            patientDob: execCase.patientDob,
+          }),
+          500,
+        );
+
+        // Resolve distinct actor ids to usernames for display.
+        const actorIds = Array.from(
+          new Set(
+            events
+              .map((e) => e.actorUserId)
+              .filter((id): id is string => !!id),
+          ),
+        );
+        const actorNameById = new Map<string, string>();
+        await Promise.all(
+          actorIds.map(async (id) => {
+            const user = await storage.getUser(id);
+            if (user?.username) actorNameById.set(id, user.username);
+          }),
+        );
+
+        const timeline = events.map((e) => ({
+          id: e.id,
+          eventType: e.eventType,
+          eventSource: e.eventSource,
+          summary: e.summary,
+          actorName: e.actorUserId
+            ? actorNameById.get(e.actorUserId) ?? null
+            : null,
+          createdAt:
+            e.createdAt != null
+              ? new Date(e.createdAt as unknown as string).toISOString()
+              : null,
+          metadata:
+            e.metadata && typeof e.metadata === "object"
+              ? (e.metadata as Record<string, unknown>)
+              : null,
+        }));
+
+        return res.json({ events: timeline });
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/assignment-board:journey] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({
+          error:
+            error instanceof Error ? error.message : "Failed to load journey",
+        });
+      }
+    },
+  );
+
+  // ─── Append a manager note to a case's journey timeline ───────────
+  // Lets a manager record free-text context directly onto the patient's
+  // call timeline without leaving the case panel. Writes a "note_added"
+  // journey event via the canonical writer so it appears inline with
+  // every other event-kind. Requires a logged-in user (the note is
+  // attributed to them).
+  app.post(
+    "/api/engagement/assignment-board/cases/:executionCaseId/journey",
+    async (req: Request, res: Response) => {
+      try {
+        const actorUserId = req.session.userId;
+        if (!actorUserId) {
+          return res
+            .status(401)
+            .json({ error: "Not authenticated", code: "unauthorized" });
+        }
+
+        const executionCaseId = Number(req.params.executionCaseId);
+        if (!Number.isInteger(executionCaseId) || executionCaseId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "Invalid executionCaseId", code: "bad_request" });
+        }
+
+        const parsed = z
+          .object({ note: z.string().trim().min(1).max(2000) })
+          .safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({
+            error: "note is required (1–2000 characters)",
+            code: "bad_request",
+          });
+        }
+
+        const [execCase] = await db
+          .select()
+          .from(patientExecutionCases)
+          .where(eq(patientExecutionCases.id, executionCaseId))
+          .limit(1);
+        if (!execCase) {
+          return res
+            .status(404)
+            .json({ error: "Execution case not found", code: "not_found" });
+        }
+
+        const event = await appendJourneyEvent({
+          eventType: "note_added",
+          eventSource: "engagement_assignment_board",
+          patientName: execCase.patientName,
+          patientDob: execCase.patientDob,
+          patientScreeningId: execCase.patientScreeningId,
+          executionCaseId,
+          actorUserId,
+          summary: parsed.data.note,
+        });
+
+        return res.status(201).json({ event });
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/assignment-board:journey-note] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({
+          error:
+            error instanceof Error ? error.message : "Failed to add note",
+        });
+      }
+    },
+  );
+
+  // ─── Per-day assignment target (additive, admin-only) ─────────────
+  // Sets outreach_schedulers.daily_target for one roster member. This
+  // is a soft planning number surfaced in the workspace — it does not
+  // change how assignments are routed, so it is fully additive and
+  // behind the existing assignment flow.
+  app.patch(
+    "/api/engagement/assignment-board/team-members/:schedulerId/daily-target",
+    async (req: Request, res: Response) => {
+      if ((req.session.role ?? "") !== "admin") {
+        return res.status(403).json({ error: "Admin only", code: "forbidden" });
+      }
+      const schedulerId = Number(req.params.schedulerId);
+      if (!Number.isInteger(schedulerId) || schedulerId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Invalid schedulerId", code: "bad_request" });
+      }
+      const parsed = z
+        .object({ dailyTarget: z.number().int().min(0).nullable() })
+        .safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: "dailyTarget must be a non-negative integer or null", code: "bad_request" });
+      }
+      const updated = await storage.updateOutreachScheduler(schedulerId, {
+        dailyTarget: parsed.data.dailyTarget,
+      });
+      if (!updated) {
+        return res
+          .status(404)
+          .json({ error: "Team member not found", code: "not_found" });
+      }
+      return res.json({
+        id: updated.id,
+        name: updated.name,
+        facility: updated.facility,
+        dailyTarget: updated.dailyTarget ?? null,
+      });
+    },
+  );
+
   // ─── Bulk / single assignment ─────────────────────────────────────
   app.post(
     "/api/engagement/assignment-board/assign",
@@ -430,11 +675,22 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
         }
         const role = assignedRole ?? "scheduler";
 
+        // Option 2 visibility: the assigned work only appears in the Team
+        // Member Portal call list (/api/operational-queue/me) when the
+        // scheduler row is linked to a login via outreach_schedulers.user_id.
+        // Surface this up-front so the Engagement Center can warn the user.
+        const visibility: "visible" | "missing_user_mapping" =
+          (newScheduler as { userId?: string | null }).userId
+            ? "visible"
+            : "missing_user_mapping";
+
         const updated: Array<{
           patientScreeningId: number;
           executionCaseId: number;
           previousSchedulerId: number | null;
           previousSchedulerName: string | null;
+          nextActionAt: string | null;
+          visibility: "visible" | "missing_user_mapping";
         }> = [];
         const failed: Array<{ patientScreeningId: number; reason: string }> = [];
 
@@ -493,12 +749,32 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             ? "assigned"
             : execCase.engagementStatus;
 
+          // Option 2 (§2 + §4): set next_action_at via the shared policy so the
+          // case surfaces on the call list immediately. A pending future
+          // callback (e.g. a prior disposition) is preserved instead of being
+          // pulled forward; otherwise the fresh assignment surfaces now.
+          const now = new Date();
+          const existingNext = execCase.nextActionAt
+            ? new Date(execCase.nextActionAt as unknown as string)
+            : null;
+          const existingFuture =
+            existingNext && !Number.isNaN(existingNext.getTime()) && existingNext.getTime() > now.getTime()
+              ? existingNext
+              : null;
+          const { nextActionAt: policyNext } = calculateNextActionAt({
+            isAssignment: true,
+            now,
+          });
+          const nextActionAt = existingFuture ?? policyNext;
+
           await db
             .update(patientExecutionCases)
             .set({
               assignedTeamMemberId: newScheduler.id,
               assignedRole: role,
               engagementStatus: nextEngagementStatus,
+              nextActionAt: nextActionAt ?? undefined,
+              updatedAt: now,
             })
             .where(eq(patientExecutionCases.id, execCase.id));
 
@@ -521,6 +797,8 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
               assignedRole: role,
               reason: reason ?? null,
               batch: patientScreeningIds.length > 1,
+              nextActionAt: nextActionAt ? nextActionAt.toISOString() : null,
+              callListVisibility: visibility,
             },
           });
 
@@ -529,6 +807,8 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             executionCaseId: execCase.id,
             previousSchedulerId,
             previousSchedulerName: previousScheduler?.name ?? null,
+            nextActionAt: nextActionAt ? nextActionAt.toISOString() : null,
+            visibility,
           });
 
           // ─── Optional: engagement-board → call-list bridge (Batch 11c) ───
@@ -581,6 +861,7 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             schedulerName: newScheduler.name,
             schedulerFacility: newScheduler.facility,
             assignedRole: role,
+            visibility,
           },
         });
       } catch (error: unknown) {

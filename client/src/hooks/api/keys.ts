@@ -20,6 +20,12 @@ export const qk = {
     weekly: (weekStart: string | null | undefined) =>
       ["/api/schedule/dashboard", weekStart || "current"] as const,
   },
+  homeStats: {
+    today: () => ["/api/home-stats"] as const,
+  },
+  missionControl: {
+    spine: () => ["/api/mission-control/spine"] as const,
+  },
   outreach: {
     dashboard: () => ["/api/outreach/dashboard"] as const,
     schedulers: () => ["/api/outreach/schedulers"] as const,
@@ -31,15 +37,28 @@ export const qk = {
   schedulerAssignments: {
     all: () => ["/api/scheduler-assignments"] as const,
   },
+  operationalQueue: {
+    me: () => ["/api/operational-queue", "me"] as const,
+  },
   appointments: {
     byFacility: (facility: string | null | undefined) =>
       ["/api/appointments", facility ?? null] as const,
   },
   plexus: {
     users: () => ["/api/plexus/users"] as const,
+    projects: () => ["/api/plexus/projects"] as const,
+    projectSummary: (id: number) => ["/api/plexus/projects", id, "summary"] as const,
     myWorkTasks: () => ["/api/plexus/tasks/my-work"] as const,
+    sentTasks: () => ["/api/plexus/tasks/sent"] as const,
     urgentTasks: () => ["/api/plexus/tasks/urgent"] as const,
+    overdueTasks: () => ["/api/plexus/tasks/overdue"] as const,
+    tasksByProject: (projectId: number) =>
+      ["/api/plexus/tasks/by-project", projectId] as const,
+    unreadCount: () => ["/api/plexus/tasks/unread-count"] as const,
     unreadPerTask: () => ["/api/plexus/tasks/unread-per-task"] as const,
+    taskMessages: (id: number) => ["/api/plexus/tasks", id, "messages"] as const,
+    taskEvents: (id: number) => ["/api/plexus/tasks", id, "events"] as const,
+    patientSearch: (q: string) => ["/api/plexus/patients/search", q] as const,
   },
   invoices: {
     all: () => ["/api/invoices"] as const,

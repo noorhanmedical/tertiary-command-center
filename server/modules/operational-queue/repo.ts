@@ -241,17 +241,38 @@ export async function listSchedulerTasksFromEngagementBoardForUser(
   filters: OperationalQueueForUserFilters,
   limit?: number,
 ): Promise<OperationalQueueItem[]> {
-  const safeLimit = clampLimit(limit);
-
-  // Resolve userId → outreach_schedulers.id, then filter execution cases
-  // by assignedTeamMemberId (which today is an outreach_schedulers.id).
+  // Resolve userId → outreach_schedulers.id, then delegate to the
+  // scheduler-id variant so admin "view as" can reuse the same query.
   const schedulers = await db
-    .select({ id: outreachSchedulers.id, name: outreachSchedulers.name })
+    .select({ id: outreachSchedulers.id })
     .from(outreachSchedulers)
     .where(eq(outreachSchedulers.userId, userId));
 
   if (schedulers.length === 0) return [];
-  const schedulerIds = schedulers.map((s) => s.id);
+  return listSchedulerTasksFromEngagementBoardForSchedulerIds(
+    schedulers.map((s) => s.id),
+    filters,
+    limit,
+    userId,
+  );
+}
+
+// Scheduler-id-scoped variant of the engagement-board source. Used directly by
+// the admin "view as" path on /api/operational-queue/me, where an admin views
+// another team member's call list without being mapped to that scheduler row.
+export async function listSchedulerTasksFromEngagementBoardForSchedulerIds(
+  schedulerIds: number[],
+  filters: OperationalQueueForUserFilters,
+  limit: number | undefined,
+  assigneeUserId: string | null,
+): Promise<OperationalQueueItem[]> {
+  const safeLimit = clampLimit(limit);
+
+  if (schedulerIds.length === 0) return [];
+  const schedulers = await db
+    .select({ id: outreachSchedulers.id, name: outreachSchedulers.name })
+    .from(outreachSchedulers)
+    .where(inArray(outreachSchedulers.id, schedulerIds));
   const schedulerNameById = new Map(schedulers.map((s) => [s.id, s.name]));
 
   const conditions = [
@@ -279,37 +300,64 @@ export async function listSchedulerTasksFromEngagementBoardForUser(
       engagementBucket: patientExecutionCases.engagementBucket,
       engagementStatus: patientExecutionCases.engagementStatus,
       nextActionAt: patientExecutionCases.nextActionAt,
+      priorityScore: patientExecutionCases.priorityScore,
+      callAttemptCount: patientExecutionCases.callAttemptCount,
+      lastCallOutcome: patientExecutionCases.lastCallOutcome,
+      selectedServices: patientExecutionCases.selectedServices,
       createdAt: patientExecutionCases.createdAt,
       updatedAt: patientExecutionCases.updatedAt,
+      phoneNumber: patientScreenings.phoneNumber,
+      insurance: patientScreenings.insurance,
     })
     .from(patientExecutionCases)
+    .leftJoin(
+      patientScreenings,
+      eq(patientExecutionCases.patientScreeningId, patientScreenings.id),
+    )
     .where(and(...conditions))
     .orderBy(desc(patientExecutionCases.updatedAt))
     .limit(safeLimit);
 
-  return rows.map((r) => ({
-    id: `st-ec:${r.id}`,
-    kind: "scheduler_task" as const,
-    ownerType: "engagement_case" as const,
-    ownerId: r.id,
-    assigneeUserId: userId,
-    assigneeName: schedulerNameById.get(r.assignedTeamMemberId ?? -1) ?? null,
-    patientScreeningId: r.patientScreeningId,
-    patientName: r.patientName,
-    patientDob: r.patientDob,
-    facility: r.facilityId,
-    scheduledDate: null,
-    scheduledTime: null,
-    status: r.engagementStatus,
-    isOpen: engagementCaseIsOpen(r.engagementStatus),
-    metadata: {
-      engagementBucket: r.engagementBucket,
-      assignedRole: r.assignedRole,
-      nextActionAt: r.nextActionAt,
-    },
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  }));
+  return rows.map((r) => {
+    // Derive scheduledDate/scheduledTime from next_action_at so engagement
+    // call work sorts alongside the other operational-queue sources (which
+    // key off scheduledDate). Cases with no next_action_at stay null and are
+    // still returned (date filters treat null scheduledDate as "always").
+    const next = r.nextActionAt ? new Date(r.nextActionAt as unknown as string) : null;
+    const hasNext = next && !Number.isNaN(next.getTime());
+    const scheduledDate = hasNext ? next!.toISOString().slice(0, 10) : null;
+    const scheduledTime = hasNext ? next!.toISOString().slice(11, 16) : null;
+    return {
+      id: `st-ec:${r.id}`,
+      kind: "scheduler_task" as const,
+      ownerType: "engagement_case" as const,
+      ownerId: r.id,
+      assigneeUserId,
+      assigneeName: schedulerNameById.get(r.assignedTeamMemberId ?? -1) ?? null,
+      patientScreeningId: r.patientScreeningId,
+      patientName: r.patientName,
+      patientDob: r.patientDob,
+      facility: r.facilityId,
+      scheduledDate,
+      scheduledTime,
+      status: r.engagementStatus,
+      isOpen: engagementCaseIsOpen(r.engagementStatus),
+      metadata: {
+        engagementBucket: r.engagementBucket,
+        assignedRole: r.assignedRole,
+        assignedTeamMemberId: r.assignedTeamMemberId,
+        nextActionAt: r.nextActionAt,
+        priorityScore: r.priorityScore,
+        callAttemptCount: r.callAttemptCount,
+        lastCallOutcome: r.lastCallOutcome,
+        selectedServices: r.selectedServices ?? [],
+        phoneNumber: r.phoneNumber ?? null,
+        insurance: r.insurance ?? null,
+      },
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    };
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────

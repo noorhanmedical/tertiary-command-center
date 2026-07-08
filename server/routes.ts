@@ -11,6 +11,10 @@ import { registerBatchRoutes } from "./routes/batches";
 import { registerPatientRoutes } from "./routes/patients";
 import { registerPlexusIqClinicalImportRoutes } from "./routes/plexusIqClinicalImport";
 import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssignmentBoard";
+import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
+import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
+import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
+import { registerCallListAuditRoutes } from "./routes/callListAudit";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
@@ -246,6 +250,15 @@ export async function registerRoutes(
   registerPatientDirectorySectionAccessRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
+  // Engagement Center canonical spine — additive server routes. UI page
+  // and components are deferred to a dedicated Engagement UI phase, so
+  // these endpoints are dormant until consumed.
+  registerEngagementBasketsRoutes(app);
+  registerEngagementCallSettingsRoutes(app, requireRole);
+  registerEngagementDistributionRoutes(app, requireRole);
+  // Admin-only call-list audit diagnostics (adminOnly middleware inside
+  // each endpoint).
+  registerCallListAuditRoutes(app, requireRole);
   registerBillingRoutes(app, { backgroundSyncBilling });
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);
