@@ -1,4 +1,4 @@
-// Storage-backed deps for the Patient Directory service (Batch B).
+// Storage-backed deps for the Patient EHR service (Batch B).
 //
 // Bridges the deps-injected projection (`patientDirectoryService.ts`)
 // to the live storage layer. Defensive reads where the 0027/0028/0029

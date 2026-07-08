@@ -24,6 +24,7 @@ import { registerAdminRoutes } from "./routes/admin";
 import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
+import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
@@ -238,6 +239,11 @@ export async function registerRoutes(
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
   registerPatientDirectoryRoutes(app);
+  // Patient EHR section-access matrix — always-on: the section-access
+  // model applies to the Patient EHR chart and the client runtime needs
+  // GET even when USE_PATIENT_DIRECTORY_ACTIVATION is OFF. PUT is
+  // admin-only and audit-logged inside the route file.
+  registerPatientDirectorySectionAccessRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
   registerBillingRoutes(app, { backgroundSyncBilling });

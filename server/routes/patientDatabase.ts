@@ -29,6 +29,7 @@ function decodeRosterKey(encoded: string): { name: string; dob: string | null } 
 type RosterPatient = {
   key: string;
   encodedKey: string;
+  representativeScreeningId: number;
   name: string;
   dob: string | null;
   age: number | null;
@@ -87,6 +88,7 @@ function rosterFromAggregate(row: PatientRosterAggregateRow, plexusIdMap?: Map<n
   return {
     key: encodedKey,
     encodedKey,
+    representativeScreeningId: row.representativeId,
     name: row.name,
     dob: row.dob,
     age: row.age,
@@ -283,6 +285,27 @@ export function registerPatientDatabaseRoutes(app: Express) {
       res.json(payload);
     } catch (error: any) {
       console.error("[patient-database/import-report] error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Resolve a numeric patient_screenings id back to the roster (name, dob)
+  // group key so deep links like /patient-directory?patientId=123 (carrying a
+  // screening id from the call list) can select the correct roster patient.
+  // Registered before the single-segment :encodedKey route so the two-segment
+  // path never collides with it.
+  app.get("/api/patients/database/resolve/:screeningId", async (req, res) => {
+    try {
+      const id = parseInt(req.params.screeningId, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid screening id" });
+      }
+      const screening = await storage.getPatientScreening(id);
+      if (!screening) return res.status(404).json({ error: "Screening not found" });
+      const encodedKey = encodeRosterKey(screening.name, screening.dob ?? null);
+      res.json({ encodedKey, name: screening.name, dob: screening.dob ?? null });
+    } catch (error: any) {
+      console.error("[patient-database/resolve] error:", error);
       res.status(500).json({ error: error.message });
     }
   });

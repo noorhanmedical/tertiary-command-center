@@ -1,4 +1,4 @@
-// Patient Directory — barrel.
+// Patient EHR — barrel.
 //
 // Re-exports the public contract types and read-only service helpers.
 // The module is intentionally NOT wired to any route in this batch

@@ -72,6 +72,20 @@ for migration in "${BACKFILL_MIGRATIONS[@]}"; do
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$path"
 done
 
+# ─── Standalone backfill scripts (order matters, run after SQL backfills) ───
+# The Patient EHR / patient_directory backfill is a tsx script rather than
+# a .sql file because it groups patient_screenings by (lower(name), dob) and
+# creates one patient_directory row per person + links FK back. Idempotent
+# (skips already-linked groups) and safe to re-run.
+if command -v npx >/dev/null 2>&1; then
+  echo "  -> scripts/backfill-patient-directory.ts"
+  ( cd "$REPO_ROOT" && npx tsx scripts/backfill-patient-directory.ts )
+else
+  echo "  SKIP: npx not on PATH — cannot run scripts/backfill-patient-directory.ts" >&2
+  echo "        Install Node/npx or run the backfill manually before verification." >&2
+  exit 1
+fi
+
 # ─── Verifications: expected result for each check is 0 ──────────────────────
 echo "==> Verifying backfills"
 
@@ -92,5 +106,12 @@ verify "0047 patient_screenings.clinic_id backfill" \
      JOIN screening_batches sb ON sb.id = ps.batch_id
     WHERE ps.clinic_id IS NULL
       AND sb.clinic_id IS NOT NULL;"
+
+# patient_directory backfill: every non-deleted screening should be linked
+# to a patient_directory row. Zero unlinked rows = success.
+verify "patient_directory backfill (all screenings linked)" \
+  "SELECT COUNT(*) FROM patient_screenings
+    WHERE patient_directory_id IS NULL
+      AND (status IS NULL OR status <> 'deleted');"
 
 echo "==> All backfills applied and verified."

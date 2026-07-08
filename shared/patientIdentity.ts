@@ -1,5 +1,5 @@
 // Patient identity helper — single source of truth for matching across
-// Patient Directory, duplicate-warning engine, import preview, run
+// Patient EHR, duplicate-warning engine, import preview, run
 // comparison, engagement handoff, and audit lookup. Pure module, no
 // runtime deps beyond standard JS. Lives in `shared/` so the same
 // matcher runs on both client and server.
@@ -216,4 +216,81 @@ export function lookupPatientInIndex<T>(
     if (r) return { row: r, tier: "name_dob_phone" };
   }
   return null;
+}
+
+// Fuzzy name matching -------------------------------------------------------
+//
+// Used by minimal-field ("service") imports where only a patient name
+// is available. Combines token-set overlap with a bigram Dice
+// coefficient on the token-sorted string so "Doe, Jane" ~ "Jane Doe"
+// and small typos still score high. No external library.
+
+function bigrams(s: string): Map<string, number> {
+  const grams = new Map<string, number>();
+  for (let i = 0; i < s.length - 1; i++) {
+    const g = s.slice(i, i + 2);
+    grams.set(g, (grams.get(g) ?? 0) + 1);
+  }
+  return grams;
+}
+
+function diceCoefficient(a: string, b: string): number {
+  if (a.length < 2 || b.length < 2) return a === b && a.length > 0 ? 1 : 0;
+  const ga = bigrams(a);
+  const gb = bigrams(b);
+  let overlap = 0;
+  let totalA = 0;
+  let totalB = 0;
+  for (const [, n] of ga) totalA += n;
+  for (const [, n] of gb) totalB += n;
+  for (const [g, n] of ga) {
+    const m = gb.get(g);
+    if (m) overlap += Math.min(n, m);
+  }
+  const denom = totalA + totalB;
+  return denom === 0 ? 0 : (2 * overlap) / denom;
+}
+
+/** Score two person names in [0, 1]. 1 = identical after normalization. */
+export function fuzzyNameScore(left: string | null | undefined, right: string | null | undefined): number {
+  const a = normalizeName(left);
+  const b = normalizeName(right);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const tokensA = a.split(" ").filter(Boolean);
+  const tokensB = b.split(" ").filter(Boolean);
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  let shared = 0;
+  for (const t of setA) if (setB.has(t)) shared++;
+  const union = new Set([...setA, ...setB]).size;
+  const tokenJaccard = union === 0 ? 0 : shared / union;
+  const sortedA = [...tokensA].sort().join(" ");
+  const sortedB = [...tokensB].sort().join(" ");
+  if (sortedA === sortedB) return 0.98; // same tokens, different order
+  const dice = diceCoefficient(sortedA, sortedB);
+  // Weighted blend — exact token overlap is the strongest signal;
+  // dice catches typos / truncations within tokens.
+  return Math.max(dice, 0.5 * tokenJaccard + 0.5 * dice);
+}
+
+export const FUZZY_NAME_MATCH_THRESHOLD = 0.75;
+
+export type FuzzyNameCandidate<T> = { row: T; score: number };
+
+/** Rank `roster` rows against `name`; returns up to `limit` candidates with score >= threshold, best first. */
+export function findFuzzyNameMatches<T>(
+  name: string | null | undefined,
+  roster: ReadonlyArray<T>,
+  nameOf: (row: T) => string | null | undefined,
+  limit = 3,
+  threshold = FUZZY_NAME_MATCH_THRESHOLD,
+): FuzzyNameCandidate<T>[] {
+  const out: FuzzyNameCandidate<T>[] = [];
+  for (const row of roster) {
+    const score = fuzzyNameScore(name, nameOf(row));
+    if (score >= threshold) out.push({ row, score });
+  }
+  out.sort((x, y) => y.score - x.score);
+  return out.slice(0, limit);
 }
