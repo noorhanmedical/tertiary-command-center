@@ -13,6 +13,7 @@ import {
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import { listJourneyEvents } from "../repositories/executionCase.repo";
 import { calculateNextActionAt } from "../services/callList/nextActionPolicy";
+import { journeyLookupFilter } from "../services/engagement/journeyLookupRules";
 
 // No-duplicate-scheduler-per-date guard.
 //
@@ -125,20 +126,11 @@ import {
 // execution-case id, which never mixes patients (at the cost of not
 // spanning sibling cases for that one person).
 //
-// Exported (pure, no DB) so it can be regression-tested in isolation.
+// journeyLookupFilter lives in ../services/engagement/journeyLookupRules
+// (pure, no DB) so the identity-scoping invariant can be regression-tested
+// without DATABASE_URL. Re-exported here for backwards compatibility.
 // SOURCE MARKER: journey timeline identity scoping requires name AND dob
-export function journeyLookupFilter(args: {
-  executionCaseId: number;
-  patientName: string | null | undefined;
-  patientDob: string | null | undefined;
-}):
-  | { patientName: string; patientDob: string }
-  | { executionCaseId: number } {
-  const name = args.patientName?.trim() || null;
-  const dob = args.patientDob?.trim() || null;
-  if (name && dob) return { patientName: name, patientDob: dob };
-  return { executionCaseId: args.executionCaseId };
-}
+export { journeyLookupFilter };
 
 const assignBoardSchema = z.object({
   patientScreeningIds: z.array(z.number().int().positive()).min(1),
