@@ -29,6 +29,7 @@ import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
 import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
+import { registerPortalCaseReadinessRoutes } from "./routes/portalCaseReadiness";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
@@ -252,6 +253,10 @@ export async function registerRoutes(
   // Physician Portal — signature workflow only (Phase A). Clinician /
   // admin role gate is enforced inside the route file.
   registerPhysicianPortalRoutes(app);
+  // Portal case-readiness — service-layered readiness read + mutation
+  // endpoints (informed consent, screening form, brainwave PDF, report).
+  // Reads/writes go through server/services/ancillary/ancillaryReadinessSummary.
+  registerPortalCaseReadinessRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
   // Engagement Center canonical spine — additive server routes. UI page
