@@ -47,6 +47,7 @@ import { TopBanner } from "@/components/TopBanner";
 import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
+import PatientDirectoryLiveRoute from "@/pages/patient-directory-live";
 import PhysicianPortalPage from "@/pages/physician-portal";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
@@ -109,14 +110,16 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
-                {/* Phase 1 Slice 1.5: /patient-directory/live consolidated
-                    back into the canonical /patient-directory route.
-                    The redirect (instead of 404) preserves existing
-                    bookmarks. PatientDirectoryLivePage components
-                    remain in client/src/components/patient-directory/
-                    for reuse inside the canonical surface. */}
+                {/* Patient EHR — parallel route.
+                    Legacy /patient-directory continues to serve
+                    PatientDatabasePage so the roster remains the source
+                    of truth. /patient-directory/live mounts the new EMR
+                    chart surface so clinicians and admins can evaluate
+                    parity before any cutover. */}
                 <Route path="/patient-directory/live">
-                  <Redirect to="/patient-directory" />
+                  <RoleGuard user={user} roles={["admin", "clinician"]}>
+                    <PatientDirectoryLiveRoute />
+                  </RoleGuard>
                 </Route>
                 <Route path="/patient-directory" component={PatientDatabasePage} />
                 <Route path="/patient-database">
