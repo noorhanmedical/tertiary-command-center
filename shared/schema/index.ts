@@ -45,6 +45,7 @@ export * from "./documents";
 export * from "./outbox";
 export * from "./pto";
 export * from "./executionCase";
+export * from "./engagement";
 export * from "./globalSchedule";
 export * from "./schedulingTriage";
 export * from "./insuranceEligibility";

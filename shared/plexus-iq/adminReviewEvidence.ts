@@ -296,6 +296,56 @@ export function evidenceForUltrasoundTest(
   return out;
 }
 
+// The ultrasound sub-tests the qualification engine is allowed to
+// auto-qualify on add. The three manual-only studies (Stress Echo,
+// Upper Extremity Arterial / Venous) are deliberately excluded — they
+// are never auto-qualified and can only be hand-added via an override.
+export const AI_QUALIFYING_ULTRASOUND_TESTS: readonly string[] = [
+  "Bilateral Carotid Duplex (93880)",
+  "Echocardiogram TTE (93306)",
+  "Renal Artery Doppler (93975)",
+  "Lower Extremity Arterial Doppler (93925)",
+  "Abdominal Aortic Aneurysm Duplex (93978)",
+  "Lower Extremity Venous Duplex (93971)",
+];
+
+// Every ultrasound sub-test the Admin Review picker can add — the 6
+// AI-qualifying studies plus the 3 manual-only ones. Used by both the picker
+// (to hide the generic "Ultrasound" option when nothing is left to add) and
+// the add service (to report an honest "already present" state).
+export const ALL_ULTRASOUND_SUBTYPES: readonly string[] = [
+  ...AI_QUALIFYING_ULTRASOUND_TESTS,
+  "Stress Echocardiogram (93350)",
+  "Upper Extremity Arterial Doppler (93930)",
+  "Upper Extremity Venous Duplex (93970)",
+];
+
+// Clinical (non-medication) support for an ultrasound test. Medications
+// are supporting context only and never qualify a study on their own, so
+// the add-on qualifier gates on this set rather than the full
+// evidenceForUltrasoundTest output.
+export function clinicalEvidenceForUltrasoundTest(
+  testName: string,
+  evidence: AdminEvidenceChip[],
+): AdminEvidenceChip[] {
+  return evidenceForUltrasoundTest(testName, evidence).filter(
+    (c) => c.kind !== "medication",
+  );
+}
+
+// Given the patient's built evidence, return the subset of the
+// AI-qualifying ultrasound sub-tests that have clinical (non-medication)
+// supporting evidence. Used when a generic "Ultrasound Studies" is added
+// to determine which specific studies actually qualify.
+export function qualifyingUltrasoundSubtests(
+  evidence: AdminEvidenceChip[],
+  candidateTests: readonly string[] = AI_QUALIFYING_ULTRASOUND_TESTS,
+): string[] {
+  return candidateTests.filter(
+    (t) => clinicalEvidenceForUltrasoundTest(t, evidence).length > 0,
+  );
+}
+
 export function buildAdminReviewEvidence(input: {
   age?: number | null;
   hx?: string | null;
@@ -501,4 +551,435 @@ export function buildAdminReviewEvidence(input: {
       missingIcdCount,
     },
   };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Admin Review — SupportingButton evidence model, assignment state, and
+// reasoning-blob helpers extracted from AdminReviewDialog so the merge
+// / dedupe / stale-flag rules are unit-testable outside React and
+// reusable by packet-QA, batch-runner preservation, and server-side
+// dedupe.
+// ────────────────────────────────────────────────────────────────────
+
+export type SupportingButtonKind =
+  | "icd_disease"
+  | "medication"
+  | "symptom"
+  | "history"
+  | "prior_test";
+
+export type SupportingButtonSource =
+  | "Dx"
+  | "Rx"
+  | "Hx"
+  | "Prior Test"
+  | "AI ICD Search"
+  | "Rule Engine";
+
+export type SupportingButton = {
+  id: string;
+  kind: SupportingButtonKind;
+  label: string;
+  source: SupportingButtonSource;
+  sourceText?: string | null;
+  icdCode?: string | null;
+  icdLabel?: string | null;
+  requiresIcd?: boolean;
+  medicationName?: string | null;
+  symptomName?: string | null;
+  confidence?: "high" | "medium" | "low";
+};
+
+export type UltrasoundAssignments = {
+  parent: SupportingButton[];
+  byTestName: Record<string, SupportingButton[]>;
+};
+
+export type AdminReviewAssignmentState = {
+  brainwave: SupportingButton[];
+  vitalwave: SupportingButton[];
+  ultrasound: UltrasoundAssignments;
+};
+
+export type AssignmentTarget =
+  | { type: "ancillary"; ancillaryId: "brainwave" | "vitalwave" }
+  | { type: "ultrasound-parent" }
+  | { type: "ultrasound-test"; testName: string }
+  | { type: "all" };
+
+export type ChipOrigin = "user" | "canonical" | "rule-seeded";
+
+export type DisplayChipKind =
+  | "icd_disease"
+  | "medication"
+  | "symptom"
+  | "history"
+  | "prior_test";
+
+export type DisplayChip = {
+  key: string;
+  label: string;
+  icdCode: string | null;
+  kind: DisplayChipKind;
+  origin: ChipOrigin;
+  button?: SupportingButton;
+  canonicalTestNames?: string[];
+};
+
+export type AssignedEvidenceMergeOptions = {
+  staleAncillaries?: Set<string>;
+  staleReason?: string;
+  clearedAncillaries?: Set<string>;
+};
+
+// Deterministic key used everywhere client-side and server-side to
+// deduplicate assigned SupportingButtons on a target. Same shape must
+// be used by the runner preservation logic and the add/regen services.
+export function buttonKey(b: SupportingButton): string {
+  if (b.kind === "icd_disease") {
+    return `icd:${b.icdCode ?? "needs"}:${b.label.toLowerCase()}`;
+  }
+  if (b.kind === "medication") {
+    return `med:${(b.medicationName ?? b.label).toLowerCase()}`;
+  }
+  if (b.kind === "symptom" || b.kind === "history") {
+    return `hx:${b.label.toLowerCase()}`;
+  }
+  if (b.kind === "prior_test") return `prior:${b.label.toLowerCase()}`;
+  return `${b.kind}:${b.label.toLowerCase()}`;
+}
+
+export function chipKeyForAssignment(b: SupportingButton): string {
+  return buttonKey(b);
+}
+
+export function emptyAssignmentState(): AdminReviewAssignmentState {
+  return {
+    brainwave: [],
+    vitalwave: [],
+    ultrasound: { parent: [], byTestName: {} },
+  };
+}
+
+// Read the assignment state out of a `patient.reasoning` blob so the
+// dialog can re-hydrate on open. Symmetrical inverse of
+// `buildAssignedEvidenceReasoning`.
+export function seedAssignmentsFromReasoning(
+  reasoning: Record<string, any>,
+): AdminReviewAssignmentState {
+  const state = emptyAssignmentState();
+  for (const id of ["brainwave", "vitalwave"] as const) {
+    const entry = reasoning[`adminReview:${id}`];
+    if (entry && typeof entry === "object" && Array.isArray(entry.assignedEvidence)) {
+      state[id] = entry.assignedEvidence as SupportingButton[];
+    }
+  }
+  const ultra = reasoning["adminReview:ultrasound"];
+  if (ultra && typeof ultra === "object" && Array.isArray(ultra.assignedEvidence)) {
+    state.ultrasound.parent = ultra.assignedEvidence as SupportingButton[];
+  }
+  for (const [key, value] of Object.entries(reasoning)) {
+    if (!key.startsWith("adminReview:test:")) continue;
+    const testName = key.slice("adminReview:test:".length);
+    if (value && typeof value === "object" && Array.isArray((value as any).assignedEvidence)) {
+      state.ultrasound.byTestName[testName] =
+        (value as any).assignedEvidence as SupportingButton[];
+    }
+  }
+  return state;
+}
+
+// Build the next `reasoning` blob so it reflects the current
+// assignment state. Writer half; must stay symmetrical with
+// `seedAssignmentsFromReasoning`.
+//
+// Merge rules:
+//   - Other keys (canonical reasoning[testName], adminReview:updates,
+//     adminReview:removedFactors, etc.) pass through.
+//   - Each `adminReview:<ancillary>` and `adminReview:test:<name>` key
+//     spreads its existing block then overwrites `assignedEvidence`
+//     only, so other admin metadata (regeneratedAt, ancillaryNote…)
+//     survives.
+//   - staleAncillaries / clearedAncillaries flip the `stale` flag on
+//     the touched blocks only; siblings' stale state is untouched.
+export function buildAssignedEvidenceReasoning(
+  prevReasoning: Record<string, unknown>,
+  assignments: AdminReviewAssignmentState,
+  options: AssignedEvidenceMergeOptions = {},
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...prevReasoning };
+  const staleSet = options.staleAncillaries ?? new Set<string>();
+  const clearedSet = options.clearedAncillaries ?? new Set<string>();
+  const staleReason = options.staleReason ?? "Evidence assignment changed";
+  const nowIso = new Date().toISOString();
+
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const key = `adminReview:${id}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    const newAssigned =
+      id === "ultrasound" ? assignments.ultrasound.parent : assignments[id];
+    const merged: Record<string, unknown> = {
+      ...existing,
+      ancillaryId: id,
+      assignedEvidence: newAssigned,
+    };
+    if (staleSet.has(id)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(id)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
+  }
+  for (const [testName, assigned] of Object.entries(
+    assignments.ultrasound.byTestName,
+  )) {
+    const key = `adminReview:test:${testName}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    const childKey = `test:${testName}`;
+    const merged: Record<string, unknown> = {
+      ...existing,
+      testName,
+      assignedEvidence: assigned,
+    };
+    if (staleSet.has(childKey)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(childKey)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
+  }
+  return next;
+}
+
+// Given an operator's assignment target, return the set of "target
+// ids" the writer marks stale on attach/detach. Parents:
+// brainwave/vitalwave/ultrasound. Ultrasound children: test:<name>.
+export function targetIdsForAssignmentTarget(
+  target: AssignmentTarget,
+): string[] {
+  if (target.type === "all") return ["brainwave", "vitalwave", "ultrasound"];
+  if (target.type === "ancillary") return [target.ancillaryId];
+  if (target.type === "ultrasound-parent") return ["ultrasound"];
+  if (target.type === "ultrasound-test") return [`test:${target.testName}`];
+  return [];
+}
+
+// Read the stale target ids from a reasoning blob. Returns the same id
+// shape (`brainwave|vitalwave|ultrasound|test:<n>`) the writer uses.
+export function readStaleTargetIds(
+  reasoning: Record<string, unknown>,
+): string[] {
+  const out: string[] = [];
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const block = reasoning[`adminReview:${id}`];
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(id);
+    }
+  }
+  for (const key of Object.keys(reasoning)) {
+    if (!key.startsWith("adminReview:test:")) continue;
+    const block = reasoning[key];
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(`test:${key.slice("adminReview:test:".length)}`);
+    }
+  }
+  return out;
+}
+
+// Predicate: is this SupportingButton already assigned to the given
+// target? Uses `chipKeyForAssignment` for structural equality, so
+// dedupe is deterministic across client + server writers.
+export function isAssignedToTarget(
+  btn: SupportingButton,
+  target: AssignmentTarget,
+  state: AdminReviewAssignmentState,
+): boolean {
+  const key = chipKeyForAssignment(btn);
+  if (target.type === "ancillary") {
+    return state[target.ancillaryId].some(
+      (b) => chipKeyForAssignment(b) === key,
+    );
+  }
+  if (target.type === "ultrasound-parent") {
+    return state.ultrasound.parent.some(
+      (b) => chipKeyForAssignment(b) === key,
+    );
+  }
+  if (target.type === "ultrasound-test") {
+    return (state.ultrasound.byTestName[target.testName] ?? []).some(
+      (b) => chipKeyForAssignment(b) === key,
+    );
+  }
+  if (target.type === "all") {
+    return (
+      state.brainwave.some((b) => chipKeyForAssignment(b) === key) &&
+      state.vitalwave.some((b) => chipKeyForAssignment(b) === key) &&
+      state.ultrasound.parent.some((b) => chipKeyForAssignment(b) === key)
+    );
+  }
+  return false;
+}
+
+// Dedupe a list of DisplayChips by `chip.key`. Higher-priority origin
+// wins the merge; canonicalTestNames are unioned so an ancillary-level
+// remove can strip every occurrence.
+export function dedupeChips(chips: DisplayChip[]): DisplayChip[] {
+  const priority: Record<ChipOrigin, number> = {
+    user: 0,
+    canonical: 1,
+    "rule-seeded": 2,
+  };
+  const map = new Map<string, DisplayChip>();
+  for (const chip of chips) {
+    const existing = map.get(chip.key);
+    if (!existing) {
+      map.set(chip.key, {
+        ...chip,
+        canonicalTestNames: chip.canonicalTestNames
+          ? [...chip.canonicalTestNames]
+          : undefined,
+      });
+      continue;
+    }
+    const winsBy: ChipOrigin =
+      priority[chip.origin] < priority[existing.origin]
+        ? chip.origin
+        : existing.origin;
+    const winner = winsBy === chip.origin ? chip : existing;
+    const merged: DisplayChip = {
+      ...winner,
+      canonicalTestNames: Array.from(
+        new Set([
+          ...(existing.canonicalTestNames ?? []),
+          ...(chip.canonicalTestNames ?? []),
+        ]),
+      ),
+    };
+    if (merged.canonicalTestNames && merged.canonicalTestNames.length === 0) {
+      merged.canonicalTestNames = undefined;
+    }
+    map.set(chip.key, merged);
+  }
+  return Array.from(map.values());
+}
+
+// Server-response merge helper (pure). Used by the dialog's
+// mergeRegenerateResponseReasoning to trust the server for
+// `regeneratedTargetIds` and carry forward every other adminReview:*
+// block from the operator's live-staged reasoning.
+export function mergeRegenerateResponseReasoning(
+  serverReasoning: Record<string, unknown>,
+  liveReasoning: Record<string, unknown>,
+  assignmentsSnapshot: AdminReviewAssignmentState,
+  regeneratedTargetIds: Set<string>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...serverReasoning };
+  for (const key of new Set([
+    ...Object.keys(liveReasoning),
+    ...Object.keys(serverReasoning),
+  ])) {
+    if (!key.startsWith("adminReview:")) continue;
+    if (key === "adminReview:updates") {
+      if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+      else if (liveReasoning[key] !== undefined) merged[key] = liveReasoning[key];
+      continue;
+    }
+    const targetId = key === "adminReview:ultrasound"
+      ? "ultrasound"
+      : key === "adminReview:brainwave"
+      ? "brainwave"
+      : key === "adminReview:vitalwave"
+      ? "vitalwave"
+      : key.startsWith("adminReview:test:")
+      ? `test:${key.slice("adminReview:test:".length)}`
+      : null;
+    if (targetId == null) continue;
+    if (regeneratedTargetIds.has(targetId)) {
+      if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+    } else {
+      if (liveReasoning[key] !== undefined) merged[key] = liveReasoning[key];
+    }
+  }
+  return buildAssignedEvidenceReasoning(merged, assignmentsSnapshot, {
+    clearedAncillaries: regeneratedTargetIds,
+  });
+}
+
+// Dedupe an `assignedEvidence` array by `buttonKey`. Server-side use:
+// call this before persisting any array so the add + regenerate
+// services never write the same target twice. Cross-target reuse (same
+// button in brainwave + vitalwave) is preserved because dedupe is
+// scoped to a single array.
+//
+// The helper is intentionally payload-agnostic: it inspects only the
+// keying properties buttonKey reads (kind, label, icdCode,
+// medicationName), which both SupportingButton (client) and
+// AdminEvidenceChip (server) share. Callers preserve their own element
+// type via the return-shape identity below.
+export function dedupeAssignedEvidence<T = unknown>(
+  buttons: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const b of buttons) {
+    const key = buttonKey(b as unknown as SupportingButton);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(b);
+  }
+  return out;
+}
+
+// The list of adminReview:* key prefixes that the batch runner must
+// preserve when it overwrites `reasoning`. The runner reads existing
+// reasoning, picks every key matching this predicate, and merges it
+// forward.
+export function isAdminReviewReasoningKey(key: string): boolean {
+  return key.startsWith("adminReview:");
+}
+
+// Preserve every adminReview:* key from `existing` on top of `next`.
+// Preserved keys always win the merge — the runner cannot silently
+// overwrite reviewer decisions. Returns the merged blob and the list
+// of preserved keys so the caller can log them.
+export function preserveAdminReviewReasoning(
+  existing: Record<string, unknown> | null | undefined,
+  next: Record<string, unknown>,
+): { reasoning: Record<string, unknown>; preservedKeys: string[] } {
+  const existingObj = existing ?? {};
+  const preservedKeys = Object.keys(existingObj).filter(
+    isAdminReviewReasoningKey,
+  );
+  if (preservedKeys.length === 0) {
+    return { reasoning: next, preservedKeys };
+  }
+  const merged: Record<string, unknown> = { ...next };
+  for (const key of preservedKeys) {
+    merged[key] = existingObj[key];
+  }
+  return { reasoning: merged, preservedKeys };
 }

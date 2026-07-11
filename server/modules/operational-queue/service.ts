@@ -14,6 +14,7 @@ import {
   listGlobalCalendarEventsForFacility,
   listGlobalCalendarEventsForUser,
   listSchedulerTasksFromEngagementBoardForUser,
+  listSchedulerTasksFromEngagementBoardForSchedulerIds,
   listSchedulerTasksFromPlexusForUser,
   listVisitAppointmentsForFacility,
 } from "./repo";
@@ -58,8 +59,11 @@ export async function getOperationalQueueForUser(
   userId: string,
   filters: OperationalQueueForUserFilters = {},
   perSourceLimit?: number,
+  options?: { viewAsSchedulerIds?: number[] },
 ): Promise<OperationalQueueItem[]> {
   const tasks: Array<Promise<OperationalQueueItem[]>> = [];
+  const viewAs = options?.viewAsSchedulerIds;
+  const isViewAs = Array.isArray(viewAs) && viewAs.length > 0;
 
   if (kindWanted(filters.kinds, "call_list_item")) {
     tasks.push(listCallListItemsForUser(userId, filters, perSourceLimit));
@@ -68,12 +72,21 @@ export async function getOperationalQueueForUser(
     tasks.push(
       listSchedulerTasksFromPlexusForUser(userId, filters, perSourceLimit),
     );
+    // Admin "view as": scope engagement-board work to the viewed scheduler
+    // row(s) instead of the logged-in user's own mapping.
     tasks.push(
-      listSchedulerTasksFromEngagementBoardForUser(
-        userId,
-        filters,
-        perSourceLimit,
-      ),
+      isViewAs
+        ? listSchedulerTasksFromEngagementBoardForSchedulerIds(
+            viewAs!,
+            filters,
+            perSourceLimit,
+            null,
+          )
+        : listSchedulerTasksFromEngagementBoardForUser(
+            userId,
+            filters,
+            perSourceLimit,
+          ),
     );
   }
   if (kindWanted(filters.kinds, "global_calendar_event")) {

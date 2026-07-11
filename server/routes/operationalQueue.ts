@@ -25,6 +25,7 @@ import {
   getOperationalQueueForUser,
   type OperationalQueueItemKind,
 } from "../modules/operational-queue";
+import { resolveSchedulerForUser } from "../services/callList/schedulerUserMapping";
 
 const VALID_KIND_SET = new Set<string>(OPERATIONAL_QUEUE_ITEM_KINDS);
 
@@ -91,19 +92,58 @@ export function registerOperationalQueueRoutes(app: Express) {
         includeClosedRaw === "true" ||
         includeClosedRaw === "yes";
 
-      const items = await getOperationalQueueForUser(
-        String(userId),
-        {
-          facility: q.facility?.trim() || undefined,
-          dateFrom: parseDateString(q.dateFrom),
-          dateTo: parseDateString(q.dateTo),
-          includeClosed,
-          kinds: parseKinds(q.kinds),
-        },
-        clampPerSourceLimit(q.perSourceLimit),
-      );
+      // Admin "view as": an admin can scope the engagement call list to any
+      // outreach_schedulers row, so they can see every team member's call list
+      // without being mapped to that scheduler. Non-admins cannot use this —
+      // the param is silently ignored so they only ever see their own work.
+      const isAdmin = req.session?.role === "admin";
+      const viewAsRaw = q.viewAsSchedulerId?.trim();
+      const viewAsParsed = viewAsRaw ? Number(viewAsRaw) : NaN;
+      const viewAsSchedulerId =
+        isAdmin && Number.isInteger(viewAsParsed) && viewAsParsed > 0
+          ? viewAsParsed
+          : null;
+      const viewAsSchedulerIds =
+        viewAsSchedulerId != null ? [viewAsSchedulerId] : undefined;
 
-      res.json({ items });
+      const [items, mapping] = await Promise.all([
+        getOperationalQueueForUser(
+          String(userId),
+          {
+            facility: q.facility?.trim() || undefined,
+            dateFrom: parseDateString(q.dateFrom),
+            dateTo: parseDateString(q.dateTo),
+            includeClosed,
+            kinds: parseKinds(q.kinds),
+          },
+          clampPerSourceLimit(q.perSourceLimit),
+          { viewAsSchedulerIds },
+        ),
+        resolveSchedulerForUser(String(userId)),
+      ]);
+
+      // meta.schedulerMapping lets the Team Member Portal distinguish
+      // "no work today" from "your login is not linked to a scheduler row"
+      // (in which case engagement-assigned cases can never appear). Additive:
+      // existing consumers that only read `items` are unaffected. When an admin
+      // is viewing as a specific scheduler, mapping is always "ok" for that row.
+      const meta =
+        viewAsSchedulerId != null
+          ? {
+              schedulerMapping: "ok" as const,
+              schedulerIds: [viewAsSchedulerId],
+            }
+          : mapping.status === "ok"
+            ? {
+                schedulerMapping: "ok" as const,
+                schedulerIds: mapping.schedulers.map((s) => s.id),
+              }
+            : {
+                schedulerMapping: "missing_user_mapping" as const,
+                schedulerIds: [],
+              };
+
+      res.json({ items, meta });
     } catch (error: any) {
       console.error("[operational-queue/me] error:", error?.message ?? error);
       res.status(500).json({

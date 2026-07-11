@@ -99,7 +99,7 @@ const DEFAULT_ADMIN_SETTINGS: DefaultAdminSetting[] = [
   { settingDomain: "engagement_center", settingKey: "queue_reentry_enabled", settingValue: { enabled: true }, description: "When true, callback-style outcomes re-enter the call list via nextActionAt." },
 
   // assignment domain — PR 2.1
-  { settingDomain: "assignment", settingKey: "scheduler_auto_assign_enabled", settingValue: { enabled: true }, description: "Auto-assign new patients to schedulers based on capacity + facility allow-list." },
+  { settingDomain: "assignment", settingKey: "scheduler_auto_assign_enabled", settingValue: { enabled: false }, description: "When ON, auto-assign new patients to schedulers at commit time (capacity + facility allow-list). When OFF (default), patients land unassigned in the Engagement Center queue for manual distribution to a PCS / ACS team member." },
   { settingDomain: "assignment", settingKey: "pcs_assignment_respects_facility_scope", settingValue: { enabled: true }, description: "PCS assignments must stay within the user's facility allow-list." },
   { settingDomain: "assignment", settingKey: "acs_assignment_respects_facility_scope", settingValue: { enabled: true }, description: "ACS assignments must stay within the user's facility allow-list." },
 
@@ -378,4 +378,52 @@ export async function listAdminSettings(
   return conditions.length > 0
     ? query.where(and(...conditions)).orderBy(desc(adminSettings.createdAt)).limit(safeLimit)
     : query.orderBy(desc(adminSettings.createdAt)).limit(safeLimit);
+}
+
+// ─── Patient EHR section access ───────────────────────────────────────
+
+import {
+  normalizeSectionAccessMatrix,
+  type SectionAccessMatrix,
+  type PartialSectionAccessMatrix,
+} from "@shared/patientDirectorySections";
+
+const PATIENT_DIRECTORY_DOMAIN = "patient_directory";
+const SECTION_ACCESS_KEY = "section_access";
+
+/** Read the global patient-directory section-access matrix, normalized so it
+ *  always covers every registry section + role (gaps filled with defaults). */
+export async function getPatientDirectorySectionAccessMatrix(): Promise<SectionAccessMatrix> {
+  const stored = await getGlobalAdminSettingValue<{ matrix?: PartialSectionAccessMatrix }>(
+    PATIENT_DIRECTORY_DOMAIN,
+    SECTION_ACCESS_KEY,
+  );
+  return normalizeSectionAccessMatrix(stored?.matrix ?? null);
+}
+
+/** Upsert the global patient-directory section-access matrix. Normalizes the
+ *  incoming matrix before persisting so the stored value is always complete
+ *  and admin is always `full`. */
+export async function savePatientDirectorySectionAccessMatrix(
+  matrix: PartialSectionAccessMatrix,
+): Promise<SectionAccessMatrix> {
+  const normalized = normalizeSectionAccessMatrix(matrix);
+  const existing = await findOneSetting(
+    PATIENT_DIRECTORY_DOMAIN,
+    SECTION_ACCESS_KEY,
+    null,
+    null,
+  );
+  if (existing) {
+    await updateAdminSetting(existing.id, { settingValue: { matrix: normalized } });
+  } else {
+    await createAdminSetting({
+      settingDomain: PATIENT_DIRECTORY_DOMAIN,
+      settingKey: SECTION_ACCESS_KEY,
+      settingValue: { matrix: normalized },
+      description: "Per-role access levels for Patient EHR chart sections.",
+      active: true,
+    });
+  }
+  return normalized;
 }

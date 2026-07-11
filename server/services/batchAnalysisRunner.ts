@@ -7,6 +7,34 @@ import { screenSinglePatientWithAI } from "./screening";
 import { commitPatient } from "./patientCommitService";
 import { getQualificationMode } from "../routes/helpers";
 import { invalidatePatientDatabase } from "../routes/patientDatabase";
+import { preserveAdminReviewReasoning } from "@shared/plexus-iq/adminReviewEvidence";
+
+// Mandatory safety fix (Phase 3): the batch runner must never silently
+// overwrite `patient_screenings.reasoning` and wipe an operator's admin-
+// reviewed decisions. Every reasoning write in this file routes through
+// `preserveAdminReviewReasoning`, which reads the existing blob, copies
+// every key beginning with `adminReview:` forward on top of the caller's
+// new reasoning, and returns the list of preserved keys so we can log
+// them. Preserved keys always win. There is no override — a future
+// "force overwrite" would be a Zod-validated explicit option on
+// `startBatchAnalysis`, not a silent default.
+function mergePreserveAndLog(
+  patientId: number,
+  jobId: number,
+  batchId: number,
+  existing: Record<string, unknown> | null | undefined,
+  next: Record<string, unknown>,
+  writeSite: string,
+): Record<string, unknown> {
+  const { reasoning, preservedKeys } = preserveAdminReviewReasoning(existing, next);
+  if (preservedKeys.length > 0) {
+    console.log(
+      `[batchAnalysisRunner:${batchId}] job=${jobId} patient=${patientId} site=${writeSite} preserved adminReview keys:`,
+      preservedKeys,
+    );
+  }
+  return reasoning;
+}
 
 // Shared, durable batch-analysis runner. Used by:
 //   - POST /api/batches/:id/analyze              (Plexus IQ "Generate")
@@ -65,9 +93,20 @@ export async function startBatchAnalysis(
         : ["processing"];
       const candidates = patients.filter((p) => resetStatuses.includes(p.status));
       for (const p of candidates) {
+        // Preserve any admin-reviewed evidence keys instead of blanking
+        // reasoning. The reset only clears AI-derived state; operator-
+        // staged assignments and audit log survive.
+        const { reasoning: resetReasoning, preservedKeys } =
+          preserveAdminReviewReasoning(p.reasoning as Record<string, unknown> | null, {});
+        if (preservedKeys.length > 0) {
+          console.log(
+            `[batchAnalysisRunner:${batchId}] reset-to-draft patient=${p.id} preserved adminReview keys:`,
+            preservedKeys,
+          );
+        }
         await tx
           .update(patientScreenings)
-          .set({ status: "draft", qualifyingTests: [], reasoning: {} })
+          .set({ status: "draft", qualifyingTests: [], reasoning: resetReasoning })
           .where(eq(patientScreenings.id, p.id));
       }
     }
@@ -168,9 +207,17 @@ async function runAnalysisLoop(
                 }
               }
             }
+            const mergedReasoning = mergePreserveAndLog(
+              patient.id,
+              jobId,
+              batchId,
+              patient.reasoning as Record<string, unknown> | null,
+              rawReasoning,
+              "ai_complete",
+            );
             await storage.updatePatientScreening(patient.id, {
               qualifyingTests: match.qualifyingTests || [],
-              reasoning: rawReasoning,
+              reasoning: mergedReasoning,
               diagnoses: match.diagnoses || patient.diagnoses || null,
               history: match.history || patient.history || null,
               medications: match.medications || patient.medications || null,
@@ -179,9 +226,17 @@ async function runAnalysisLoop(
               status: "completed",
             });
           } else {
+            const mergedReasoning = mergePreserveAndLog(
+              patient.id,
+              jobId,
+              batchId,
+              patient.reasoning as Record<string, unknown> | null,
+              {},
+              "ai_no_result",
+            );
             await storage.updatePatientScreening(patient.id, {
               qualifyingTests: [],
-              reasoning: {},
+              reasoning: mergedReasoning,
               status: "completed",
             });
           }
@@ -208,14 +263,22 @@ async function runAnalysisLoop(
           // qualification-jobs status endpoint can surface per-patient
           // error reasons without a new schema column. Retry resets
           // this back to {} before the next attempt.
-          await storage.updatePatientScreening(patient.id, {
-            qualifyingTests: [],
-            reasoning: {
+          const errorReasoning = mergePreserveAndLog(
+            patient.id,
+            jobId,
+            batchId,
+            patient.reasoning as Record<string, unknown> | null,
+            {
               __analysisError: {
                 message: errMsg,
                 failedAt: new Date().toISOString(),
               },
             } as Record<string, unknown>,
+            "analysis_error",
+          );
+          await storage.updatePatientScreening(patient.id, {
+            qualifyingTests: [],
+            reasoning: errorReasoning,
             status: "error",
           });
         }
