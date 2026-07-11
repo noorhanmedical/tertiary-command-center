@@ -9,7 +9,14 @@ import {
   Loader2,
   Sparkles,
   Trash2,
+  Workflow,
 } from "lucide-react";
+import {
+  PremiumPanel,
+  PremiumDataCard,
+  PremiumModeStrip,
+  type PremiumMode,
+} from "@/components/premium";
 import {
   Accordion,
   AccordionContent,
@@ -55,9 +62,9 @@ type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 // Centralized facility/dashboard bucket display labels. Backend status
 // values stay untouched — this is presentation only.
 export const PLEXUS_IQ_BUCKET_LABELS = {
-  needs_completion: "Parsed",
+  needs_completion: "Needs Completion",
   missing_info: "Missing Info",
-  admin_review: "Admin Review Pending",
+  admin_review: "Admin Review",
   completed: "Completed",
   submitted_engagement: "Sent to Engagement",
 } as const;
@@ -322,9 +329,9 @@ function WorklistGroupCard({
 
   const ariaLabel =
     mode === "needs"
-      ? "Work incomplete"
+      ? "Needs Completion"
       : mode === "finalized"
-      ? "View finalized"
+      ? "View completed"
       : "View patients";
 
   return (
@@ -364,7 +371,7 @@ function WorklistGroupCard({
             {group.finalizedCount > 0 && (
               <>
                 <span className="text-slate-300">·</span>
-                <span className="text-emerald-700">{group.finalizedCount} finalized</span>
+                <span className="text-emerald-700">{group.finalizedCount} completed</span>
               </>
             )}
             {group.scheduleDate && group.scheduledCount > 0 && (
@@ -408,14 +415,17 @@ function WorklistGroupCard({
               <CalendarCheck className="w-4 h-4" />
             </IconButton>
           )}
+          {/* Quieter count chip — the chevron above is the canonical
+              expand control. Still clickable for redundancy and to
+              preserve onToggle wiring + the existing data-testid. */}
           <button
             type="button"
             onClick={onToggle}
-            className="ml-1 inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-800 transition-colors"
+            aria-label={ariaLabel}
+            className="ml-1 inline-flex items-center gap-1 rounded text-[11px] text-[#475467] hover:text-[#111827] transition-colors px-1.5 py-0.5"
             data-testid={`button-plexus-iq-worklist-action-${group.batchId}`}
           >
-            {ariaLabel}
-            <span className="text-slate-500">({patientsToRender.length})</span>
+            <span className="tabular-nums">{patientsToRender.length}</span>
           </button>
         </div>
       </div>
@@ -898,120 +908,67 @@ export function PlexusIQWorkspace({
       // Plexus IQ facility bucket order:
       //   1. Completed
       //   2. Missing Info
-      //   3. Parsed
-      //   4. Admin Review Pending
+      //   3. Needs Completion
+      //   4. Admin Review
       //   5. Sent to Engagement
       //   6. All Patients
       // SOURCE MARKER: Plexus IQ facility bucket order
-      const tiles: Array<{
-        id: ClinicStatusFilter;
-        label: string;
-        count: number;
-        tone: "amber" | "emerald" | "rose" | "sky" | "slate";
-      }> = [
-        {
-          id: "completed",
-          label: PLEXUS_IQ_BUCKET_LABELS.completed,
-          count: summary?.finalizedCount ?? 0,
-          tone: "emerald",
-        },
-        {
-          id: "missingInfo",
-          label: PLEXUS_IQ_BUCKET_LABELS.missing_info,
-          count: summary?.missingInfoCount ?? 0,
-          tone: "rose",
-        },
-        {
-          id: "needs",
-          label: PLEXUS_IQ_BUCKET_LABELS.needs_completion,
-          count: summary?.incompleteCount ?? 0,
-          tone: "amber",
-        },
-        {
-          id: "readyForEngagement",
-          label: PLEXUS_IQ_BUCKET_LABELS.admin_review,
-          count: summary?.readyForEngagementCount ?? 0,
-          tone: "sky",
-        },
-        {
-          id: "sentToEngagement",
-          label: PLEXUS_IQ_BUCKET_LABELS.submitted_engagement,
-          count: summary?.sentToEngagementCount ?? 0,
-          tone: "slate",
-        },
-        {
-          id: "all",
-          label: "All Patients",
-          count: summary?.totalCount ?? 0,
-          tone: "slate",
-        },
+      const modes: PremiumMode<ClinicStatusFilter>[] = [
+        { id: "completed", label: PLEXUS_IQ_BUCKET_LABELS.completed, count: summary?.finalizedCount ?? 0 },
+        { id: "missingInfo", label: PLEXUS_IQ_BUCKET_LABELS.missing_info, count: summary?.missingInfoCount ?? 0 },
+        { id: "needs", label: PLEXUS_IQ_BUCKET_LABELS.needs_completion, count: summary?.incompleteCount ?? 0 },
+        { id: "readyForEngagement", label: PLEXUS_IQ_BUCKET_LABELS.admin_review, count: summary?.readyForEngagementCount ?? 0 },
+        { id: "sentToEngagement", label: PLEXUS_IQ_BUCKET_LABELS.submitted_engagement, count: summary?.sentToEngagementCount ?? 0 },
+        { id: "all", label: "All Patients", count: summary?.totalCount ?? 0 },
       ];
-      const toneStyles: Record<typeof tiles[number]["tone"], string> = {
-        amber: "bg-amber-50 border-amber-200 text-amber-900",
-        emerald: "bg-emerald-50 border-emerald-200 text-emerald-900",
-        rose: "bg-rose-50 border-rose-200 text-rose-900",
-        sky: "bg-sky-50 border-sky-200 text-sky-900",
-        slate: "bg-slate-50 border-slate-200 text-slate-900",
-      };
+      const activeLabel = modes.find((m) => m.id === clinicStatusFilter)?.label ?? "";
       return (
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
-          <div className="flex items-center gap-3" data-testid="plexus-iq-clinic-detail-header">
+        <div className="mx-auto w-full max-w-[1400px] px-6 sm:px-8 lg:px-10 xl:px-12 py-6 space-y-4">
+          {/* Single breadcrumb row. Replaces the prior duplicate
+              "Back to clinics" pill + facility label + "Legacy full
+              view →" trio. Legacy view stays reachable from the
+              Plexus IQ overview eyebrow; not duplicated here. */}
+          <nav
+            className="flex items-center gap-1.5 text-[13px]"
+            data-testid="plexus-iq-clinic-detail-header"
+            data-legacy-testid="plexus-iq-clinic-detail-header"
+            aria-label="Breadcrumb"
+          >
             <button
               type="button"
               onClick={() => {
                 setSelectedClinicFacility(null);
                 setClinicStatusFilter("completed");
               }}
-              className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-medium text-slate-800"
+              className="inline-flex items-center gap-1 rounded text-[#475467] hover:text-[#111827] transition-colors px-1 py-0.5"
               data-testid="button-plexus-iq-clinic-back"
             >
               <ChevronRight className="h-3.5 w-3.5 rotate-180" />
-              Back to clinics
+              Clinics
             </button>
-            <div className="text-base font-semibold text-slate-900">
+            <span aria-hidden className="text-[#9AA3B2]">/</span>
+            <span
+              className="text-[#111827] font-medium truncate"
+              title={selectedClinicFacility ?? undefined}
+            >
               {selectedClinicFacility}
-            </div>
-            <div className="ml-auto">
-              <button
-                type="button"
-                onClick={() => setViewMode("all")}
-                className="text-[11px] text-slate-500 hover:text-slate-700"
-                data-testid="button-plexus-iq-legacy-full-view"
-              >
-                Legacy full view →
-              </button>
-            </div>
-          </div>
+            </span>
+          </nav>
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" data-testid="plexus-iq-clinic-status-tiles">
-            {tiles.map((t) => {
-              const isActive = clinicStatusFilter === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setClinicStatusFilter(t.id)}
-                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                    isActive
-                      ? "ring-2 ring-offset-1 ring-slate-900 " + toneStyles[t.tone]
-                      : toneStyles[t.tone] + " hover:opacity-90"
-                  }`}
-                  data-testid={`plexus-iq-clinic-status-tile-${t.id}`}
-                >
-                  <div className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
-                    {t.label}
-                  </div>
-                  <div className="text-xl font-semibold">{t.count}</div>
-                </button>
-              );
-            })}
-          </div>
+          <PremiumModeStrip
+            modes={modes}
+            activeId={clinicStatusFilter}
+            onSelect={(id) => setClinicStatusFilter(id)}
+            testId="plexus-iq-clinic-status-tiles"
+          />
 
-          <div className="rounded-2xl bg-white p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+          <div data-testid="plexus-iq-clinic-detail-body">
             {clinicDetailFiltered.length === 0 ? (
-              <div className="text-xs text-slate-500 italic py-4 text-center">
-                No patients match this status in {selectedClinicFacility}.
-              </div>
+              <PremiumPanel>
+                <div className="text-[12px] text-[#667085] italic py-2 text-center">
+                  No patients match this status in {selectedClinicFacility}.
+                </div>
+              </PremiumPanel>
             ) : (
               <ClinicDetailPackets
                 facility={selectedClinicFacility}
@@ -1022,7 +979,7 @@ export function PlexusIQWorkspace({
                 onDeletePatient={onDeletePatient}
                 onAnalyzeOnePatient={onAnalyzeOnePatient}
                 fallbackScheduleDate={clinicDetailScheduleDate}
-                statusLabel={tiles.find((t) => t.id === clinicStatusFilter)?.label ?? ""}
+                statusLabel={activeLabel}
               />
             )}
           </div>
@@ -1034,86 +991,87 @@ export function PlexusIQWorkspace({
     // Global stat cards, qualification jobs, recent qualification cards,
     // and recently-deleted panels are NOT rendered here per the
     // facility-first rule. Clicking a tile opens its facility interior.
+    //
+    // The premium dark hero now lives at the page level in plexus-iq.tsx
+    // (PremiumHero + PremiumHeroStatGrid), so this surface drops its
+    // internal duplicate.
     return (
       <div
-        className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3"
+        className="mx-auto w-full max-w-[1400px] px-6 sm:px-8 lg:px-10 xl:px-12 py-6 space-y-4"
         data-testid="plexus-iq-facility-overview"
       >
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-            Clinics
-          </div>
-          <button
-            type="button"
-            onClick={() => setViewMode("all")}
-            className="text-[11px] text-slate-500 hover:text-slate-700"
-            data-testid="button-plexus-iq-legacy-full-view"
-          >
-            Legacy full view →
-          </button>
-        </div>
-        <div
-          className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
-          data-testid="plexus-iq-facility-tile-grid"
-          data-tile-grid-legacy="plexus-iq-clinic-tiles"
-        >
-          {clinicSummaries.map((c) => (
+        <PremiumPanel
+          eyebrow="Plexus Clinical"
+          title="Clinics"
+          trailing={
             <button
-              key={c.facility}
               type="button"
-              onClick={() => {
-                setSelectedClinicFacility(c.facility);
-                // Completed is the default Plexus IQ facility bucket.
-                setClinicStatusFilter("completed");
-              }}
-              className="group flex flex-col overflow-hidden rounded-2xl bg-white text-left shadow-[0_2px_8px_rgba(15,23,42,0.06)] hover:shadow-[0_6px_20px_rgba(15,23,42,0.10)] transition-shadow"
-              data-testid="plexus-iq-facility-tile"
-              data-facility={c.facility}
-              data-legacy-testid={`plexus-iq-clinic-tile-${c.facility}`}
+              onClick={() => setViewMode("all")}
+              className="text-[11px] text-[#667085] hover:text-[#101115] transition-colors"
+              data-testid="button-plexus-iq-legacy-full-view"
             >
-              {/* Black header strip — clinic name only, no counts. */}
-              <div className="bg-slate-900 group-hover:bg-slate-800 transition-colors px-4 py-3">
-                <div className="text-sm font-semibold tracking-tight text-white truncate">
-                  {c.facility}
-                </div>
-              </div>
-
-              {/* Clean stat rows. Total in the corner; per-status counts
-                  stacked + colored sparingly so the eye lands on the
-                  number first. */}
-              <div className="flex-1 px-4 py-3 space-y-1.5">
-                <StatRow label="Incomplete" value={c.incompleteCount} tone="amber" />
-                <StatRow label="Completed" value={c.finalizedCount} tone="emerald" />
-                {c.missingInfoCount > 0 && (
-                  <StatRow label="Missing info" value={c.missingInfoCount} tone="rose" />
-                )}
-                {c.readyForEngagementCount > 0 && (
-                  <StatRow
-                    label="Ready for Engagement"
-                    value={c.readyForEngagementCount}
-                    tone="sky"
-                  />
-                )}
-                {c.sentToEngagementCount > 0 && (
-                  <StatRow
-                    label="Sent to Engagement"
-                    value={c.sentToEngagementCount}
-                    tone="slate"
-                  />
-                )}
-                {c.errorCount > 0 && (
-                  <StatRow label="Errors" value={c.errorCount} tone="rose" />
-                )}
-              </div>
-
-              {/* Footer: total patients. */}
-              <div className="border-t border-slate-100 px-4 py-2 flex items-center justify-between text-[11px] text-slate-500">
-                <span>Total patients</span>
-                <span className="font-semibold text-slate-900">{c.totalCount}</span>
-              </div>
+              Legacy full view →
             </button>
-          ))}
-        </div>
+          }
+        >
+          <div
+            className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3"
+            data-testid="plexus-iq-facility-tile-grid"
+            data-tile-grid-legacy="plexus-iq-clinic-tiles"
+          >
+            {clinicSummaries.map((c) => (
+              <PremiumDataCard
+                key={c.facility}
+                onClick={() => {
+                  setSelectedClinicFacility(c.facility);
+                  // Completed is the default Plexus IQ facility bucket.
+                  setClinicStatusFilter("completed");
+                }}
+                testId="plexus-iq-facility-tile"
+                ariaLabel={`Open ${c.facility}`}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-col h-full" data-facility={c.facility} data-legacy-testid={`plexus-iq-clinic-tile-${c.facility}`}>
+                  {/* Top: facility identity + IQ workflow icon badge. */}
+                  <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-2">
+                    <div className="min-w-0">
+                      <div className="text-[14px] font-medium tracking-tight text-[#111827] truncate">
+                        {c.facility}
+                      </div>
+                      <div className="text-[11px] text-[#667085]">
+                        {c.totalCount} {c.totalCount === 1 ? "patient" : "patients"}
+                      </div>
+                    </div>
+                    <span
+                      aria-hidden
+                      className="inline-flex items-center justify-center h-7 w-7 rounded bg-[#F8F9FB] text-[#475467] border border-[#EEF1F5]"
+                    >
+                      <Workflow className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                  {/* Body: status stack — always render Completed +
+                      Needs Completion + Admin Review. Surface missing
+                      info / sent to engagement / errors only when > 0
+                      so dormant tiles stay calm. */}
+                  <div className="flex-1 px-4 py-2 space-y-1.5 border-t border-[#EEF1F5]">
+                    <StatRow label="Completed" value={c.finalizedCount} tone="emerald" />
+                    <StatRow label="Needs Completion" value={c.incompleteCount} tone="amber" />
+                    <StatRow label="Admin Review" value={c.readyForEngagementCount} tone="sky" />
+                    {c.missingInfoCount > 0 && (
+                      <StatRow label="Missing Info" value={c.missingInfoCount} tone="rose" />
+                    )}
+                    {c.sentToEngagementCount > 0 && (
+                      <StatRow label="Sent to Engagement" value={c.sentToEngagementCount} tone="slate" />
+                    )}
+                    {c.errorCount > 0 && (
+                      <StatRow label="Errors" value={c.errorCount} tone="rose" />
+                    )}
+                  </div>
+                </div>
+              </PremiumDataCard>
+            ))}
+          </div>
+        </PremiumPanel>
       </div>
     );
   }
@@ -1142,7 +1100,7 @@ export function PlexusIQWorkspace({
               )}
             </TabsTrigger>
             <TabsTrigger value="finalized" data-testid="tab-plexus-iq-finalized">
-              Finalized
+              Completed
               {totals.totalFinalized > 0 && (
                 <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[10px] font-semibold text-emerald-800">
                   {totals.totalFinalized}
@@ -1172,7 +1130,7 @@ export function PlexusIQWorkspace({
             </span>
             <span className="text-slate-300">·</span>
             <span>
-              <strong className="text-slate-800">{totals.totalFinalized}</strong> finalized
+              <strong className="text-slate-800">{totals.totalFinalized}</strong> completed
             </span>
             <span className="text-slate-300">·</span>
             <span>
@@ -1189,7 +1147,7 @@ export function PlexusIQWorkspace({
           {needsGroups.length === 0 ? (
             <div className="rounded-2xl bg-white p-6 text-center text-xs text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               <CheckCircle2 className="mx-auto mb-2 h-5 w-5 text-emerald-600" />
-              All visible patients are finalized. Use Finalized, Scheduled,
+              All visible patients are completed. Use Completed, Scheduled,
               or All Patients to review completed work.
             </div>
           ) : (
@@ -1226,7 +1184,7 @@ export function PlexusIQWorkspace({
         <TabsContent value="finalized" className="mt-3" data-testid="plexus-iq-tab-content-finalized">
           {finalizedGroups.length === 0 ? (
             <div className="rounded-2xl bg-white p-6 text-center text-xs text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-              No finalized patients yet. Run Generate on a batch to populate.
+              No completed patients yet. Run Generate on a batch to populate.
             </div>
           ) : (
             <div className="space-y-2">
@@ -1711,10 +1669,10 @@ function ClinicDetailPackets({
               data-dropdown-default-closed="?? true"
             >
               <div
-                className={`relative flex items-center justify-between gap-2 pl-4 pr-2 py-2 rounded-xl border border-slate-200/70 transition-colors ${
+                className={`relative flex items-center justify-between gap-2 pl-4 pr-2 py-2 rounded border border-[#DCE2EA] transition-colors ${
                   active
                     ? "bg-[#7283B0]/10 ring-1 ring-[#7283B0]/40"
-                    : "bg-white hover:bg-slate-50/80"
+                    : "bg-white hover:bg-[#F8F9FB]"
                 }`}
               >
                 <span
@@ -1780,17 +1738,20 @@ function ClinicDetailPackets({
       >
         {activeEntry ? (
           <div
-            className="rounded-2xl bg-[#7283B0] text-white p-3 shadow-[0_8px_24px_rgba(114,131,176,0.30)] max-h-[72vh] overflow-y-auto"
+            className="rounded bg-[#7283B0] text-white p-2 max-h-[72vh] overflow-y-auto"
             data-testid="plexus-iq-dropdown-panel"
             data-panel-style="plexus-iq-dropdown-contained-panel"
             data-indent-style="plexus-iq-dropdown-indented-panel"
             data-panel-color="#7283B0"
             style={{ backgroundColor: "#7283B0" }}
           >
+            {/* Header line drops the facility · date repeat because the
+                left-side date rail already carries that context. Count
+                stays since it is the only piece of info unique here. */}
             <div className="flex items-center gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/85">
               <CalendarDays className="w-3 h-3 opacity-80" />
               <span className="truncate">
-                {facility} · {dateLabelFor(activeEntry[1].scheduleDate)}
+                {dateLabelFor(activeEntry[1].scheduleDate)}
               </span>
               <span className="ml-auto text-white/70 tabular-nums">
                 {activeEntry[1].patients.length}
@@ -1848,7 +1809,7 @@ function ClinicDetailPackets({
               )}
             </div>
             <div
-              className="rounded-xl bg-white p-2 shadow-[0_2px_6px_rgba(15,23,42,0.10)]"
+              className="rounded bg-white p-2"
               data-testid="plexus-iq-dropdown-white-row"
               data-row-surface="plexus-iq-dropdown-white-row"
             >

@@ -170,118 +170,128 @@ export function PlexusIQQualificationJobsStatus({
         testId: "plexus-iq-qualification-status-qualifying",
       };
 
+  // Tighter strip: header row is now a single line (icon · title ·
+  // aggregate label · counts · dismiss). Per-job rows collapse into
+  // a <details> disclosure when there is more than one job so the
+  // banner stays a strip until the operator asks for detail.
   return (
     <Card
-      className="border border-slate-200 bg-white px-4 py-3"
+      className="border border-[#DCE2EA] bg-white px-3 py-2"
       data-testid="plexus-iq-qualification-jobs-status"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            {statusIcon(aggregate.headerStatus)}
-            <div className="text-sm font-semibold text-slate-900">
-              Qualification jobs
-              <span className="ml-1 text-slate-500 font-normal">
-                ({jobs.length})
-              </span>
-            </div>
-            <span
-              className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-700"
-              data-testid={aggregateLabel.testId}
-              data-aggregate-status="qualification-jobs-overall-status"
-            >
-              {aggregateLabel.text}
-            </span>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {statusIcon(aggregate.headerStatus)}
+          <div className="text-[13px] font-medium text-[#111827]">
+            Qualification jobs
+            <span className="ml-1 text-[#667085] font-normal">({jobs.length})</span>
           </div>
-
-          <div className="mt-2 space-y-1">
-            <div
-              className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100"
-              role="progressbar"
-              aria-valuenow={aggregate.percent}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            >
-              <div
-                className="h-full bg-plexus-navy-800 transition-[width]"
-                style={{ width: `${Math.max(0, Math.min(100, aggregate.percent))}%` }}
-              />
-            </div>
-            <div
-              className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600"
-              data-testid="qualification-jobs-aggregate-counts"
-            >
-              <span>{aggregate.percent}%</span>
+          <span
+            className="rounded bg-[#F8F9FB] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#475467]"
+            data-testid={aggregateLabel.testId}
+            data-aggregate-status="qualification-jobs-overall-status"
+          >
+            {aggregateLabel.text}
+          </span>
+          <div
+            className="hidden sm:flex items-center gap-3 text-[11px] text-[#475467]"
+            data-testid="qualification-jobs-aggregate-counts"
+          >
+            <span className="tabular-nums">{aggregate.percent}%</span>
+            <span>
+              <strong className="text-[#111827] font-medium">{aggregate.completed}</strong>
+              /{aggregate.total} completed
+            </span>
+            {aggregate.queued > 0 && (
               <span>
-                <strong className="text-slate-900">{aggregate.completed}</strong>/{aggregate.total} completed
+                <strong className="text-[#111827] font-medium">{aggregate.queued}</strong> queued
               </span>
-              <span>
-                <strong className="text-slate-900">{aggregate.queued}</strong> queued
+            )}
+            {aggregate.failed > 0 && (
+              <span className="text-[#BE123C]">
+                <strong>{aggregate.failed}</strong> failed
               </span>
-              {aggregate.failed > 0 && (
-                <span className="text-rose-700">
-                  <strong>{aggregate.failed}</strong> failed
-                </span>
-              )}
-            </div>
-            <p className="text-[10px] text-slate-500 leading-snug" data-testid="qualification-jobs-transparency">
-              Each patient is qualified individually. Jobs run with limited
-              concurrency, so multiple patients may complete at the same time.
-            </p>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={onDismiss}
-            className="h-7 w-7 p-0"
-            aria-label="Dismiss"
-            data-testid="plexus-iq-qualification-status-dismiss"
-            data-legacy-testid="button-qualification-jobs-dismiss"
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={onDismiss}
+          className="h-7 w-7 p-0 text-[#667085] hover:text-[#101115]"
+          aria-label="Dismiss"
+          data-testid="plexus-iq-qualification-status-dismiss"
+          data-legacy-testid="button-qualification-jobs-dismiss"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      <div className="mt-1.5">
+        <div
+          className="h-1 w-full overflow-hidden rounded bg-[#EEF1F5]"
+          role="progressbar"
+          aria-valuenow={aggregate.percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className="h-full bg-[#2A3D5A] transition-[width]"
+            style={{ width: `${Math.max(0, Math.min(100, aggregate.percent))}%` }}
+          />
         </div>
       </div>
 
-      <ul className="mt-3 space-y-1.5" data-testid="qualification-jobs-list">
-        {jobs.map((job, idx) => (
-          <JobRow
-            key={job.jobId}
-            job={job}
-            status={statuses[idx]}
-            isLoading={queries[idx].isLoading && !statuses[idx]}
-            isError={queries[idx].isError}
-            error={queries[idx].error}
-            onRetried={(newJobId, totalPatients) => {
-              const next = jobs.map((j, i) =>
-                i === idx
-                  ? {
-                      ...j,
-                      jobId: newJobId,
-                      totalPatients: totalPatients ?? j.totalPatients ?? null,
-                    }
-                  : j,
-              );
-              onJobsChange(next);
-              queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-            }}
-            onRetryError={(msg) => {
-              toast({
-                title: "Retry failed",
-                description: msg,
-                variant: "destructive",
-              });
-            }}
-            onHide={() => {
-              onJobsChange(jobs.filter((j) => j.jobId !== job.jobId));
-            }}
-          />
-        ))}
-      </ul>
+      <details className="mt-2 group" data-testid="qualification-jobs-disclosure">
+        <summary className="text-[11px] text-[#667085] cursor-pointer select-none list-none flex items-center gap-1 hover:text-[#101115]">
+          <span className="group-open:rotate-90 transition-transform inline-block">›</span>
+          <span>Job detail · {jobs.length} {jobs.length === 1 ? "job" : "jobs"}</span>
+        </summary>
+        <p
+          className="mt-1 text-[10px] text-[#9AA3B2] leading-snug"
+          data-testid="qualification-jobs-transparency"
+        >
+          Each patient is qualified individually. Jobs run with limited
+          concurrency, so multiple patients may complete at the same time.
+        </p>
+        <ul className="mt-2 space-y-1.5" data-testid="qualification-jobs-list">
+          {jobs.map((job, idx) => (
+            <JobRow
+              key={job.jobId}
+              job={job}
+              status={statuses[idx]}
+              isLoading={queries[idx].isLoading && !statuses[idx]}
+              isError={queries[idx].isError}
+              error={queries[idx].error}
+              onRetried={(newJobId, totalPatients) => {
+                const next = jobs.map((j, i) =>
+                  i === idx
+                    ? {
+                        ...j,
+                        jobId: newJobId,
+                        totalPatients: totalPatients ?? j.totalPatients ?? null,
+                      }
+                    : j,
+                );
+                onJobsChange(next);
+                queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+              }}
+              onRetryError={(msg) => {
+                toast({
+                  title: "Retry failed",
+                  description: msg,
+                  variant: "destructive",
+                });
+              }}
+              onHide={() => {
+                onJobsChange(jobs.filter((j) => j.jobId !== job.jobId));
+              }}
+            />
+          ))}
+        </ul>
+      </details>
     </Card>
   );
 }

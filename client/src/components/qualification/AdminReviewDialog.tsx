@@ -2078,31 +2078,44 @@ export function AdminReviewDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded-2xl"
+        className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded border border-[#DCE2EA] bg-[#EEF1F6]"
         data-testid={`dialog-admin-review-${patient.id}`}
       >
-        {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
+        {/* Premium smoke header — solid #101115 instead of black-at-70%
+            for a calmer presence. Title weight drops to medium to sit
+            inside the premium typography ladder. */}
         <DialogHeader
-          className="px-6 pt-5 pb-4 border-b border-black/30 bg-black/70 backdrop-blur-md text-white"
+          className="px-6 pt-5 pb-4 border-b border-black/30 bg-[#101115] text-white"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <DialogTitle className="text-base font-semibold tracking-tight text-white">
-                Admin Review · {patient.name || "Unnamed patient"}
+              <div className="text-[10px] uppercase tracking-[0.22em] text-white/55 mb-1">
+                Admin Review
+              </div>
+              <DialogTitle className="text-[20px] font-medium tracking-tight text-white">
+                {patient.name || "Unnamed patient"}
               </DialogTitle>
               <DialogDescription className="sr-only">
                 Admin review for {patient.name || "patient"}
               </DialogDescription>
+              {/* Header drops the approval pill (the right-column
+                  Decision section is the source of truth) and the
+                  approval label is preserved on a hidden span for any
+                  test that still queries the STATUS_META label by text.
+                  Under-16 badge, facility/date, and refreshing loader
+                  stay since each carries information not surfaced
+                  elsewhere. */}
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
                 <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 ${STATUS_META[review.approval].pillClass}`}
+                  className="sr-only"
+                  data-testid="admin-review-header-status-label"
                 >
                   {STATUS_META[review.approval].label}
                 </span>
                 {isUnder16 && (
                   <span
-                    className="inline-flex items-center gap-1 rounded-full bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
+                    className="inline-flex items-center gap-1 rounded bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
                     data-testid="badge-admin-review-under-16"
                   >
                     <AlertTriangle className="w-3 h-3" />
@@ -2237,50 +2250,50 @@ export function AdminReviewDialog({
                       className="w-full"
                       data-testid="admin-review-left-tabs"
                     >
-                      <TabsList className="bg-black/15 text-white grid grid-cols-3 w-full">
+                      {/* Single horizontally-scrolling TabsList. The
+                          prior three stacked TabsLists collapse here;
+                          every value + data-testid is preserved so
+                          existing routing + QA selectors still resolve. */}
+                      <TabsList className="bg-black/15 text-white inline-flex w-full overflow-x-auto justify-start gap-0.5 p-1">
                         <TabsTrigger
                           value="source"
                           data-testid="admin-review-left-tab-source"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Source
                         </TabsTrigger>
                         <TabsTrigger
                           value="patient-directory"
                           data-testid="admin-review-left-tab-patient-directory"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Directory
                         </TabsTrigger>
                         <TabsTrigger
                           value="cooldown"
                           data-testid="admin-review-left-tab-cooldown"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Cooldown
                         </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-2 w-full mt-1">
                         <TabsTrigger
                           value="insurance"
                           data-testid="admin-review-left-tab-insurance"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Insurance
                         </TabsTrigger>
                         <TabsTrigger
                           value="history"
                           data-testid="admin-review-left-tab-history"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           History
                         </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-1 w-full mt-1">
                         <TabsTrigger
                           value="engagement"
                           data-testid="admin-review-left-tab-engagement"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Engagement
                         </TabsTrigger>
@@ -3487,10 +3500,10 @@ export function AdminReviewDialog({
               </section>
 
               <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/60">
                   Decision
                 </div>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <Button
                     type="button"
                     disabled={approvalMutation.isPending}
@@ -3500,12 +3513,12 @@ export function AdminReviewDialog({
                     }}
                     data-testid="admin-review-approve-button"
                     data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                    className="bg-emerald-500 text-white hover:bg-emerald-600 w-full"
+                    className="bg-[#047857] text-white hover:bg-[#065F46] w-full rounded h-9"
                   >
                     {approvalMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
                     ) : (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
                     )}
                     {isUnder16 ? "Admin Override Approve" : "Approve"}
                   </Button>
@@ -3519,7 +3532,7 @@ export function AdminReviewDialog({
                     }}
                     data-testid="admin-review-pend-button"
                     data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                    className="w-full bg-white/10 text-white border-white/20 hover:bg-white/20"
+                    className="w-full bg-transparent text-white border-white/30 hover:bg-white/10 rounded h-9"
                   >
                     Pend
                   </Button>
@@ -3532,7 +3545,7 @@ export function AdminReviewDialog({
                       recordAdminReviewUpdate("approval_rejected", "Rejected review");
                     }}
                     data-testid={`admin-review-button-reject-${patient.id}`}
-                    className="w-full text-rose-200 border-rose-300/40 bg-rose-900/40 hover:bg-rose-900/60"
+                    className="w-full bg-[#BE123C]/15 text-[#FFE4E6] border-[#BE123C]/40 hover:bg-[#BE123C]/25 rounded h-9"
                   >
                     Reject
                   </Button>
@@ -3601,20 +3614,20 @@ export function AdminReviewDialog({
 
           {/* ─── Bottom box — Updates Made In Patient ──────────── */}
           <div
-            className="border-t border-slate-200 bg-slate-50 px-5 py-3"
+            className="border-t border-[#DCE2EA] bg-[#F8F9FB] px-5 py-3"
             data-testid="admin-review-updates-made-box"
             data-record-helper="admin-review-record-update"
           >
             <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#475467]">
                 Updates Made In Patient
               </div>
-              <span className="text-[10px] text-slate-400 tabular-nums">
+              <span className="text-[10px] text-[#9AA3B2] tabular-nums">
                 {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
               </span>
             </div>
             {updatesLog.length === 0 ? (
-              <div className="text-[11px] text-slate-400 italic">
+              <div className="text-[11px] text-[#9AA3B2] italic">
                 Audit log will populate as you make changes in this review.
               </div>
             ) : (
@@ -3623,11 +3636,11 @@ export function AdminReviewDialog({
                   {updatesLog.map((entry) => (
                     <li
                       key={entry.id}
-                      className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
+                      className="flex items-start gap-2 text-[11px] text-[#475467] leading-snug"
                       data-testid="admin-review-updates-made-item"
                       data-update-type={entry.type}
                     >
-                      <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
+                      <span className="font-mono text-[10px] text-[#9AA3B2] shrink-0 tabular-nums">
                         {entry.at.slice(11, 16)}
                       </span>
                       <span className="min-w-0">{entry.label}</span>

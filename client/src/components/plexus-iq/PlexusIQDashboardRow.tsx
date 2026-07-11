@@ -82,8 +82,8 @@ export function PlexusIQDashboardRow({
       data-testid="plexus-iq-dashboard-row"
     >
       <Stat icon={<Users className="w-4 h-4" />} label="Total" value={stats.total} accent="bg-slate-900/5 text-slate-700" testId="stat-total" />
-      <Stat icon={<Clock className="w-4 h-4" />} label="Pending" value={stats.pending} accent="bg-sky-100 text-sky-700" testId="stat-pending" />
-      <Stat icon={<CheckCircle2 className="w-4 h-4" />} label="Final" value={stats.final} accent="bg-plexus-navy-800/10 text-plexus-navy-800" testId="stat-final" />
+      <Stat icon={<Clock className="w-4 h-4" />} label="Needs Completion" value={stats.pending} accent="bg-sky-100 text-sky-700" testId="stat-pending" />
+      <Stat icon={<CheckCircle2 className="w-4 h-4" />} label="Completed" value={stats.final} accent="bg-plexus-navy-800/10 text-plexus-navy-800" testId="stat-final" />
       <Stat icon={<Brain className="w-4 h-4" />} label="BrainWave" value={stats.bw} accent="bg-violet-100 text-violet-700" testId="stat-brainwave" />
       <Stat icon={<HeartPulse className="w-4 h-4" />} label="VitalWave" value={stats.vw} accent="bg-red-100 text-red-700" testId="stat-vitalwave" />
       <Stat icon={<Scan className="w-4 h-4" />} label="Ultrasound" value={stats.us} accent="bg-emerald-100 text-emerald-700" testId="stat-ultrasound" />

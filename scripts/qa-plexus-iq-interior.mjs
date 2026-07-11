@@ -329,10 +329,12 @@ requireText(patientCard, [
   "menu-edit-patient",
   "menu-generate",
   "button-patient-more",
-  // Status pill states.
-  '"Pending"',
+  // Status pill states. Vocabulary unified — "Final" → "Completed",
+  // "Pending" → "Needs Completion". "Ready" still names the
+  // qualified-but-not-yet-decided state.
+  '"Needs Completion"',
   '"Ready"',
-  '"Final"',
+  '"Completed"',
   // Pencil + MoreHorizontal lucide imports.
   "MoreHorizontal",
   "Pencil",
@@ -346,7 +348,7 @@ requireText(patientCard, [
   "ShieldCheck",
   "readyForAdminReview",
   "button-admin-review",
-  "Ready for Admin Review",
+  "readyForAdminReview",
 ]);
 
 // Edit dialog gets completeness + missing pill plus Admin Review entry.
@@ -848,9 +850,11 @@ requireText(patientCard, [
 const bucketLabelsHost = "client/src/components/plexus-iq/PlexusIQWorkspace.tsx";
 requireText(bucketLabelsHost, [
   "PLEXUS_IQ_BUCKET_LABELS",
-  "Parsed",
+  // Vocabulary unified: "Parsed" → "Needs Completion",
+  // "Admin Review Pending" → "Admin Review". Other labels unchanged.
+  "Needs Completion",
   "Missing Info",
-  "Admin Review Pending",
+  "Admin Review",
   "Completed",
   "Sent to Engagement",
   // Bucket order + Completed-as-default source markers.
@@ -914,7 +918,7 @@ requireNotText(
 );
 
 // Bucket-order check: tiles array must list Completed before Missing
-// Info before Parsed (needs) before Admin Review Pending before Sent
+// Info before Needs Completion (needs) before Admin Review before Sent
 // to Engagement. We assert by checking the source-substring order of
 // the `id: "..."` lines in the tiles array.
 {

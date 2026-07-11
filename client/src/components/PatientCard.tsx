@@ -233,7 +233,7 @@ export function PatientCard({
   const { isComplete: infoComplete, missing } = getPatientCompleteness(patient, { isVisit });
   const generatedFinal = patient.status === "completed";
   const showAsFinal = infoComplete && generatedFinal;
-  const statusLabel = !infoComplete ? "Pending" : generatedFinal ? "Final" : "Ready";
+  const statusLabel = !infoComplete ? "Needs Completion" : generatedFinal ? "Completed" : "Ready";
 
   // Three banner states:
   //   1. Lavender — `readyForAdminReview` (premium soft violet gradient,
@@ -270,7 +270,7 @@ export function PatientCard({
         };
 
   const reviewPillLabel = review.readyForAdminReview
-    ? "Ready for Admin Review"
+    ? "Admin Review"
     : review.approval === "approved"
       ? "Approved"
       : review.approval === "rejected"
@@ -528,22 +528,29 @@ export function PatientCard({
                   <Pencil className="w-3.5 h-3.5 mr-2" />
                   Edit patient
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={generateDisabled}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!infoComplete) return;
-                    onAnalyze();
-                  }}
-                  data-testid={`menu-generate-${patient.id}`}
-                >
-                  {isAnalyzing ? (
-                    <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5 mr-2" />
-                  )}
-                  {generateLabel}
-                </DropdownMenuItem>
+                {/* When zero tests, the front-card round Generate is
+                    the primary CTA; hide the duplicate menu entry.
+                    When tests exist, Re-generate stays here as the
+                    secondary action — Generate disappears from the
+                    front so the front stays icon-only. */}
+                {tests.length > 0 && (
+                  <DropdownMenuItem
+                    disabled={generateDisabled}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!infoComplete) return;
+                      onAnalyze();
+                    }}
+                    data-testid={`menu-generate-${patient.id}`}
+                  >
+                    {isAnalyzing ? (
+                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5 mr-2" />
+                    )}
+                    {generateLabel}
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
