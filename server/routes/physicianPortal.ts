@@ -1,19 +1,22 @@
-// Physician Portal — signature endpoints only (Phase A).
+// Physician Portal — signatures + reports + ancillary metrics.
 //
 // Aggregates from canonical tables only — no parallel data store.
-//   Signatures → procedure_notes (signature_status state machine)
+//   Signatures        → procedure_notes (signature_status state machine)
+//   Reports           → case_document_readiness (document_type='report')
+//   Ancillary metrics → procedure_events + case_document_readiness +
+//                       procedure_notes, per-service, scoped to a window.
 //
-// This route is intentionally MINIMAL: only the signature worklist +
-// sign/return endpoints. The archive's Reports / Ancillary Metrics /
-// Financial Health tabs are deferred as mock-backed UI. When they land,
-// their route handlers must live in a repository-layered service the
-// same way this file's signature endpoints do.
+// Finance is intentionally NOT included. Real financial data is complex
+// (invoices, payments, denials) and the archive shape mixed live billing
+// tables with derived "financial health" values that felt like KPIs but
+// were not audited numbers. The client's Finance tab renders an honest
+// "not enabled yet" state instead of pretending values are live.
 //
 // Layering rules enforced here:
 //   • Zero db.select / db.execute / db.update calls in this file.
-//   • Route validates request → delegates to signatureWorkflow service →
-//     service delegates DB reads to physicianPortal.repo and writes to
-//     the existing generatedNotes.repo.
+//   • Route validates request → delegates to signatureWorkflow /
+//     reportsService → services delegate DB reads to
+//     physicianPortal.repo + physicianPortalOps.repo.
 //   • Auth: global requireAuth is already applied at /api. This file
 //     enforces the additional clinician/admin role gate.
 
@@ -25,6 +28,10 @@ import {
   bulkSignNotes,
   returnNoteForCorrection,
 } from "../services/physicianPortal/signatureWorkflow";
+import {
+  listReports,
+  ancillaryMetrics,
+} from "../services/physicianPortal/reportsService";
 
 function requireClinicianOrAdmin(
   req: Request,
@@ -142,6 +149,58 @@ export function registerPhysicianPortalRoutes(app: Express) {
       } catch (error: any) {
         console.error("[physician-portal/return] error:", error?.message ?? error);
         res.status(500).json({ error: "Failed to return note" });
+      }
+    },
+  );
+
+  // ─── GET /api/physician-portal/reports ────────────────────────────────────
+  // Ancillary reports from case_document_readiness. Defaults to onlyOpen=true
+  // so the tab surfaces outstanding items first.
+  app.get(
+    "/api/physician-portal/reports",
+    requireClinicianOrAdmin,
+    async (req, res) => {
+      try {
+        const q = req.query as Record<string, string | undefined>;
+        const items = await listReports({
+          facilityId: q.facilityId,
+          serviceType: q.serviceType,
+          documentStatus: q.documentStatus,
+          onlyOpen: q.onlyOpen ? q.onlyOpen !== "false" : true,
+          limit: q.limit ? parseInt(q.limit, 10) || undefined : undefined,
+        });
+        res.json(items);
+      } catch (error: any) {
+        console.error(
+          "[physician-portal/reports] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({ error: "Failed to load reports" });
+      }
+    },
+  );
+
+  // ─── GET /api/physician-portal/ancillary-metrics ─────────────────────────
+  // Per-service rollup: procedures completed, reports uploaded, notes signed
+  // in a scoped window (default 30d). Reports-outstanding is the current
+  // backlog and is not date-scoped.
+  app.get(
+    "/api/physician-portal/ancillary-metrics",
+    requireClinicianOrAdmin,
+    async (req, res) => {
+      try {
+        const q = req.query as Record<string, string | undefined>;
+        const items = await ancillaryMetrics({
+          days: q.days ? parseInt(q.days, 10) : undefined,
+          facilityId: q.facilityId,
+        });
+        res.json(items);
+      } catch (error: any) {
+        console.error(
+          "[physician-portal/ancillary-metrics] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({ error: "Failed to load ancillary metrics" });
       }
     },
   );
