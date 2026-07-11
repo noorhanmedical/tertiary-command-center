@@ -572,6 +572,12 @@ export type ListJourneyEventsFilters = {
   patientName?: string;
   patientDob?: string;
   eventType?: string;
+  /** Scoped time window — inclusive lower bound. */
+  createdAfter?: Date;
+  /** Scoped time window — inclusive upper bound. */
+  createdBefore?: Date;
+  /** Restrict to specific actor user ids. Empty array means no filter. */
+  actorUserIds?: string[];
 };
 
 export async function listJourneyEvents(
@@ -585,6 +591,11 @@ export async function listJourneyEvents(
   if (filters.patientName) conditions.push(eq(patientJourneyEvents.patientName, filters.patientName));
   if (filters.patientDob) conditions.push(eq(patientJourneyEvents.patientDob, filters.patientDob));
   if (filters.eventType) conditions.push(eq(patientJourneyEvents.eventType, filters.eventType));
+  if (filters.createdAfter) conditions.push(sql`${patientJourneyEvents.createdAt} >= ${filters.createdAfter}`);
+  if (filters.createdBefore) conditions.push(sql`${patientJourneyEvents.createdAt} <= ${filters.createdBefore}`);
+  if (filters.actorUserIds && filters.actorUserIds.length > 0) {
+    conditions.push(inArray(patientJourneyEvents.actorUserId, filters.actorUserIds));
+  }
 
   const query = db.select().from(patientJourneyEvents)
     .$dynamic();
@@ -592,4 +603,42 @@ export async function listJourneyEvents(
   return conditions.length > 0
     ? query.where(and(...conditions)).orderBy(desc(patientJourneyEvents.createdAt)).limit(safeLimit)
     : query.orderBy(desc(patientJourneyEvents.createdAt)).limit(safeLimit);
+}
+
+// ─── Team Metrics rollup: scoped call-result event reads ───────────────────
+
+/** Actor + patient + metadata bag of a `call_result_logged` journey event.
+ *  Kept to a narrow projection so the Team Metrics rollup can materialize a
+ *  full day of calls without dragging patient identifiers or full case rows. */
+export type CallResultLoggedEvent = {
+  actorUserId: string | null;
+  patientScreeningId: number | null;
+  metadata: unknown;
+  createdAt: Date;
+};
+
+/**
+ * Scoped time-range read for `call_result_logged` patient-journey events.
+ * Cheap because patient_journey_events is indexed on (event_type, created_at)
+ * and the caller supplies a bounded window (today by default).
+ */
+export async function listCallResultLoggedEventsInRange(
+  start: Date,
+  end: Date,
+): Promise<CallResultLoggedEvent[]> {
+  return db
+    .select({
+      actorUserId: patientJourneyEvents.actorUserId,
+      patientScreeningId: patientJourneyEvents.patientScreeningId,
+      metadata: patientJourneyEvents.metadata,
+      createdAt: patientJourneyEvents.createdAt,
+    })
+    .from(patientJourneyEvents)
+    .where(
+      and(
+        eq(patientJourneyEvents.eventType, "call_result_logged"),
+        sql`${patientJourneyEvents.createdAt} >= ${start}`,
+        sql`${patientJourneyEvents.createdAt} <= ${end}`,
+      ),
+    );
 }

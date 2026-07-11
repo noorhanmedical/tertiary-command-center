@@ -48,10 +48,8 @@ import { EngagementFilterRail } from "@/components/engagement/EngagementFilterRa
 import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel";
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
-// EngagementTeamMetrics defers until its backend rollup (server route
-// + DB-backed team metrics service) lands. In the meantime the
-// callResults tab renders a friendly "coming soon" placeholder so the
-// view toggle remains navigable.
+// Live team metrics — /api/engagement/team-metrics (admin-only).
+import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
 import {
   type BoardResponse,
   type BoardRow,
@@ -437,9 +435,7 @@ export default function EngagementCenterPage() {
       ) : view === "callResults" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
-            <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-              Team metrics rollup is pending backend integration.
-            </div>
+            <EngagementTeamMetrics />
           </div>
         </main>
       ) : (
