@@ -8,6 +8,11 @@ import {
 import { upsertCaseDocumentReadinessForProcedureComplete } from "./documentReadiness.repo";
 import { createPendingProcedureNotes } from "./generatedNotes.repo";
 import { evaluateBillingReadinessForProcedure } from "./billingReadiness.repo";
+import {
+  upsertProcedureCompleteEvent,
+  clearProcedureCompleteEvent,
+} from "./globalSchedule.repo";
+import { shouldClearProcedureCompleteMirror } from "../services/procedureEvents/procedureCalendarSyncRules";
 
 export type ListProcedureEventsFilters = {
   executionCaseId?: number;
@@ -37,6 +42,20 @@ export async function updateProcedureEvent(
     .set({ ...updates, updatedAt: new Date() })
     .where(eq(procedureEvents.id, id))
     .returning();
+
+  // If a procedure transitions AWAY from "complete" (reopened, no-show,
+  // cancelled, back to in_progress/not_started, etc.), remove its
+  // mirrored `procedure_complete` schedule event so the calendar ✓
+  // badge disappears. Fire-and-forget: never let a mirror failure
+  // rollback the primary procedure update.
+  if (result && shouldClearProcedureCompleteMirror(updates)) {
+    void clearProcedureCompleteEvent(id).catch((err) => {
+      console.error(
+        "[procedureEvents.repo] clearProcedureCompleteEvent failed:",
+        err,
+      );
+    });
+  }
   return result;
 }
 
@@ -221,6 +240,27 @@ export async function markProcedureComplete(
     serviceType: input.serviceType,
   }).catch((err) => {
     console.error("[procedureEvents.repo] evaluateBillingReadinessForProcedure failed:", err);
+  });
+
+  // Mirror the completion onto the global schedule timeline so calendar
+  // surfaces can badge the day with a ✓ (calendarFilters procedureCompleted
+  // → calendarEventMapper procedure_complete → procedure_completed kind).
+  // Fire-and-forget: never let a mirror failure rollback the primary
+  // procedure completion.
+  void upsertProcedureCompleteEvent({
+    procedureEventId: procedureEvent.id,
+    completedAt: now,
+    serviceType: input.serviceType,
+    executionCaseId: input.executionCaseId ?? null,
+    patientScreeningId: input.patientScreeningId ?? null,
+    patientName: input.patientName ?? null,
+    patientDob: input.patientDob ?? null,
+    facilityId: input.facilityId ?? null,
+  }).catch((err) => {
+    console.error(
+      "[procedureEvents.repo] upsertProcedureCompleteEvent failed:",
+      err,
+    );
   });
 
   return { procedureEvent, documentRows };
