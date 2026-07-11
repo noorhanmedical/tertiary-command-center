@@ -29,6 +29,7 @@ import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
 import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
+import { registerPortalCaseReadinessRoutes } from "./routes/portalCaseReadiness";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
