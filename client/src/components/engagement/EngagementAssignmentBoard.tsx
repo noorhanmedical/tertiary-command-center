@@ -1178,6 +1178,52 @@ export function EngagementAssignmentBoard() {
         </Card>
       )}
 
+      {/* Backend / fetch error surface. Distinct from the empty-state
+          copy so an API failure (500, network drop, schema mismatch)
+          is never mistaken for "no patients in Engagement yet". The
+          empty-state cards below are suppressed while this is shown.
+          SOURCE MARKER: Engagement Center surfaces board API errors */}
+      {board.isError && (
+        <Card
+          role="alert"
+          className="border-rose-200 bg-rose-50 p-3"
+          data-testid="engagement-center-board-error"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-rose-600" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="text-xs font-semibold text-rose-900">
+                Could not load Engagement Center patients.
+              </div>
+              <div className="text-[11px] text-rose-700">
+                This is a backend/API error, not an empty board.
+              </div>
+              {board.error instanceof Error && board.error.message ? (
+                <div
+                  className="text-[11px] text-rose-700/80 font-mono break-words"
+                  data-testid="engagement-center-board-error-detail"
+                >
+                  {board.error.message}
+                </div>
+              ) : null}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => board.refetch()}
+              disabled={board.isFetching}
+              className="h-7 gap-1 px-2 text-[11px] border-rose-300 text-rose-700 hover:bg-rose-100"
+              data-testid="engagement-center-board-error-retry"
+            >
+              {board.isFetching ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : null}
+              Retry
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {/* Grouped board (Date / Facility / Scheduler). */}
       {groupMode !== "none" && (
         <div className="space-y-3">
@@ -1187,7 +1233,7 @@ export function EngagementAssignmentBoard() {
               Loading board…
             </Card>
           )}
-          {!board.isLoading && grouped.length === 0 && (
+          {!board.isLoading && !board.isError && grouped.length === 0 && (
             <Card className="p-3 text-center text-xs text-slate-500 italic">
               No patients in Engagement yet.
             </Card>
@@ -1557,11 +1603,13 @@ export function EngagementAssignmentBoard() {
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-3 py-4 text-center text-slate-500 italic">
-                    No patients sent to Engagement yet.
-                  </td>
-                </tr>
+                board.isError ? null : (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-4 text-center text-slate-500 italic">
+                      No patients sent to Engagement yet.
+                    </td>
+                  </tr>
+                )
               ) : (
                 rows.map((r) => (
                   <RowItem
