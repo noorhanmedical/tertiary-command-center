@@ -47,6 +47,7 @@ import { TopBanner } from "@/components/TopBanner";
 import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
+import CallListAuditPage from "@/pages/call-list-audit";
 import PatientDirectoryLiveRoute from "@/pages/patient-directory-live";
 import PhysicianPortalPage from "@/pages/physician-portal";
 import QualificationPage from "@/pages/qualification";
@@ -196,6 +197,13 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <EngagementCenterPage />
           </SidebarProvider>
+        </Route>
+        <Route path="/admin/call-list-audit">
+          <AdminGuard user={user}>
+            <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+              <CallListAuditPage />
+            </SidebarProvider>
+          </AdminGuard>
         </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
