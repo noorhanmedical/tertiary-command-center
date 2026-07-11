@@ -48,6 +48,7 @@ import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import PatientDirectoryLiveRoute from "@/pages/patient-directory-live";
+import PhysicianPortalPage from "@/pages/physician-portal";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
@@ -129,6 +130,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/ancillary-documents" />
                 </Route>
                 <Route path="/billing" component={BillingPage} />
+                <Route path="/physician-portal">
+                  <RoleGuard user={user} roles={["admin", "clinician"]}><PhysicianPortalPage /></RoleGuard>
+                </Route>
                 <Route path="/invoices">
                   <RoleGuard user={user} roles={["admin", "biller"]}><InvoicesPage /></RoleGuard>
                 </Route>
