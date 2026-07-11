@@ -49,7 +49,7 @@ import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
-import PlexusIQPage from "@/pages/plexus-iq";
+import PlexusIQPremiumPage from "@/pages/plexus-iq-premium";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
@@ -167,7 +167,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         </Route>
         <Route path="/plexus-iq">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-            <PlexusIQPage />
+            <PlexusIQPremiumPage />
           </SidebarProvider>
         </Route>
         <Route path="/team-member-portals">

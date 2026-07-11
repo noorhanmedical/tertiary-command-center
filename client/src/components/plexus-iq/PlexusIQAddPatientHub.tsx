@@ -4,7 +4,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ClipboardList, Phone, Upload } from "lucide-react";
+import { CalendarCheck2, Headset, Workflow } from "lucide-react";
 
 // 3-tile hub for the Plexus IQ "Add Patient(s)" action.
 //
@@ -29,10 +29,10 @@ export type PlexusIQAddPatientHubProps = {
 };
 
 const TILE_BASE =
-  "group flex flex-col items-center text-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-7 cursor-pointer transition-colors hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
+  "group flex flex-col items-start text-left gap-3 rounded-md border border-slate-200 bg-white px-5 py-6 cursor-pointer transition-colors hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
 
 const ICON_WRAP_BASE =
-  "inline-flex h-14 w-14 items-center justify-center rounded-2xl transition-transform group-hover:scale-[1.03]";
+  "inline-flex h-12 w-12 items-center justify-center rounded-sm border transition-transform group-hover:scale-[1.03]";
 
 function HubTile({
   label,
@@ -52,7 +52,7 @@ function HubTile({
   return (
     <button type="button" onClick={onClick} className={TILE_BASE} data-testid={testId}>
       <span className={`${ICON_WRAP_BASE} ${iconWrapClass}`}>{icon}</span>
-      <span className="text-base font-semibold text-slate-900">{label}</span>
+      <span className="text-base font-medium tracking-[-0.02em] text-slate-950">{label}</span>
       <span className="text-xs leading-snug text-slate-500">{description}</span>
     </button>
   );
@@ -69,7 +69,7 @@ export function PlexusIQAddPatientHub({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-3xl" data-testid="plexus-iq-add-patient-hub">
         <DialogHeader>
-          <DialogTitle className="text-lg font-semibold tracking-tight">
+          <DialogTitle className="text-lg font-medium tracking-tight">
             Add Patient(s)
           </DialogTitle>
         </DialogHeader>
@@ -80,9 +80,9 @@ export function PlexusIQAddPatientHub({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <HubTile
             label="Visit"
-            description="One patient with a clinic appointment."
-            icon={<ClipboardList className="h-7 w-7" />}
-            iconWrapClass="bg-sky-50 text-sky-700"
+            description="Clinic appointment patient routed into a facility/date batch."
+            icon={<CalendarCheck2 className="h-6 w-6" />}
+            iconWrapClass="border-sky-100 bg-sky-50 text-sky-700"
             onClick={() => {
               onPickVisit();
               onClose();
@@ -91,9 +91,9 @@ export function PlexusIQAddPatientHub({
           />
           <HubTile
             label="Outreach"
-            description="One patient for call list / no clinic date."
-            icon={<Phone className="h-7 w-7" />}
-            iconWrapClass="bg-amber-50 text-amber-700"
+            description="Call-list patient for engagement before scheduling."
+            icon={<Headset className="h-6 w-6" />}
+            iconWrapClass="border-amber-100 bg-amber-50 text-amber-700"
             onClick={() => {
               onPickOutreach();
               onClose();
@@ -102,9 +102,9 @@ export function PlexusIQAddPatientHub({
           />
           <HubTile
             label="Plexus BatchFlow"
-            description="Paste a clinic spreadsheet. Routes by Clinic + Date."
-            icon={<Upload className="h-7 w-7" />}
-            iconWrapClass="bg-indigo-50 text-indigo-700"
+            description="Clinic spreadsheet import grouped by clinic and date."
+            icon={<Workflow className="h-6 w-6" />}
+            iconWrapClass="border-indigo-100 bg-indigo-50 text-indigo-700"
             onClick={() => {
               onPickBatchFlow();
               onClose();
