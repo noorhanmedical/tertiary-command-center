@@ -14,6 +14,7 @@ import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssi
 import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
 import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
 import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
+import { registerEngagementTeamMetricsRoutes } from "./routes/engagementTeamMetrics";
 import { registerCallListAuditRoutes } from "./routes/callListAudit";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
@@ -265,6 +266,8 @@ export async function registerRoutes(
   registerEngagementBasketsRoutes(app);
   registerEngagementCallSettingsRoutes(app, requireRole);
   registerEngagementDistributionRoutes(app, requireRole);
+  // Live team metrics + activity feed (admin-only inside route file).
+  registerEngagementTeamMetricsRoutes(app, requireRole);
   // Admin-only call-list audit diagnostics (adminOnly middleware inside
   // each endpoint).
   registerCallListAuditRoutes(app, requireRole);
