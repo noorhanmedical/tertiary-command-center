@@ -20,6 +20,11 @@ import {
   recallPatient,
   ensureCanonicalSpineForScreening,
 } from "../services/patientCommitService";
+import {
+  startBatchAnalysis,
+  NoSuchBatchError,
+  EmptyBatchError,
+} from "../services/batchAnalysisRunner";
 
 type BackgroundSyncPatients = () => void | Promise<void>;
 
@@ -999,6 +1004,51 @@ export function registerPatientRoutes(
     } catch (error: any) {
       console.error("Patient recall error:", error);
       res.status(500).json({ error: error.message || "Recall failed" });
+    }
+  });
+
+  // Hotfix: durable single-patient qualification. Replaces the
+  // synchronous /api/patients/:id/analyze for Plexus IQ Generate. The
+  // legacy synchronous route stays in place for admin/dev tooling but
+  // Plexus IQ must call THIS one — it kicks off a single-patient slice
+  // of the durable batchAnalysisRunner and returns { jobId } immediately
+  // so the browser request doesn't ride on top of the OpenAI round trip.
+  app.post("/api/patients/:id/analyze-async", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid patient id" });
+      }
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+      if (patient.batchId == null) {
+        return res
+          .status(400)
+          .json({ error: "Patient is not attached to a screening batch" });
+      }
+      const { jobId, totalPatients } = await startBatchAnalysis(
+        patient.batchId,
+        req.session.userId ?? null,
+        { restrictToPatientIds: [id], resetFailed: true },
+      );
+      return res.json({
+        success: true,
+        jobId,
+        batchId: patient.batchId,
+        patientCount: totalPatients,
+        async: true,
+      });
+    } catch (err: unknown) {
+      if (err instanceof NoSuchBatchError) {
+        return res.status(404).json({ error: "Batch not found" });
+      }
+      if (err instanceof EmptyBatchError) {
+        return res.status(400).json({ error: "Batch is empty" });
+      }
+      console.error("Per-patient async kickoff error:", err);
+      return res.status(500).json({
+        error: err instanceof Error ? err.message : "Failed to start analysis",
+      });
     }
   });
 

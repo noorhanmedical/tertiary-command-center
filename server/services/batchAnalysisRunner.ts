@@ -69,17 +69,46 @@ export class EmptyBatchError extends Error {
   }
 }
 
+// Default lowered from 5 to 2 so Replit's per-process socket budget and
+// the OpenAI 60s/attempt timeout don't compound. Override via env when
+// running against a beefier host: `BATCH_ANALYSIS_CONCURRENCY=5`. The
+// pure accessor lives in `batchAnalysisConfig.ts` so callers that just
+// need the values can skip the db / storage / drizzle load.
+import {
+  BATCH_ANALYSIS_CONCURRENCY_DEFAULT as DEFAULT_BATCH_ANALYSIS_CONCURRENCY,
+  getBatchAnalysisConfig,
+} from "./batchAnalysisConfig";
+export { getBatchAnalysisConfig };
+
+export type StartBatchAnalysisOptions = {
+  resetFailed?: boolean;
+  /** Restrict the analysis to a subset of patients in this batch. Used
+   *  by Plexus IQ's single-patient Generate so it can re-use the
+   *  durable runner without re-processing the entire batch. When set,
+   *  only these patient ids inside the batch are analyzed; the job
+   *  row's totalPatients reflects the restricted set. Unknown ids are
+   *  silently dropped. */
+  restrictToPatientIds?: number[];
+};
+
 // Kicks off the durable analyze job. Returns `{ jobId, totalPatients }`
 // synchronously after the job row is created; the heavy work (AI calls,
 // commits, batch status update) runs as an unawaited background task.
 export async function startBatchAnalysis(
   batchId: number,
   userId: string | null,
-  options: { resetFailed?: boolean } = {},
+  options: StartBatchAnalysisOptions = {},
 ): Promise<StartBatchAnalysisResult> {
   const batch = await storage.getScreeningBatch(batchId);
   if (!batch) throw new NoSuchBatchError(batchId);
-  const patients = await storage.getPatientScreeningsByBatch(batchId);
+  const allPatients = await storage.getPatientScreeningsByBatch(batchId);
+  if (allPatients.length === 0) throw new EmptyBatchError(batchId);
+  const restrictIds = options.restrictToPatientIds && options.restrictToPatientIds.length > 0
+    ? new Set(options.restrictToPatientIds)
+    : null;
+  const patients = restrictIds
+    ? allPatients.filter((p) => restrictIds.has(p.id))
+    : allPatients;
   if (patients.length === 0) throw new EmptyBatchError(batchId);
 
   await db.transaction(async (tx) => {
@@ -124,7 +153,7 @@ export async function startBatchAnalysis(
   });
 
   // Run the heavy work in the background.
-  void runAnalysisLoop(batchId, job.id, userId).catch((err) => {
+  void runAnalysisLoop(batchId, job.id, userId, restrictIds).catch((err) => {
     console.error("[batchAnalysisRunner] background loop error:", err);
   });
 
@@ -135,11 +164,15 @@ async function runAnalysisLoop(
   batchId: number,
   jobId: number,
   userId: string | null,
+  restrictIds: Set<number> | null = null,
 ): Promise<void> {
   try {
     const batch = await storage.getScreeningBatch(batchId);
     if (!batch) throw new NoSuchBatchError(batchId);
-    const patients = await storage.getPatientScreeningsByBatch(batchId);
+    const allPatients = await storage.getPatientScreeningsByBatch(batchId);
+    const patients = restrictIds
+      ? allPatients.filter((p) => restrictIds.has(p.id))
+      : allPatients;
     const facilityQualMode = await getQualificationMode(batch.facility ?? null);
     console.log(
       `[batchAnalysisRunner:${batchId}] qualification mode: ${facilityQualMode} (facility: ${batch.facility ?? "none"})`,
@@ -147,7 +180,7 @@ async function runAnalysisLoop(
 
     const concurrency = Math.max(
       1,
-      Number(process.env.BATCH_ANALYSIS_CONCURRENCY ?? 5),
+      Number(process.env.BATCH_ANALYSIS_CONCURRENCY ?? DEFAULT_BATCH_ANALYSIS_CONCURRENCY),
     );
     // Dev-only audit logs so per-patient processing can be verified by
     // tailing the server console. We deliberately keep these out of
@@ -331,4 +364,63 @@ async function runAnalysisLoop(
       );
     }
   }
+}
+
+// ─── Stuck-job recovery ────────────────────────────────────────────────
+//
+// Any analysis_jobs row still in `running` whose `startedAt` is older
+// than JOB_STUCK_THRESHOLD_MS is considered stuck. We mark it `failed`
+// with a clear `errorMessage`, set its batch back to `error`, and
+// surface the recovered jobs so the caller can show them in the UI.
+// This is safe to call repeatedly — once a stuck job is failed, it
+// won't be picked up again. Patients keep their existing status
+// (`completed` patients are not reset).
+
+export type RecoveredStuckJob = {
+  jobId: number;
+  batchId: number;
+  startedAt: string | null;
+  totalPatients: number;
+  completedPatients: number;
+};
+
+export async function recoverStuckAnalysisJobs(
+  thresholdMs: number = getBatchAnalysisConfig().JOB_STUCK_THRESHOLD_MS,
+): Promise<RecoveredStuckJob[]> {
+  const cutoff = new Date(Date.now() - thresholdMs);
+  // We read the small set of recent running jobs via the existing
+  // storage helper — analysis_jobs is small.
+  const jobs = await storage.getRecentAnalysisJobs(200);
+  const recovered: RecoveredStuckJob[] = [];
+  for (const job of jobs) {
+    if (job.status !== "running") continue;
+    const startedAt = job.startedAt instanceof Date ? job.startedAt : new Date(job.startedAt ?? 0);
+    if (!Number.isFinite(startedAt.getTime())) continue;
+    if (startedAt.getTime() >= cutoff.getTime()) continue;
+    try {
+      await storage.updateAnalysisJob(job.id, {
+        status: "failed",
+        errorMessage: `Stuck in running for >= ${thresholdMs}ms; recovered automatically. Re-run via retry-failed.`,
+        completedAt: new Date(),
+      });
+      try {
+        await db
+          .update(screeningBatches)
+          .set({ status: "error" })
+          .where(eq(screeningBatches.id, job.batchId));
+      } catch (stErr) {
+        console.warn(`[batchAnalysisRunner] recover: batch status update failed for ${job.batchId}:`, stErr);
+      }
+      recovered.push({
+        jobId: job.id,
+        batchId: job.batchId,
+        startedAt: startedAt.toISOString(),
+        totalPatients: job.totalPatients ?? 0,
+        completedPatients: job.completedPatients ?? 0,
+      });
+    } catch (err) {
+      console.warn(`[batchAnalysisRunner] recover: failed to mark job ${job.id} as failed:`, err);
+    }
+  }
+  return recovered;
 }
