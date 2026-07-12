@@ -16,6 +16,8 @@ import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSet
 import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
 import { registerEngagementTeamMetricsRoutes } from "./routes/engagementTeamMetrics";
 import { registerCallListAuditRoutes } from "./routes/callListAudit";
+import { registerMissionControlRoutes } from "./routes/missionControl";
+import { registerHomeStatsRoutes } from "./routes/homeStats";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
@@ -271,6 +273,11 @@ export async function registerRoutes(
   // Admin-only call-list audit diagnostics (adminOnly middleware inside
   // each endpoint).
   registerCallListAuditRoutes(app, requireRole);
+  // Mission Control monitoring spine — admin-only.
+  registerMissionControlRoutes(app, requireRole);
+  // Home live dashboard stats — session-authenticated. Returns full
+  // shape with honest zeros until scoped repository aggregates land.
+  registerHomeStatsRoutes(app);
   registerBillingRoutes(app, { backgroundSyncBilling });
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);

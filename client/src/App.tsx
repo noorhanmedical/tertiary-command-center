@@ -56,7 +56,15 @@ import PlexusIQPage from "@/pages/plexus-iq";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
+import {
+  TeamPortalV2LandingPage,
+  PatientCareSpecialistPortalV2Page,
+  AncillaryCareSpecialistPortalV2Page,
+} from "@/pages/team-portal-v2";
 import EngagementCenterPage from "@/pages/engagement-center";
+import MissionControlPage from "@/pages/mission-control";
+import HomeV2Page from "@/pages/home-v2";
+import PhysicianPortalV2Page from "@/pages/physician-portal-v2";
 // Slice 1.5: PatientDirectoryLiveRoute import removed — the
 // /patient-directory/live route now redirects to /patient-directory.
 
@@ -191,6 +199,54 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         <Route path="/ancillary-care-specialist-portal">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <AncillaryCareSpecialistPortalPage />
+          </SidebarProvider>
+        </Route>
+        {/* Team Portal V2 — Replit UI restore preview, admin-only.
+            Kept as parallel routes so the production portals above remain
+            untouched until the V2 shell is approved for replacement. */}
+        <Route path="/team-portal-v2">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <TeamPortalV2LandingPage />
+          </SidebarProvider>
+        </Route>
+        <Route path="/patient-care-specialist-portal-v2">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <PatientCareSpecialistPortalV2Page />
+          </SidebarProvider>
+        </Route>
+        <Route path="/ancillary-care-specialist-portal-v2">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AncillaryCareSpecialistPortalV2Page />
+          </SidebarProvider>
+        </Route>
+        {/* Mission Control — Replit UI restore, admin-only monitoring surface.
+            Backend spine returns honest sourceMissing states for sections
+            without scoped repository helpers yet. */}
+        <Route path="/mission-control">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <MissionControlPage />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        {/* Home V2 — Replit UI restore, admin-only preview of
+            HomeLiveDashboard + HomeWorldClocks. Current production home
+            at "/" is unchanged. */}
+        <Route path="/home-v2">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <HomeV2Page />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        {/* Physician Portal V2 — Replit UI restore, admin-only preview.
+            Canonical physician portal at /physician-portal (PRs #301 + #307)
+            is unchanged. */}
+        <Route path="/physician-portal-v2">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <PhysicianPortalV2Page />
+            </AdminGuard>
           </SidebarProvider>
         </Route>
         <Route path="/engagement-center">
