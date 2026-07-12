@@ -10,7 +10,7 @@ import { type ComponentType, type ReactNode } from "react";
 import {
   LeftRailToolsButton,
   type ToolTint,
-} from "@/components/portal/leftRail/LeftRailToolsButtonV2";
+} from "@/components/portal/leftRail/LeftRailToolsButton";
 import { WIDGET_DND_MIME, type PlaygroundWidgetType } from "./workspaceWidgets";
 
 export type DockTool = {

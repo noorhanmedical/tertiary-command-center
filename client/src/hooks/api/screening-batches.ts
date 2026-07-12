@@ -137,6 +137,13 @@ export type AddPatientInput = {
   noPreviousTests?: boolean;
   patientType?: string;
   notes?: string;
+  /** V2 preview: qualifying tests carried through from the archive's
+   *  Add Patient dialog. Server currently ignores this — it is stored
+   *  in the client-side dock state only. */
+  qualifyingTests?: string[];
+  /** V2 preview: extra reasoning blob attached to a manually-added
+   *  patient by the dock panel. Server-side ignored today. */
+  reasoning?: Record<string, unknown>;
 };
 
 export function useAddPatient() {

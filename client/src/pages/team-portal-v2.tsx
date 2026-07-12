@@ -116,7 +116,129 @@ function V2Renderer({ role }: { role: WorkspaceRole }) {
   );
 }
 
+type PreviewLink = {
+  href: string;
+  title: string;
+  subtitle: string;
+  group: "Team Portal" | "Executive" | "Home & Nav" | "Clinical" | "Ops & Finance" | "Admin";
+  testId: string;
+};
+
+const V2_PREVIEW_LINKS: PreviewLink[] = [
+  {
+    href: "/patient-care-specialist-portal-v2",
+    title: "Patient Care Specialist Workspace",
+    subtitle:
+      "Call list, callbacks, patient coordination, and appointment workflow.",
+    group: "Team Portal",
+    testId: "link-team-portal-v2-pcs",
+  },
+  {
+    href: "/ancillary-care-specialist-portal-v2",
+    title: "Ancillary Care Specialist Workspace",
+    subtitle:
+      "Clinic schedule, ancillary schedule, call list, consent, procedure completion, uploads.",
+    group: "Team Portal",
+    testId: "link-team-portal-v2-acs",
+  },
+  {
+    href: "/mission-control",
+    title: "Mission Control",
+    subtitle: "Executive monitoring dashboard — lanes, role queues, spine.",
+    group: "Executive",
+    testId: "link-mission-control",
+  },
+  {
+    href: "/physician-portal-v2",
+    title: "Physician Portal V2",
+    subtitle:
+      "Alternate clinician command center — Dashboard, Finance, Orders, Engagement tabs.",
+    group: "Clinical",
+    testId: "link-physician-portal-v2",
+  },
+  {
+    href: "/home-v2",
+    title: "Home V2",
+    subtitle: "HomeLiveDashboard + HomeWorldClocks preview.",
+    group: "Home & Nav",
+    testId: "link-home-v2",
+  },
+  {
+    href: "/home-preview",
+    title: "Home Preview",
+    subtitle: "Full-page home redesign — flat navy tiles, uniform accents.",
+    group: "Home & Nav",
+    testId: "link-home-preview",
+  },
+  {
+    href: "/clinical-intelligence",
+    title: "Clinical Intelligence & Governance",
+    subtitle: "Plexus IQ knowledge tile — 20-module governance prototype.",
+    group: "Clinical",
+    testId: "link-clinical-intelligence",
+  },
+  {
+    href: "/imaging-central",
+    title: "Imaging Central",
+    subtitle: "Imaging worklist and reading room UX.",
+    group: "Clinical",
+    testId: "link-imaging-central",
+  },
+  {
+    href: "/plexus-bank",
+    title: "Plexus Bank",
+    subtitle:
+      "Frontend-only bank/finance ops mock — invoice desk, claims, payer ledger.",
+    group: "Ops & Finance",
+    testId: "link-plexus-bank",
+  },
+  {
+    href: "/plexus-iq-prototype",
+    title: "Plexus IQ Operating Canvas",
+    subtitle: "Operating list + row prototype.",
+    group: "Clinical",
+    testId: "link-plexus-iq-prototype",
+  },
+  {
+    href: "/clinic-analytics",
+    title: "Clinic Analytics",
+    subtitle: "Facility-level KPI shell.",
+    group: "Ops & Finance",
+    testId: "link-clinic-analytics",
+  },
+  {
+    href: "/clinic-onboarding",
+    title: "Clinic Onboarding",
+    subtitle: "New-clinic onboarding checklist shell.",
+    group: "Ops & Finance",
+    testId: "link-clinic-onboarding",
+  },
+  {
+    href: "/admin-settings",
+    title: "Admin Settings (Unified)",
+    subtitle:
+      "Consolidated admin/settings shell — System, Billing, Team, Facility, Logs sections.",
+    group: "Admin",
+    testId: "link-admin-settings",
+  },
+];
+
+function LinkCard({ link }: { link: PreviewLink }) {
+  return (
+    <a
+      href={link.href}
+      className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow-md"
+      data-testid={link.testId}
+    >
+      <h2 className="text-lg font-semibold text-slate-900">{link.title}</h2>
+      <p className="mt-1 text-sm text-slate-600">{link.subtitle}</p>
+      <p className="mt-3 font-mono text-[11px] text-slate-400">{link.href}</p>
+    </a>
+  );
+}
+
 export function TeamPortalV2LandingPage() {
+  const groups = Array.from(new Set(V2_PREVIEW_LINKS.map((l) => l.group)));
   return (
     <AdminOnly>
       <div className="flex h-full w-full flex-col">
@@ -125,33 +247,19 @@ export function TeamPortalV2LandingPage() {
           subtitle="Restored Replit UI/UX — admin only"
         />
         <V2PreviewBanner />
-        <div className="mx-auto grid w-full max-w-3xl gap-4 p-6 sm:grid-cols-2">
-          <a
-            href="/patient-care-specialist-portal-v2"
-            className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow-md"
-            data-testid="link-team-portal-v2-pcs"
-          >
-            <h2 className="text-lg font-semibold text-slate-900">
-              Patient Care Specialist Workspace
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              V2 preview — call list, callbacks, patient coordination, and
-              appointment workflow.
-            </p>
-          </a>
-          <a
-            href="/ancillary-care-specialist-portal-v2"
-            className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow-md"
-            data-testid="link-team-portal-v2-acs"
-          >
-            <h2 className="text-lg font-semibold text-slate-900">
-              Ancillary Care Specialist Workspace
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              V2 preview — clinic schedule, ancillary schedule, call list,
-              consent, procedure completion, uploads, and reports.
-            </p>
-          </a>
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 p-6">
+          {groups.map((group) => (
+            <section key={group}>
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                {group}
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {V2_PREVIEW_LINKS.filter((l) => l.group === group).map((l) => (
+                  <LinkCard key={l.href} link={l} />
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       </div>
     </AdminOnly>

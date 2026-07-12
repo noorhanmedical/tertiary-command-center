@@ -32,7 +32,7 @@ import {
   TIME_SLOTS,
   prettyTime,
   combineLocalDateAndTimeToIso,
-} from "@/components/portal/SchedulePatientDialogV2";
+} from "@/components/portal/SchedulePatientDialog";
 import {
   fetchPatientScheduleDayContext,
   schedulePatientAncillary,

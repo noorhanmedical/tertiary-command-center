@@ -43,7 +43,7 @@ import {
   prettyDateLong,
   combineLocalDateAndTimeToIso,
   buildScheduleNote,
-} from "@/components/portal/SchedulePatientDialogV2";
+} from "@/components/portal/SchedulePatientDialog";
 import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
 import { CanonicalMonthCalendar } from "@/calendar/views/CanonicalMonthCalendar";
 import {

@@ -65,6 +65,15 @@ import EngagementCenterPage from "@/pages/engagement-center";
 import MissionControlPage from "@/pages/mission-control";
 import HomeV2Page from "@/pages/home-v2";
 import PhysicianPortalV2Page from "@/pages/physician-portal-v2";
+// V2 restore preview pages — admin-only.
+import HomePreview from "@/pages/home-preview";
+import PlexusBankPage from "@/pages/plexus-bank";
+import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
+import ClinicAnalyticsPage from "@/pages/clinic-analytics";
+import ClinicOnboardingPage from "@/pages/clinic-onboarding";
+import ClinicalIntelligencePage from "@/pages/clinical-intelligence";
+import ImagingCentralPage from "@/pages/imaging-central";
+import AdminSettingsPage from "@/pages/admin-settings";
 // Slice 1.5: PatientDirectoryLiveRoute import removed — the
 // /patient-directory/live route now redirects to /patient-directory.
 
@@ -236,6 +245,63 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <AdminGuard user={user}>
               <HomeV2Page />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        {/* Additional V2 restore preview surfaces — all admin-only. */}
+        <Route path="/home-preview">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <HomePreview />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        <Route path="/plexus-bank">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <PlexusBankPage />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        <Route path="/plexus-iq-prototype">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <PlexusIqPrototypePage />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        <Route path="/clinic-analytics">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <ClinicAnalyticsPage />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        <Route path="/clinic-onboarding">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <ClinicOnboardingPage />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        <Route path="/clinical-intelligence">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <ClinicalIntelligencePage />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        <Route path="/imaging-central">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <ImagingCentralPage />
+            </AdminGuard>
+          </SidebarProvider>
+        </Route>
+        <Route path="/admin-settings">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AdminGuard user={user}>
+              <AdminSettingsPage />
             </AdminGuard>
           </SidebarProvider>
         </Route>
