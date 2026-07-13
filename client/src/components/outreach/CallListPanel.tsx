@@ -2,6 +2,7 @@ import {
   Building2, CalendarPlus, ChevronDown, ChevronUp,
   History as HistoryIcon, Phone, ShieldCheck,
 } from "lucide-react";
+import { useLocation } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import type { OutreachCall } from "@shared/schema";
 import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
@@ -33,11 +34,12 @@ export function CallListPanel({
   selectPatient: (id: number | null) => void;
   setCallListBookPatient: (item: OutreachCallItem | null) => void;
 }) {
+  const [, setLocation] = useLocation();
   return (
     <div className="min-w-0 flex flex-col max-h-[calc(100vh-140px)] xl:max-h-none xl:min-h-0 xl:h-full">
       <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden flex flex-col min-h-0 flex-1">
         <div className="px-5 pt-5 pb-4 flex flex-col flex-1 min-h-0">
-          {/* Phase 1 Patient Directory activation: read-only duplicate
+          {/* Phase 1 Patient EHR activation: read-only duplicate
               warning banner above the call list. Renders nothing when
               no patient has a warning (activation flag OFF or empty
               facts). */}
@@ -75,7 +77,7 @@ export function CallListPanel({
                       <BucketIndicator bucket={bucket} />
                       <button
                         type="button"
-                        onClick={() => selectPatient(item.patientId)}
+                        onClick={() => setLocation(`/patient-directory?patientId=${item.patientId}`)}
                         className="flex-1 min-w-0 text-left"
                         data-testid={`portal-row-select-${item.patientId}`}
                       >

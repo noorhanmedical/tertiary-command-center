@@ -60,7 +60,7 @@ function Field({
   );
 }
 
-export default function StovetopHeatSettingsPage() {
+export default function StovetopHeatSettingsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [stoveRegion, setStoveRegion] = useState<string>("Southwest");
   const [stoveFacility, setStoveFacility] = useState<string>("NWPG - Spring");
   const [stoveKnob, setStoveKnob] = useState<StoveKey>("medium");
@@ -68,17 +68,8 @@ export default function StovetopHeatSettingsPage() {
   const active = STOVE_OPTIONS.find((option) => option.key === stoveKnob) ?? STOVE_OPTIONS[2];
   const heatHeaderClass = heatHeaderTheme(stoveKnob);
 
-  return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-6 py-6">
-        <PageHeader
-          backHref="/admin"
-          eyebrow="PLEXUS ANCILLARY · ADMIN"
-          icon={SettingsIcon}
-          title="Stovetop Heat Settings"
-          subtitle="Facility-level preset controls for payout, qualification permissiveness, KPI thresholds, and Plex Factor."
-        />
-
+  const body = (
+    <>
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
@@ -314,6 +305,22 @@ export default function StovetopHeatSettingsPage() {
             </div>
           </Card>
         </div>
+    </>
+  );
+
+  if (embedded) return <div className="flex flex-col gap-6">{body}</div>;
+
+  return (
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          backHref="/admin"
+          eyebrow="PLEXUS ANCILLARY · ADMIN"
+          icon={SettingsIcon}
+          title="Stovetop Heat Settings"
+          subtitle="Facility-level preset controls for payout, qualification permissiveness, KPI thresholds, and Plex Factor."
+        />
+        {body}
       </div>
     </div>
   );

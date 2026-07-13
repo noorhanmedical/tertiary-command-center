@@ -5,7 +5,6 @@ import {
   drainOutbox,
   deleteOutboxItem,
   getOutboxSummary,
-  enqueueSheetSync,
 } from "../services/outbox";
 import { readBlob } from "../services/blobStore";
 import { db } from "../db";
@@ -41,16 +40,6 @@ export function registerOutboxRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
       const result = await drainOutbox(parsed.data);
       res.json(result);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.post("/api/outbox/enqueue-sheets", requireAdmin, async (_req, res) => {
-    try {
-      const billing = await enqueueSheetSync("sheet_billing");
-      const patients = await enqueueSheetSync("sheet_patients");
-      res.json({ billing, patients });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

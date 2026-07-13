@@ -1,12 +1,3 @@
-// @ts-nocheck — V2 restore preview file. Some section imports
-// (TestFixtureCard from @/pages/admin; SchedulerTeamSection /
-// CallListDistributionCard / ChangePasswordCard /
-// InvoiceReminderSettingsCard / OperationalRuleSections from
-// @/pages/settings) are archive-only exports. When the corresponding
-// archive versions of admin.tsx and settings.tsx are adopted these
-// resolve; until then the preview page still renders its shell and
-// tab strip, and the missing sub-sections read as empty at runtime.
-//
 // Unified Admin Settings — Task #530 / #756.
 //
 // Consolidates ~13 scattered admin/settings pages and the two hubs into ONE
@@ -53,40 +44,14 @@ import AdminOutboxPage from "@/pages/admin-outbox";
 import BillingAuditorPage from "@/pages/billing-auditor";
 import CallListAuditPage from "@/pages/call-list-audit";
 import RemittanceAuditPage from "@/pages/remittance-audit";
-// V2 preview stubs — the archive versions of @/pages/admin and
-// @/pages/settings export TestFixtureCard / SchedulerTeamSection /
-// CallListDistributionCard / ChangePasswordCard /
-// InvoiceReminderSettingsCard / OperationalRuleSections. Those don't
-// exist on main yet; render honest empty callouts so the shell + tab
-// strip still work end-to-end.
-function MissingSection({ label }: { label: string }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-8 text-center text-sm text-slate-500">
-      <p className="font-medium text-slate-700">{label}</p>
-      <p className="mt-1 text-xs">
-        Restored from archive as a preview shell. This sub-section is
-        wired to an archive-only page export; it will render once the
-        matching main-side page adopts the export.
-      </p>
-    </div>
-  );
-}
-const TestFixtureCard = () => <MissingSection label="Test Fixture Card" />;
-const SchedulerTeamSection = (_: any) => (
-  <MissingSection label="Scheduler Team Section" />
-);
-const CallListDistributionCard = (_: any) => (
-  <MissingSection label="Call List Distribution Card" />
-);
-const ChangePasswordCard = (_: any) => (
-  <MissingSection label="Change Password Card" />
-);
-const InvoiceReminderSettingsCard = (_: any) => (
-  <MissingSection label="Invoice Reminder Settings Card" />
-);
-const OperationalRuleSections = (_: any) => (
-  <MissingSection label="Operational Rule Sections" />
-);
+import { TestFixtureCard } from "@/pages/admin";
+import {
+  SchedulerTeamSection,
+  CallListDistributionCard,
+  ChangePasswordCard,
+  InvoiceReminderSettingsCard,
+  OperationalRuleSections,
+} from "@/pages/settings";
 
 const SECTIONS = ["system", "billing", "team", "facility", "logs"] as const;
 type SectionKey = (typeof SECTIONS)[number];

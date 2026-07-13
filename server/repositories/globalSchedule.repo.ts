@@ -50,11 +50,10 @@ export async function updateGlobalScheduleEvent(
 }
 
 // Mirror a completed procedure onto the global schedule timeline as a
-// `procedure_complete` event so calendar surfaces (calendarFilters
-// procedureCompleted → calendarEventMapper procedure_completed) can badge
-// the day with a ✓. Deduped by the originating procedure-event id (stored
-// in metadata) so re-completing / editing the same procedure updates the
-// existing row instead of stacking duplicates.
+// `procedure_complete` event so calendar surfaces (Home, Plexus IQ, portal
+// mini-calendars) can badge the day with a ✓. Deduped by the originating
+// procedure-event id (stored in metadata) so re-completing / editing the
+// same procedure updates the existing row instead of stacking duplicates.
 export type UpsertProcedureCompleteEventInput = {
   procedureEventId: number;
   completedAt: Date;

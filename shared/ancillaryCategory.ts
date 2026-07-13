@@ -7,11 +7,6 @@
 
 export type AncillaryCategory = "brainwave" | "vitalwave" | "ultrasound" | "other";
 
-// Substrings, not exact words — matched against the lowercased
-// serviceType via t.includes(k). "aorta" alone does NOT match "aortic"
-// (the "aorta" substring is absent from "aortic"), so both root and
-// adjective forms must be listed explicitly. Same for
-// "abdomen"/"abdominal".
 const ULTRASOUND_KEYWORDS = [
   "ultrasound",
   "carotid",

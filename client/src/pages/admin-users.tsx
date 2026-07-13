@@ -31,7 +31,7 @@ import { PageHeader } from "@/components/PageHeader";
 
 type TeamUser = { id: string; username: string; active: boolean };
 
-export default function AdminUsersPage() {
+export default function AdminUsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { toast } = useToast();
   const [addOpen, setAddOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TeamUser | null>(null);
@@ -126,27 +126,18 @@ export default function AdminUsersPage() {
     createMutation.mutate();
   }
 
-  return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[900px] flex-col gap-6 px-6 py-6">
-        <PageHeader
-          backHref="/admin"
-          eyebrow="PLEXUS ANCILLARY · USERS"
-          icon={Users}
-          iconAccent="bg-amber-100 text-amber-700"
-          title="User Management"
-          subtitle="Create and manage team accounts."
-          actions={
-            <Button
-              onClick={() => { setAddOpen(true); setFieldError(null); setUsername(""); setPassword(""); }}
-              data-testid="button-add-user"
-              className="gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              Add User
-            </Button>
-          }
-        />
+  const body = (
+    <>
+        <div className="flex justify-end">
+          <Button
+            onClick={() => { setAddOpen(true); setFieldError(null); setUsername(""); setPassword(""); }}
+            data-testid="button-add-user"
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Add User
+          </Button>
+        </div>
 
         <Card className="rounded-3xl border border-white/60 bg-white/75 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl overflow-hidden">
           {isLoading ? (
@@ -225,7 +216,6 @@ export default function AdminUsersPage() {
             </table>
           )}
         </Card>
-      </div>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent data-testid="dialog-add-user">
@@ -312,6 +302,24 @@ export default function AdminUsersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </>
+  );
+
+  if (embedded) return <div className="flex flex-col gap-6">{body}</div>;
+
+  return (
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[900px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          backHref="/admin"
+          eyebrow="PLEXUS ANCILLARY · USERS"
+          icon={Users}
+          iconAccent="bg-amber-100 text-amber-700"
+          title="User Management"
+          subtitle="Create and manage team accounts."
+        />
+        {body}
+      </div>
     </div>
   );
 }

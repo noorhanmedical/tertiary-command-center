@@ -6,13 +6,9 @@ import { parseReferenceImportWithAI } from "../services/screening";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
-type BackgroundSyncPatients = () => void | Promise<void>;
-
 export function registerPatientReferenceRoutes(
   app: Express,
-  deps: { backgroundSyncPatients: BackgroundSyncPatients }
 ) {
-  const { backgroundSyncPatients } = deps;
 
   app.get("/api/patient-references", async (req, res) => {
     try {
@@ -59,7 +55,6 @@ export function registerPatientReferenceRoutes(
       const validRecords = await parseReferenceImportWithAI(text);
       const created = await storage.createPatientReferenceBulk(validRecords);
       res.json(created);
-      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -70,7 +65,6 @@ export function registerPatientReferenceRoutes(
       const id = parseInt(String(req.params.id), 10);
       await storage.deletePatientReference(id);
       res.json({ success: true });
-      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -80,7 +74,6 @@ export function registerPatientReferenceRoutes(
     try {
       await storage.deleteAllPatientReferences();
       res.json({ success: true });
-      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

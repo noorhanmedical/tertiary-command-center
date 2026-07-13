@@ -19,7 +19,10 @@ export * from "./uploadedDocuments.repo";
 export * from "./appointments.repo";
 export * from "./outreach.repo";
 export * from "./schedulerAssignments.repo";
+export * from "./engagementCallSettings.repo";
 export * from "./analysisJobs.repo";
 export * from "./plexus.repo";
 export * from "./marketingMaterials.repo";
 export * from "./documentLibrary.repo";
+// Priority 4 — directMessages repo deferred pending vendor-messaging decision.
+// export * from "./directMessages.repo";

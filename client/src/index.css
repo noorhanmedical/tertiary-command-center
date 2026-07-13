@@ -512,6 +512,76 @@
   .glass-tile-interactive:hover .glass-tile-icon {
     transform: scale(1.10);
   }
+
+  /* ── Home Preview (Task #622): navy / slate / white command center ──
+     Scoped utilities used ONLY by /home-preview. The live /home page keeps
+     using .glass-tile above; nothing in this block touches it. No gradients
+     inside tiles, no periwinkle/emerald/indigo accents — white, slate, and
+     a single calm navy only. */
+  .preview-surface {
+    background:
+      radial-gradient(120% 80% at 50% -8%, rgba(23, 51, 88, 0.07), transparent 60%),
+      hsl(220 37% 96%);
+  }
+
+  .preview-glass-tile {
+    background: rgba(255, 255, 255, 0.70);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 2px solid rgba(255, 255, 255, 0.70);
+    box-shadow: 0 24px 80px rgba(15, 23, 42, 0.14);
+    border-radius: 16px;
+    position: relative;
+    transition: transform 240ms ease-out, box-shadow 240ms ease-out,
+      border-color 240ms ease-out;
+  }
+
+  .preview-glass-tile-interactive {
+    cursor: pointer;
+  }
+
+  .preview-glass-tile-interactive:hover {
+    transform: translateY(-2px);
+    border-color: rgba(23, 51, 88, 0.20);
+    box-shadow: 0 28px 90px rgba(15, 23, 42, 0.20);
+  }
+
+  /* Frosted white glass for overlays / popovers / dropdowns / day-popovers. */
+  .preview-glass-overlay {
+    background: rgba(255, 255, 255, 0.72) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 2px solid rgba(255, 255, 255, 0.70) !important;
+    box-shadow: 0 24px 80px rgba(15, 23, 42, 0.14) !important;
+  }
+
+  /* Large frosted section panel (Practice Pulse, Calendar card). */
+  .preview-panel {
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.82),
+      rgba(248, 250, 252, 0.72)
+    );
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 2px solid rgba(255, 255, 255, 0.70);
+    box-shadow: 0 24px 80px rgba(15, 23, 42, 0.14);
+    border-radius: 24px;
+  }
+
+  /* Section heading with a mild navy glow (no solid black / indigo). */
+  .preview-header-glow {
+    color: hsl(214 58% 22%);
+    text-shadow: 0 1px 22px rgba(23, 51, 88, 0.22);
+  }
+
+  /* Calendar header bar: navy glow instead of solid black. */
+  .preview-calendar-header {
+    background:
+      radial-gradient(140% 130% at 50% 0%, rgba(23, 51, 88, 0.12), transparent 70%),
+      linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(255, 255, 255, 0.80));
+    border-bottom: 1px solid rgba(23, 51, 88, 0.08);
+  }
 }
 
 /**

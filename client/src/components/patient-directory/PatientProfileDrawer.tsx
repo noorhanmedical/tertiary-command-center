@@ -1,6 +1,6 @@
 // Patient Profile drawer (Batch B11).
 //
-// Read-only drawer rendered from the new Patient Directory scaffold
+// Read-only drawer rendered from the new Patient EHR scaffold
 // page. Accepts a snapshot-shaped object from the future
 // /api/patient-directory/:id endpoint; until that endpoint lands, the
 // drawer renders gracefully on null fields.

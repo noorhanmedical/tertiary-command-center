@@ -23,11 +23,6 @@ export interface IOutreachRepository {
   listCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
-  /**
-   * Scoped time-range read for outreach_calls, used by the Team Metrics
-   * rollup. Cheap because outreach_calls has an index on `started_at`
-   * and the range is a single day (or short window) by contract.
-   */
   listCallsInRange(start: Date, end: Date): Promise<OutreachCall[]>;
   latestCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined>;
 }

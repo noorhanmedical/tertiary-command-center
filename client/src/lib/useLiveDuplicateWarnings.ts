@@ -1,8 +1,8 @@
 // Live duplicate-warning hook (Batch F).
 //
 // Drop-in hook that consumers in Admin Review, Engagement handoff,
-// Team Portal, and the Patient Directory page can call to get the
-// per-patient DuplicateWarningResult against real Patient Directory
+// Team Portal, and the Patient EHR page can call to get the
+// per-patient DuplicateWarningResult against real Patient EHR
 // facts. When the activation routes return 404 (flag OFF on server)
 // the hook returns an empty result so call sites render no warning
 // rather than crashing.

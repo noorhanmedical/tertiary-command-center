@@ -1,5 +1,5 @@
-// Patient Directory live page route — renders PatientDirectoryLivePage
-// (route-connected wrapper) so the live Patient Directory is reachable
+// Patient EHR live page route — renders PatientDirectoryLivePage
+// (route-connected wrapper) so the live Patient EHR is reachable
 // at /patient-directory/live. The legacy /patient-directory route
 // continues to serve PatientDatabasePage so this is purely additive.
 
@@ -14,13 +14,13 @@ export default function PatientDirectoryLiveRoute() {
           <SidebarTrigger data-testid="button-sidebar-toggle-patient-directory-live" />
           <div>
             <div className="text-[10px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
-              PLEXUS · PATIENT DIRECTORY · LIVE
+              PLEXUS · PATIENT EHR · LIVE
             </div>
             <h1
               className="text-xl font-semibold tracking-tight text-slate-900"
               data-testid="text-patient-directory-live-title"
             >
-              Patient Directory (live)
+              Patient EHR (live)
             </h1>
             <p className="text-[11px] text-slate-500">
               Search, profile, audit trail, contact restrictions, prior tests, import preview.

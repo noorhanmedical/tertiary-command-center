@@ -13,6 +13,8 @@ interface PdfPatientSelectDialogProps {
   patients: PatientScreening[];
   onClose: () => void;
   onGenerate: (selected: PatientScreening[]) => void;
+  /** Keep the caller's patient order instead of re-ordering here. */
+  preserveOrder?: boolean;
 }
 
 export default function PdfPatientSelectDialog({
@@ -21,6 +23,7 @@ export default function PdfPatientSelectDialog({
   patients,
   onClose,
   onGenerate,
+  preserveOrder,
 }: PdfPatientSelectDialogProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
@@ -31,7 +34,10 @@ export default function PdfPatientSelectDialog({
   // Phase 1 ordering: outreach alphabetical, visit by appointment time.
   // Same helper as PlexusIQRunOrganizationPanel + the PDF packet group
   // dialog so the order on screen matches the order in the generated PDF.
+  // When `preserveOrder` is set, the caller has already sorted the roster
+  // (e.g. the operating list's active Time/Name sort) and we keep it as-is.
   const ordered = useMemo(() => {
+    if (preserveOrder) return patients;
     const rows = patients.map((p) => ({
       batchId: 0,
       batchCreatedAt: "",
@@ -43,10 +49,12 @@ export default function PdfPatientSelectDialog({
     const orderedRows = orderPatientsWithinRun(rows);
     const byId = new Map(patients.map((p) => [p.id, p]));
     return orderedRows.map((r) => byId.get(r.patientId)!).filter(Boolean);
-  }, [patients]);
+  }, [patients, preserveOrder]);
 
-  const allSelected = selected.size === ordered.length;
+  const allSelected = selected.size === ordered.length && ordered.length > 0;
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(ordered.map(p => p.id)));
+  const selectAll = () => setSelected(new Set(ordered.map(p => p.id)));
+  const clearAll = () => setSelected(new Set());
   const toggle = (id: number) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const title = mode === "clinician" ? "Clinician PDF" : "Plexus Team PDF";
@@ -104,18 +112,40 @@ export default function PdfPatientSelectDialog({
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={onClose} data-testid="button-pdf-cancel">Cancel</Button>
-          <Button
-            size="sm"
-            disabled={selected.size === 0}
-            onClick={() => onGenerate(ordered.filter(p => selected.has(p.id)))}
-            className="gap-1.5"
-            data-testid="button-pdf-generate"
-          >
-            {mode === "clinician" ? <Printer className="w-3.5 h-3.5" /> : <Users2 className="w-3.5 h-3.5" />}
-            Generate PDF ({selected.size})
-          </Button>
+        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={selectAll}
+              disabled={allSelected}
+              data-testid="button-pdf-select-all"
+            >
+              Select All
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={clearAll}
+              disabled={selected.size === 0}
+              data-testid="button-pdf-clear-all"
+            >
+              Clear All
+            </Button>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={onClose} data-testid="button-pdf-cancel">Cancel</Button>
+            <Button
+              size="sm"
+              disabled={selected.size === 0}
+              onClick={() => onGenerate(ordered.filter(p => selected.has(p.id)))}
+              className="gap-1.5"
+              data-testid="button-pdf-generate"
+            >
+              {mode === "clinician" ? <Printer className="w-3.5 h-3.5" /> : <Users2 className="w-3.5 h-3.5" />}
+              Print Selected ({selected.size})
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

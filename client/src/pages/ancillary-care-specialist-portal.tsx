@@ -1,14 +1,10 @@
 // Ancillary Care Specialist Workspace.
 //
-// Consolidates the former Technician and Liaison portal capabilities into
-// a single team-member workspace. Shares its shell with the Patient Care
-// Specialist Workspace at /patient-care-specialist-portal via
-// ClinicWorkflowPortal → PortalShell. Default right-panel mode is
-// Clinic Schedule; future right-panel modes (Ancillary Schedule, Call
-// List) are wired in a follow-up batch.
+// Uses the Playground shell. Messaging is a left-rail tab, not a left-rail
+// button group, and the dock exposes a purple iMessage-style popup.
 
-import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
+import TeamMemberPortalPlayground from "@/components/portal/TeamMemberPortalPlayground";
 
 export default function AncillaryCareSpecialistPortalPage() {
-  return <ClinicWorkflowPortal role="ancillaryCareSpecialist" />;
+  return <TeamMemberPortalPlayground role="ancillaryCareSpecialist" />;
 }

@@ -29,6 +29,9 @@ export function PlexusIQAssignDateDialog({
   onClose,
   onAssign,
   pending,
+  initialDate,
+  title,
+  submitLabel,
 }: {
   open: boolean;
   batchId: number | null;
@@ -36,16 +39,26 @@ export function PlexusIQAssignDateDialog({
   onClose: () => void;
   onAssign: (batchId: number, isoDate: string) => void | Promise<void>;
   pending: boolean;
+  /** Pre-filled date (ISO YYYY-MM-DD). Defaults to today when absent/invalid. */
+  initialDate?: string | null;
+  /** Dialog title — defaults to "Assign date". */
+  title?: string;
+  /** Submit button label — defaults to the title. */
+  submitLabel?: string;
 }) {
   const [date, setDate] = useState<string>(todayIso());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setDate(todayIso());
+      setDate(
+        initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate)
+          ? initialDate
+          : todayIso(),
+      );
       setError(null);
     }
-  }, [open, batchId]);
+  }, [open, batchId, initialDate]);
 
   async function handleAssign() {
     if (!batchId) return;
@@ -67,7 +80,7 @@ export function PlexusIQAssignDateDialog({
       <DialogContent className="max-w-sm rounded-2xl" data-testid="plexus-iq-assign-date-dialog">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold tracking-tight">
-            Assign date
+            {title ?? "Assign date"}
           </DialogTitle>
         </DialogHeader>
 
@@ -112,7 +125,7 @@ export function PlexusIQAssignDateDialog({
             data-testid="button-plexus-iq-assign-submit"
           >
             {pending && <Loader2 className="w-4 h-4 animate-spin" />}
-            Assign date
+            {submitLabel ?? title ?? "Assign date"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,5 +1,6 @@
 import { db } from "../db";
-import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, notInArray, isNull } from "drizzle-orm";
+import { publishLiveActivity } from "../services/engagement/liveActivityBus";
 import {
   patientExecutionCases,
   patientJourneyEvents,
@@ -219,6 +220,9 @@ export async function appendPatientJourneyEvent(
     .insert(patientJourneyEvents)
     .values(event)
     .returning();
+  // Push a non-PHI signal so live SSE consumers (Engagement Live Team Activity)
+  // can refetch within ~1s instead of waiting on the polling tick.
+  publishLiveActivity(result.eventType);
   return result;
 }
 
@@ -248,6 +252,172 @@ export async function listExecutionCases(
   return conditions.length > 0
     ? query.where(and(...conditions)).orderBy(desc(patientExecutionCases.createdAt)).limit(safeLimit)
     : query.orderBy(desc(patientExecutionCases.createdAt)).limit(safeLimit);
+}
+
+// Normalizes a patient name for identity comparison: trims, collapses
+// internal whitespace runs, and lowercases. "  Jon  Smith " → "jon smith".
+export function normalizePatientName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+// Looks up an existing QUICK-SCHEDULE STUB case so double-submits of the
+// same name-only patient reuse one stub instead of spawning duplicates.
+// Deliberately narrow to avoid hijacking an unrelated patient's case:
+// - only cases created by quick-schedule (source='quick_schedule')
+// - patientName match is case/whitespace-insensitive (trim + collapse
+//   internal whitespace + lower) so "jon smith " reuses "Jon Smith"
+// - exact patientDob (DOB is required — without it a common-name
+//   collision could cross-link operational data)
+// - same facility (both null counts as a match)
+export async function getQuickScheduleStubCase(
+  patientName: string,
+  patientDob: string,
+  facilityId: string | null,
+): Promise<PatientExecutionCase | undefined> {
+  const normalized = normalizePatientName(patientName);
+  const conditions = [
+    eq(patientExecutionCases.source, "quick_schedule"),
+    sql`lower(regexp_replace(trim(${patientExecutionCases.patientName}), '\\s+', ' ', 'g')) = ${normalized}`,
+    eq(patientExecutionCases.patientDob, patientDob.trim()),
+    facilityId === null
+      ? isNull(patientExecutionCases.facilityId)
+      : eq(patientExecutionCases.facilityId, facilityId),
+  ];
+  const [result] = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(and(...conditions))
+    .orderBy(desc(patientExecutionCases.createdAt))
+    .limit(1);
+  return result;
+}
+
+// ─── Similar-patient lookup (duplicate-prevention aid) ─────────────────────
+
+/** Levenshtein edit distance — small inputs (patient names) only. */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+export type SimilarExecutionCaseMatch = {
+  id: number;
+  patientName: string;
+  patientDob: string | null;
+  facilityId: string | null;
+  patientScreeningId: number | null;
+  source: string;
+  qualificationStatus: string;
+  engagementStatus: string;
+  createdAt: Date | null;
+  matchReason: "exact_name" | "similar_name" | "same_dob_similar_name";
+};
+
+/** Finds existing execution cases that likely represent the same patient
+ *  as the supplied name (+optional DOB). Used by the quick-schedule dialog
+ *  to surface "did you mean this existing patient?" before creating a
+ *  duplicate stub. Matching (against normalized names):
+ *    - exact normalized name (case/whitespace-insensitive)
+ *    - similar name: edit distance ≤ 2 (≤ 1 for short names)
+ *    - same DOB + edit distance ≤ 4 (typos + DOB agreement = strong signal)
+ *  Read-only ranking helper — never auto-links; the caller decides. */
+export async function findSimilarExecutionCases(
+  patientName: string,
+  patientDob?: string | null,
+  limit = 5,
+): Promise<SimilarExecutionCaseMatch[]> {
+  const target = normalizePatientName(patientName);
+  if (!target) return [];
+  const dob = (patientDob ?? "").trim() || null;
+
+  // Candidate pool: recent non-archived cases. Names are compared in JS
+  // (edit distance isn't expressible without pg_trgm/fuzzystrmatch).
+  const rows = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(notInArray(patientExecutionCases.lifecycleStatus, [...TERMINAL_LIFECYCLE_STATUSES]))
+    .orderBy(desc(patientExecutionCases.createdAt))
+    .limit(1000);
+
+  const scored: Array<{ row: PatientExecutionCase; reason: SimilarExecutionCaseMatch["matchReason"]; dist: number }> = [];
+  for (const row of rows) {
+    const candidate = normalizePatientName(row.patientName ?? "");
+    if (!candidate) continue;
+    const dist = levenshtein(target, candidate);
+    const sameDob = dob !== null && (row.patientDob ?? "").trim() === dob;
+    const shortName = Math.min(target.length, candidate.length) < 6;
+    if (dist === 0) {
+      scored.push({ row, reason: "exact_name", dist });
+    } else if (sameDob && dist <= 4) {
+      scored.push({ row, reason: "same_dob_similar_name", dist });
+    } else if (dist <= (shortName ? 1 : 2)) {
+      scored.push({ row, reason: "similar_name", dist });
+    }
+  }
+
+  const reasonRank = { exact_name: 0, same_dob_similar_name: 1, similar_name: 2 } as const;
+  scored.sort((a, b) => {
+    if (reasonRank[a.reason] !== reasonRank[b.reason]) return reasonRank[a.reason] - reasonRank[b.reason];
+    if (a.dist !== b.dist) return a.dist - b.dist;
+    const aT = a.row.createdAt ? new Date(a.row.createdAt as unknown as string).getTime() : 0;
+    const bT = b.row.createdAt ? new Date(b.row.createdAt as unknown as string).getTime() : 0;
+    return bT - aT;
+  });
+
+  return scored.slice(0, Math.min(Math.max(1, limit), 20)).map(({ row, reason }) => ({
+    id: row.id,
+    patientName: row.patientName,
+    patientDob: row.patientDob ?? null,
+    facilityId: row.facilityId ?? null,
+    patientScreeningId: row.patientScreeningId ?? null,
+    source: row.source,
+    qualificationStatus: row.qualificationStatus,
+    engagementStatus: row.engagementStatus,
+    createdAt: row.createdAt ?? null,
+    matchReason: reason,
+  }));
+}
+
+// Quick-schedule stub: creates a minimal execution case for a brand-new
+// patient who has no screening yet (walk-in / not-yet-screened). The case
+// is honest about its provenance (source=quick_schedule, unscreened) so
+// downstream views can distinguish it from system-generated cases.
+export async function createQuickScheduleExecutionCase(input: {
+  patientName: string;
+  patientDob?: string | null;
+  facilityId?: string | null;
+  serviceType?: string | null;
+}): Promise<PatientExecutionCase> {
+  const [created] = await db
+    .insert(patientExecutionCases)
+    .values({
+      patientScreeningId: null,
+      patientName: input.patientName,
+      patientDob: input.patientDob ?? undefined,
+      facilityId: input.facilityId ?? undefined,
+      source: "quick_schedule",
+      engagementBucket: "visit",
+      qualificationStatus: "unscreened",
+      lifecycleStatus: "active",
+      engagementStatus: "new",
+      selectedServices: input.serviceType ? [input.serviceType] : undefined,
+    })
+    .returning();
+  return created;
 }
 
 export async function getExecutionCaseById(id: number): Promise<PatientExecutionCase | undefined> {
@@ -566,18 +736,96 @@ export async function assignEngagementCases(
   return { dryRun, targetRole: input.targetRole, count: cases.length, cases };
 }
 
+// ─── Call-list recall / manual-add ─────────────────────────────────────────
+
+export type RecallToCallListInput = {
+  executionCaseId?: number;
+  patientScreeningId?: number;
+  /** When provided, reassign ownership to this roster member (outreach_schedulers.id)
+   *  so the case surfaces on that member's scoped call list. */
+  assignedTeamMemberId?: number | null;
+  actorUserId?: string | null;
+  reason?: string;
+};
+
+/** Re-surface a completed / dismissed / dormant execution case onto the active
+ *  call list. Sets a non-terminal engagement status, reactivates the lifecycle,
+ *  and stamps nextActionAt=now so the case sorts to the top of the day window.
+ *  The engagement bucket is normalized into a scheduler/call-list bucket when it
+ *  is not already one, otherwise the call-list feed (which only reads
+ *  visit/outreach/scheduling_triage) would silently drop the recalled case.
+ *  Returns the updated row, or null when no matching case exists. */
+export async function recallExecutionCaseToCallList(
+  input: RecallToCallListInput,
+): Promise<PatientExecutionCase | null> {
+  let row: PatientExecutionCase | undefined;
+  if (input.executionCaseId != null) {
+    row = await getExecutionCaseById(input.executionCaseId);
+  } else if (input.patientScreeningId != null) {
+    row = await getExecutionCaseByScreeningId(input.patientScreeningId);
+  }
+  if (!row) return null;
+
+  const bucketIsCallList = (SCHEDULER_DEFAULT_BUCKETS as readonly string[]).includes(
+    row.engagementBucket ?? "",
+  );
+
+  const setFields: Record<string, unknown> = {
+    engagementStatus: "in_progress",
+    lifecycleStatus: "active",
+    nextActionAt: new Date(),
+    updatedAt: new Date(),
+  };
+  if (!bucketIsCallList) setFields.engagementBucket = "outreach";
+  if (input.assignedTeamMemberId != null) {
+    setFields.assignedTeamMemberId = input.assignedTeamMemberId;
+  }
+
+  const [updated] = await db
+    .update(patientExecutionCases)
+    .set(setFields)
+    .where(eq(patientExecutionCases.id, row.id))
+    .returning();
+  if (!updated) return null;
+
+  try {
+    await appendPatientJourneyEvent({
+      patientName: updated.patientName,
+      patientDob: updated.patientDob ?? undefined,
+      patientScreeningId: updated.patientScreeningId ?? undefined,
+      executionCaseId: updated.id,
+      eventType: "call_list_recall",
+      eventSource: "team_portal",
+      actorUserId: input.actorUserId ?? null,
+      summary: input.reason?.trim() || "Recalled to active call list",
+      metadata: {
+        previousEngagementStatus: row.engagementStatus,
+        previousLifecycleStatus: row.lifecycleStatus,
+        previousEngagementBucket: row.engagementBucket ?? null,
+        previousAssignedTeamMemberId: row.assignedTeamMemberId ?? null,
+        assignedTeamMemberId:
+          input.assignedTeamMemberId ?? row.assignedTeamMemberId ?? null,
+        reason: input.reason?.trim() || null,
+      },
+    });
+  } catch (err) {
+    // Journey logging is best-effort — never undo the recall over a logging miss.
+    console.error("[recallExecutionCaseToCallList] journey event append failed:", err);
+  }
+
+  return updated;
+}
+
 export type ListJourneyEventsFilters = {
   executionCaseId?: number;
   patientScreeningId?: number;
   patientName?: string;
   patientDob?: string;
   eventType?: string;
-  /** Scoped time window — inclusive lower bound. */
-  createdAfter?: Date;
-  /** Scoped time window — inclusive upper bound. */
-  createdBefore?: Date;
-  /** Restrict to specific actor user ids. Empty array means no filter. */
+  eventTypes?: string[];
   actorUserIds?: string[];
+  createdAfter?: Date;
+  createdBefore?: Date;
 };
 
 export async function listJourneyEvents(
@@ -591,11 +839,10 @@ export async function listJourneyEvents(
   if (filters.patientName) conditions.push(eq(patientJourneyEvents.patientName, filters.patientName));
   if (filters.patientDob) conditions.push(eq(patientJourneyEvents.patientDob, filters.patientDob));
   if (filters.eventType) conditions.push(eq(patientJourneyEvents.eventType, filters.eventType));
+  if (filters.eventTypes && filters.eventTypes.length > 0) conditions.push(inArray(patientJourneyEvents.eventType, filters.eventTypes));
+  if (filters.actorUserIds && filters.actorUserIds.length > 0) conditions.push(inArray(patientJourneyEvents.actorUserId, filters.actorUserIds));
   if (filters.createdAfter) conditions.push(sql`${patientJourneyEvents.createdAt} >= ${filters.createdAfter}`);
-  if (filters.createdBefore) conditions.push(sql`${patientJourneyEvents.createdAt} <= ${filters.createdBefore}`);
-  if (filters.actorUserIds && filters.actorUserIds.length > 0) {
-    conditions.push(inArray(patientJourneyEvents.actorUserId, filters.actorUserIds));
-  }
+  if (filters.createdBefore) conditions.push(sql`${patientJourneyEvents.createdAt} < ${filters.createdBefore}`);
 
   const query = db.select().from(patientJourneyEvents)
     .$dynamic();
@@ -605,22 +852,22 @@ export async function listJourneyEvents(
     : query.orderBy(desc(patientJourneyEvents.createdAt)).limit(safeLimit);
 }
 
-// ─── Team Metrics rollup: scoped call-result event reads ───────────────────
-
-/** Actor + patient + metadata bag of a `call_result_logged` journey event.
- *  Kept to a narrow projection so the Team Metrics rollup can materialize a
- *  full day of calls without dragging patient identifiers or full case rows. */
+/** A single call-result journey event, reduced to the fields the team-metrics
+ *  read model needs (attribution + outcome + dedup key). */
 export type CallResultLoggedEvent = {
   actorUserId: string | null;
   patientScreeningId: number | null;
   metadata: unknown;
-  createdAt: Date;
+  createdAt: Date | null;
 };
 
 /**
- * Scoped time-range read for `call_result_logged` patient-journey events.
- * Cheap because patient_journey_events is indexed on (event_type, created_at)
- * and the caller supplies a bounded window (today by default).
+ * List EVERY `call_result_logged` journey event in a time range — the
+ * canonical per-call log for the engagement-center call-result path (the
+ * default portal write). Unlike {@link listJourneyEvents}, this is NOT capped
+ * at 500 rows: team metrics must reflect every portal call, so a high-volume
+ * day cannot silently drop calls. Only the minimal columns are selected so
+ * materializing a full day of calls stays cheap.
  */
 export async function listCallResultLoggedEventsInRange(
   start: Date,

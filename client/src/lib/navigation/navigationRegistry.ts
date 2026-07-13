@@ -4,9 +4,10 @@ import {
   CheckSquare,
   Sparkles,
   CalendarDays,
-  CalendarClock,
-  Search,
   Phone,
+  TrendingUp,
+  Search,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,8 +46,8 @@ export const DOCK_ITEMS: DockItem[] = [
     id: "tasks",
     label: "Tasks",
     Icon: CheckSquare,
-    kind: "link",
-    href: "/plexus-tasks",
+    kind: "panel",
+    panelId: "tasks",
     testId: "global-floating-dock-tasks",
   },
   {
@@ -64,6 +65,14 @@ export const DOCK_ITEMS: DockItem[] = [
     kind: "panel",
     panelId: "calendar",
     testId: "global-floating-dock-calendar",
+  },
+  {
+    id: "engagement",
+    label: "Engagement",
+    Icon: TrendingUp,
+    kind: "link",
+    href: "/engagement-center",
+    testId: "global-floating-dock-engagement",
   },
   {
     id: "communications",
@@ -129,10 +138,10 @@ export const PORTAL_DOCK_ITEMS: DockItem[] = [
   },
 ];
 
-// Roles that get the simplified 6-item portal dock.
+// Roles that get the simplified 4-item portal dock.
 export const PORTAL_DOCK_ROLES = new Set(["scheduler", "clinician"]);
 
-export const GLOBAL_NAV_ROUTES: string[] = ["/home"];
+export const GLOBAL_NAV_ROUTES: string[] = ["/home", "/clinician-portal"];
 
 export function shouldShowGlobalNav(pathname: string): boolean {
   return GLOBAL_NAV_ROUTES.some(

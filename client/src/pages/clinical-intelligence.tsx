@@ -1,7 +1,3 @@
-// @ts-nocheck — V2 restore preview prototype. Multiple archive-only lib
-// helpers infer `any` in strict mode; keeping this file compilable via
-// nocheck so the visual restore renders. Admin-only preview route.
-//
 // Clinical Intelligence & Governance — Plexus IQ knowledge tile (prototype).
 //
 // The system-wide "AI brain" surface: 20 governance modules over the

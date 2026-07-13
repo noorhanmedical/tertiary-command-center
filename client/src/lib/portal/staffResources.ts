@@ -145,7 +145,7 @@ export const STAFF_RESOURCES: ReadonlyArray<StaffResource> = [
       `qualification or Admin Review.\n\n` +
       `  - DNC: do not place outreach calls or send outreach emails.\n` +
       `  - Cooldown: skip outreach until the cooldown end date.\n` +
-      `  - Both surface in the Patient Directory warning facts and in\n` +
+      `  - Both surface in the Patient EHR warning facts and in\n` +
       `    the canonical AdminReviewDuplicateGuard.\n` +
       `  - Never override DNC/cooldown without escalation.`,
   },

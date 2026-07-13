@@ -25,6 +25,7 @@ export const ADMIN_SETTING_DOMAINS = [
   "emr_integration",
   "ai",
   "audit",
+  "patient_directory",
 ] as const;
 export type AdminSettingDomain = typeof ADMIN_SETTING_DOMAINS[number];
 
