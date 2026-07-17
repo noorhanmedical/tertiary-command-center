@@ -12,28 +12,32 @@
 //   • Injects `now` and the UTC date window into the repo — the repo
 //     never calls `new Date()`.
 //
-// The Mission Control route is admin-only, so platform-wide helpers
-// are acceptable for the sections whose tables lack a `clinic_id`
-// column (plexus_tasks, analysis_jobs, outreach_calls). Those
-// platform-wide helpers are named with a `_platformWide` suffix in
-// the repo to make the scope explicit.
+// The Mission Control route is admin-only, so EVERY metric this
+// service consumes is intentionally platform-wide. The client
+// contract (client/src/hooks/api/missionControl.ts) carries no
+// per-clinic filter today, so there is no "clinic-scoped Mission
+// Control" surface for this service to feed. Every helper Mission
+// Control uses is named with a `_platformWide` suffix in the repo
+// to make that intent legible at each call site — no
+// `{ clinicId: null }` construction here. If Mission Control ever
+// gains a per-clinic view, the service will swap these for the
+// clinic-scoped helpers directly.
 
 import * as defaultRepo from "../../repositories/missionControl.repo";
 import type { MetricValue } from "../../repositories/missionControl.repo";
 
-// The set of repository helpers this service depends on. Enumerated
-// explicitly so tests can inject a fake without depending on the
-// entire module namespace being writable (ESM exports are frozen).
+// The set of repository helpers this service depends on. Every helper
+// is platform-wide by design.
 export type MissionRepoDeps = Pick<
   typeof defaultRepo,
-  | "countActiveExecutionCases"
+  | "countActiveExecutionCases_platformWide"
   | "countCallbacksPending_platformWide"
   | "countOpenPlexusTasks_platformWide"
-  | "countPrescreenPending"
-  | "countReadyForBilling"
-  | "countReportsMissing"
+  | "countPrescreenPending_platformWide"
+  | "countReadyForBilling_platformWide"
+  | "countReportsMissing_platformWide"
   | "countRunningAnalysisJobs_platformWide"
-  | "countScheduledInWindow"
+  | "countScheduledInWindow_platformWide"
   | "countUpcomingAncillaryPatients_UNAVAILABLE"
 >;
 
@@ -127,8 +131,18 @@ export async function buildMissionControlSpine(
   const dayStart = utcDayStart(now);
   const dayEnd = utcAddDays(dayStart, 1);
 
-  const clinicScope = { clinicId: null };
+  // Mission Control is admin-only + intentionally platform-wide. Every
+  // repo call receives a `PlatformScope` phantom — this makes the
+  // scope semantics explicit at the call site AND blocks a future
+  // refactor from silently substituting `{ clinicId: null }` (which
+  // would masquerade as clinic-scoped but drop the filter).
   const platformScope = { platformOnly: true as const };
+  // The upcoming-ancillary metric is deferred — its dedupe helper
+  // needs owner review before it can safely light up. Uses the
+  // clinic-scope shape purely because the helper's signature was
+  // written to be reusable; the scope value has no bearing on the
+  // returned unavailability.
+  const deferredScope = { clinicId: null };
 
   const [
     activeCases,
@@ -141,16 +155,19 @@ export async function buildMissionControlSpine(
     qualificationBacklog,
     upcomingAncillary,
   ] = await Promise.all([
-    repo.countActiveExecutionCases(clinicScope),
+    repo.countActiveExecutionCases_platformWide(platformScope),
     repo.countOpenPlexusTasks_platformWide(platformScope),
-    repo.countPrescreenPending(clinicScope),
+    repo.countPrescreenPending_platformWide(platformScope),
     repo.countCallbacksPending_platformWide(platformScope, now),
-    repo.countScheduledInWindow(clinicScope, { start: dayStart, end: dayEnd }),
-    repo.countReadyForBilling(clinicScope),
-    repo.countReportsMissing(clinicScope),
+    repo.countScheduledInWindow_platformWide(platformScope, {
+      start: dayStart,
+      end: dayEnd,
+    }),
+    repo.countReadyForBilling_platformWide(platformScope),
+    repo.countReportsMissing_platformWide(platformScope),
     repo.countRunningAnalysisJobs_platformWide(platformScope),
     // Explicitly marked unavailable — NOT a proxy for active-case count.
-    repo.countUpcomingAncillaryPatients_UNAVAILABLE(clinicScope),
+    repo.countUpcomingAncillaryPatients_UNAVAILABLE(deferredScope),
   ]);
 
   const spine = {

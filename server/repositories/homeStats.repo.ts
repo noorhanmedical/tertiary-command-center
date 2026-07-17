@@ -151,9 +151,13 @@ export async function countAncillaryByCategoryInRange(
 // ─── Finance: invoice payments summed in window (clinic-scoped) ─
 // Authoritative payment table: invoice_payments (amount + payment_date
 // + invoice_id → invoices.clinic_id). payment_date is stored as text
-// in YYYY-MM-DD form (schema line 112); we compare it against ISO
-// date strings so no timezone drift occurs. Clinic scope enforced via
-// inner-join to invoices.
+// (`text("payment_date").notNull()` — schema line 112). The write
+// path is fenced by ISO_DATE_RE at
+// server/routes/invoiceFinancialEvents.ts so on-disk values are
+// always YYYY-MM-DD, but we ALSO cast to `date` in the SQL
+// comparison so any legacy row that predates the boundary check
+// still compares by real calendar date instead of lexicographic
+// string order. Clinic scope enforced via inner-join to invoices.
 //
 // This REPLACES the prior invoices.created_at proxy — creation time
 // is not payment time.
@@ -176,8 +180,11 @@ export async function sumPaymentsPostedInRange(
     .innerJoin(invoices, eq(invoices.id, invoicePayments.invoiceId))
     .where(
       and(
-        gte(invoicePayments.paymentDate, startIso),
-        lt(invoicePayments.paymentDate, endIso),
+        // Cast text → date so the range compares by calendar day.
+        // Prevents "01/05/2025" or any pre-boundary legacy row from
+        // being silently miscompared.
+        sql`${invoicePayments.paymentDate}::date >= ${startIso}::date`,
+        sql`${invoicePayments.paymentDate}::date < ${endIso}::date`,
         eq(invoices.clinicId, scope.clinicId),
       ),
     );

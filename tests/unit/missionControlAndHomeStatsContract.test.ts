@@ -190,16 +190,42 @@ if (
   fail("§8 service does not consult .available on the repo response");
 }
 
-// §9: platform-wide-only helpers are explicitly named.
-if (
-  !/countOpenPlexusTasks_platformWide/.test(missionRepoRaw) ||
-  !/countRunningAnalysisJobs_platformWide/.test(missionRepoRaw) ||
-  !/countCallbacksPending_platformWide/.test(missionRepoRaw)
-) {
-  fail("§9 platform-wide helpers missing explicit _platformWide suffix");
+// §9: every helper Mission Control uses is EXPLICITLY named
+// _platformWide, and the service uses each. Prevents the earlier
+// masquerading `{ clinicId: null }` pattern from returning.
+const PLATFORM_HELPERS = [
+  "countOpenPlexusTasks_platformWide",
+  "countRunningAnalysisJobs_platformWide",
+  "countCallbacksPending_platformWide",
+  "countActiveExecutionCases_platformWide",
+  "countPrescreenPending_platformWide",
+  "countReadyForBilling_platformWide",
+  "countReportsMissing_platformWide",
+  "countScheduledInWindow_platformWide",
+];
+for (const h of PLATFORM_HELPERS) {
+  if (!new RegExp(`\\b${h}\\b`).test(missionRepoRaw)) {
+    fail(`§9 platform-wide helper ${h} missing from missionControl.repo`);
+  }
+  if (!new RegExp(`\\b${h}\\b`).test(missionServiceRaw)) {
+    fail(`§9 Mission Control service does not use ${h}`);
+  }
 }
 if (!/PlatformScope/.test(missionRepoRaw)) {
   fail("§9 PlatformScope type not defined");
+}
+// §9b: Mission Control service must not construct { clinicId: null }
+// as a bare "scope drop" pattern. It is allowed at most once (the
+// upcoming-ancillary metric is deferred and its helper signature was
+// written for clinic-scoped reuse; that single call is documented and
+// exercised via `deferredScope`).
+const clinicNullHits = (
+  stripComments(missionServiceRaw).match(/\{\s*clinicId:\s*null\s*\}/g) ?? []
+).length;
+if (clinicNullHits > 1) {
+  fail(
+    `§9b Mission Control service constructs { clinicId: null } ${clinicNullHits} times — allowed at most once (deferred-metric shim)`,
+  );
 }
 
 // §10: repos never call new Date(). Callback + window Dates flow in.
