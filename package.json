@@ -11,6 +11,10 @@
     "db:push": "drizzle-kit push",
     "seed:admin-settings": "tsx script/seedAdminSettings.ts",
     "check:canonical-tables": "tsx script/checkCanonicalTables.ts",
+    "test:unit": "for t in tests/unit/*.test.ts; do npx tsx \"$t\" || exit 1; done",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:install": "playwright install --with-deps chromium",
     "smoke:canonical-apis": "tsx script/smokeCanonicalApis.ts",
     "seed:testguy-flow": "tsx script/seedTestGuyFlow.ts",
     "reconcile:testguy": "tsx script/reconcileTestGuy.ts",
@@ -156,7 +160,8 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.5",
     "typescript": "5.6.3",
-    "vite": "^7.3.0"
+    "vite": "^7.3.0",
+    "@playwright/test": "^1.55.0"
   },
   "overrides": {
     "drizzle-kit": {
