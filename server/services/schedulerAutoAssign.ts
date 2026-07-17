@@ -26,6 +26,8 @@ import {
 } from "@shared/schema/executionCase";
 import type { OutreachScheduler } from "@shared/schema/outreach";
 import { getExecutionCaseById } from "../repositories/executionCase.repo";
+import { getAdminSettingValue } from "../repositories/adminSettings.repo";
+import { engagementCallSettingsRepository } from "../repositories/engagementCallSettings.repo";
 import { appendJourneyEvent } from "./journey/appendJourneyEvent";
 
 const TERMINAL_LIFECYCLE_STATUSES = new Set(["closed", "archived", "cancelled"]);
@@ -39,6 +41,7 @@ export type SchedulerAutoAssignSkippedReason =
   | "case_not_found"
   | "closed_or_archived"
   | "already_assigned"
+  | "auto_assign_disabled"
   | "no_scheduler_for_facility";
 
 export type SchedulerAutoAssignResult =
@@ -61,14 +64,44 @@ export type SchedulerAutoAssignResult =
       executionCase?: PatientExecutionCase;
     };
 
+function normalizeFacility(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+/** Does this member cover the given facility via their per-member
+ *  facilitiesCovered allow-list? Members with no coverage configured
+ *  return false (they fall back to roster-facility matching only). */
+function coversFacility(
+  coverageBySchedulerId: Map<number, string[]>,
+  schedulerId: number,
+  facilityId: string,
+): boolean {
+  const covered = coverageBySchedulerId.get(schedulerId);
+  if (!covered || covered.length === 0) return false;
+  const target = normalizeFacility(facilityId);
+  return covered.some((f) => normalizeFacility(f) === target);
+}
+
 /** Pick the best scheduler for a given facility:
- *  1. same facility + linked user_id, ranked by capacity_percent DESC
- *  2. fallback: any linked scheduler (any facility), ranked by capacity_percent DESC
- *  Returns null when no linked scheduler exists at all. */
-function pickSchedulerForFacility(
+ *  1. same roster facility + linked user_id, ranked by capacity_percent DESC
+ *  2. a linked member who covers the facility via facilitiesCovered, ranked
+ *     by capacity_percent DESC
+ *  3. fallback: any linked scheduler (any facility), ranked by capacity_percent DESC
+ *  Returns null when no linked scheduler exists at all.
+ *
+ *  facilitiesCovered routing (step 2) only ever ADDS candidates — a member
+ *  with no coverage configured behaves exactly as before, and a direct
+ *  roster-facility match always wins over a coverage-only match, so there is
+ *  no regression for existing setups. */
+export function pickSchedulerForFacility(
   schedulers: OutreachScheduler[],
   facilityId: string | null,
-): { scheduler: OutreachScheduler; facilityMatched: boolean } | null {
+  coverageBySchedulerId: Map<number, string[]> = new Map(),
+): {
+  scheduler: OutreachScheduler;
+  facilityMatched: boolean;
+  coverageMatched: boolean;
+} | null {
   const linked = schedulers.filter((s) => !!s.userId);
   if (linked.length === 0) return null;
 
@@ -80,14 +113,58 @@ function pickSchedulerForFacility(
       .filter((s) => s.facility === facilityId)
       .sort(byCapacity);
     if (sameFacility[0]) {
-      return { scheduler: sameFacility[0], facilityMatched: true };
+      return {
+        scheduler: sameFacility[0],
+        facilityMatched: true,
+        coverageMatched: false,
+      };
+    }
+
+    // No direct roster-facility match — route to a member who explicitly
+    // covers this facility via their facilitiesCovered allow-list.
+    const covers = linked
+      .filter((s) => coversFacility(coverageBySchedulerId, s.id, facilityId))
+      .sort(byCapacity);
+    if (covers[0]) {
+      return {
+        scheduler: covers[0],
+        facilityMatched: true,
+        coverageMatched: true,
+      };
     }
   }
 
   const fallback = [...linked].sort(byCapacity);
   return fallback[0]
-    ? { scheduler: fallback[0], facilityMatched: false }
+    ? { scheduler: fallback[0], facilityMatched: false, coverageMatched: false }
     : null;
+}
+
+/** Build a schedulerId → facilitiesCovered map for the given schedulers from
+ *  the per-member engagement call settings. Members with no row, or with an
+ *  empty/unset facilitiesCovered, simply have no entry (current behavior). */
+async function buildCoverageMap(
+  schedulers: OutreachScheduler[],
+): Promise<Map<number, string[]>> {
+  const ids = schedulers.map((s) => s.id);
+  const map = new Map<number, string[]>();
+  if (ids.length === 0) return map;
+  try {
+    const settings = await engagementCallSettingsRepository.listForSchedulers(ids);
+    for (const row of settings) {
+      const covered = (row.facilitiesCovered ?? []).filter(
+        (f) => typeof f === "string" && f.trim().length > 0,
+      );
+      if (covered.length > 0) map.set(row.schedulerId, covered);
+    }
+  } catch (err: any) {
+    // Coverage is an additive optimization — never block assignment on it.
+    console.error(
+      "[autoAssignSchedulerForExecutionCase] coverage lookup failed (non-fatal):",
+      err?.message ?? err,
+    );
+  }
+  return map;
 }
 
 export async function autoAssignSchedulerForExecutionCase(
@@ -101,6 +178,22 @@ export async function autoAssignSchedulerForExecutionCase(
     return { applied: false, reason: "closed_or_archived", executionCase: ec };
   }
 
+  // Manual-distribution gate. When the admin setting
+  // assignment.scheduler_auto_assign_enabled is off (the default),
+  // commit-time auto-assign is a no-op: the case stays unassigned and
+  // lands in the Engagement Center "Unassigned / Engagement Queue"
+  // pool for a manager to manually distribute to a PCS / ACS team
+  // member. Scope-aware (facility override falls back to global);
+  // missing/undefined value defaults to disabled (manual).
+  const autoAssignSetting = await getAdminSettingValue<{ enabled?: boolean }>(
+    "assignment",
+    "scheduler_auto_assign_enabled",
+    { facilityId: ec.facilityId ?? null },
+  );
+  if (!(autoAssignSetting?.enabled ?? false)) {
+    return { applied: false, reason: "auto_assign_disabled", executionCase: ec };
+  }
+
   // Already assigned — preserve owner continuity. Helper is a no-op even
   // when the previously-assigned scheduler is no longer at the facility.
   if (ec.assignedTeamMemberId != null) {
@@ -108,12 +201,17 @@ export async function autoAssignSchedulerForExecutionCase(
   }
 
   const schedulers = await storage.getOutreachSchedulers();
-  const pick = pickSchedulerForFacility(schedulers, ec.facilityId ?? null);
+  const coverageBySchedulerId = await buildCoverageMap(schedulers);
+  const pick = pickSchedulerForFacility(
+    schedulers,
+    ec.facilityId ?? null,
+    coverageBySchedulerId,
+  );
   if (!pick) {
     return { applied: false, reason: "no_scheduler_for_facility", executionCase: ec };
   }
 
-  const { scheduler, facilityMatched } = pick;
+  const { scheduler, facilityMatched, coverageMatched } = pick;
 
   // Build the patch — only touch engagement_status when current value is
   // upgradable (new / ready); never overwrite a stronger workflow state.
@@ -164,7 +262,13 @@ export async function autoAssignSchedulerForExecutionCase(
         eventType: "scheduler_assigned",
         eventSource: "scheduler_auto_assign",
         actorUserId: opts.actorUserId ?? undefined,
-        summary: `Assigned to scheduler ${scheduler.name}${facilityMatched ? "" : " (cross-facility fallback)"}`,
+        summary: `Assigned to scheduler ${scheduler.name}${
+          coverageMatched
+            ? " (covers facility)"
+            : facilityMatched
+              ? ""
+              : " (cross-facility fallback)"
+        }`,
         metadata: {
           schedulerId: scheduler.id,
           schedulerUserId: scheduler.userId ?? null,
@@ -172,6 +276,7 @@ export async function autoAssignSchedulerForExecutionCase(
           schedulerFacility: scheduler.facility,
           caseFacility: ec.facilityId ?? null,
           facilityMatched,
+          coverageMatched,
           capacityPercent: scheduler.capacityPercent ?? null,
           previousEngagementStatus: ec.engagementStatus ?? null,
           newEngagementStatus: updatedRow.engagementStatus,

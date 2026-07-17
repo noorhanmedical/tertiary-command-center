@@ -24,6 +24,7 @@ import {
   type AdminSettingRow,
   type EffectiveAdminSettingsBundle,
 } from "@/lib/adminSettingsApi";
+import PatientDirectorySectionAccessPanel from "@/components/admin/PatientDirectorySectionAccessPanel";
 
 function sourceTone(src: string): "default" | "secondary" | "outline" {
   // test_type wins most-specific — use the most prominent tone.
@@ -33,7 +34,7 @@ function sourceTone(src: string): "default" | "secondary" | "outline" {
   return "outline";
 }
 
-export default function AdminSettingsCenterPage() {
+export default function AdminSettingsCenterPage({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -87,7 +88,11 @@ export default function AdminSettingsCenterPage() {
     <div className="flex h-full w-full flex-col gap-4 overflow-y-auto p-6" data-testid="admin-settings-center">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Admin Settings Center</h1>
+          {embedded ? (
+            <h2 className="text-lg font-semibold text-slate-900">Admin Settings Center</h2>
+          ) : (
+            <h1 className="text-xl font-semibold text-slate-900">Admin Settings Center</h1>
+          )}
           <p className="text-xs text-slate-500">
             Effective runtime values + per-row overrides. All call-result, scheduling,
             and assignment routing reads from these rows at runtime.
@@ -133,6 +138,8 @@ export default function AdminSettingsCenterPage() {
           <Field label="ACS respects facility scope" value={effective.assignment.acsAssignmentRespectsFacilityScope ? "Yes" : "No"} source={effective.sources["assignment.acs_assignment_respects_facility_scope"]} />
         </div>
       </Card>
+
+      <PatientDirectorySectionAccessPanel />
 
       {Object.keys(grouped).sort().map((domain) => (
         <Card key={domain} className="p-4 bg-white" data-testid={`admin-settings-domain-${domain}`}>

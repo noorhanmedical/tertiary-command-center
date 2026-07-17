@@ -88,7 +88,7 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
         driveWebViewLink: data.webViewLink ?? null,
         driveFileId: data.driveFileId ?? null,
       });
-      toast({ title: "Uploaded to Google Drive" });
+      toast({ title: "Document uploaded" });
     },
     onError: (err: Error) => {
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
@@ -143,10 +143,10 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-sm text-emerald-600 hover:text-emerald-700 hover:underline"
-            data-testid={`link-drive-${docType}`}
+            data-testid={`link-uploaded-file-${docType}`}
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            View in Google Drive
+            View uploaded file
           </a>
         )}
         <Button variant="outline" size="sm" onClick={handleReset} className="self-start" data-testid={`button-upload-another-${docType}`}>
@@ -250,7 +250,7 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
         {uploadMutation.isPending ? (
           <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Uploading…</>
         ) : (
-          <><Upload className="w-4 h-4 mr-2" />Upload to Drive</>
+          <><Upload className="w-4 h-4 mr-2" />Upload</>
         )}
       </Button>
     </Card>
@@ -266,7 +266,7 @@ export default function DocumentUploadPage() {
           icon={Upload}
           iconAccent="bg-indigo-100 text-indigo-700"
           title="Document Upload"
-          subtitle="Upload patient reports, informed consent forms, and screening forms to Google Drive. Patient names are auto-extracted via AI."
+          subtitle="Upload patient reports, informed consent forms, and screening forms. Patient names are auto-extracted via AI."
           className="mb-8"
         />
 

@@ -64,7 +64,7 @@ export function HomeSidebar({
                   data-testid="sidebar-patient-directory"
                 >
                   <Users className="w-4 h-4 shrink-0" />
-                  <span className="text-sm font-medium">Patient Directory</span>
+                  <span className="text-sm font-medium">Patient EHR</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

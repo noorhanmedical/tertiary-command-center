@@ -1,11 +1,16 @@
-// Ancillary Care Specialist Workspace.
+// Ancillary Care Specialist Workspace — LIVE Team Portal.
 //
-// Consolidates the former Technician and Liaison portal capabilities into
-// a single team-member workspace. Shares its shell with the Patient Care
-// Specialist Workspace at /patient-care-specialist-portal via
-// ClinicWorkflowPortal → PortalShell. Default right-panel mode is
-// Clinic Schedule; future right-panel modes (Ancillary Schedule, Call
-// List) are wired in a follow-up batch.
+// Mounts ClinicWorkflowPortal → TeamPortalShell (the real 3,973-line
+// interactive shell with slide-away/hover-peek rails, pin toggles,
+// view-as, multi-tab workspaces, tool dock, floating widgets,
+// communication tray, invoice desk, calls repository, and
+// backend-persisted widget/layout prefs via /api/portal/widgets and
+// /api/portal/workspace-prefs).
+//
+// IMPORTANT: This route must never mount TeamMemberPortalPlayground.
+// That file is a static, unwired mockup/design reference kept for
+// visual experimentation only. Any visual experiment must live on a
+// separate preview route, not here.
 
 import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
 

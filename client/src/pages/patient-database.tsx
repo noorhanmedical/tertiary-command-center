@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
@@ -8,17 +8,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
-  Loader2, Search, Database, Users, Building2, Clock, CheckCircle2, AlertTriangle,
-  Calendar, FileText, Stethoscope, Upload, Phone, Shield, ExternalLink, X,
+  Loader2, Search, Database, Users, Building2, Clock, CheckCircle2,
+  Upload, X, UserSearch,
 } from "lucide-react";
-import { PageHeader } from "@/components/PageHeader";
+import { PatientProfileWorkspace } from "@/components/patient-directory/PatientProfileWorkspace";
+import { PatientChartSkeleton } from "@/components/patient-directory/PatientChart";
+import { RecentImportsPanel } from "@/components/patient-directory/RecentImportsPanel";
+import { initials, fmtDate } from "@/components/patient-directory/profileTypes";
 
 type RosterPatient = {
   key: string;
   encodedKey: string;
+  representativeScreeningId: number;
   name: string;
   dob: string | null;
   age: number | null;
@@ -51,45 +54,6 @@ type CooldownSummary = {
   allClinics: string[];
 };
 
-type TestCooldown = {
-  testName: string;
-  lastDate: string;
-  insuranceType: string;
-  cooldownMonths: number;
-  clearsAt: string;
-  daysUntilClear: number;
-  cleared: boolean;
-  clinic: string | null;
-  historyId: number;
-};
-type ProfileResponse = {
-  key: string;
-  encodedKey: string;
-  plexusId: string | null;
-  identity: { name: string; dob: string | null; age: number | null; gender: string | null; phoneNumber: string | null; insurance: string | null; clinic: string };
-  clinical: { diagnoses: string | null; history: string | null; medications: string | null; notes: string | null };
-  testHistory: Array<{ id: number; testName: string; dateOfService: string; insuranceType: string; clinic: string }>;
-  cooldowns: TestCooldown[];
-  screenings: Array<{ id: number; batchId: number; batchName: string; facility: string | null; scheduleDate: string | null; createdAt: string; time: string | null; qualifyingTests: string[]; appointmentStatus: string; patientType: string }>;
-  generatedNotes: Array<{ id: number; batchId: number; patientId: number; service: string; docKind: string; title: string; generatedAt: string; driveWebViewLink: string | null; facility: string | null; scheduleDate: string | null }>;
-};
-
-function initials(name: string): string {
-  return name
-    .split(/[\s,]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("") || "?";
-}
-
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso.includes("T") ? iso : `${iso}T00:00:00`);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
 function CooldownBadge({ p }: { p: RosterPatient }) {
   if (p.cooldownActiveCount === 0) {
     return (
@@ -111,8 +75,14 @@ function CooldownBadge({ p }: { p: RosterPatient }) {
 export default function PatientDatabasePage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [, setLocation] = useLocation();
+  const searchString = useSearch();
+
+  const urlParams = useMemo(() => new URLSearchParams(searchString), [searchString]);
+  const urlPatientId = urlParams.get("patientId");
+
+  const [search, setSearch] = useState(() => urlParams.get("search") ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => (urlParams.get("search") ?? "").trim());
   const [clinicFilter, setClinicFilter] = useState<string>("");
   const [windowFilter, setWindowFilter] = useState<"" | "1d" | "1w" | "1m">("");
 
@@ -120,7 +90,17 @@ export default function PatientDatabasePage() {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
-  const [openProfileKey, setOpenProfileKey] = useState<string | null>(null);
+
+  // Keep ?search= in the URL in sync (without spamming history) while preserving
+  // any active ?patientId= deep link.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    if (debouncedSearch) sp.set("search", debouncedSearch);
+    else sp.delete("search");
+    const qs = sp.toString();
+    window.history.replaceState(null, "", `/patient-directory${qs ? `?${qs}` : ""}`);
+  }, [debouncedSearch]);
+
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
 
@@ -143,9 +123,6 @@ export default function PatientDatabasePage() {
       lastPage.pagination.hasMore ? lastPage.pagination.page + 1 : undefined,
   });
 
-  // Merge paginated pages into a single set of clinic groups, preserving the
-  // server's ordering (alphabetical, with Unassigned last) and de-duplicating
-  // patients by encodedKey in case a row appears in two pages (e.g. caching).
   const mergedRoster = useMemo(() => {
     const pages = rosterQuery.data?.pages ?? [];
     const groupOrder: string[] = [];
@@ -189,15 +166,51 @@ export default function PatientDatabasePage() {
     queryKey: ["/api/patients/database/cooldown-summary"],
   });
 
-  const profileQuery = useQuery<ProfileResponse>({
-    queryKey: ["/api/patients/database", openProfileKey],
+  // ── Selection / deep-link resolution ──────────────────────────────────────
+  // Try to satisfy ?patientId= from the already-loaded roster first; fall back
+  // to a tiny resolve endpoint (screening id -> roster key) for inbound deep
+  // links (e.g. the Team Member Portal call list).
+  const rosterMatch = useMemo(() => {
+    if (!urlPatientId) return null;
+    const idNum = Number(urlPatientId);
+    if (!Number.isFinite(idNum)) return null;
+    for (const g of mergedRoster.groups) {
+      for (const p of g.patients) {
+        if (p.representativeScreeningId === idNum) return p;
+      }
+    }
+    return null;
+  }, [urlPatientId, mergedRoster.groups]);
+
+  const resolveQuery = useQuery<{ encodedKey: string; name: string; dob: string | null }>({
+    queryKey: ["/api/patients/database/resolve", urlPatientId],
     queryFn: async () => {
-      const res = await fetch(`/api/patients/database/${openProfileKey}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load patient profile");
+      const res = await fetch(`/api/patients/database/resolve/${urlPatientId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to resolve patient");
       return res.json();
     },
-    enabled: !!openProfileKey,
+    enabled: !!urlPatientId && !rosterMatch,
   });
+
+  const selectedKey = rosterMatch?.encodedKey ?? resolveQuery.data?.encodedKey ?? null;
+  const selectedRepId = rosterMatch?.representativeScreeningId
+    ?? (urlPatientId && Number.isFinite(Number(urlPatientId)) ? Number(urlPatientId) : null);
+  // Name shown instantly in the chart shell before the heavy profile resolves.
+  // Prefer roster/resolve data; fall back to a name passed on the deep link.
+  const seedName = rosterMatch?.name ?? resolveQuery.data?.name ?? urlParams.get("name") ?? null;
+
+  function selectPatient(p: RosterPatient) {
+    const sp = new URLSearchParams(window.location.search);
+    sp.set("patientId", String(p.representativeScreeningId));
+    setLocation(`/patient-directory?${sp.toString()}`);
+  }
+
+  function clearSelection() {
+    const sp = new URLSearchParams(window.location.search);
+    sp.delete("patientId");
+    const qs = sp.toString();
+    setLocation(`/patient-directory${qs ? `?${qs}` : ""}`);
+  }
 
   const importTextMutation = useMutation({
     mutationFn: async (text: string) => {
@@ -233,9 +246,6 @@ export default function PatientDatabasePage() {
     onError: (e: unknown) => toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
   });
 
-  // Use the unfiltered list of all clinics (from the cooldown summary endpoint)
-  // so the chip row stays stable when the user picks a clinic. Falls back to
-  // the per-page clinicTotals while the summary is loading.
   const allClinics = useMemo(() => {
     const fromSummary = summaryQuery.data?.allClinics;
     if (fromSummary && fromSummary.length > 0) return fromSummary;
@@ -243,7 +253,6 @@ export default function PatientDatabasePage() {
   }, [summaryQuery.data?.allClinics, mergedRoster.clinicTotals]);
 
   const totalPatients = mergedRoster.totals.patients;
-  const totalClinics = mergedRoster.totals.clinics;
   const loadedCount = mergedRoster.loadedCount;
   const hasMore = mergedRoster.pagination.hasMore;
   const isLoading = rosterQuery.isLoading;
@@ -257,9 +266,7 @@ export default function PatientDatabasePage() {
     if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          fetchNextPage();
-        }
+        if (entries.some((e) => e.isIntersecting)) fetchNextPage();
       },
       { rootMargin: "200px" },
     );
@@ -267,81 +274,84 @@ export default function PatientDatabasePage() {
     return () => observer.disconnect();
   }, [hasMore, isFetchingNextPage, fetchNextPage]);
 
+  const hasSelection = !!urlPatientId;
+  const resolving = resolveQuery.isLoading && !rosterMatch;
+
   return (
-    <div className="flex flex-col h-full relative z-10 bg-finance-bg">
-      <main className="flex-1 overflow-auto p-4">
-        <div className="max-w-6xl mx-auto space-y-4">
-          <PageHeader
-            eyebrow="PLEXUS ANCILLARY · PATIENTS"
-            icon={Database}
-            iconAccent="bg-slate-900/8 text-slate-700"
-            title="Patient Directory"
-            subtitle={`${totalPatients} patient${totalPatients !== 1 ? "s" : ""} · ${totalClinics} clinic${totalClinics !== 1 ? "s" : ""}${hasMore || loadedCount < totalPatients ? ` (showing ${loadedCount})` : ""}`}
-            actions={
-              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5" data-testid="button-import-test-history">
-                <Upload className="w-3.5 h-3.5" />Import test history
-              </Button>
-            }
-          />
-          {/* Cooldown dashboard */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div className="flex h-full relative z-10 bg-finance-bg overflow-hidden">
+      {/* ── Left rail: roster + filters ── */}
+      <aside
+        className={`${hasSelection ? "hidden lg:flex" : "flex"} flex-col w-full lg:w-[380px] xl:w-[420px] shrink-0 border-r border-border/60 bg-white/40 dark:bg-card/30`}
+        data-testid="patient-directory-rail"
+      >
+        <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-slate-900/8 text-slate-700 flex items-center justify-center shrink-0">
+                <Database className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Plexus Ancillary</div>
+                <h1 className="text-base font-bold leading-tight truncate">Patient EHR</h1>
+              </div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5 shrink-0" data-testid="button-import-test-history">
+              <Upload className="w-3.5 h-3.5" />Import
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground" data-testid="text-roster-summary">
+            {totalPatients} patient{totalPatients !== 1 ? "s" : ""}{loadedCount < totalPatients ? ` · showing ${loadedCount}` : ""}
+          </p>
+
+          {/* Cooldown tiles (compact) */}
+          <div className="grid grid-cols-3 gap-2">
             {([
-              { key: "1d" as const, label: "Cooldowns clearing in 1 day", count: summaryQuery.data?.oneDay ?? 0, tone: "from-red-500/10 to-red-500/5 border-red-200 text-red-900" },
-              { key: "1w" as const, label: "Clearing in 1 week", count: summaryQuery.data?.oneWeek ?? 0, tone: "from-amber-500/10 to-amber-500/5 border-amber-200 text-amber-900" },
-              { key: "1m" as const, label: "Clearing in 1 month", count: summaryQuery.data?.oneMonth ?? 0, tone: "from-blue-500/10 to-blue-500/5 border-blue-200 text-blue-900" },
+              { key: "1d" as const, label: "≤1 day", count: summaryQuery.data?.oneDay ?? 0, tone: "border-red-200 text-red-900 bg-red-50 dark:bg-red-900/20" },
+              { key: "1w" as const, label: "≤1 week", count: summaryQuery.data?.oneWeek ?? 0, tone: "border-amber-200 text-amber-900 bg-amber-50 dark:bg-amber-900/20" },
+              { key: "1m" as const, label: "≤1 month", count: summaryQuery.data?.oneMonth ?? 0, tone: "border-blue-200 text-blue-900 bg-blue-50 dark:bg-blue-900/20" },
             ]).map((tile) => {
               const active = windowFilter === tile.key;
               return (
                 <button
                   key={tile.key}
                   onClick={() => setWindowFilter(active ? "" : tile.key)}
-                  className={`text-left rounded-xl border bg-gradient-to-br p-4 transition-all hover:shadow-sm ${tile.tone} ${active ? "ring-2 ring-offset-1 ring-slate-400 dark:ring-slate-500" : ""}`}
+                  className={`text-left rounded-lg border p-2 transition-all hover:shadow-sm ${tile.tone} ${active ? "ring-2 ring-offset-1 ring-slate-400" : ""}`}
                   data-testid={`tile-cooldown-${tile.key}`}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <Clock className="w-4 h-4 opacity-70" />
-                    {active && <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80">Filter active</span>}
-                  </div>
-                  <div className="text-3xl font-bold tabular-nums leading-tight" data-testid={`text-cooldown-count-${tile.key}`}>{tile.count}</div>
-                  <div className="text-xs mt-1 opacity-80">{tile.label}</div>
+                  <div className="text-xl font-bold tabular-nums leading-none" data-testid={`text-cooldown-count-${tile.key}`}>{tile.count}</div>
+                  <div className="text-[10px] mt-1 opacity-80">{tile.label}</div>
                 </button>
               );
             })}
           </div>
 
-          {/* Search + clinic chips */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-              <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-              <Input
-                placeholder="Search by name or DOB..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="text-sm h-9 max-w-md"
-                data-testid="input-search-patients"
-              />
-            </div>
-            {windowFilter && (
-              <Button size="sm" variant="ghost" onClick={() => setWindowFilter("")} className="gap-1 text-xs" data-testid="button-clear-window">
-                <X className="w-3 h-3" />Clear cooldown filter
-              </Button>
-            )}
+          {/* Search */}
+          <div className="flex items-center gap-2">
+            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+            <Input
+              placeholder="Search by name or DOB..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="text-sm h-9"
+              data-testid="input-search-patients"
+            />
           </div>
 
+          {/* Clinic chips */}
           {allClinics.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap" data-testid="row-clinic-chips">
               <button
                 onClick={() => setClinicFilter("")}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${clinicFilter === "" ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-muted dark:text-foreground"}`}
+                className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors ${clinicFilter === "" ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-muted dark:text-foreground"}`}
                 data-testid="chip-clinic-all"
               >
-                All clinics
+                All
               </button>
               {allClinics.map((c) => (
                 <button
                   key={c}
                   onClick={() => setClinicFilter(clinicFilter === c ? "" : c)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1 ${clinicFilter === c ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-muted dark:text-foreground"}`}
+                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors flex items-center gap-1 ${clinicFilter === c ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-muted dark:text-foreground"}`}
                   data-testid={`chip-clinic-${c.replace(/\s+/g, "-")}`}
                 >
                   <Building2 className="w-3 h-3" />{c}
@@ -349,118 +359,84 @@ export default function PatientDatabasePage() {
               ))}
             </div>
           )}
+          {(clinicFilter || windowFilter || debouncedSearch) && (
+            <Button size="sm" variant="ghost" onClick={() => { setSearch(""); setClinicFilter(""); setWindowFilter(""); }} className="gap-1 text-xs h-7 px-2" data-testid="button-clear-all-filters">
+              <X className="w-3 h-3" />Clear filters
+            </Button>
+          )}
+        </div>
 
+        {/* Recent imports (collapsible) */}
+        <div className="px-2 pt-2">
+          <RecentImportsPanel />
+        </div>
+
+        {/* Roster list */}
+        <div className="flex-1 overflow-y-auto px-2 py-2">
           {isLoading ? (
             <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : mergedRoster.groups.length === 0 ? (
-            <div className="text-center py-20 text-muted-foreground" data-testid="empty-roster">
-              <Users className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              {debouncedSearch || clinicFilter || windowFilter ? (
-                <>
-                  <p className="text-base">No patients match your filters.</p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mt-4"
-                    onClick={() => { setSearch(""); setClinicFilter(""); setWindowFilter(""); }}
-                    data-testid="button-clear-all-filters"
-                  >
-                    Clear filters
-                  </Button>
-                </>
-              ) : (
-                <p className="text-base">No patients yet. Import test history or add a schedule to get started.</p>
-              )}
+            <div className="text-center py-16 px-4 text-muted-foreground" data-testid="empty-roster">
+              <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">
+                {debouncedSearch || clinicFilter || windowFilter
+                  ? "No patients match your filters."
+                  : "No patients yet. Import test history or add a schedule to get started."}
+              </p>
             </div>
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-4">
               {mergedRoster.groups.map((group) => {
                 const clinicTotal = clinicTotalByName.get(group.clinic) ?? group.patients.length;
                 const partial = group.patients.length < clinicTotal;
                 return (
-                <section key={group.clinic} data-testid={`section-clinic-${group.clinic.replace(/\s+/g, "-")}`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Building2 className="w-4 h-4 text-slate-500" />
-                    <h2 className="text-sm font-semibold text-slate-800 dark:text-foreground">{group.clinic}</h2>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px]"
-                      title={partial ? `${group.patients.length} of ${clinicTotal} loaded` : undefined}
-                      data-testid={`badge-clinic-count-${group.clinic.replace(/\s+/g, "-")}`}
-                    >
-                      {partial ? `${group.patients.length} / ${clinicTotal}` : clinicTotal}
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {group.patients.map((p) => (
-                      <button
-                        key={p.encodedKey}
-                        onClick={() => setOpenProfileKey(p.encodedKey)}
-                        className="text-left"
-                        data-testid={`card-patient-${p.encodedKey}`}
-                      >
-                        <Card className="p-3 hover:shadow-md hover:border-slate-300 transition-all h-full">
-                          <div className="flex items-start gap-2 mb-2">
-                            <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-xs font-semibold shrink-0">
+                  <section key={group.clinic} data-testid={`section-clinic-${group.clinic.replace(/\s+/g, "-")}`}>
+                    <div className="flex items-center gap-2 px-2 mb-1.5 sticky top-0 bg-white/80 dark:bg-card/80 backdrop-blur py-1 z-10">
+                      <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                      <h2 className="text-xs font-semibold text-slate-800 dark:text-foreground truncate">{group.clinic}</h2>
+                      <Badge variant="outline" className="text-[10px]" data-testid={`badge-clinic-count-${group.clinic.replace(/\s+/g, "-")}`}>
+                        {partial ? `${group.patients.length} / ${clinicTotal}` : clinicTotal}
+                      </Badge>
+                    </div>
+                    <div className="space-y-1">
+                      {group.patients.map((p) => {
+                        const selected = selectedKey === p.encodedKey;
+                        return (
+                          <button
+                            key={p.encodedKey}
+                            onClick={() => selectPatient(p)}
+                            className={`w-full text-left rounded-lg px-2.5 py-2 transition-colors flex items-start gap-2.5 ${selected ? "bg-indigo-50 dark:bg-indigo-900/30 ring-1 ring-indigo-300 dark:ring-indigo-700" : "hover:bg-slate-100 dark:hover:bg-muted/50"}`}
+                            data-testid={`card-patient-${p.encodedKey}`}
+                          >
+                            <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-[11px] font-semibold shrink-0">
                               {initials(p.name)}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="font-semibold text-xs truncate" data-testid={`text-patient-name-${p.encodedKey}`}>{p.name}</p>
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="font-semibold text-xs truncate" data-testid={`text-patient-name-${p.encodedKey}`}>{p.name}</p>
+                                <CooldownBadge p={p} />
+                              </div>
                               {p.plexusId && (
                                 <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-mono font-medium text-slate-600 dark:text-slate-300 mt-0.5" data-testid={`badge-plexus-id-${p.encodedKey}`}>
                                   {p.plexusId}
                                 </span>
                               )}
-                              {p.dob && <p className="text-[10px] text-muted-foreground truncate">DOB {p.dob}</p>}
+                              <p className="text-[10px] text-muted-foreground truncate">
+                                {p.dob ? `DOB ${p.dob} · ` : ""}{fmtDate(p.lastVisit)}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {p.testCount} test{p.testCount !== 1 ? "s" : ""} · {p.screeningCount} screening{p.screeningCount !== 1 ? "s" : ""}
+                              </p>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <CooldownBadge p={p} />
-                          </div>
-                          <div className="mt-2 text-[10px] text-muted-foreground space-y-0.5">
-                            <div>Last visit: {fmtDate(p.lastVisit)}</div>
-                            <div>{p.testCount} test{p.testCount !== 1 ? "s" : ""} · {p.screeningCount} screening{p.screeningCount !== 1 ? "s" : ""}</div>
-                          </div>
-                        </Card>
-                      </button>
-                    ))}
-                  </div>
-                </section>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
                 );
               })}
               {hasMore && (
-                <div className="flex flex-col items-center gap-3 py-4" data-testid="region-load-more">
-                  {rosterQuery.isFetchingNextPage && (
-                    <div className="w-full" data-testid="skeleton-loading-more-patients">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <Card key={i} className="p-3 h-full animate-pulse">
-                            <div className="flex items-start gap-2 mb-2">
-                              <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />
-                              <div className="min-w-0 flex-1 space-y-1.5">
-                                <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-3/4" />
-                                <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
-                              </div>
-                            </div>
-                            <div className="h-4 w-16 bg-slate-200 dark:bg-slate-700 rounded-full mb-2" />
-                            <div className="space-y-1">
-                              <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded w-2/3" />
-                              <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
-                            </div>
-                          </Card>
-                        ))}
-                      </div>
-                      <p
-                        className="text-xs text-muted-foreground text-center mt-3 flex items-center justify-center gap-1.5"
-                        data-testid="text-loading-more-patients"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Loading more patients… ({loadedCount} of {totalPatients} loaded)
-                      </p>
-                    </div>
-                  )}
+                <div className="flex flex-col items-center gap-2 py-3" data-testid="region-load-more">
                   <Button
                     size="sm"
                     variant="outline"
@@ -469,10 +445,7 @@ export default function PatientDatabasePage() {
                     data-testid="button-load-more-patients"
                   >
                     {rosterQuery.isFetchingNextPage ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                        Loading more patients…
-                      </>
+                      <><Loader2 className="w-3 h-3 animate-spin mr-1" />Loading…</>
                     ) : (
                       <>Load more ({totalPatients - loadedCount} remaining)</>
                     )}
@@ -483,20 +456,37 @@ export default function PatientDatabasePage() {
             </div>
           )}
         </div>
-      </main>
+      </aside>
 
-      {/* Profile drawer */}
-      <Sheet open={!!openProfileKey} onOpenChange={(o) => !o && setOpenProfileKey(null)}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto" data-testid="drawer-patient-profile">
-          {profileQuery.isLoading ? (
-            <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-          ) : profileQuery.data ? (
-            <ProfileBody profile={profileQuery.data} />
-          ) : (
-            <div className="py-20 text-center text-sm text-muted-foreground">Failed to load profile.</div>
-          )}
-        </SheetContent>
-      </Sheet>
+      {/* ── Right area: patient chart ── */}
+      <section
+        className={`${hasSelection ? "flex" : "hidden lg:flex"} flex-1 min-w-0 flex-col bg-finance-bg`}
+        data-testid="patient-directory-detail"
+      >
+        {resolving ? (
+          <PatientChartSkeleton seedName={seedName} onBack={clearSelection} />
+        ) : selectedKey ? (
+          <PatientProfileWorkspace
+            key={selectedKey}
+            encodedKey={selectedKey}
+            representativeScreeningId={selectedRepId}
+            seedName={seedName}
+            onBack={clearSelection}
+          />
+        ) : hasSelection ? (
+          <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-6" data-testid="profile-not-found">
+            <UserSearch className="w-12 h-12 mb-4 opacity-30" />
+            <p className="text-base">We couldn't find that patient.</p>
+            <Button size="sm" variant="outline" className="mt-4" onClick={clearSelection} data-testid="button-clear-selection">Back to EHR</Button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-6" data-testid="profile-empty-state">
+            <UserSearch className="w-14 h-14 mb-4 opacity-25" />
+            <p className="text-lg font-medium text-slate-700 dark:text-foreground">Select a patient</p>
+            <p className="text-sm mt-1 max-w-sm">Choose a patient from the EHR to open their full clinical chart, qualifying opportunities, calls, scheduling, and billing readiness.</p>
+          </div>
+        )}
+      </section>
 
       {/* Import history dialog */}
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
@@ -545,164 +535,6 @@ export default function PatientDatabasePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function ProfileBody({ profile }: { profile: ProfileResponse }) {
-  const id = profile.identity;
-  return (
-    <>
-      <SheetHeader className="mb-4">
-        <SheetTitle className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-xs font-semibold shrink-0">{initials(id.name)}</div>
-          <span data-testid="text-profile-name">{id.name}</span>
-          {profile.plexusId && (
-            <span className="inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-xs font-mono font-medium text-slate-600 dark:text-slate-300" data-testid="badge-profile-plexus-id">
-              {profile.plexusId}
-            </span>
-          )}
-        </SheetTitle>
-        <SheetDescription className="text-xs">
-          {id.clinic} · {id.dob ? `DOB ${id.dob}` : "DOB unknown"}
-        </SheetDescription>
-      </SheetHeader>
-
-      <div className="space-y-4 pb-8">
-        {/* Identity */}
-        <Card className="p-3 text-xs space-y-1.5" data-testid="card-identity">
-          <div className="flex items-center gap-2 font-semibold text-sm mb-1.5"><Shield className="w-3.5 h-3.5" />Identity</div>
-          <Row label="Age / Gender" value={[id.age ? `${id.age}yo` : null, id.gender].filter(Boolean).join(" · ") || "—"} />
-          <Row label="Phone" value={id.phoneNumber || "—"} icon={<Phone className="w-3 h-3" />} />
-          <Row label="Insurance" value={id.insurance || "—"} />
-          <Row label="Clinic" value={id.clinic} icon={<Building2 className="w-3 h-3" />} />
-        </Card>
-
-        {/* Clinical */}
-        {(profile.clinical.diagnoses || profile.clinical.history || profile.clinical.medications) && (
-          <Card className="p-3 text-xs space-y-2" data-testid="card-clinical">
-            <div className="flex items-center gap-2 font-semibold text-sm mb-1.5"><Stethoscope className="w-3.5 h-3.5" />Clinical Context</div>
-            {profile.clinical.diagnoses && <Row label="Diagnoses" value={profile.clinical.diagnoses} block />}
-            {profile.clinical.history && <Row label="History" value={profile.clinical.history} block />}
-            {profile.clinical.medications && <Row label="Medications" value={profile.clinical.medications} block />}
-          </Card>
-        )}
-
-        {/* Cooldowns */}
-        <Card className="p-3 text-xs" data-testid="card-cooldowns">
-          <div className="flex items-center gap-2 font-semibold text-sm mb-2"><Clock className="w-3.5 h-3.5" />Cooldown Status ({profile.cooldowns.length})</div>
-          {profile.cooldowns.length === 0 ? (
-            <p className="text-muted-foreground">No prior tests on file.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {profile.cooldowns.map((cd) => (
-                <div key={`${cd.testName}-${cd.historyId}`} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-slate-50 dark:bg-muted/40" data-testid={`row-cooldown-${cd.historyId}`}>
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{cd.testName}</div>
-                    <div className="text-[10px] text-muted-foreground">Last {cd.lastDate} · {cd.insuranceType.toUpperCase()} · {cd.cooldownMonths}mo</div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    {cd.cleared ? (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
-                        <CheckCircle2 className="w-3 h-3" />Eligible
-                      </span>
-                    ) : (
-                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${cd.daysUntilClear <= 1 ? "bg-red-100 text-red-800" : cd.daysUntilClear <= 7 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
-                        Clears {fmtDate(cd.clearsAt)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* Test history */}
-        <Card className="p-3 text-xs" data-testid="card-test-history">
-          <div className="flex items-center gap-2 font-semibold text-sm mb-2"><Calendar className="w-3.5 h-3.5" />Tests on File ({profile.testHistory.length})</div>
-          {profile.testHistory.length === 0 ? (
-            <p className="text-muted-foreground">No imported test records.</p>
-          ) : (
-            <div className="space-y-1">
-              {profile.testHistory.map((h) => (
-                <div key={h.id} className="flex items-center justify-between gap-2 py-1 border-b border-slate-100 last:border-0">
-                  <div className="min-w-0">
-                    <span className="font-medium">{h.testName}</span>
-                    <span className="text-[10px] text-muted-foreground ml-2">{h.dateOfService}</span>
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">{h.clinic} · {h.insuranceType.toUpperCase()}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* Prior screenings */}
-        <Card className="p-3 text-xs" data-testid="card-prior-screenings">
-          <div className="flex items-center gap-2 font-semibold text-sm mb-2"><AlertTriangle className="w-3.5 h-3.5" />Prior Screenings ({profile.screenings.length})</div>
-          {profile.screenings.length === 0 ? (
-            <p className="text-muted-foreground">No screenings.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {profile.screenings.map((s) => (
-                <div key={s.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-slate-50 dark:bg-muted/40" data-testid={`row-screening-${s.id}`}>
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{s.batchName}</div>
-                    <div className="text-[10px] text-muted-foreground">{s.scheduleDate || fmtDate(s.createdAt)} · {s.facility || "—"} · {s.qualifyingTests.length} qualifying</div>
-                  </div>
-                  <Link href={`/schedule/${s.batchId}`}>
-                    <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" data-testid={`button-open-batch-${s.batchId}`}>
-                      <ExternalLink className="w-3 h-3" />Open
-                    </Button>
-                  </Link>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* Generated notes */}
-        <Card className="p-3 text-xs" data-testid="card-generated-notes">
-          <div className="flex items-center gap-2 font-semibold text-sm mb-2"><FileText className="w-3.5 h-3.5" />Generated Notes ({profile.generatedNotes.length})</div>
-          {profile.generatedNotes.length === 0 ? (
-            <p className="text-muted-foreground">No notes generated.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {profile.generatedNotes.map((n) => (
-                <div key={n.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-slate-50 dark:bg-muted/40" data-testid={`row-note-${n.id}`}>
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{n.title}</div>
-                    <div className="text-[10px] text-muted-foreground">{n.service} · {fmtDate(n.generatedAt)}</div>
-                  </div>
-                  {n.driveWebViewLink && (
-                    <a href={n.driveWebViewLink} target="_blank" rel="noopener noreferrer" className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-0.5">
-                      <ExternalLink className="w-3 h-3" />Drive
-                    </a>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-    </>
-  );
-}
-
-function Row({ label, value, icon, block }: { label: string; value: string; icon?: React.ReactNode; block?: boolean }) {
-  if (block) {
-    return (
-      <div>
-        <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">{label}</div>
-        <div className="text-xs leading-snug">{value}</div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">{icon}{label}</div>
-      <div className="text-xs font-medium text-right truncate max-w-[60%]">{value}</div>
     </div>
   );
 }

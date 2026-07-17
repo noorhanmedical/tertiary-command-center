@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -305,37 +305,59 @@ export function PlexusIQBulkImportModal({
   onClinicalImport,
   pending,
   progress,
+  defaultFacility,
+  defaultScheduleDate,
 }: {
   open: boolean;
   onClose: () => void;
   // Legacy code-path: per-row POST loop (still used for the Start/End
   // label-block and legacy CSV formats so existing behaviour is preserved).
-  onImport: (rows: ParsedRow[]) => Promise<void>;
+  onImport: (rows: ParsedRow[], source: "paste" | "import") => Promise<void>;
   // New clinical-spreadsheet code-path: one bulk POST + optional
   // qualification-job kickoff. Supplied by /plexus-iq.tsx.
   onClinicalImport?: (
     rows: PlexusIqClinicalImportRow[],
     defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+    source: "paste" | "import",
   ) => Promise<void>;
   pending: boolean;
   progress: { current: number; total: number; uniqueBatches: number; uniqueFacilities: number } | null;
+  // Default routing sourced from the operating list's current selection.
+  // Per-row Clinic / Appointment Date columns still override these; they
+  // are fallbacks only and remain overridable in Step 1.
+  defaultFacility?: string;
+  defaultScheduleDate?: string;
 }) {
   const [step, setStep] = useState<"source" | "preview">("source");
-  const [defFacility, setDefFacility] = useState<string>("");
-  const [defDate, setDefDate] = useState<string>(todayIso());
+  const [defFacility, setDefFacility] = useState<string>(defaultFacility ?? "");
+  const [defDate, setDefDate] = useState<string>(defaultScheduleDate ?? todayIso());
   const [defType, setDefType] = useState<PatientType>("visit");
   const [text, setText] = useState("");
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [errors, setErrors] = useState<ParsedRowError[]>([]);
+  // Tracks whether the current source text was populated from a file
+  // upload (vs. a manual paste) so the page can record the batch's source
+  // for Batch History.
+  const [usedFile, setUsedFile] = useState(false);
+
+  // On open, seed the default facility/date from the operating list's
+  // current selection so an import lands in the list the user is viewing.
+  useEffect(() => {
+    if (open) {
+      setDefFacility(defaultFacility ?? "");
+      setDefDate(defaultScheduleDate ?? todayIso());
+    }
+  }, [open, defaultFacility, defaultScheduleDate]);
 
   function reset() {
     setStep("source");
-    setDefFacility("");
-    setDefDate(todayIso());
+    setDefFacility(defaultFacility ?? "");
+    setDefDate(defaultScheduleDate ?? todayIso());
     setDefType("visit");
     setText("");
     setFileNotice(null);
     setErrors([]);
+    setUsedFile(false);
   }
 
   async function handleFile(file: File) {
@@ -349,6 +371,7 @@ export function PlexusIQBulkImportModal({
     try {
       const content = await file.text();
       setText((prev) => (prev ? `${prev}\n${content}` : content));
+      setUsedFile(true);
     } catch {
       setFileNotice(`Could not read ${file.name}.`);
     }
@@ -522,17 +545,21 @@ export function PlexusIQBulkImportModal({
         setStep("source");
         return;
       }
-      await onClinicalImport(preview.clinicalRows, {
-        // Defaults are still passed so any row with a blank Clinic /
-        // Appointment Date cell can fall back. The clinical-import
-        // route applies them when row values are missing.
-        facility: defFacility || preview.clinicalRows[0].facility || "",
-        scheduleDate: defDate || preview.clinicalRows[0].scheduleDate || "",
-        patientType: defType,
-      });
+      await onClinicalImport(
+        preview.clinicalRows,
+        {
+          // Defaults are still passed so any row with a blank Clinic /
+          // Appointment Date cell can fall back. The clinical-import
+          // route applies them when row values are missing.
+          facility: defFacility || preview.clinicalRows[0].facility || "",
+          scheduleDate: defDate || preview.clinicalRows[0].scheduleDate || "",
+          patientType: defType,
+        },
+        usedFile ? "import" : "paste",
+      );
       return;
     }
-    await onImport(preview.rows);
+    await onImport(preview.rows, usedFile ? "import" : "paste");
   }
 
   return (

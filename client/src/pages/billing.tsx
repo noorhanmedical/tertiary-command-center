@@ -43,7 +43,6 @@ import {
   Timer,
   Download,
 } from "lucide-react";
-import { SiGooglesheets, SiGoogledrive } from "react-icons/si";
 import { PageHeader } from "@/components/PageHeader";
 import { CanonicalBillingPanel } from "@/components/billing/CanonicalBillingPanel";
 
@@ -484,14 +483,10 @@ function NotesModal({
   notes,
   title,
   onClose,
-  onExportToDrive,
-  exportingNoteIds,
 }: {
   notes: GeneratedNote[];
   title: string;
   onClose: () => void;
-  onExportToDrive?: (noteId: number) => void;
-  exportingNoteIds?: Set<number>;
 }) {
   const visible = notes.filter((n) => !n.sections.every((s) => s.heading.startsWith("__")));
 
@@ -554,22 +549,6 @@ function NotesModal({
                     <span className="text-xs font-semibold text-slate-700">{note.title}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {note.driveWebViewLink ? (
-                      <a href={note.driveWebViewLink} target="_blank" rel="noopener noreferrer"
-                        className="text-[10px] text-blue-600 hover:text-blue-800 px-2 py-0.5 rounded border border-blue-200 bg-blue-50 flex items-center gap-1"
-                        data-testid={`link-drive-billing-${note.id}`}>
-                        <ExternalLink className="w-3 h-3" />Drive
-                      </a>
-                    ) : onExportToDrive ? (
-                      <button
-                        className="text-[10px] text-blue-600 hover:text-blue-800 px-2 py-0.5 rounded border border-blue-200 bg-blue-50 flex items-center gap-1"
-                        onClick={() => onExportToDrive(note.id)}
-                        disabled={exportingNoteIds?.has(note.id)}
-                        data-testid={`button-save-drive-billing-${note.id}`}>
-                        {exportingNoteIds?.has(note.id) ? <RefreshCw className="w-3 h-3 animate-spin" /> : <SiGoogledrive className="w-3 h-3" />}
-                        Save to Drive
-                      </button>
-                    ) : null}
                     <button className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors" onClick={() => handleCopy(note)} title="Copy" data-testid={`button-copy-billing-doc-${note.id}`}>
                       <Copy className="w-3.5 h-3.5" />
                     </button>
@@ -750,12 +729,6 @@ export default function BillingPage() {
   const queryClient = useQueryClient();
   const [docModal, setDocModal] = useState<{ notes: GeneratedNote[]; title: string } | null>(null);
   const [showAddRow, setShowAddRow] = useState(false);
-  const [billingSyncedAt, setBillingSyncedAt] = useState<string | null>(null);
-  const [billingSheetUrl, setBillingSheetUrl] = useState<string | null>(null);
-  const [masterSheetUrl, setMasterSheetUrl] = useState<string | null>(null);
-  const [facilitySheetUrls, setFacilitySheetUrls] = useState<Record<string, string>>({});
-  const [exportingNoteIds, setExportingNoteIds] = useState<Set<number>>(new Set());
-
   const [facilityTab, setFacilityTab] = useState<string>("All");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterService, setFilterService] = useState("");
@@ -783,28 +756,6 @@ export default function BillingPage() {
   const outstandingTotal = aging ? parseFloat(aging.totals.totalBalance) : 0;
   const outstandingCount = aging?.totals.invoiceCount ?? 0;
 
-  const { data: googleStatus } = useQuery<{
-    sheets: {
-      connected: boolean;
-      lastSyncedBilling: string | null;
-      billingSpreadsheetUrl: string | null;
-      masterBillingSpreadsheetUrl: string | null;
-      billingDriveFolderUrl: string | null;
-      facilityBillingSpreadsheetUrls: Record<string, string>;
-    };
-    drive: { connected: boolean; email: string | null };
-  }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
-
-  useEffect(() => {
-    if (!googleStatus?.sheets) return;
-    setBillingSyncedAt(googleStatus.sheets.lastSyncedBilling ?? null);
-    const master = googleStatus.sheets.masterBillingSpreadsheetUrl ?? googleStatus.sheets.billingSpreadsheetUrl ?? null;
-    setBillingSheetUrl(master);
-    setMasterSheetUrl(googleStatus.sheets.masterBillingSpreadsheetUrl ?? null);
-    const facUrls = googleStatus.sheets.facilityBillingSpreadsheetUrls;
-    if (facUrls && typeof facUrls === "object") setFacilitySheetUrls(facUrls);
-  }, [googleStatus]);
-
   const updateMutation = useMutation({
     mutationFn: ({ id, updates }: { id: number; updates: Record<string, string | null> }) =>
       apiRequest("PATCH", `/api/billing-records/${id}`, updates),
@@ -822,60 +773,6 @@ export default function BillingPage() {
     mutationFn: (body: { service: string; patientName: string; dob?: string | null; mrn?: string | null; dateOfService: string | null; facility: string | null; clinician: string | null; insuranceInfo: string | null; batchId?: number | null }) => apiRequest("POST", "/api/billing-records", body),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] }); toast({ title: "Row added" }); },
     onError: (err: Error) => { toast({ title: "Failed to add row", description: err.message, variant: "destructive" }); },
-  });
-
-  const exportNoteMutation = useMutation({
-    mutationFn: async (noteId: number) => {
-      setExportingNoteIds((prev) => new Set(prev).add(noteId));
-      const res = await apiRequest("POST", "/api/google/drive/export-note", { noteId });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      setExportingNoteIds((prev) => { const s = new Set(prev); s.delete(data.note?.id); return s; });
-      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
-      toast({ title: "Saved to Google Drive" });
-    },
-    onError: (err: Error, noteId) => {
-      setExportingNoteIds((prev) => { const s = new Set(prev); s.delete(noteId); return s; });
-      toast({ title: "Drive export failed", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const syncBillingMutation = useMutation({
-    mutationFn: async () => { const res = await apiRequest("POST", "/api/google/sync/billing"); return res.json(); },
-    onSuccess: (data) => {
-      if (data.syncedAt) {
-        setBillingSyncedAt(data.syncedAt);
-        if (data.masterSpreadsheetUrl) {
-          setMasterSheetUrl(data.masterSpreadsheetUrl);
-          setBillingSheetUrl(data.masterSpreadsheetUrl);
-        } else if (data.spreadsheetUrl) {
-          setBillingSheetUrl(data.spreadsheetUrl);
-        }
-        if (data.facilitySpreadsheetUrls) setFacilitySheetUrls(data.facilitySpreadsheetUrls);
-        if (data.masterSyncError) {
-          toast({ title: "Synced (master tracker error)", description: `Facility sheets updated but master tracker failed: ${data.masterSyncError}`, variant: "destructive" });
-        } else {
-          toast({ title: "Synced to Google Sheets", description: `${data.recordCount} records pushed` });
-        }
-      } else {
-        toast({ title: "Sync queued" });
-      }
-    },
-    onError: (err: Error) => { toast({ title: "Sync failed", description: err.message, variant: "destructive" }); },
-  });
-
-  const importFromSheetMutation = useMutation({
-    mutationFn: async () => { const res = await apiRequest("POST", "/api/billing-records/import-from-sheet"); return res.json(); },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] });
-      if (data.total === 0) {
-        toast({ title: "Nothing to import", description: "No records found in connected sheets." });
-      } else {
-        toast({ title: "Import complete", description: `${data.created} created, ${data.updated} updated from Google Sheets.` });
-      }
-    },
-    onError: (err: Error) => { toast({ title: "Import failed", description: err.message, variant: "destructive" }); },
   });
 
   function handleSave(id: number, field: keyof BillingRecord, value: string | null, record: BillingRecord) {
@@ -1008,34 +905,6 @@ export default function BillingPage() {
             titleTestId="text-billing-title"
             actions={
               <div className="flex items-center gap-2 flex-wrap justify-end">
-            <Button size="sm" variant="outline" onClick={() => syncBillingMutation.mutate()} disabled={syncBillingMutation.isPending || importFromSheetMutation.isPending}
-              className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50 h-8 text-xs" data-testid="button-sync-billing-sheets">
-              {syncBillingMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <SiGooglesheets className="w-3.5 h-3.5" />}
-              Sync to Sheets
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => importFromSheetMutation.mutate()} disabled={importFromSheetMutation.isPending || syncBillingMutation.isPending}
-              className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50 h-8 text-xs" data-testid="button-import-from-sheet">
-              {importFromSheetMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-              Import from Sheet
-            </Button>
-            <div className="h-4 w-px bg-slate-200" />
-            {(() => {
-              const openUrl = masterSheetUrl ?? billingSheetUrl ?? (googleStatus?.sheets?.billingDriveFolderUrl ?? null);
-              if (!openUrl) return null;
-              return (
-                <a href={openUrl} target="_blank" rel="noopener noreferrer"
-                  className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
-                  title="Open Plexus Billing Tracker in Google Sheets"
-                  data-testid="link-active-billing-sheet">
-                  <SiGooglesheets className="w-3 h-3" />Open Billing Sheet
-                </a>
-              );
-            })()}
-            {billingSyncedAt && (
-              <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                Synced {new Date(billingSyncedAt).toLocaleTimeString()}
-              </span>
-            )}
             <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8 text-slate-600" onClick={() => setShowAddRow(true)} data-testid="button-add-billing-row">
               <Plus className="w-3.5 h-3.5" />Add Row
             </Button>
@@ -1123,7 +992,7 @@ export default function BillingPage() {
 
       <CanonicalBillingPanel />
 
-      {/* Spreadsheet */}
+      {/* Records table */}
       <div className="flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex items-center justify-center py-16 text-slate-400 text-sm">Loading...</div>
@@ -1320,8 +1189,7 @@ export default function BillingPage() {
 
       {/* Document modal */}
       {docModal && (
-        <NotesModal notes={docModal.notes} title={docModal.title} onClose={() => setDocModal(null)}
-          onExportToDrive={(noteId) => exportNoteMutation.mutate(noteId)} exportingNoteIds={exportingNoteIds} />
+        <NotesModal notes={docModal.notes} title={docModal.title} onClose={() => setDocModal(null)} />
       )}
 
       {/* Add Row modal */}

@@ -146,6 +146,10 @@ type Props = {
   priorAttempts?: number;
   defaultOutcome?: OutreachCallOutcome;
   onLogged?: () => void;
+  /** Optional — when provided, a "Push to Playground" action appears in the
+   *  sheet so the caller can send this patient into the detailed Playground
+   *  workspace. Outreach surfaces omit this and are unaffected. */
+  onPushToPlayground?: () => void;
 };
 
 function defaultCallbackIso(): string {
@@ -166,6 +170,7 @@ export function DispositionSheet({
   priorAttempts = 0,
   defaultOutcome,
   onLogged,
+  onPushToPlayground,
 }: Props) {
   const [outcome, setOutcome] = useState<OutreachCallOutcome | null>(defaultOutcome ?? null);
   const [notes, setNotes] = useState("");
@@ -404,7 +409,7 @@ export function DispositionSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-md overflow-y-auto"
+        className="z-[95] w-full sm:max-w-md overflow-y-auto"
         data-testid="disposition-sheet"
       >
         <SheetHeader>
@@ -550,6 +555,21 @@ export function DispositionSheet({
               data-testid="disposition-notes"
             />
           </div>
+
+          {onPushToPlayground && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                onPushToPlayground();
+                onOpenChange(false);
+              }}
+              className="w-full rounded-full border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              data-testid="disposition-push-to-playground"
+            >
+              Push to Playground
+            </Button>
+          )}
 
           <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
             <Button

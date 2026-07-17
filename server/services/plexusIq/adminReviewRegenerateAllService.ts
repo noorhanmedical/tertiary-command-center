@@ -76,10 +76,6 @@
 import type { PatientScreening } from "@shared/schema";
 import { storage } from "../../storage";
 import { invalidatePatientDatabase } from "../../routes/patientDatabase";
-import {
-  dedupeAssignedEvidence,
-  type AdminEvidenceChip,
-} from "@shared/plexus-iq/adminReviewEvidence";
 
 export type AdminReviewRegenerateAllFailure =
   | { kind: "invalid_id" }
@@ -114,24 +110,16 @@ export async function regenerateAdminReviewAll(
 
   const b = (body ?? {}) as Record<string, any>;
 
-  // Server-side dedupe per target. Same factor same target dedupes;
-  // cross-target reuse is preserved because dedupe is scoped per array.
   const assignedEvidenceByAncillary = {
-    brainwave: dedupeAssignedEvidence(
-      Array.isArray(b.assignedEvidenceByAncillary?.brainwave)
-        ? b.assignedEvidenceByAncillary.brainwave
-        : [],
-    ),
-    vitalwave: dedupeAssignedEvidence(
-      Array.isArray(b.assignedEvidenceByAncillary?.vitalwave)
-        ? b.assignedEvidenceByAncillary.vitalwave
-        : [],
-    ),
-    ultrasound: dedupeAssignedEvidence(
-      Array.isArray(b.assignedEvidenceByAncillary?.ultrasound)
-        ? b.assignedEvidenceByAncillary.ultrasound
-        : [],
-    ),
+    brainwave: Array.isArray(b.assignedEvidenceByAncillary?.brainwave)
+      ? b.assignedEvidenceByAncillary.brainwave
+      : [],
+    vitalwave: Array.isArray(b.assignedEvidenceByAncillary?.vitalwave)
+      ? b.assignedEvidenceByAncillary.vitalwave
+      : [],
+    ultrasound: Array.isArray(b.assignedEvidenceByAncillary?.ultrasound)
+      ? b.assignedEvidenceByAncillary.ultrasound
+      : [],
   };
   const ancillaryNotes = {
     brainwave:
@@ -232,13 +220,7 @@ export async function regenerateAdminReviewAll(
       medications: updatedMedications ?? null,
     } as typeof patient,
     qualifyingTests,
-    // Dedupe is payload-agnostic; assignedEvidenceByAncillary here
-    // uses the AdminEvidenceChip shape the downstream regen expects.
-    assignedEvidenceByAncillary: assignedEvidenceByAncillary as unknown as {
-      brainwave: AdminEvidenceChip[];
-      vitalwave: AdminEvidenceChip[];
-      ultrasound: AdminEvidenceChip[];
-    },
+    assignedEvidenceByAncillary,
     ancillaryNotes,
     adminNote,
     icdCodes,

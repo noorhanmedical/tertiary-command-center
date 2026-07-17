@@ -51,7 +51,6 @@
 import type { PatientScreening } from "@shared/schema";
 import { storage } from "../../storage";
 import { invalidatePatientDatabase } from "../../routes/patientDatabase";
-import { dedupeAssignedEvidence } from "@shared/plexus-iq/adminReviewEvidence";
 
 export type AdminReviewSupplementalRegenerateFailure =
   | { kind: "invalid_id" }
@@ -90,10 +89,9 @@ export async function regenerateAdminReviewSupplemental(
   const b = (body ?? {}) as Record<string, any>;
   const ancillaryId = String(b.ancillaryId ?? "");
   const mode = String(b.mode ?? "all");
-  // Server-side dedupe on the persisted assignedEvidence array.
-  const assignedEvidence = dedupeAssignedEvidence(
-    Array.isArray(b.assignedEvidence) ? b.assignedEvidence : [],
-  );
+  const assignedEvidence = Array.isArray(b.assignedEvidence)
+    ? b.assignedEvidence
+    : [];
   const ancillaryNote =
     typeof b.ancillaryNote === "string" ? b.ancillaryNote : "";
 

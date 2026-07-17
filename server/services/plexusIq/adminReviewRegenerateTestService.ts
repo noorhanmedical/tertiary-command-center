@@ -84,7 +84,6 @@
 import type { PatientScreening } from "@shared/schema";
 import { storage } from "../../storage";
 import { invalidatePatientDatabase } from "../../routes/patientDatabase";
-import { dedupeAssignedEvidence } from "@shared/plexus-iq/adminReviewEvidence";
 
 export type AdminReviewRegenerateTestFailure =
   | { kind: "invalid_id" }
@@ -150,11 +149,9 @@ export async function regenerateAdminReviewTest(
     };
   }
 
-  // Server-side dedupe (same key same test dedupes; cross-test reuse
-  // is preserved because dedupe is scoped to this single array).
-  const assignedEvidence = dedupeAssignedEvidence(
-    Array.isArray(b.assignedEvidence) ? b.assignedEvidence : [],
-  );
+  const assignedEvidence = Array.isArray(b.assignedEvidence)
+    ? b.assignedEvidence
+    : [];
   const ancillaryNote =
     typeof b.ancillaryNote === "string" ? b.ancillaryNote : "";
   const adminNote = typeof b.adminNote === "string" ? b.adminNote : "";

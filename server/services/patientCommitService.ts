@@ -7,7 +7,6 @@ import {
   type PatientScreening,
 } from "@shared/schema";
 import { patientExecutionCases, type PatientExecutionCase } from "@shared/schema/executionCase";
-import { resolveSchedulerForClinic } from "../../shared/platformSettings";
 import {
   createOrUpdateExecutionCaseFromScreening,
   appendPatientJourneyEvent,
@@ -18,7 +17,12 @@ import { createOrUpdateCooldownRecordsFromScreening } from "../repositories/cool
 
 export type CommitOutcome = {
   patient: PatientScreening;
+  // Name of the scheduler the patient was *actually* assigned to as part of
+  // this commit. null means the patient landed in the unassigned engagement
+  // queue (the common case when commit-time auto-assign is disabled).
   schedulerName: string | null;
+  // True only when this commit resulted in a genuine scheduler assignment.
+  autoAssigned: boolean;
 };
 
 export type CommitError =
@@ -40,6 +44,13 @@ function missingRequiredFields(p: PatientScreening): string[] {
   return missing;
 }
 
+// Resolve the name of the scheduler the patient is *actually* assigned to.
+// Only a genuine batch-level assignment (Smart Scheduler Assignment) counts —
+// we deliberately do NOT fall back to the facility→scheduler mapping, because
+// a facility merely *having* a default scheduler does not mean this patient was
+// routed to that person. Returning the facility default here is what made the
+// approval toast falsely claim "Routed to scheduler: X" when the patient really
+// landed in the unassigned engagement queue.
 async function resolveSchedulerName(p: PatientScreening): Promise<string | null> {
   const batch = await storage.getScreeningBatch(p.batchId);
 
@@ -49,8 +60,7 @@ async function resolveSchedulerName(p: PatientScreening): Promise<string | null>
     if (assigned?.name) return assigned.name;
   }
 
-  const facility = p.facility ?? batch?.facility ?? null;
-  return resolveSchedulerForClinic(facility)?.name ?? null;
+  return null;
 }
 
 /**
@@ -68,10 +78,12 @@ export async function commitPatient(
 
   if (patient.commitStatus !== "Draft") {
     // Already committed — return current state with scheduler so callers
-    // (e.g. analyze auto-commit) don't error and the UI can refresh.
+    // don't error and the UI can refresh. resolveSchedulerName only reports
+    // a genuine assignment (never the facility default).
+    const schedulerName = await resolveSchedulerName(patient);
     return {
       ok: true,
-      data: { patient, schedulerName: await resolveSchedulerName(patient) },
+      data: { patient, schedulerName, autoAssigned: schedulerName != null },
     };
   }
 
@@ -93,97 +105,130 @@ export async function commitPatient(
 
   if (!updated) return { ok: false, error: { code: "not_found" } };
 
-  // Wire execution case + global schedule spine — fire-and-forget so a failure never breaks the commit
-  void (async () => {
+  // Truthful routing signal for the caller (and the approval toast). Default
+  // to "unassigned engagement queue" and only upgrade to a named scheduler if
+  // the patient was genuinely assigned during this commit.
+  let assignedSchedulerName: string | null = null;
+  let autoAssigned = false;
+
+  try {
+    const { executionCase, created } = await createOrUpdateExecutionCaseFromScreening(updated, userId);
+
+    // Auto-pick a scheduler for the freshly committed case so it shows up in
+    // the right scheduler's queue without a manual reconcile. This is awaited
+    // (not fire-and-forget) so the caller can truthfully report whether the
+    // patient was actually assigned vs. left in the unassigned queue. The
+    // assignment itself is gated by the admin `scheduler_auto_assign_enabled`
+    // setting (off by default), in which case it is a no-op. Late import to
+    // avoid a circular reference (scheduler service imports from this file).
+    let autoAssignResult:
+      | Awaited<
+          ReturnType<
+            typeof import("./schedulerAutoAssign").autoAssignSchedulerForExecutionCase
+          >
+        >
+      | null = null;
     try {
-      const { executionCase, created } = await createOrUpdateExecutionCaseFromScreening(updated, userId);
-
-      // Fetch batch to get scheduleDate for appointment datetime parsing
-      const batch = await storage.getScreeningBatch(updated.batchId);
-      const batchScheduleDate = batch?.scheduleDate ?? null;
-
-      // Global schedule event — only when a usable appointment datetime exists
-      const scheduleResult = await createGlobalScheduleEventFromScreeningCommit(
-        updated,
-        executionCase.id,
-        batchScheduleDate,
-        { auto: options.auto, actorUserId: userId },
-      );
-
-      // Insurance eligibility review — always created/updated from commit
-      const eligibilityResult = await createOrUpdateInsuranceEligibilityReviewFromScreening(
-        updated,
-        executionCase.id,
-      );
-
-      // Cooldown records — one per qualifying service
-      const cooldownResults = await createOrUpdateCooldownRecordsFromScreening(
-        updated,
-        executionCase.id,
-      );
-
-      await appendPatientJourneyEvent({
-        patientName: updated.name,
-        patientDob: updated.dob ?? undefined,
-        patientScreeningId: updated.id,
-        executionCaseId: executionCase.id,
-        eventType: "screening_committed",
-        eventSource: options.auto ? "auto_commit" : "manual_commit",
-        actorUserId: userId ?? undefined,
-        summary: `Screening committed (${options.auto ? "auto" : "manual"}); execution case ${created ? "created" : "updated"}`,
-        metadata: {
-          commitStatus: "Ready",
-          auto: options.auto,
-          // Bucket routing signals — make engagement bucket assignment
-          // observable in the journey. patientType is the source signal
-          // deriveEngagementBucket reads to choose the bucket.
-          engagementBucket: executionCase.engagementBucket,
-          patientType: updated.patientType ?? null,
-          executionCaseSource: executionCase.source,
-          globalScheduleEventId: scheduleResult?.event.id ?? null,
-          globalScheduleCreated: scheduleResult?.created ?? null,
-          noScheduleEventReason: scheduleResult === null ? "missing_appointment_datetime" : null,
-          insuranceEligibilityReviewId: eligibilityResult.review.id,
-          insuranceEligibilityCreated: eligibilityResult.created,
-          eligibilityStatus: eligibilityResult.review.eligibilityStatus,
-          approvalStatus: eligibilityResult.review.approvalStatus,
-          priorityClass: eligibilityResult.review.priorityClass,
-          cooldownRecordIds: cooldownResults.map((r) => r.id),
-          cooldownRecordCount: cooldownResults.length,
-        },
+      const { autoAssignSchedulerForExecutionCase } = await import("./schedulerAutoAssign");
+      autoAssignResult = await autoAssignSchedulerForExecutionCase(executionCase.id, {
+        actorUserId: userId ?? null,
       });
-      await appendPatientJourneyEvent({
-        patientName: updated.name,
-        patientDob: updated.dob ?? undefined,
-        patientScreeningId: updated.id,
-        executionCaseId: executionCase.id,
-        eventType: created ? "execution_case_created" : "execution_case_updated",
-        eventSource: "screening_commit_hook",
-        actorUserId: userId ?? undefined,
-        summary: created
-          ? `Execution case created from screening commit`
-          : `Execution case updated from screening commit`,
-        metadata: { executionCaseId: executionCase.id },
-      });
-
-      // Auto-pick a scheduler for the freshly committed case so it shows up
-      // in the right scheduler's queue without a manual reconcile. Idempotent
-      // — no-op when the case is already assigned. Late import to avoid
-      // circular reference (scheduler service imports from this file).
-      try {
-        const { autoAssignSchedulerForExecutionCase } = await import("./schedulerAutoAssign");
-        await autoAssignSchedulerForExecutionCase(executionCase.id, { actorUserId: userId ?? null });
-      } catch (assignErr) {
-        console.error("[patientCommitService] scheduler auto-assign failed:", assignErr);
-      }
-    } catch (err) {
-      console.error("[patientCommitService] execution case spine failed:", err);
+    } catch (assignErr) {
+      console.error("[patientCommitService] scheduler auto-assign failed:", assignErr);
     }
-  })();
+
+    if (autoAssignResult?.applied) {
+      autoAssigned = true;
+      assignedSchedulerName = autoAssignResult.schedulerName ?? null;
+    } else {
+      // No case-level auto-assign happened this commit. Fall back to a genuine
+      // batch-level assignment (Smart Scheduler Assignment) if one exists —
+      // never the facility default mapping.
+      assignedSchedulerName = await resolveSchedulerName(updated);
+      autoAssigned = assignedSchedulerName != null;
+    }
+
+    // Remaining spine work — fire-and-forget so a failure never breaks the commit.
+    void (async () => {
+      try {
+        // Fetch batch to get scheduleDate for appointment datetime parsing
+        const batch = await storage.getScreeningBatch(updated.batchId);
+        const batchScheduleDate = batch?.scheduleDate ?? null;
+
+        // Global schedule event — only when a usable appointment datetime exists
+        const scheduleResult = await createGlobalScheduleEventFromScreeningCommit(
+          updated,
+          executionCase.id,
+          batchScheduleDate,
+          { auto: options.auto, actorUserId: userId },
+        );
+
+        // Insurance eligibility review — always created/updated from commit
+        const eligibilityResult = await createOrUpdateInsuranceEligibilityReviewFromScreening(
+          updated,
+          executionCase.id,
+        );
+
+        // Cooldown records — one per qualifying service
+        const cooldownResults = await createOrUpdateCooldownRecordsFromScreening(
+          updated,
+          executionCase.id,
+        );
+
+        await appendPatientJourneyEvent({
+          patientName: updated.name,
+          patientDob: updated.dob ?? undefined,
+          patientScreeningId: updated.id,
+          executionCaseId: executionCase.id,
+          eventType: "screening_committed",
+          eventSource: options.auto ? "auto_commit" : "manual_commit",
+          actorUserId: userId ?? undefined,
+          summary: `Screening committed (${options.auto ? "auto" : "manual"}); execution case ${created ? "created" : "updated"}`,
+          metadata: {
+            commitStatus: "Ready",
+            auto: options.auto,
+            // Bucket routing signals — make engagement bucket assignment
+            // observable in the journey. patientType is the source signal
+            // deriveEngagementBucket reads to choose the bucket.
+            engagementBucket: executionCase.engagementBucket,
+            patientType: updated.patientType ?? null,
+            executionCaseSource: executionCase.source,
+            globalScheduleEventId: scheduleResult?.event.id ?? null,
+            globalScheduleCreated: scheduleResult?.created ?? null,
+            noScheduleEventReason: scheduleResult === null ? "missing_appointment_datetime" : null,
+            insuranceEligibilityReviewId: eligibilityResult.review.id,
+            insuranceEligibilityCreated: eligibilityResult.created,
+            eligibilityStatus: eligibilityResult.review.eligibilityStatus,
+            approvalStatus: eligibilityResult.review.approvalStatus,
+            priorityClass: eligibilityResult.review.priorityClass,
+            cooldownRecordIds: cooldownResults.map((r) => r.id),
+            cooldownRecordCount: cooldownResults.length,
+          },
+        });
+        await appendPatientJourneyEvent({
+          patientName: updated.name,
+          patientDob: updated.dob ?? undefined,
+          patientScreeningId: updated.id,
+          executionCaseId: executionCase.id,
+          eventType: created ? "execution_case_created" : "execution_case_updated",
+          eventSource: "screening_commit_hook",
+          actorUserId: userId ?? undefined,
+          summary: created
+            ? `Execution case created from screening commit`
+            : `Execution case updated from screening commit`,
+          metadata: { executionCaseId: executionCase.id },
+        });
+      } catch (err) {
+        console.error("[patientCommitService] commit spine (journey/schedule) failed:", err);
+      }
+    })();
+  } catch (err) {
+    console.error("[patientCommitService] execution case spine failed:", err);
+  }
 
   return {
     ok: true,
-    data: { patient: updated, schedulerName: await resolveSchedulerName(updated) },
+    data: { patient: updated, schedulerName: assignedSchedulerName, autoAssigned },
   };
 }
 

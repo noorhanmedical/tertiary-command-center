@@ -8,13 +8,9 @@ import { invalidatePatientDatabase } from "./patientDatabase";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
-type BackgroundSyncPatients = () => void | Promise<void>;
-
 export function registerTestHistoryRoutes(
   app: Express,
-  deps: { backgroundSyncPatients: BackgroundSyncPatients }
 ) {
-  const { backgroundSyncPatients } = deps;
 
   app.get("/api/test-history", async (_req, res) => {
     try {
@@ -35,7 +31,6 @@ export function registerTestHistoryRoutes(
       const record = await storage.createTestHistory(parsed.data);
       invalidatePatientDatabase();
       res.json(record);
-      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -82,7 +77,6 @@ export function registerTestHistoryRoutes(
       const created = await storage.createTestHistoryBulk(validRecords);
       invalidatePatientDatabase();
       res.json(created);
-      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -94,7 +88,6 @@ export function registerTestHistoryRoutes(
       await storage.deleteTestHistory(id);
       invalidatePatientDatabase();
       res.json({ success: true });
-      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -105,7 +98,6 @@ export function registerTestHistoryRoutes(
       await storage.deleteAllTestHistory();
       invalidatePatientDatabase();
       res.json({ success: true });
-      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

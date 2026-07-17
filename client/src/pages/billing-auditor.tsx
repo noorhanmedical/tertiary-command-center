@@ -12,7 +12,7 @@ import {
   type WorklistQueueId, type WorklistSummary, type WorklistItem,
 } from "@/lib/billingAuditorApi";
 
-export default function BillingAuditorPage() {
+export default function BillingAuditorPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [facility, setFacility] = useState("");
   const [queueId, setQueueId] = useState<WorklistQueueId>("ready_to_invoice");
 
@@ -30,7 +30,7 @@ export default function BillingAuditorPage() {
     <div className="flex h-full w-full flex-col gap-3 overflow-y-auto p-6" data-testid="billing-auditor-page">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Billing auditor</h1>
+          {!embedded && <h1 className="text-xl font-semibold text-slate-900">Billing auditor</h1>}
           <p className="text-xs text-slate-500">
             Operational queues across readiness, batches, drafts,
             delivery, payments, and denials. Read-only aggregation —

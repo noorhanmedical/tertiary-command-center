@@ -17,6 +17,9 @@ type ProcedureCompleteButtonProps = {
   size?: "sm" | "default" | "lg";
   variant?: "default" | "outline" | "ghost" | "secondary";
   className?: string;
+  /** Fired after a successful completion. Lets a parent run an exit animation
+   *  (e.g. slide the completed row up) before refetching the call list. */
+  onCompleted?: (data: ProcedureCompleteResponse) => void;
 };
 
 export function ProcedureCompleteButton({
@@ -28,6 +31,7 @@ export function ProcedureCompleteButton({
   size = "sm",
   variant = "outline",
   className,
+  onCompleted,
 }: ProcedureCompleteButtonProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -49,6 +53,7 @@ export function ProcedureCompleteButton({
       queryClient.invalidateQueries({ queryKey: ["/api/patient-packet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/patient-packet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/technician-liaison/patient-packet"] });
+      onCompleted?.(data);
     },
     onError: (err) => {
       toast({

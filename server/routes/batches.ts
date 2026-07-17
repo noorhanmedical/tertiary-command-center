@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import multer from "multer";
 import * as XLSX from "xlsx";
+import { z } from "zod";
 import { storage } from "../storage";
 import { db } from "../db";
 import { patientScreenings, screeningBatches } from "@shared/schema";
@@ -13,6 +14,18 @@ import {
   extractDateFromPrevTests,
   getQualificationMode,
 } from "./helpers";
+
+// Plexus IQ runtime hardening — Routes step 4: placement on Add Patient.
+//
+// Wire shape matches the Clinical Import surface in
+// `plexusIqClinicalImport.ts` (camelCase `newRun`). Defaults are NOT
+// applied at the schema level — the handler defaults to `newRun` to
+// preserve today's "create a fresh batch each time" behavior. The UI
+// placement dialog will start sending an explicit mode in a later block.
+const batchPlacementSchema = z.object({
+  mode: z.enum(["append", "newRun"]),
+  targetBatchId: z.number().int().positive().optional(),
+});
 import { getAncillaryCategory } from "@shared/ancillaryCategory";
 import {
   parseWithAI,
@@ -30,7 +43,6 @@ import {
   findSchedulerForBatch,
   createAssignmentTask,
 } from "../services/schedulerAssignmentService";
-import { commitPatient } from "../services/patientCommitService";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -40,8 +52,85 @@ export function registerBatchRoutes(app: Express) {
       const parsed = createBatchSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
 
+      // Plexus IQ runtime hardening — Routes step 4.
+      // Placement is optional on the wire. When absent, default to
+      // `newRun` so today's callers (every UI today) see no behavior
+      // change. The placement is parsed in isolation so an unknown
+      // shape on the existing payload doesn't trip createBatchSchema.
+      const placementParsed = batchPlacementSchema.safeParse(req.body?.placement);
+      if (req.body?.placement !== undefined && !placementParsed.success) {
+        return res.status(400).json({
+          error: placementParsed.error.errors[0]?.message || "Invalid placement",
+        });
+      }
+      const placement: z.infer<typeof batchPlacementSchema> = placementParsed.success
+        ? placementParsed.data
+        : { mode: "newRun" };
+
+      // append: reuse an existing batch. No new screening_batches row.
+      // No scheduler reassignment — the existing batch keeps whatever
+      // scheduler it was already assigned to.
+      if (placement.mode === "append") {
+        if (placement.targetBatchId == null) {
+          return res.status(400).json({
+            error: "placement.targetBatchId is required when placement.mode is 'append'",
+          });
+        }
+        const target = await storage.getScreeningBatch(placement.targetBatchId);
+        if (!target) {
+          return res.status(400).json({
+            error: `targetBatchId ${placement.targetBatchId} not found`,
+          });
+        }
+        if (target.facility !== parsed.data.facility) {
+          return res.status(400).json({
+            error: `targetBatchId ${placement.targetBatchId} belongs to facility "${target.facility ?? ""}", expected "${parsed.data.facility}"`,
+          });
+        }
+        const expectedDate = parsed.data.scheduleDate ?? null;
+        if ((target.scheduleDate ?? null) !== expectedDate) {
+          return res.status(400).json({
+            error: `targetBatchId ${placement.targetBatchId} has scheduleDate "${target.scheduleDate ?? ""}", expected "${expectedDate ?? ""}"`,
+          });
+        }
+        void logAudit(req, "append", "batch", target.id, {
+          name: target.name,
+          facility: target.facility,
+          via: "placement.append",
+        });
+        return res.json({
+          ...target,
+          // Surface that this was an append, not a create, so the
+          // client UI can distinguish ("added to existing run") from
+          // a fresh run. Existing fields stay where callers expect.
+          placement: { mode: "append", targetBatchId: target.id },
+          created: false,
+          requiresManualAssignment: false,
+        });
+      }
+
+      // newRun: create a fresh batch. If siblings already exist for
+      // the same facility/scheduleDate AND the caller did not pass an
+      // explicit name, append `(Run N)` so the new run is
+      // distinguishable in lists. Today's callers don't pass a name
+      // either, so this only kicks in when there's already a sibling.
+      let name = parsed.data.name ?? "";
+      if (!name) {
+        const existing = await storage.getAllScreeningBatches();
+        const siblings = existing.filter(
+          (b) =>
+            b.facility === parsed.data.facility &&
+            (b.scheduleDate ?? null) === (parsed.data.scheduleDate ?? null),
+        );
+        if (siblings.length > 0 && parsed.data.scheduleDate) {
+          name = `${parsed.data.facility} - ${parsed.data.scheduleDate} (Run ${siblings.length + 1})`;
+        } else {
+          name = `Batch - ${new Date().toLocaleDateString()}`;
+        }
+      }
+
       const batch = await storage.createScreeningBatch({
-        name: parsed.data.name || `Batch - ${new Date().toLocaleDateString()}`,
+        name,
         patientCount: 0,
         status: "draft",
         facility: parsed.data.facility || null,
@@ -142,8 +231,13 @@ export function registerBatchRoutes(app: Express) {
         name, time, age, gender, dob, phoneNumber,
         insurance, diagnoses, history, medications,
         previousTests, previousTestsDate, noPreviousTests,
-        patientType, notes,
+        patientType, notes, qualifyingTests, reasoning,
       } = parsed.data;
+
+      // When the caller supplies pre-computed qualification (e.g. the portal
+      // quick-qualify "Add to schedule" flow), persist those tests + reasoning
+      // and land the patient as already-completed so the result isn't wiped.
+      const hasPrecomputedQualification = Array.isArray(qualifyingTests);
 
       const patient = await storage.createPatientScreening({
         batchId,
@@ -162,9 +256,9 @@ export function registerBatchRoutes(app: Express) {
         previousTestsDate: previousTestsDate || extractDateFromPrevTests(previousTests) || null,
         noPreviousTests: noPreviousTests ?? false,
         notes: notes || null,
-        qualifyingTests: [],
-        reasoning: {},
-        status: "draft",
+        qualifyingTests: hasPrecomputedQualification ? qualifyingTests : [],
+        reasoning: (reasoning as Record<string, unknown>) || {},
+        status: hasPrecomputedQualification ? "completed" : "draft",
         appointmentStatus: "pending",
         patientType: patientType || (time ? "visit" : "outreach"),
       });
@@ -378,14 +472,9 @@ export function registerBatchRoutes(app: Express) {
                 status: "completed",
               });
             }
-            // Auto-commit on successful batch analysis: any Draft patients
-            // whose AI analysis just finished move to Ready so the assigned
-            // scheduler can immediately see and call them.
-            try {
-              await commitPatient(patient.id, req.session.userId ?? null, { auto: true });
-            } catch (commitErr) {
-              console.error(`Auto-commit after batch analyze failed for patient ${patient.id}:`, commitErr);
-            }
+            // Patients remain in Draft after AI analysis. They only move to
+            // Ready (and into the engagement queue) when an admin explicitly
+            // approves them via the Admin Review flow.
           } catch (err: any) {
             console.error(`Failed to analyze patient ${patient.name}:`, err.message);
             await storage.updatePatientScreening(patient.id, {

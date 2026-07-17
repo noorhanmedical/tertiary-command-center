@@ -5,25 +5,23 @@ import { ancillaryDocumentTemplates } from "@shared/schema/ancillaryDocumentTemp
 import { listCaseDocumentReadinessForCases } from "../../repositories/documentReadiness.repo";
 import { getExecutionCaseById, getExecutionCaseByScreeningId } from "../../repositories/executionCase.repo";
 import { getAncillaryCategory } from "@shared/ancillaryCategory";
-import {
-  READINESS_DOC_INFORMED_CONSENT,
-  READINESS_DOC_SCREENING_FORM,
-  READINESS_DOC_BRAINWAVE_PDF,
-  READINESS_DOC_REPORT,
-  isComplete as isReadinessComplete,
-  requirementsForService,
-  type ReadinessItemState,
-} from "./ancillaryReadinessRules";
 
-// Re-export the pure surface so consumers keep one import path.
-export {
-  READINESS_DOC_INFORMED_CONSENT,
-  READINESS_DOC_SCREENING_FORM,
-  READINESS_DOC_BRAINWAVE_PDF,
-  READINESS_DOC_REPORT,
-  requirementsForService,
-  type ReadinessItemState,
-} from "./ancillaryReadinessRules";
+// Canonical readiness document-type keys persisted in case_document_readiness.
+export const READINESS_DOC_INFORMED_CONSENT = "informed_consent";
+export const READINESS_DOC_SCREENING_FORM = "screening_form";
+export const READINESS_DOC_BRAINWAVE_PDF = "brainwave_pdf";
+export const READINESS_DOC_REPORT = "report";
+
+// Any of these documentStatus values count as "the item is done".
+const COMPLETE_STATUSES = new Set([
+  "complete",
+  "completed",
+  "uploaded",
+  "approved",
+  "generated",
+]);
+
+export type ReadinessItemState = "complete" | "missing" | "not_required";
 
 export type AncillaryReadinessSummary = {
   informedConsent: ReadinessItemState;
@@ -44,10 +42,9 @@ type AncillaryRowLike = {
   serviceType?: string | null;
 };
 
-// isComplete + COMPLETE_STATUSES + requirementsForService moved to
-// ./ancillaryReadinessRules.ts (pure, no DB). Local alias below so the
-// existing call sites in this file keep reading naturally.
-const isComplete = isReadinessComplete;
+function isComplete(status: string | null | undefined): boolean {
+  return status != null && COMPLETE_STATUSES.has(status.toLowerCase());
+}
 
 /** Latest non-deleted, non-superseded informed-consent library document id. */
 async function resolveInformedConsentDocId(): Promise<number | null> {
@@ -91,8 +88,24 @@ async function resolveScreeningFormDocByCategory(): Promise<Map<string, number>>
   return map;
 }
 
-// requirementsForService moved to ./ancillaryReadinessRules.ts (pure, no DB).
-// Re-exported at the top of this file so downstream imports keep working.
+/** Per-service requirement flags: which of the three readiness items apply. */
+export function requirementsForService(serviceType: string | null | undefined): {
+  informedConsent: boolean;
+  screeningForm: boolean;
+  brainwavePdf: boolean;
+  category: ReturnType<typeof getAncillaryCategory>;
+} {
+  const category = getAncillaryCategory(serviceType ?? "");
+  return {
+    // Informed consent is required for every ancillary patient.
+    informedConsent: true,
+    // Screening form is service-specific (BrainWave / VitalWave).
+    screeningForm: category === "brainwave" || category === "vitalwave",
+    // BrainWave Result PDF only applies to BrainWave.
+    brainwavePdf: category === "brainwave",
+    category,
+  };
+}
 
 /**
  * Build a readiness summary for each ancillary appointment row. Resolves

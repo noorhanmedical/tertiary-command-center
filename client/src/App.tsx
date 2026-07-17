@@ -7,6 +7,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
+import HomePreview from "@/pages/home-preview";
+import MissionControlPage from "@/pages/mission-control";
+import ImagingCentralPage from "@/pages/imaging-central";
+import ClinicAnalyticsPage from "@/pages/clinic-analytics";
+import ClinicOnboardingPage from "@/pages/clinic-onboarding";
 import SchedulePage from "@/pages/SchedulePage";
 import SharedSchedule from "@/pages/shared-schedule";
 import PatientDatabasePage from "@/pages/patient-database";
@@ -19,27 +24,17 @@ import OutreachPage from "@/pages/outreach";
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 import TechnicianPortalPage from "@/pages/technician-portal";
 import LiaisonPortalPage from "@/pages/liaison-portal";
-import AdminOpsPage from "@/pages/admin-ops";
-import AdminPage from "@/pages/admin";
-import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
-import AdminUsersPage from "@/pages/admin-users";
-import AdminSettingsCenterPage from "@/pages/admin-settings-center";
-import BillingSettingsPage from "@/pages/billing-settings";
+import PhysicianPortalPage from "@/pages/physician-portal";
+import AdminSettingsPage from "@/pages/admin-settings";
 import BillingReadinessPage from "@/pages/billing-readiness";
 import InvoiceBatchesPage from "@/pages/invoice-batches";
 import InvoiceReviewPage from "@/pages/invoice-review";
 import InvoiceDeliveryPage from "@/pages/invoice-delivery";
-import RemittanceAuditPage from "@/pages/remittance-audit";
-import BillingAuditorPage from "@/pages/billing-auditor";
 import BillingReportsPage from "@/pages/billing-reports";
-import AuditLogPage from "@/pages/audit-log";
-import AdminAnalysisJobsPage from "@/pages/admin-analysis-jobs";
-import AdminOutboxPage from "@/pages/admin-outbox";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
-import SettingsPage from "@/pages/settings";
 import TeamOpsPage from "@/pages/team-ops";
 import PlexusTasksPage from "@/pages/plexus-tasks";
-import DrivePage from "@/pages/drive";
+import PlexusBankPage from "@/pages/plexus-bank";
 import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
@@ -47,12 +42,12 @@ import { TopBanner } from "@/components/TopBanner";
 import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
-import CallListAuditPage from "@/pages/call-list-audit";
-import PatientDirectoryLiveRoute from "@/pages/patient-directory-live";
-import PhysicianPortalPage from "@/pages/physician-portal";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
+import ClinicalIntelligencePage from "@/pages/clinical-intelligence";
+// Temporary design-prototype route — mock data only, not production.
+import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
@@ -110,17 +105,55 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                     <Home />
                   </SidebarProvider>
                 </Route>
+                <Route path="/home-preview">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <HomePreview />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/mission-control">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <MissionControlPage />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/imaging-central">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ImagingCentralPage />
+                  </SidebarProvider>
+                </Route>
+                {/* Compatibility redirects: the imaging execution module was
+                    renamed from Ultrasound/Technician Central to Imaging Central.
+                    Old deep links keep working. */}
+                <Route path="/ultrasound-central">
+                  <Redirect to="/imaging-central" />
+                </Route>
+                <Route path="/technician-central">
+                  <Redirect to="/imaging-central" />
+                </Route>
+                <Route path="/clinic-analytics">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicAnalyticsPage />
+                  </SidebarProvider>
+                </Route>
+                {/* /analytics is preserved and renders Clinic Analytics. */}
+                <Route path="/analytics">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicAnalyticsPage />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/clinic-onboarding">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicOnboardingPage />
+                  </SidebarProvider>
+                </Route>
                 <Route path="/schedule" component={SchedulePage} />
-                {/* Patient EHR — parallel route.
-                    Legacy /patient-directory continues to serve
-                    PatientDatabasePage so the roster remains the source
-                    of truth. /patient-directory/live mounts the new EMR
-                    chart surface so clinicians and admins can evaluate
-                    parity before any cutover. */}
+                {/* Phase 1 Slice 1.5: /patient-directory/live consolidated
+                    back into the canonical /patient-directory route.
+                    The redirect (instead of 404) preserves existing
+                    bookmarks. PatientDirectoryLivePage components
+                    remain in client/src/components/patient-directory/
+                    for reuse inside the canonical surface. */}
                 <Route path="/patient-directory/live">
-                  <RoleGuard user={user} roles={["admin", "clinician"]}>
-                    <PatientDirectoryLiveRoute />
-                  </RoleGuard>
+                  <Redirect to="/patient-directory" />
                 </Route>
                 <Route path="/patient-directory" component={PatientDatabasePage} />
                 <Route path="/patient-database">
@@ -131,9 +164,6 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/ancillary-documents" />
                 </Route>
                 <Route path="/billing" component={BillingPage} />
-                <Route path="/physician-portal">
-                  <RoleGuard user={user} roles={["admin", "clinician"]}><PhysicianPortalPage /></RoleGuard>
-                </Route>
                 <Route path="/invoices">
                   <RoleGuard user={user} roles={["admin", "biller"]}><InvoicesPage /></RoleGuard>
                 </Route>
@@ -150,6 +180,12 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 <Route path="/technician-portal" component={TechnicianPortalPage} />
                 <Route path="/liaison-technician-portal" component={LiaisonPortalPage} />
+                <Route path="/clinician-portal">
+                  <RoleGuard user={user} roles={["admin", "clinician"]}><PhysicianPortalPage /></RoleGuard>
+                </Route>
+                <Route path="/physician-portal">
+                  <Redirect to="/clinician-portal" />
+                </Route>
                 <Route path="/liaison-portal">
                   <Redirect to="/liaison-technician-portal" />
                 </Route>
@@ -178,6 +214,17 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
             <PlexusIQPage />
           </SidebarProvider>
         </Route>
+        {/* Plexus IQ knowledge tile — Clinical Intelligence & Governance
+            (localStorage-backed prototype). */}
+        <Route path="/clinical-intelligence">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <ClinicalIntelligencePage />
+          </SidebarProvider>
+        </Route>
+        {/* Temporary design-prototype route — mock data only. */}
+        <Route path="/plexus-iq-prototype">
+          <PlexusIqPrototypePage />
+        </Route>
         <Route path="/team-member-portals">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <TeamMemberPortalsPage />
@@ -194,37 +241,34 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
           </SidebarProvider>
         </Route>
         <Route path="/engagement-center">
-          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-            <EngagementCenterPage />
-          </SidebarProvider>
-        </Route>
-        <Route path="/admin/call-list-audit">
-          <AdminGuard user={user}>
-            <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-              <CallListAuditPage />
-            </SidebarProvider>
-          </AdminGuard>
+          <EngagementCenterPage />
         </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
                   <Redirect to="/plexus-tasks" />
                 </Route>
                 <Route path="/plexus-tasks" component={PlexusTasksPage} />
-                <Route path="/drive" component={DrivePage} />
+                <Route path="/plexus-bank">
+                  <AdminGuard user={user}><PlexusBankPage /></AdminGuard>
+                </Route>
                 <Route path="/document-library">
                   <AdminGuard user={user}><DocumentLibraryPage /></AdminGuard>
                 </Route>
+                {/* Task #530: unified admin settings hub. */}
+                <Route path="/admin/settings">
+                  <AdminGuard user={user}><AdminSettingsPage /></AdminGuard>
+                </Route>
                 <Route path="/admin">
-                  <AdminGuard user={user}><AdminPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=system" />
                 </Route>
                 <Route path="/admin/stovetop-heat-settings">
-                  <AdminGuard user={user}><StovetopHeatSettingsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=facility" />
                 </Route>
                 <Route path="/admin/settings-center">
-                  <AdminGuard user={user}><AdminSettingsCenterPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=system" />
                 </Route>
                 <Route path="/admin/billing-settings">
-                  <AdminGuard user={user}><BillingSettingsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=billing" />
                 </Route>
                 <Route path="/billing/readiness">
                   <AdminGuard user={user}><BillingReadinessPage /></AdminGuard>
@@ -239,35 +283,38 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <AdminGuard user={user}><InvoiceDeliveryPage /></AdminGuard>
                 </Route>
                 <Route path="/billing/remittance">
-                  <AdminGuard user={user}><RemittanceAuditPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=remittance" />
                 </Route>
                 <Route path="/billing/auditor">
-                  <AdminGuard user={user}><BillingAuditorPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=billing-auditor" />
                 </Route>
                 <Route path="/billing/reports">
                   <AdminGuard user={user}><BillingReportsPage /></AdminGuard>
                 </Route>
                 <Route path="/admin/users">
-                  <AdminGuard user={user}><AdminUsersPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=team" />
                 </Route>
                 <Route path="/audit-log">
-                  <AdminGuard user={user}><AuditLogPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=audit" />
                 </Route>
                 <Route path="/admin/analysis-jobs">
-                  <AdminGuard user={user}><AdminAnalysisJobsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=analysis-jobs" />
                 </Route>
                 <Route path="/admin/outbox">
-                  <AdminGuard user={user}><AdminOutboxPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=outbox" />
                 </Route>
                 <Route path="/admin-ops">
-                  <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=system" />
+                </Route>
+                <Route path="/call-list-audit">
+                  <Redirect to="/admin/settings?tab=logs&log=call-list-audit" />
                 </Route>
                 <Route path="/dashboard" component={ScheduleDashboardPage} />
                 <Route path="/schedule-dashboard">
                   <Redirect to="/dashboard" />
                 </Route>
                 <Route path="/settings">
-                  <AdminGuard user={user}><SettingsPage /></AdminGuard>
+                  <Redirect to="/admin/settings#team" />
                 </Route>
                 <Route component={NotFound} />
               </Switch>
@@ -281,7 +328,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
 }
 
 function AppShell() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: user, isLoading, refetch } = useQuery<AuthUser>({

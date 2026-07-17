@@ -30,6 +30,8 @@ import { useEffect, useMemo, useState } from "react";
   import { RailIcon } from "@/components/outreach/RailIcon";
   import { CurrentCallCard } from "@/components/outreach/CurrentCallCard";
   import { FloatingMetricsTile } from "@/components/outreach/FloatingMetricsTile";
+  import { DailyTargetsTile } from "@/components/outreach/DailyTargetsTile";
+  import { useEngagementCallSettings } from "@/hooks/api/engagementCallSettings";
   import { MissionControlBar } from "@/components/outreach/MissionControlBar";
   import { AiBar } from "@/components/outreach/AiBar";
   import { TriClinicCalendar } from "@/components/outreach/TriClinicCalendar";
@@ -121,6 +123,7 @@ export default function OutreachSchedulerPortalPage() {
       latestCallByPatient,
       sortedCallList,
       callbacksDue,
+      schedulerMappingMissing,
     } = useOutreachData(schedulerId);
 
   // ── Canonical execution cases (per-facility) — surfaces patients that
@@ -319,6 +322,29 @@ export default function OutreachSchedulerPortalPage() {
   ).length;
   const scheduledFromCalls = todayCalls.filter((c) => c.outcome === "scheduled").length;
   const conversionPct = callsMade === 0 ? 0 : Math.round((scheduledFromCalls / callsMade) * 100);
+
+  // Per-member daily call targets, surfaced from the engagement Call Settings
+  // derived source of truth (members[].derived). We match the viewed card to a
+  // roster member by name + facility (the same identity the server keys on) and
+  // pass the server-derived targets straight through — never recomputed here.
+  const { data: callSettings } = useEngagementCallSettings();
+  const myTargets = useMemo(() => {
+    if (!card || !callSettings?.members) return null;
+    const norm = (s: string) => s.trim().toLowerCase();
+    const cardName = norm(card.name);
+    const cardFacility = norm(card.facility);
+    const member = callSettings.members.find(
+      (m) =>
+        norm(m.name) === cardName && norm(m.facility) === cardFacility,
+    );
+    if (!member) return null;
+    return {
+      completedCallKpi: member.completedCallKpi,
+      scheduledKpi: member.scheduledKpi,
+      visitTarget: member.visitTarget,
+      outreachTarget: member.outreachTarget,
+    };
+  }, [card, callSettings]);
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -616,7 +642,7 @@ export default function OutreachSchedulerPortalPage() {
           {/* ─── CENTER PANEL: Full-bleed playfield with tabs + floating AI bar ─── */}
           <div className="min-w-0 flex flex-col gap-2 xl:min-h-0 relative">
             {/* Sticky top-center metrics pill — floats above the panel */}
-            <div className="sticky top-2 z-20 flex justify-center">
+            <div className="sticky top-2 z-20 flex flex-wrap justify-center gap-2">
               <FloatingMetricsTile
                 callsMade={callsMade}
                 reachedCount={reachedCount}
@@ -624,6 +650,16 @@ export default function OutreachSchedulerPortalPage() {
                 conversionPct={conversionPct}
                 callbacksDue={callbacksDue}
               />
+              {myTargets && (
+                <DailyTargetsTile
+                  completedCallKpi={myTargets.completedCallKpi}
+                  scheduledKpi={myTargets.scheduledKpi}
+                  visitTarget={myTargets.visitTarget}
+                  outreachTarget={myTargets.outreachTarget}
+                  callsDone={callsMade}
+                  scheduledDone={scheduledFromCalls}
+                />
+              )}
             </div>
 
             {/* ── Playfield tabs strip ── */}
@@ -885,6 +921,16 @@ export default function OutreachSchedulerPortalPage() {
                       );
                     })}
                   </ul>
+                </div>
+              )}
+              {schedulerMappingMissing && (
+                <div
+                  className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+                  data-testid="banner-missing-scheduler-mapping"
+                >
+                  <span className="font-semibold">Account not linked to a scheduler.</span>{" "}
+                  Engagement-assigned patients won't appear here until an admin links
+                  your login to a scheduler in the Call List Audit.
                 </div>
               )}
               <CallListPanel

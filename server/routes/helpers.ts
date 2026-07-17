@@ -136,6 +136,8 @@ export const addPatientSchema = z.object({
   noPreviousTests: z.boolean().optional(),
   patientType: z.string().optional(),
   notes: z.string().optional(),
+  qualifyingTests: z.array(z.string()).optional(),
+  reasoning: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const updatePatientSchema = z.object({
@@ -147,6 +149,7 @@ export const updatePatientSchema = z.object({
   phoneNumber: z.string().nullable().optional(),
   insurance: z.string().nullable().optional(),
   diagnoses: z.string().nullable().optional(),
+  reasoning: z.record(z.string(), z.unknown()).nullable().optional(),
   history: z.string().nullable().optional(),
   medications: z.string().nullable().optional(),
   previousTests: z.string().nullable().optional(),
@@ -157,12 +160,6 @@ export const updatePatientSchema = z.object({
   selectedCompletedTests: z.array(z.string()).optional(),
   appointmentStatus: z.string().nullable().optional(),
   patientType: z.string().nullable().optional(),
-  // Admin Review persistence — the dialog PATCHes reasoning back on
-  // every attach/detach so `adminReview:*` keys survive across close/
-  // reopen. Shape is a free-form jsonb blob managed by the client;
-  // server-side dedupe of assignedEvidence lives in the admin-review
-  // services, not here.
-  reasoning: z.record(z.any()).optional(),
 });
 
 export const importTextSchema = z.object({

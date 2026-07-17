@@ -163,7 +163,7 @@ export function PatientAuditTrailModal({
             className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[12px] text-slate-600"
             data-testid="patient-audit-trail-endpoint-unavailable"
           >
-            The Patient Directory audit endpoint is not yet wired. The modal is
+            The Patient EHR audit endpoint is not yet wired. The modal is
             showing only the events the calling surface had on hand
             (duplicate-warning context). Once the endpoint lands, the full
             history will appear here.

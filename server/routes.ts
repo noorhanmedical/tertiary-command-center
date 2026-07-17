@@ -5,7 +5,6 @@ import { db, pool } from "./db";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
-import { registerGoogleRoutes } from "./routes/google";
 import { registerPlexusTasksRoutes } from "./routes/plexusTasks";
 import { registerBatchRoutes } from "./routes/batches";
 import { registerPatientRoutes } from "./routes/patients";
@@ -15,7 +14,6 @@ import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
 import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
 import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
 import { registerEngagementTeamMetricsRoutes } from "./routes/engagementTeamMetrics";
-import { registerCallListAuditRoutes } from "./routes/callListAudit";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
@@ -30,17 +28,27 @@ import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
 import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
-import { registerPortalCaseReadinessRoutes } from "./routes/portalCaseReadiness";
-import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
 import { registerPortalRoutes } from "./routes/portal";
+// Priority 4 backend routes — deferred pending product decision.
+// UI is preserved via local/mock/disabled state on the client side.
+//   patient messaging / vendor SMS (Twilio)
+//   portal assistant (AI chat scope)
+//   portal widgets / prefs (persistence layer)
+// import { registerPatientMessagesRoutes } from "./routes/patientMessages";
+// import { registerPortalAssistantRoutes } from "./routes/portalAssistant";
 import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
 import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerContactsRoutes } from "./routes/contacts";
+// Team Portal — backend-persisted widget/layout prefs. Wired to the
+// TeamPortalShell tool dock + floating widgets. Backing schema:
+// migrations/0044_add_portal_widgets.sql + 0045_add_workspace_prefs.sql.
+import { registerPortalWidgetsRoutes } from "./routes/portalWidgets";
+import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
 import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
 import { registerInvoiceReadinessRoutes } from "./routes/invoiceReadiness";
 import { registerInvoiceBatchRoutes } from "./routes/invoiceBatches";
@@ -54,6 +62,7 @@ import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibilit
 import { registerCooldownRoutes } from "./routes/cooldown";
 import { registerAdminSettingsRoutes } from "./routes/adminSettings";
 import { registerDocumentReadinessRoutes } from "./routes/documentReadiness";
+import { registerPortalCaseReadinessRoutes } from "./routes/portalCaseReadiness";
 import { registerProcedureEventRoutes } from "./routes/procedureEvents";
 import { registerBillingReadinessRoutes } from "./routes/billingReadiness";
 import { registerBillingDocumentRoutes } from "./routes/billingDocuments";
@@ -63,12 +72,18 @@ import { registerProjectedInvoiceRoutes } from "./routes/projectedInvoices";
 import { registerPatientPacketRoutes } from "./routes/patientPacket";
 import { registerAncillaryDocumentTemplateRoutes } from "./routes/ancillaryDocumentTemplates";
 import { registerOperationalQueueRoutes } from "./routes/operationalQueue";
+import { registerCallListAuditRoutes } from "./routes/callListAudit";
+import { registerHomeStatsRoutes } from "./routes/homeStats";
+// Priority 4 backend routes — deferred pending product decision.
+//   clinician portal alt backend (canonical shell decision pending)
+//   clinical intelligence backend (schema commit decision pending)
+// import { registerClinicianPortalRoutes } from "./routes/clinicianPortal";
+import { registerMissionControlRoutes } from "./routes/missionControl";
+import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
+// import { registerClinicalIntelligenceRoutes } from "./routes/clinicalIntelligence";
+// import { seedCiRulesIfEmpty } from "./repositories/clinicalIntelligence.repo";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
-import {
-  backgroundSyncPatients,
-  backgroundSyncBilling,
-} from "./services/syncService";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -178,6 +193,11 @@ export async function registerRoutes(
   });
 
   const requireAuth = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
+    // Twilio's inbound SMS webhook can't hold a session — it is validated
+    // by X-Twilio-Signature inside the route handler instead (Task #648).
+    if (req.path === "/sms/twilio/inbound" && req.method === "POST") {
+      return next();
+    }
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -231,9 +251,8 @@ export async function registerRoutes(
   });
 
   // ─── Domain route registrations ────────────────────────────────────────────
-  registerGoogleRoutes(app);
-  registerTestHistoryRoutes(app, { backgroundSyncPatients });
-  registerPatientReferenceRoutes(app, { backgroundSyncPatients });
+  registerTestHistoryRoutes(app);
+  registerPatientReferenceRoutes(app);
   registerGeneratedNotesRoutes(app);
   registerPlexusTasksRoutes(app);
   registerBatchRoutes(app);
@@ -241,37 +260,21 @@ export async function registerRoutes(
   // the static `/api/patients/database*` paths take precedence over the
   // `/api/patients/:id` parameterised handler.
   registerPatientDatabaseRoutes(app);
-  registerPatientRoutes(app, { backgroundSyncPatients });
-  // Patient Directory routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
+  registerPatientRoutes(app);
+  // Patient EHR routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
   registerPatientDirectoryRoutes(app);
-  // Patient EHR section-access matrix — always-on: the section-access
-  // model applies to the Patient EHR chart and the client runtime needs
-  // GET even when USE_PATIENT_DIRECTORY_ACTIVATION is OFF. PUT is
-  // admin-only and audit-logged inside the route file.
+  // Section-access config is NOT gated behind the activation flag — it applies
+  // to the always-on Patient EHR chart in the Patient Database.
   registerPatientDirectorySectionAccessRoutes(app);
-  // Physician Portal — signature workflow only (Phase A). Clinician /
-  // admin role gate is enforced inside the route file.
-  registerPhysicianPortalRoutes(app);
-  // Portal case-readiness — service-layered readiness read + mutation
-  // endpoints (informed consent, screening form, brainwave PDF, report).
-  // Reads/writes go through server/services/ancillary/ancillaryReadinessSummary.
-  registerPortalCaseReadinessRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
-  // Engagement Center canonical spine — additive server routes. UI page
-  // and components are deferred to a dedicated Engagement UI phase, so
-  // these endpoints are dormant until consumed.
   registerEngagementBasketsRoutes(app);
   registerEngagementCallSettingsRoutes(app, requireRole);
   registerEngagementDistributionRoutes(app, requireRole);
-  // Live team metrics + activity feed (admin-only inside route file).
   registerEngagementTeamMetricsRoutes(app, requireRole);
-  // Admin-only call-list audit diagnostics (adminOnly middleware inside
-  // each endpoint).
-  registerCallListAuditRoutes(app, requireRole);
-  registerBillingRoutes(app, { backgroundSyncBilling });
+  registerBillingRoutes(app);
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);
   registerEmailRoutes(app);
@@ -286,10 +289,15 @@ export async function registerRoutes(
   registerMarketingMaterialRoutes(app);
   registerDocumentLibraryRoutes(app);
   registerPortalRoutes(app);
+  // Priority 4 registrations — deferred pending product decision.
+  // registerPatientMessagesRoutes(app);
+  // registerPortalAssistantRoutes(app, requireRole);
   registerExecutionCaseRoutes(app);
   registerAcsWorkflowRoutes(app);
   registerPatientNotesRoutes(app);
   registerContactsRoutes(app);
+  registerPortalWidgetsRoutes(app);
+  registerPortalPrefsRoutes(app);
   registerBillingPolicyRoutes(app);
   registerInvoiceReadinessRoutes(app);
   registerInvoiceBatchRoutes(app);
@@ -304,6 +312,7 @@ export async function registerRoutes(
   registerCooldownRoutes(app);
   registerAdminSettingsRoutes(app);
   registerDocumentReadinessRoutes(app);
+  registerPortalCaseReadinessRoutes(app);
   registerProcedureEventRoutes(app);
   registerBillingReadinessRoutes(app);
   registerBillingDocumentRoutes(app);
@@ -313,6 +322,20 @@ export async function registerRoutes(
   registerPatientPacketRoutes(app);
   registerAncillaryDocumentTemplateRoutes(app);
   registerOperationalQueueRoutes(app);
+  registerCallListAuditRoutes(app, requireRole);
+  registerHomeStatsRoutes(app);
+  // Priority 4 — clinician portal alt backend deferred; canonical shell TBD.
+  // registerClinicianPortalRoutes(app);
+  registerMissionControlRoutes(app, requireRole);
+  registerPhysicianPortalRoutes(app);
+  // Priority 4 — clinical intelligence backend deferred; UI runs on local
+  // storage prototype. Enable route + seed when schema is approved.
+  // registerClinicalIntelligenceRoutes(app, requireRole);
+  // try {
+  //   await seedCiRulesIfEmpty();
+  // } catch (seedErr: any) {
+  //   console.error("[clinical-intelligence] Failed to seed rule library:", seedErr.message);
+  // }
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

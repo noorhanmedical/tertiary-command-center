@@ -69,7 +69,7 @@ export function QuickNoteTool() {
         <div className="mt-1 text-[10px] text-slate-500">
           Write a quick operator note attached to a patient. Notes
           persist to /api/patient-notes and appear in the center
-          patient canvas + Patient Directory.
+          patient canvas + Patient EHR.
         </div>
       </Card>
 

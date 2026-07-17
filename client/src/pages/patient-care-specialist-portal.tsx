@@ -1,14 +1,16 @@
-// Patient Care Specialist Workspace.
+// Patient Care Specialist Workspace — LIVE Team Portal.
 //
-// This is one of the two team-member workspaces. It is intentionally
-// NOT Outreach / Engagement Center — the standalone Outreach surface is
-// available separately at /engagement-center.
+// Mounts ClinicWorkflowPortal → TeamPortalShell (the real 3,973-line
+// interactive shell with slide-away/hover-peek rails, pin toggles,
+// view-as, multi-tab workspaces, tool dock, floating widgets,
+// communication tray, invoice desk, calls repository, and
+// backend-persisted widget/layout prefs via /api/portal/widgets and
+// /api/portal/workspace-prefs).
 //
-// Both team-member workspaces (Patient Care Specialist + Ancillary Care
-// Specialist) share the same shell architecture provided by
-// ClinicWorkflowPortal → PortalShell. Workspace-specific customization
-// (default right-panel mode, visible label) is applied at the
-// ClinicWorkflowPortal boundary; internals stay unchanged in this batch.
+// IMPORTANT: This route must never mount TeamMemberPortalPlayground.
+// That file is a static, unwired mockup/design reference kept for
+// visual experimentation only. Any visual experiment must live on a
+// separate preview route, not here.
 
 import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
 

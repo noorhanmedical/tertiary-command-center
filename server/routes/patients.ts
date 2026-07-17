@@ -21,13 +21,9 @@ import {
   ensureCanonicalSpineForScreening,
 } from "../services/patientCommitService";
 
-type BackgroundSyncPatients = () => void | Promise<void>;
-
 export function registerPatientRoutes(
   app: Express,
-  deps: { backgroundSyncPatients: BackgroundSyncPatients }
 ) {
-  const { backgroundSyncPatients } = deps;
 
   // Recently soft-deleted patients within the restore window. Used by
   // the Plexus IQ Recently Deleted card. Expired rows (delete_expires_at
@@ -165,7 +161,6 @@ export function registerPatientRoutes(
             }));
             await storage.bulkInsertTestHistoryIfNotExists(records);
             invalidatePatientDatabase();
-            void backgroundSyncPatients();
           }
         } catch (e) {
           console.error("Auto test history capture on completion failed:", e);
@@ -592,13 +587,28 @@ export function registerPatientRoutes(
               error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
             });
           }
-          if (outcome.error.kind === "not_found") {
-            return res.status(404).json({ error: "Patient not found" });
-          }
-          return res.status(500).json({ error: "Failed to add ancillary" });
+          return res.status(404).json({ error: "Patient not found" });
         }
-        invalidatePatientDatabase();
-        res.json(outcome);
+        if (!outcome.qualified) {
+          return res.json({
+            ok: true,
+            qualified: false,
+            ancillaryId: outcome.ancillaryId,
+            requestedTestName: outcome.requestedTestName,
+            state: outcome.state,
+            candidates: outcome.candidates,
+          });
+        }
+        res.json({
+          ok: true,
+          qualified: true,
+          patient: outcome.patient,
+          ancillaryId: outcome.ancillaryId,
+          testName: outcome.testName,
+          addedTests: outcome.addedTests,
+          alreadyPresent: outcome.alreadyPresent,
+          narrativeGenerated: outcome.narrativeGenerated,
+        });
       } catch (error: any) {
         console.error(
           "[admin-review/add-ancillary] error:",
@@ -708,6 +718,13 @@ export function registerPatientRoutes(
         let commitFailed = false;
         let commitError: string | null = null;
         if (isApproved) {
+          // Record which facility→scheduler mapping *exists* (for the audit
+          // trail / debugging) but do NOT treat its mere existence as a real
+          // assignment. A facility having a default scheduler does not mean
+          // this patient was routed to that person — only an actual auto-assign
+          // (or batch-level Smart Scheduler Assignment) counts. Naming the
+          // facility default here is what caused the toast to falsely claim
+          // "Routed to scheduler: X" while the patient sat unassigned.
           const { lookupSchedulerFromSettings } = await import(
             "../services/schedulerSettings"
           );
@@ -715,17 +732,20 @@ export function registerPatientRoutes(
             patient.facility ?? null,
           );
           routedSchedulerSettingsSource = settingsLookup.source;
-          if (settingsLookup.scheduler) {
-            routedSchedulerName = settingsLookup.scheduler.name;
-            routedByScheduledSettings = true;
-          }
           if (updated.commitStatus === "Draft") {
             try {
               const result = await commitPatient(id, userId, { auto: true });
               if (result.ok) {
                 routedToEngagement = true;
-                routedSchedulerName =
-                  routedSchedulerName ?? result.data.schedulerName ?? null;
+                // Only surface a scheduler name when the commit confirms an
+                // actual assignment. Otherwise the patient landed in the
+                // unassigned engagement queue.
+                if (result.data.autoAssigned && result.data.schedulerName) {
+                  routedSchedulerName = result.data.schedulerName;
+                  routedByScheduledSettings =
+                    settingsLookup.scheduler != null &&
+                    settingsLookup.scheduler.name === result.data.schedulerName;
+                }
               } else {
                 // commitPatient returned a structured failure; surface
                 // it without throwing. CommitError is a discriminated

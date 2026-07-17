@@ -10,7 +10,6 @@ import {
   Clock3,
   Layers3,
   Settings as SettingsIcon,
-  Shield,
   Users2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -140,9 +139,6 @@ export default function ScheduleDashboardPage() {
               <HeaderStatusPill />
               <Link href="/">
                 <HeaderPill icon={<ArrowLeft className="w-3.5 h-3.5" />}>Home</HeaderPill>
-              </Link>
-              <Link href="/admin-ops">
-                <HeaderPill icon={<Shield className="w-3.5 h-3.5" />}>Admin</HeaderPill>
               </Link>
               <Link href="/settings">
                 <HeaderPill icon={<SettingsIcon className="w-3.5 h-3.5" />}>Settings</HeaderPill>

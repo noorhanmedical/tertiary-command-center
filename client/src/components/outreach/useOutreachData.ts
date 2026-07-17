@@ -10,6 +10,10 @@ import {
 } from "@/hooks/api/plexus";
 import { useSchedulerAssignments } from "@/hooks/api/scheduler-assignments";
 import {
+  useMyOperationalQueue,
+  type OperationalQueueItem,
+} from "@/hooks/api/operationalQueue";
+import {
   useOutreachDashboard,
   useOutreachSchedulers,
   useOutreachCallsToday,
@@ -65,8 +69,6 @@ export function useOutreachData(schedulerId: string) {
     [myWorkTasks],
   );
 
-  const { data: todayCalls = [] } = useOutreachCallsToday(currentUser?.id);
-
   const patientIds = useMemo(() => (card?.callList ?? []).map((p) => p.patientId), [card]);
 
   const { data: assignmentRows = [] } = useSchedulerAssignments() as {
@@ -79,10 +81,37 @@ export function useOutreachData(schedulerId: string) {
   }, [assignmentRows]);
 
   const { data: allSchedulerCards = [] } =
-    useOutreachSchedulers<{ id: number; name: string }>();
+    useOutreachSchedulers<{
+      id: number;
+      name: string;
+      facility: string;
+      userId: string | null;
+    }>();
   const schedulerNameById = useMemo(() => {
     const m = new Map<number, string>();
     for (const sc of allSchedulerCards) m.set(sc.id, sc.name);
+    return m;
+  }, [allSchedulerCards]);
+
+  const userIdBySchedulerId = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const sc of allSchedulerCards) {
+      if (sc.userId) m.set(sc.id, sc.userId);
+    }
+    return m;
+  }, [allSchedulerCards]);
+
+  // Mirror server cardIdFor(name, facility) so engagement cases (assigned to an
+  // outreach_schedulers row) can be scoped to the selected dashboard card.
+  const cardIdBySchedulerId = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const sc of allSchedulerCards) {
+      if (!sc.name || !sc.facility) continue;
+      const id = `${sc.name.toLowerCase().replace(/\s+/g, "-")}__${sc.facility
+        .toLowerCase()
+        .replace(/\s+/g, "-")}`;
+      m.set(sc.id, id);
+    }
     return m;
   }, [allSchedulerCards]);
 
@@ -96,19 +125,146 @@ export function useOutreachData(schedulerId: string) {
     return m;
   }, [callsByPatient]);
 
-  const myEngineAssignedIds = useMemo(
-    () => new Set(assignmentRows.map((a) => a.patientScreeningId)),
-    [assignmentRows],
+  // Option 2: engagement-assigned call work is sourced from the operational
+  // queue (/api/operational-queue/me), NOT the legacy scheduler_assignments
+  // path. We merge the engagement-assigned screening IDs into the visible set
+  // and synthesize rows for any assigned patient that is not already in the
+  // facility dashboard call list, so assigned work always surfaces.
+  // Admin "view as": when an admin opens any scheduler card, scope the
+  // engagement queue to that card's scheduler row so they see that team
+  // member's call list (not their own). Resolve the scheduler id from the
+  // card slug via the same name+facility mapping. Non-admins always read
+  // their own queue (the server ignores the param for them).
+  const isAdmin = currentUser?.role === "admin";
+  const viewedSchedulerId = useMemo(() => {
+    for (const [sid, cid] of cardIdBySchedulerId) {
+      if (cid === schedulerId) return sid;
+    }
+    return null;
+  }, [cardIdBySchedulerId, schedulerId]);
+  const { data: opQueue } = useMyOperationalQueue(
+    isAdmin ? viewedSchedulerId : null,
   );
+
+  // Daily progress (calls/scheduled done today) must reflect the VIEWED member,
+  // not the logged-in user. Calls are keyed by the scheduler's linked user id.
+  // For an admin viewing another member's card, scope today's calls to that
+  // scheduler row's user id; everyone else reads their own calls. If the viewed
+  // scheduler isn't linked to a user, the query stays disabled and progress is
+  // honestly empty rather than showing the admin's own numbers.
+  const viewedSchedulerUserId =
+    isAdmin && viewedSchedulerId != null
+      ? userIdBySchedulerId.get(viewedSchedulerId) ?? null
+      : null;
+  const callsScopeUserId =
+    isAdmin && viewedSchedulerId != null
+      ? viewedSchedulerUserId
+      : currentUser?.id;
+  const { data: todayCalls = [] } = useOutreachCallsToday(callsScopeUserId);
+
+  // /me can return engagement cases for every scheduler row the user is mapped
+  // to (potentially across facilities/cards). Scope to the currently selected
+  // card so one card never shows another scheduler's patients. Prefer exact
+  // scheduler→card identity; fall back to facility match when the assigned
+  // scheduler id is unknown.
+  const engagementItems = useMemo<OperationalQueueItem[]>(() => {
+    const all = (opQueue?.items ?? []).filter(
+      (i) => i.kind === "scheduler_task" && i.ownerType === "engagement_case",
+    );
+    if (!card) return [];
+    return all.filter((i) => {
+      const meta = (i.metadata ?? {}) as Record<string, unknown>;
+      const assignedSchedulerId =
+        typeof meta.assignedTeamMemberId === "number"
+          ? (meta.assignedTeamMemberId as number)
+          : null;
+      const mappedCardId =
+        assignedSchedulerId != null
+          ? cardIdBySchedulerId.get(assignedSchedulerId)
+          : undefined;
+      if (mappedCardId != null) return mappedCardId === card.id;
+      return i.facility != null && i.facility === card.facility;
+    });
+  }, [opQueue, card, cardIdBySchedulerId]);
+
+  // Admins use view-as, so the "your login isn't linked to a scheduler" banner
+  // never applies to them — only to a self-viewing team member.
+  const schedulerMappingMissing =
+    !isAdmin && opQueue?.meta?.schedulerMapping === "missing_user_mapping";
+
+  const engagementByScreeningId = useMemo(() => {
+    const m = new Map<number, OperationalQueueItem>();
+    for (const it of engagementItems) {
+      if (it.patientScreeningId != null) m.set(it.patientScreeningId, it);
+    }
+    return m;
+  }, [engagementItems]);
+
+  const myEngineAssignedIds = useMemo(() => {
+    const s = new Set(assignmentRows.map((a) => a.patientScreeningId));
+    for (const id of engagementByScreeningId.keys()) s.add(id);
+    return s;
+  }, [assignmentRows, engagementByScreeningId]);
 
   const sortedCallList = useMemo<SortedCallEntry[]>(() => {
     const list = card?.callList ?? [];
-    return list
+    const presentIds = new Set(list.map((i) => i.patientId));
+
+    // Synthetic rows for engagement-assigned patients that are not in the
+    // facility dashboard call list (e.g. outreach-bucket cases not yet in the
+    // outreach pool). Built from the operational-queue item metadata.
+    const synthetic: SortedCallEntry[] = [];
+    for (const it of engagementItems) {
+      const pid = it.patientScreeningId;
+      if (pid == null || presentIds.has(pid)) continue;
+      const meta = (it.metadata ?? {}) as Record<string, unknown>;
+      const services = Array.isArray(meta.selectedServices)
+        ? (meta.selectedServices as string[])
+        : [];
+      const synthItem: OutreachCallItem = {
+        id: it.id,
+        patientId: pid,
+        patientName: it.patientName ?? "Unknown patient",
+        facility: it.facility ?? card?.facility ?? "",
+        phoneNumber: (meta.phoneNumber as string) ?? "",
+        email: "",
+        insurance: (meta.insurance as string) ?? "",
+        qualifyingTests: services,
+        appointmentStatus: it.status ?? "pending",
+        patientType: "outreach",
+        batchId: 0,
+        scheduleDate: it.scheduledDate ?? "",
+        time: it.scheduledTime ?? "",
+        providerName: "",
+        notes: null,
+        dob: it.patientDob ?? null,
+        age: null,
+        gender: null,
+        diagnoses: null,
+        history: null,
+        medications: null,
+        previousTests: null,
+        previousTestsDate: null,
+        noPreviousTests: false,
+        reasoning: [],
+        priorTestHistory: [],
+      };
+      const latest = latestCallByPatient.get(pid);
+      synthetic.push({
+        item: synthItem,
+        latest,
+        bucket: bucketForItem(synthItem, latest),
+      });
+    }
+
+    const fromDashboard = list
       .filter((item) => myEngineAssignedIds.has(item.patientId))
       .map((item) => {
         const latest = latestCallByPatient.get(item.patientId);
         return { item, latest, bucket: bucketForItem(item, latest) };
-      })
+      });
+
+    return [...fromDashboard, ...synthetic]
       .sort((a, b) => {
         const r = BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket];
         if (r !== 0) return r;
@@ -117,7 +273,7 @@ export function useOutreachData(schedulerId: string) {
         }
         return a.item.patientName.localeCompare(b.item.patientName);
       });
-  }, [card, latestCallByPatient, myEngineAssignedIds]);
+  }, [card, latestCallByPatient, myEngineAssignedIds, engagementItems]);
 
   const callbacksDue = useMemo(() => {
     let count = 0;
@@ -148,5 +304,7 @@ export function useOutreachData(schedulerId: string) {
     myEngineAssignedIds,
     sortedCallList,
     callbacksDue,
+    schedulerMappingMissing,
+    engagementItems,
   };
 }

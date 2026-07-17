@@ -9,6 +9,7 @@ import {
   type QualificationJobStatus,
 } from "@/lib/plexusIqClinicalImportApi";
 import { useToast } from "@/hooks/use-toast";
+import { categoryLabel, formatEta } from "./qualificationJobFormat";
 
 // Compact status banner for the active clinical-import qualification
 // job. Polls /api/plexus-iq/qualification-jobs/:jobId/status every 2.5s
@@ -41,9 +42,20 @@ export function PlexusIQQualificationJobStatus({
   const retryMutation = useMutation({
     mutationFn: () => retryPlexusIqQualificationJobFailed(jobId),
     onSuccess: (resp) => {
+      // Plexus IQ runtime hardening — Routes step 3.
+      // Retry can return `jobId: null` for the zero-failed and
+      // duplicate-in-flight branches. Show the reason instead of a
+      // misleading "Re-queued N patients" toast.
+      if (resp.jobId == null) {
+        toast({
+          title: "Nothing to retry",
+          description: resp.reason ?? "No retryable failed patients",
+        });
+        return;
+      }
       toast({
         title: "Retrying",
-        description: `Re-queued ${resp.totalPatients} patient${resp.totalPatients === 1 ? "" : "s"}.`,
+        description: `Re-queued ${resp.totalPatients ?? 0} patient${(resp.totalPatients ?? 0) === 1 ? "" : "s"}.`,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
       onJobChange(resp.jobId);
@@ -64,7 +76,18 @@ export function PlexusIQQualificationJobStatus({
       completed: data.completed,
       failed: data.failed,
       queued: data.queued,
+      skipped: data.skipped ?? 0,
       percent: data.percent,
+      chunkIndex: data.chunkIndex,
+      totalChunks: data.totalChunks,
+      patientsPerMinute: data.patientsPerMinute,
+      etaSecondsRemaining: data.etaSecondsRemaining,
+      rateLimitedCount: data.rateLimitedCount ?? 0,
+      aiBatchFallbackCount: data.aiBatchFallbackCount ?? 0,
+      missingClinicalCount: data.missingClinicalCount,
+      missingDemographicCount: data.missingDemographicCount,
+      technicalFailedCount: data.technicalFailedCount,
+      aiErrorCount: data.aiErrorCount,
     };
   }, [data]);
 
@@ -131,12 +154,107 @@ export function PlexusIQQualificationJobStatus({
                 <span>
                   <strong className="text-slate-900">{summary.queued}</strong> queued
                 </span>
+                {summary.skipped > 0 && (
+                  <span data-testid="qualification-job-skipped">
+                    <strong className="text-slate-900">{summary.skipped}</strong> skipped
+                  </span>
+                )}
                 {summary.failed > 0 && (
                   <span className="text-rose-700">
                     <strong>{summary.failed}</strong> failed
                   </span>
                 )}
               </div>
+              {/* Plexus IQ runtime hardening — runner step 7 progress
+                  signals. Each field renders only when the runner has
+                  written it; absent fields are honestly omitted (no
+                  fake zeros). */}
+              {(summary.chunkIndex != null ||
+                summary.patientsPerMinute != null ||
+                summary.etaSecondsRemaining != null ||
+                summary.rateLimitedCount > 0 ||
+                summary.aiBatchFallbackCount > 0) && (
+                <div
+                  className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500"
+                  data-testid="qualification-job-throughput"
+                >
+                  {summary.chunkIndex != null && summary.totalChunks != null && (
+                    <span data-testid="qualification-job-chunk">
+                      chunk <strong className="text-slate-700">{summary.chunkIndex}</strong> of {summary.totalChunks}
+                    </span>
+                  )}
+                  {summary.patientsPerMinute != null && (
+                    <span data-testid="qualification-job-speed">
+                      <strong className="text-slate-700">{summary.patientsPerMinute}</strong>/min
+                    </span>
+                  )}
+                  {summary.etaSecondsRemaining != null && summary.etaSecondsRemaining > 0 && (
+                    <span data-testid="qualification-job-eta">
+                      ETA <strong className="text-slate-700">{formatEta(summary.etaSecondsRemaining)}</strong>
+                    </span>
+                  )}
+                  {summary.rateLimitedCount > 0 && (
+                    <span className="text-amber-700" data-testid="qualification-job-rate-limited">
+                      rate-limited <strong>{summary.rateLimitedCount}</strong>
+                    </span>
+                  )}
+                  {summary.aiBatchFallbackCount > 0 && (
+                    <span className="text-amber-700" data-testid="qualification-job-ai-batch-fallback">
+                      ai-batch fallback <strong>{summary.aiBatchFallbackCount}</strong>
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Plexus IQ runtime hardening — per-category failure
+                  breakdown. Only renders when the runner persisted at
+                  least one bucketed counter (legacy jobs omit). */}
+              {(summary.missingClinicalCount != null ||
+                summary.missingDemographicCount != null ||
+                summary.technicalFailedCount != null ||
+                summary.aiErrorCount != null) &&
+                ((summary.missingClinicalCount ?? 0) +
+                  (summary.missingDemographicCount ?? 0) +
+                  (summary.technicalFailedCount ?? 0) +
+                  (summary.aiErrorCount ?? 0)) >
+                  0 && (
+                <div
+                  className="flex flex-wrap items-center gap-2 text-[11px]"
+                  data-testid="qualification-job-categories"
+                >
+                  {(summary.missingClinicalCount ?? 0) > 0 && (
+                    <span
+                      className="rounded-full bg-amber-50 text-amber-800 px-2 py-0.5"
+                      data-testid="qualification-job-missing-clinical"
+                    >
+                      missing clinical <strong>{summary.missingClinicalCount}</strong>
+                    </span>
+                  )}
+                  {(summary.missingDemographicCount ?? 0) > 0 && (
+                    <span
+                      className="rounded-full bg-amber-50 text-amber-800 px-2 py-0.5"
+                      data-testid="qualification-job-missing-demographic"
+                    >
+                      missing demographic <strong>{summary.missingDemographicCount}</strong>
+                    </span>
+                  )}
+                  {(summary.technicalFailedCount ?? 0) > 0 && (
+                    <span
+                      className="rounded-full bg-rose-50 text-rose-800 px-2 py-0.5"
+                      data-testid="qualification-job-technical-failed"
+                    >
+                      technical failed <strong>{summary.technicalFailedCount}</strong>
+                    </span>
+                  )}
+                  {(summary.aiErrorCount ?? 0) > 0 && (
+                    <span
+                      className="rounded-full bg-rose-50 text-rose-800 px-2 py-0.5"
+                      data-testid="qualification-job-ai-error"
+                    >
+                      ai error <strong>{summary.aiErrorCount}</strong>
+                    </span>
+                  )}
+                </div>
+              )}
               {data?.errors?.length ? (
                 <div className="mt-2 max-h-24 overflow-y-auto rounded-md border border-rose-100 bg-rose-50 px-2 py-1.5 text-[11px] text-rose-800">
                   <div className="font-medium mb-0.5">
@@ -145,7 +263,14 @@ export function PlexusIQQualificationJobStatus({
                   <ul className="space-y-0.5">
                     {data.errors.slice(0, 8).map((e) => (
                       <li key={e.patientId} className="truncate">
-                        #{e.patientId} · {e.patientName} · {e.error}
+                        #{e.patientId} · {e.patientName}
+                        {e.category ? (
+                          <span className="ml-1 text-[10px] uppercase tracking-wider opacity-70">
+                            [{categoryLabel(e.category)}]
+                          </span>
+                        ) : null}
+                        {" · "}
+                        {e.error}
                       </li>
                     ))}
                     {data.errors.length > 8 && (
