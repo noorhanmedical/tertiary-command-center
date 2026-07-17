@@ -49,6 +49,20 @@ import { registerContactsRoutes } from "./routes/contacts";
 // migrations/0044_add_portal_widgets.sql + 0045_add_workspace_prefs.sql.
 import { registerPortalWidgetsRoutes } from "./routes/portalWidgets";
 import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
+// Phase 4 — internal direct messages (INTERNAL user-to-user only, no
+// patient messaging, no Twilio, no SMS). Feature-flagged OFF by
+// default; when the flag is off the routes 501 back and the client
+// keeps using mockPortalMessages local state.
+import { registerDirectMessagesRoutes } from "./routes/directMessages";
+import { registerPortalAssistantRoutes } from "./routes/portalAssistant";
+// Phase 4C — Clinical Intelligence live persistence deferred. The
+// canonical schema `shared/schema/clinicalIntelligence.ts` is already
+// on main (5 tables: ciLearningItems, ciRules, ciRuleVersions,
+// ciEvidenceRecords, ciAuditEntries) but no migration ships them yet
+// and the client keeps running on its localStorage prototype. The
+// authored migration SQL + a repo/service consuming those five tables
+// lands in a follow-up PR once the tables have been reviewed against
+// current data.
 import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
 import { registerInvoiceReadinessRoutes } from "./routes/invoiceReadiness";
 import { registerInvoiceBatchRoutes } from "./routes/invoiceBatches";
@@ -298,6 +312,13 @@ export async function registerRoutes(
   registerContactsRoutes(app);
   registerPortalWidgetsRoutes(app);
   registerPortalPrefsRoutes(app);
+  // Phase 4 — internal direct messages (feature-flagged OFF by default).
+  registerDirectMessagesRoutes(app);
+  // Phase 4 — Portal Assistant (AI, feature-flagged OFF by default).
+  registerPortalAssistantRoutes(app);
+  // Phase 4C — Clinical Intelligence live persistence deferred (see
+  // import block above). No route registered until schema migration
+  // review completes.
   registerBillingPolicyRoutes(app);
   registerInvoiceReadinessRoutes(app);
   registerInvoiceBatchRoutes(app);
