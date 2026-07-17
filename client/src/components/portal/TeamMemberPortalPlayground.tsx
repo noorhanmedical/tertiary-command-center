@@ -389,19 +389,6 @@ export default function TeamMemberPortalPlayground({ role }: { role: WorkspaceRo
 
   return (
     <div className="fixed inset-0 z-[80] overflow-hidden bg-white text-slate-900" data-testid={`portal-playground-${role}`}>
-      {/* Dev-only build-proof marker. Confirms which shell + role is rendering.
-          Present only when the client build runs in development (Vite MODE)
-          so production users never see it. Search DOM for
-          data-testid="team-portal-parity-marker" to verify at runtime. */}
-      {typeof import.meta !== "undefined" && import.meta.env?.DEV ? (
-        <div
-          data-testid="team-portal-parity-marker"
-          className="absolute right-2 top-2 z-[200] rounded-md bg-slate-900/85 px-2 py-1 font-mono text-[10px] leading-tight text-white shadow-lg"
-          title="Team Portal parity build marker (dev only)"
-        >
-          shell=TeamMemberPortalPlayground · role={role} · SHA=8b2f2f4
-        </div>
-      ) : null}
       <header className="absolute left-0 right-0 top-0 z-10 flex h-[76px] items-center justify-between px-8">
         <div className="font-[cursive] text-[34px] italic tracking-tight text-[#2F67F2]">The Playground</div>
         <div className="flex items-center gap-3 text-sm">

@@ -61,4 +61,8 @@ export * from "./cashPricing";
 export * from "./projectedInvoices";
 export * from "./ancillaryDocumentTemplates";
 export * from "./clinicalIntelligence";
+// Team Portal — backend-persisted widget/layout prefs (schema for the
+// TeamPortalShell tool dock + floating widget layer).
+export * from "./portalWidgets";
+export * from "./portalPrefs";
 export * from "../models/chat";

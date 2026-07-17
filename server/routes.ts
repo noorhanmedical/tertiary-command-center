@@ -44,8 +44,11 @@ import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
 import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerContactsRoutes } from "./routes/contacts";
-// import { registerPortalWidgetsRoutes } from "./routes/portalWidgets";
-// import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
+// Team Portal — backend-persisted widget/layout prefs. Wired to the
+// TeamPortalShell tool dock + floating widgets. Backing schema:
+// migrations/0044_add_portal_widgets.sql + 0045_add_workspace_prefs.sql.
+import { registerPortalWidgetsRoutes } from "./routes/portalWidgets";
+import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
 import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
 import { registerInvoiceReadinessRoutes } from "./routes/invoiceReadiness";
 import { registerInvoiceBatchRoutes } from "./routes/invoiceBatches";
@@ -293,8 +296,8 @@ export async function registerRoutes(
   registerAcsWorkflowRoutes(app);
   registerPatientNotesRoutes(app);
   registerContactsRoutes(app);
-  // registerPortalWidgetsRoutes(app);
-  // registerPortalPrefsRoutes(app);
+  registerPortalWidgetsRoutes(app);
+  registerPortalPrefsRoutes(app);
   registerBillingPolicyRoutes(app);
   registerInvoiceReadinessRoutes(app);
   registerInvoiceBatchRoutes(app);
