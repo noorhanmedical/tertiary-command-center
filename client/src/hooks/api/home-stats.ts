@@ -25,6 +25,28 @@ export type HomeFinanceStat = {
   upcoming: number;
 };
 
+// Per-metric availability sidecar. Introduced in Phase 3 correction to
+// let consumers render honest "Unavailable" states without inventing
+// values. All fields are optional; a pre-Phase-3 client that ignores
+// this shape continues to render fine.
+export type HomeStatsAvailability = {
+  finance?: {
+    last7?: { sourceMissing: boolean; reason?: string };
+    upcoming?: { sourceMissing: boolean; reason?: string };
+  };
+  windows?: {
+    today?: { callsPlanned?: { sourceMissing: boolean; reason?: string } };
+    last7?: { callsPlanned?: { sourceMissing: boolean; reason?: string } };
+    last30?: { callsPlanned?: { sourceMissing: boolean; reason?: string } };
+  };
+  upcoming?: {
+    ancillaryPatients?: { sourceMissing: boolean; reason?: string };
+    callsDistributed?: { sourceMissing: boolean; reason?: string };
+    callsDone?: { sourceMissing: boolean; reason?: string };
+  };
+  callsByMember?: { sourceMissing: boolean; reason?: string };
+};
+
 export type HomeStatsResponse = {
   today: string;
   finance: HomeFinanceStat;
@@ -46,6 +68,7 @@ export type HomeStatsResponse = {
     last7: HomeMemberCallStat[];
     last30: HomeMemberCallStat[];
   };
+  availability?: HomeStatsAvailability;
 };
 
 export function useHomeStats(opts: { enabled?: boolean } = {}) {
