@@ -2114,7 +2114,7 @@
     },
     {
       "path": "client/src/hooks/api/home-stats.ts",
-      "blob": "650721e9c4b45cad03e9cf6cb6bad087d4762619",
+      "blob": "c8a8e1b2f1b1892bd7d65dccbd8a278ef7704086",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

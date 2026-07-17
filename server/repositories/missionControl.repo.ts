@@ -1,16 +1,34 @@
-// Mission Control repository — bounded scoped counts only.
+// Mission Control repository — bounded scoped counts, authoritative
+// sources only, real enum values only. No proxy metrics.
 //
-// Every helper here returns a single scalar count from an indexed WHERE
-// clause. No unbounded selects, no broad getAll. New helpers must
-// follow the same pattern.
+// Every helper returns a discriminated union:
+//   { available: true, value: N }   — authoritative query ran (N may be 0)
+//   { available: false, reason: X } — no authoritative source or an
+//                                     unresolvable scope
 //
-// Every read is optionally clinic-scoped via the `clinicId` filter
-// argument. When clinicId is null the query returns platform-wide
-// counts (admin-only per the route guard). When clinicId is set, the
-// query filters by the tenancy column on the source table.
+// This forces callers to distinguish "query ran, count is 0" from
+// "there is no source to query." A DB or service ERROR from the query
+// itself is NEVER silently converted to `available: false` — the
+// exception propagates to the service, which surfaces 500 to the route.
+//
+// SCOPING RULE
+//   • Any helper that accepts clinicId MUST honor it (either directly
+//     via a clinic_id column or via a bounded JOIN through an
+//     authoritative relationship). Silently ignoring scope is a bug.
+//   • Helpers that CANNOT be safely clinic-scoped are named with a
+//     `_platformWide` suffix and take a `PlatformScope` argument. The
+//     Mission Control route is `requireRole("admin")`, so
+//     platform-wide values are honest for it — the service surfaces
+//     them as-is.
+//
+// TIMEZONE POLICY
+//   This platform has no clinic-timezone table today. The temporary
+//   canonical timezone for dashboard windows is UTC. All boundary
+//   crossing happens in the service layer via injected Date values;
+//   repositories never call `new Date()` themselves.
 
 import { db } from "../db";
-import { and, eq, gte, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { patientExecutionCases } from "@shared/schema/executionCase";
 import { plexusTasks } from "@shared/schema/plexus";
 import { analysisJobs } from "@shared/schema/analysisJobs";
@@ -20,27 +38,27 @@ import { billingReadinessChecks } from "@shared/schema/billingReadiness";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import { patientScreenings } from "@shared/schema/screening";
 
-export type MissionScope = {
-  clinicId?: number | null;
-  // Today, in UTC. Callers pass in a controlled date so tests can pin the
-  // clock; live callers supply new Date().toISOString().slice(0,10).
-  todayIso?: string;
-};
+// ─── Discriminated union types ──────────────────────────────────
+export type MetricValue<T> =
+  | { available: true; value: T }
+  | { available: false; reason: string };
 
-function utcMidnight(iso: string): Date {
-  return new Date(`${iso}T00:00:00.000Z`);
-}
-function utcNextDay(iso: string): Date {
-  const d = utcMidnight(iso);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d;
-}
+export type ClinicScope = { clinicId: number | null };
+export type PlatformScope = { platformOnly: true };
 
-// ─── Active execution cases ──────────────────────────────────────
-// Definition: lifecycleStatus IS NULL OR = 'active'.
+const AVAILABLE = <T,>(value: T): MetricValue<T> => ({ available: true, value });
+const UNAVAILABLE = <T,>(reason: string): MetricValue<T> => ({
+  available: false,
+  reason,
+});
+
+// ─── Active execution cases (clinic-scoped) ─────────────────────
+// Source: patient_execution_cases (has clinic_id + lifecycle_status).
+// Definition: lifecycle_status = 'active'. NULL is coerced to active
+// because the schema default is 'active' but backfill rows may be NULL.
 export async function countActiveExecutionCases(
-  scope: MissionScope = {},
-): Promise<number> {
+  scope: ClinicScope,
+): Promise<MetricValue<number>> {
   const conds = [
     or(
       isNull(patientExecutionCases.lifecycleStatus),
@@ -54,69 +72,80 @@ export async function countActiveExecutionCases(
     .select({ n: sql<number>`count(*)::int` })
     .from(patientExecutionCases)
     .where(and(...conds));
-  return row?.n ?? 0;
+  return AVAILABLE(row?.n ?? 0);
 }
 
-// ─── Open Plexus tasks ──────────────────────────────────────────
-// NOTE: plexus_tasks has no clinic_id column — tenancy is indirect via
-// patient_screening_id → patient_screenings.clinic_id. Clinic scoping
-// therefore requires a JOIN; for Mission Control (admin-only route)
-// the platform-wide count is acceptable. If a clinic filter becomes
-// necessary here, add a helper that JOINs patient_screenings.
-const OPEN_TASK_STATUSES = ["open", "active", "in_progress"] as const;
-export async function countOpenPlexusTasks(
-  _scope: MissionScope = {},
-): Promise<number> {
+// ─── Open plexus tasks — PLATFORM-WIDE ──────────────────────────
+// plexus_tasks has no clinic_id column; clinic scoping would require a
+// JOIN through patient_screening_id → patient_screenings.clinic_id
+// that has not been audited for duplicate-row safety. Mission Control
+// route is admin-only, so platform-wide is honest.
+//
+// Real terminal statuses (verified in server/repositories/plexus.repo.ts):
+//   "closed", "done"
+// Everything else is treated as "open" — this matches the plexus repo
+// which uses `ne(status, "closed")` + `ne(status, "done")`.
+export async function countOpenPlexusTasks_platformWide(
+  _scope: PlatformScope,
+): Promise<MetricValue<number>> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(plexusTasks)
-    .where(or(...OPEN_TASK_STATUSES.map((s) => eq(plexusTasks.status, s))));
-  return row?.n ?? 0;
+    .where(
+      and(
+        ne(plexusTasks.status, "closed"),
+        ne(plexusTasks.status, "done"),
+      ),
+    );
+  return AVAILABLE(row?.n ?? 0);
 }
 
-// ─── Qualification backlog (running analysis jobs) ──────────────
-// Definition: analysis_jobs.status = 'running'. Platform-wide count —
-// analysis_jobs has no clinic_id column; tenancy is via batch_id.
-export async function countRunningAnalysisJobs(
-  _scope: MissionScope = {},
-): Promise<number> {
+// ─── Running analysis jobs — PLATFORM-WIDE ──────────────────────
+// analysis_jobs has no clinic_id column; tenancy is indirect via
+// batch_id → screening_batches.clinic_id. Mission Control is
+// admin-only, so platform-wide is honest.
+// Real status: default is "running" (confirmed in schema).
+export async function countRunningAnalysisJobs_platformWide(
+  _scope: PlatformScope,
+): Promise<MetricValue<number>> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(analysisJobs)
     .where(eq(analysisJobs.status, "running"));
-  return row?.n ?? 0;
+  return AVAILABLE(row?.n ?? 0);
 }
 
-// ─── Callbacks pending ───────────────────────────────────────────
-// Definition: outreach_calls with a future callbackAt.
-// idx_outreach_calls_callback_at supports this.
-// outreach_calls has no clinic_id column; the count is platform-wide.
-export async function countCallbacksPending(
-  _scope: MissionScope = {},
-): Promise<number> {
-  const now = new Date();
+// ─── Callbacks pending — PLATFORM-WIDE, INJECTED CLOCK ─────────
+// outreach_calls has no clinic_id column; clinic scoping would require
+// a JOIN through patient_screening_id → patient_screenings.clinic_id.
+// The service supplies `now`; the repo never calls `new Date()`.
+// Definition: callback_at IS NOT NULL AND callback_at >= now.
+export async function countCallbacksPending_platformWide(
+  _scope: PlatformScope,
+  now: Date,
+): Promise<MetricValue<number>> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(outreachCalls)
     .where(gte(outreachCalls.callbackAt, now));
-  return row?.n ?? 0;
+  return AVAILABLE(row?.n ?? 0);
 }
 
-// ─── Scheduled today (doctor_visit + ancillary_appointment) ─────
-export async function countScheduledToday(
-  scope: MissionScope = {},
-): Promise<number> {
-  if (!scope.todayIso) return 0;
-  const start = utcMidnight(scope.todayIso);
-  const end = utcNextDay(scope.todayIso);
+// ─── Scheduled today (clinic-scoped) ────────────────────────────
+// Source: global_schedule_events (has clinic_id + status).
+// Window and clinic are both required in the args — no default clock.
+// Cancelled events are excluded.
+export async function countScheduledInWindow(
+  scope: ClinicScope,
+  window: { start: Date; end: Date },
+): Promise<MetricValue<number>> {
   const conds = [
     or(
       eq(globalScheduleEvents.eventType, "doctor_visit"),
       eq(globalScheduleEvents.eventType, "ancillary_appointment"),
     ),
-    gte(globalScheduleEvents.startsAt, start),
-    lt(globalScheduleEvents.startsAt, end),
-    // Cancelled events do not count as scheduled today
+    gte(globalScheduleEvents.startsAt, window.start),
+    lt(globalScheduleEvents.startsAt, window.end),
     ne(globalScheduleEvents.status, "cancelled"),
   ];
   if (scope.clinicId != null) {
@@ -126,21 +155,21 @@ export async function countScheduledToday(
     .select({ n: sql<number>`count(*)::int` })
     .from(globalScheduleEvents)
     .where(and(...conds));
-  return row?.n ?? 0;
+  return AVAILABLE(row?.n ?? 0);
 }
 
-// ─── Ready for billing ──────────────────────────────────────────
-// Definition: billing_readiness_checks.readiness_status = 'ready_to_generate'.
-const READY_BILLING_STATUSES = ["ready_to_generate", "ready"] as const;
+// ─── Ready for billing (clinic-scoped) ──────────────────────────
+// Source: billing_readiness_checks (has clinic_id).
+// Real enum: BILLING_READINESS_STATUSES = ("not_ready",
+// "missing_requirements", "ready_to_generate",
+// "billing_document_generated", "sent_to_billing"). Only
+// "ready_to_generate" is the "ready" bucket. The prior code included
+// a guessed "ready" string that never exists in the enum.
 export async function countReadyForBilling(
-  scope: MissionScope = {},
-): Promise<number> {
+  scope: ClinicScope,
+): Promise<MetricValue<number>> {
   const conds = [
-    or(
-      ...READY_BILLING_STATUSES.map((s) =>
-        eq(billingReadinessChecks.readinessStatus, s),
-      ),
-    ),
+    eq(billingReadinessChecks.readinessStatus, "ready_to_generate"),
   ];
   if (scope.clinicId != null) {
     conds.push(eq(billingReadinessChecks.clinicId, scope.clinicId));
@@ -149,21 +178,25 @@ export async function countReadyForBilling(
     .select({ n: sql<number>`count(*)::int` })
     .from(billingReadinessChecks)
     .where(and(...conds));
-  return row?.n ?? 0;
+  return AVAILABLE(row?.n ?? 0);
 }
 
-// ─── Reports missing / outstanding ──────────────────────────────
-// Definition: case_document_readiness with document_type='report' and
-// document_status IN ('pending','uploaded') — i.e., not yet complete.
+// ─── Reports missing (clinic-scoped) ────────────────────────────
+// Source: case_document_readiness (has clinic_id + document_type +
+// document_status). Real DOCUMENT_STATUSES enum:
+//   "missing", "pending", "uploaded", "generated", "approved",
+//   "completed", "blocked".
+//
+// A report that is "uploaded" is NOT missing. The prior code counted
+// ("pending","uploaded") as outstanding — that is wrong per the
+// canonical enum. Corrected definition: document_type='report'
+// AND document_status='missing'.
 export async function countReportsMissing(
-  scope: MissionScope = {},
-): Promise<number> {
+  scope: ClinicScope,
+): Promise<MetricValue<number>> {
   const conds = [
     eq(caseDocumentReadiness.documentType, "report"),
-    or(
-      eq(caseDocumentReadiness.documentStatus, "pending"),
-      eq(caseDocumentReadiness.documentStatus, "uploaded"),
-    ),
+    eq(caseDocumentReadiness.documentStatus, "missing"),
   ];
   if (scope.clinicId != null) {
     conds.push(eq(caseDocumentReadiness.clinicId, scope.clinicId));
@@ -172,19 +205,25 @@ export async function countReportsMissing(
     .select({ n: sql<number>`count(*)::int` })
     .from(caseDocumentReadiness)
     .where(and(...conds));
-  return row?.n ?? 0;
+  return AVAILABLE(row?.n ?? 0);
 }
 
-// ─── Prescreen — patient_screenings pending review ──────────────
+// ─── Prescreen backlog (clinic-scoped) ──────────────────────────
+// Source: patient_screenings (has clinic_id + status).
+// Confirmed enum values in use (across the batch-analysis pipeline):
+//   "pending" (default), "draft".
+// "pending_review" is a QUALIFICATION_STATUS on execution_cases, not a
+// screening status; the prior code guessed it here and was wrong.
 export async function countPrescreenPending(
-  scope: MissionScope = {},
-): Promise<number> {
+  scope: ClinicScope,
+): Promise<MetricValue<number>> {
   const conds = [
     or(
       eq(patientScreenings.status, "pending"),
-      eq(patientScreenings.status, "pending_review"),
       eq(patientScreenings.status, "draft"),
     ),
+    // Screening rows are soft-deleted; don't count them.
+    isNull(patientScreenings.deletedAt),
   ];
   if (scope.clinicId != null) {
     conds.push(eq(patientScreenings.clinicId, scope.clinicId));
@@ -193,5 +232,66 @@ export async function countPrescreenPending(
     .select({ n: sql<number>`count(*)::int` })
     .from(patientScreenings)
     .where(and(...conds));
-  return row?.n ?? 0;
+  return AVAILABLE(row?.n ?? 0);
 }
+
+// ─── Upcoming ancillary patients — NOT IMPLEMENTED ──────────────
+// The prior code proxied this from `countActiveExecutionCases` — that
+// is not the same metric. "Upcoming ancillary patients" requires:
+//   • active case
+//   • with an ancillary assignment / procedure event scheduled
+//   • inside a specific date window
+//   • not cancelled
+//   • DEDUPED by patient
+// The current schema has procedure_events + global_schedule_events but
+// no audited helper that dedupes by patient inside a window. Marking
+// this metric explicitly unavailable until a proper repository helper
+// is authored.
+export async function countUpcomingAncillaryPatients_UNAVAILABLE(
+  _scope: ClinicScope,
+): Promise<MetricValue<number>> {
+  return UNAVAILABLE(
+    "No authoritative helper that dedupes upcoming-ancillary patients " +
+      "by patient inside a window. Active-case count is NOT a valid " +
+      "proxy for this metric.",
+  );
+}
+
+// Helper: distinct-patient de-duped scheduled count. Used by home
+// stats for "how many distinct patients are scheduled in window X."
+// This is an authoritative count, but the metric definition must be
+// exact — the caller decides which event types are included.
+export async function countDistinctPatientsScheduledInWindow(
+  scope: ClinicScope,
+  window: { start: Date; end: Date },
+  eventTypes: string[],
+): Promise<MetricValue<number>> {
+  if (eventTypes.length === 0) {
+    return UNAVAILABLE("no event types requested");
+  }
+  const conds = [
+    gte(globalScheduleEvents.startsAt, window.start),
+    lt(globalScheduleEvents.startsAt, window.end),
+    ne(globalScheduleEvents.status, "cancelled"),
+    or(
+      ...eventTypes.map((t) => eq(globalScheduleEvents.eventType, t)),
+    ),
+  ];
+  if (scope.clinicId != null) {
+    conds.push(eq(globalScheduleEvents.clinicId, scope.clinicId));
+  }
+  const [row] = await db
+    .select({
+      n: sql<number>`count(distinct ${globalScheduleEvents.patientScreeningId})::int`,
+    })
+    .from(globalScheduleEvents)
+    .where(and(...conds));
+  return AVAILABLE(row?.n ?? 0);
+}
+
+// Explicitly re-export the notInArray helper so downstream test files
+// can verify the plexus_tasks "open" definition without duplicating
+// the status list.
+export const OPEN_PLEXUS_TASK_TERMINAL_STATUSES = ["closed", "done"] as const;
+// Referenced by test — never removed silently.
+void notInArray;
