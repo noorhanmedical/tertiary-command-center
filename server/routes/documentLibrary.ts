@@ -3,13 +3,21 @@ import multer from "multer";
 import { storage } from "../storage";
 import { saveBlob, readBlob, deleteBlob, getLatestBlobForOwner } from "../services/blobStore";
 import { enqueueDriveFile } from "../services/outbox";
-import { db } from "../db";
-import { uploadedDocuments, documents as documentsTable, documentSurfaceAssignments, patientScreenings } from "@shared/schema";
-import { and, desc, eq, ilike, isNull, like, or, sql } from "drizzle-orm";
+import { uploadedDocuments } from "@shared/schema";
 import {
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
+import {
+  LEGACY_SOURCE_PREFIX,
+  findLatestPatientScreeningByExactName,
+  getLegacyUploadedDocumentById,
+  getPatientScreeningNameAndDob,
+  insertLegacyLibraryRow,
+  listLegacyUploadedDocuments,
+  listMigratedLegacyMarkers,
+  searchCurrentLibraryDocuments,
+} from "../repositories/documentLibraryLegacy.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import {
   type Document,
@@ -77,63 +85,30 @@ function inferLibraryKindFromLegacyDocType(docType: string): DocumentKind {
   }
 }
 
-// Stable, deterministic source-notes prefix used to mark library rows that
-// were back-filled from the legacy `uploaded_documents` table. Used both for
-// idempotency (skip already-migrated rows) and provenance tracing.
-const LEGACY_SOURCE_PREFIX = "legacy_uploaded_document_id=";
-
 // First-read migration: idempotently upsert any unmigrated `uploaded_documents`
 // rows into `documents` + a default `patient_chart` `document_surface_assignments`
 // row, resolving `patient_screening_id` by exact name match where possible.
 // Errors are logged but never thrown — a failed migration must not break reads.
 async function migrateLegacyUploadedDocuments(): Promise<void> {
   try {
-    const legacyRows = await db.select().from(uploadedDocuments)
-      .where(eq(uploadedDocuments.isTest, false));
+    const legacyRows = await listLegacyUploadedDocuments();
     if (legacyRows.length === 0) return;
 
-    const migrated = await db.select({ sourceNotes: documentsTable.sourceNotes })
-      .from(documentsTable)
-      .where(like(documentsTable.sourceNotes, `${LEGACY_SOURCE_PREFIX}%`));
-    const migratedIds = new Set<number>();
-    for (const r of migrated) {
-      if (!r.sourceNotes) continue;
-      const idStr = r.sourceNotes.slice(LEGACY_SOURCE_PREFIX.length);
-      const n = parseInt(idStr, 10);
-      if (!Number.isNaN(n)) migratedIds.add(n);
-    }
+    const migratedIds = await listMigratedLegacyMarkers();
 
     const todo = legacyRows.filter((r) => !migratedIds.has(r.id));
     if (todo.length === 0) return;
 
     for (const row of todo) {
       try {
-        const matches = await db.select({ id: patientScreenings.id })
-          .from(patientScreenings)
-          .where(eq(patientScreenings.name, row.patientName))
-          .orderBy(desc(patientScreenings.id))
-          .limit(1);
-        const patientScreeningId = matches[0]?.id ?? null;
-
-        await db.transaction(async (tx) => {
-          const inserted = await tx.insert(documentsTable).values({
-            title: `${row.patientName} — ${row.ancillaryType} (${row.docType})`,
-            description: "",
-            kind: inferLibraryKindFromLegacyDocType(row.docType),
-            signatureRequirement: "none",
-            filename: `${row.patientName}-${row.docType}.pdf`,
-            contentType: "application/pdf",
-            sizeBytes: 0,
-            patientScreeningId,
-            facility: row.facility,
-            sourceNotes: `${LEGACY_SOURCE_PREFIX}${row.id}`,
-            createdByUserId: null,
-          }).returning({ id: documentsTable.id });
-          const newId = inserted[0]!.id;
-          await tx.insert(documentSurfaceAssignments).values({
-            documentId: newId,
-            surface: "patient_chart",
-          }).onConflictDoNothing();
+        const patientScreeningId = await findLatestPatientScreeningByExactName(row.patientName);
+        await insertLegacyLibraryRow({
+          title: `${row.patientName} — ${row.ancillaryType} (${row.docType})`,
+          kind: inferLibraryKindFromLegacyDocType(row.docType),
+          filename: `${row.patientName}-${row.docType}.pdf`,
+          patientScreeningId,
+          facility: row.facility,
+          sourceNotes: `${LEGACY_SOURCE_PREFIX}${row.id}`,
         });
       } catch (rowErr) {
         console.error(`[document-library] legacy migration failed for uploaded_documents.id=${row.id}:`, rowErr);
@@ -268,29 +243,7 @@ function mountRoutes(app: Express, basePath: string) {
       const limit = Math.min(parseInt(String(req.query.limit ?? "25"), 10) || 25, 100);
       if (q.length === 0) return res.json({ rows: [] });
       const pattern = `%${q}%`;
-      const rows = await db
-        .select({
-          id: documentsTable.id,
-          title: documentsTable.title,
-          kind: documentsTable.kind,
-          filename: documentsTable.filename,
-          facility: documentsTable.facility,
-          contentType: documentsTable.contentType,
-        })
-        .from(documentsTable)
-        .where(
-          and(
-            isNull(documentsTable.supersededByDocumentId),
-            isNull(documentsTable.deletedAt),
-            or(
-              ilike(documentsTable.title, pattern),
-              ilike(documentsTable.filename, pattern),
-              ilike(documentsTable.description, pattern),
-            ),
-          ),
-        )
-        .orderBy(desc(documentsTable.createdAt))
-        .limit(limit);
+      const rows = await searchCurrentLibraryDocuments(pattern, limit);
       res.json({
         rows: rows.map((r) => ({
           id: r.id,
@@ -354,11 +307,8 @@ function mountRoutes(app: Express, basePath: string) {
         const legacyIdStr = doc.sourceNotes.slice(LEGACY_SOURCE_PREFIX.length);
         const legacyId = parseInt(legacyIdStr, 10);
         if (!Number.isNaN(legacyId)) {
-          const legacyRow = await db.select()
-            .from(uploadedDocuments)
-            .where(eq(uploadedDocuments.id, legacyId))
-            .limit(1);
-          legacyDriveLink = legacyRow[0]?.driveWebViewLink ?? null;
+          const legacyRow = await getLegacyUploadedDocumentById(legacyId);
+          legacyDriveLink = legacyRow?.driveWebViewLink ?? null;
           if (!blob) {
             blob = await getLatestBlobForOwner("uploaded_document", legacyId);
           }
@@ -673,11 +623,7 @@ function mountRoutes(app: Express, basePath: string) {
       }
 
       if (patientScreeningId !== null && (!patientName || !patientDob)) {
-        const [screening] = await db
-          .select({ name: patientScreenings.name, dob: patientScreenings.dob })
-          .from(patientScreenings)
-          .where(eq(patientScreenings.id, patientScreeningId))
-          .limit(1);
+        const screening = await getPatientScreeningNameAndDob(patientScreeningId);
         if (screening) {
           if (!patientName) patientName = screening.name;
           if (!patientDob && screening.dob) patientDob = screening.dob;

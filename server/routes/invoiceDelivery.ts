@@ -1,15 +1,19 @@
-// /api/invoice-delivery-queue + delivery actions — Phase 4 PR 4.5.
+// /api/invoice-delivery-queue + delivery actions.
+//
+// Phase 5 refactor: this route no longer imports drizzle-orm or ../db.
+// All reads flow through server/repositories/invoiceDelivery.repo.ts.
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { db } from "../db";
-import { eq, desc } from "drizzle-orm";
-import { invoices } from "@shared/schema/invoices";
-import { invoiceDeliveryEvents } from "@shared/schema/invoiceDelivery";
 import {
   queueDelivery, sendEmailDelivery, sendReminderDelivery,
 } from "../services/billing/invoiceDeliveryService";
 import { sendOutreachEmail } from "../services/emailService";
+import {
+  listInvoiceDeliveryQueue,
+  listDeliveryEventsForInvoice,
+  getInvoiceById,
+} from "../repositories/invoiceDelivery.repo";
 
 function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -30,9 +34,9 @@ const sendBody = z.object({
 
 export function registerInvoiceDeliveryRoutes(app: Express) {
   // GET /api/invoice-delivery-queue — invoices grouped by delivery_status.
-  app.get("/api/invoice-delivery-queue", requireAuth, async (req, res) => {
+  app.get("/api/invoice-delivery-queue", requireAuth, async (_req, res) => {
     try {
-      const rows = await db.select().from(invoices).orderBy(desc(invoices.createdAt)).limit(500);
+      const rows = await listInvoiceDeliveryQueue();
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -43,7 +47,7 @@ export function registerInvoiceDeliveryRoutes(app: Express) {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select().from(invoiceDeliveryEvents).where(eq(invoiceDeliveryEvents.invoiceId, id)).orderBy(desc(invoiceDeliveryEvents.createdAt));
+      const rows = await listDeliveryEventsForInvoice(id);
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -68,7 +72,7 @@ export function registerInvoiceDeliveryRoutes(app: Express) {
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const parsed = sendBody.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
-      const [inv] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
+      const inv = await getInvoiceById(id);
       if (!inv) return res.status(404).json({ error: "Invoice not found" });
       const subject = parsed.data.subject ?? `Invoice ${inv.invoiceNumber} — ${inv.facility}`;
       const body = parsed.data.body ?? `Please find your invoice ${inv.invoiceNumber} attached or available for download.`;
@@ -97,7 +101,7 @@ export function registerInvoiceDeliveryRoutes(app: Express) {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const [inv] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
+      const inv = await getInvoiceById(id);
       if (!inv) return res.status(404).json({ error: "Invoice not found" });
       const subject = `Reminder — invoice ${inv.invoiceNumber}`;
       const body = `This is a reminder that invoice ${inv.invoiceNumber} (balance $${inv.totalBalance}) is outstanding.`;
