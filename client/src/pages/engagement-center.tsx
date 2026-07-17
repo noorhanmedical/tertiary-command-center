@@ -48,7 +48,6 @@ import { EngagementFilterRail } from "@/components/engagement/EngagementFilterRa
 import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel";
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
-// Live team metrics — /api/engagement/team-metrics (admin-only).
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
 import {
   type BoardResponse,

@@ -72,11 +72,6 @@ const OUTREACH = "outreach";
  * datetimes ("2026-06-12T10:00:00Z"), which are normalized to their local
  * time-of-day so mixed formats within a list still compare consistently.
  * Returns null when the value can't be understood as a time.
- *
- * Previous behaviour was `new Date(t).getTime()`, which returns Invalid
- * Date (NaN) for time-only strings like "9:00 AM" — so
- * compareByAppointmentTime silently collapsed every row to +Infinity and
- * visit patients did not actually order by appointment time.
  */
 export function parseAppointmentTimeMinutes(
   raw: string | null | undefined,

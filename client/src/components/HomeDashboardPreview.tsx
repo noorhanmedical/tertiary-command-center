@@ -1,9 +1,3 @@
-// @ts-nocheck — V2 restore preview file. Type-checking suppressed so the
-// archive visual layout can render even when a couple of prop signatures
-// (activeFilters on BuildCommandCalendarCellsInput, alternate
-// CanonicalMonthCalendar props) drift from what main currently exports.
-// The preview is admin-only and lives on /home-preview.
-//
 // Preview copy of HomeDashboard (Task #622). Visual-layer-only redesign for
 // /home-preview: the Plexus IQ starfield/black-gradient card and assorted
 // accent icon colors become uniform flat navy tiles, the solid-black calendar
