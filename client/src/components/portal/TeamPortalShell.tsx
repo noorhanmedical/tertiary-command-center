@@ -2161,7 +2161,7 @@ export function TeamPortalShell({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`}>
+    <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
       {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
           reclaimed space reads as usable canvas. Left: "The Playground" wordmark
           in a cursive script font, blue. Right: the existing Clinic selector,

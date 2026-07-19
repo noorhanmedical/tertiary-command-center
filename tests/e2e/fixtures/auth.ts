@@ -56,9 +56,12 @@ export async function loginAs(page: Page, role: Role): Promise<void> {
     return;
   }
   await page.goto("/login");
-  await page.getByLabel(/username/i).fill(creds.user);
-  await page.getByLabel(/password/i).fill(creds.pass);
-  await page.getByRole("button", { name: /log in|sign in/i }).click();
+  // Stable test IDs from client/src/pages/login.tsx.
+  // Prefer testId over role/label queries — label queries have broken
+  // in the past when a label element wraps the input differently.
+  await page.getByTestId("input-login-username").fill(creds.user);
+  await page.getByTestId("input-login-password").fill(creds.pass);
+  await page.getByTestId("button-login-submit").click();
   await page.waitForURL((url) => !/login$/.test(url.pathname), { timeout: 10_000 });
 }
 

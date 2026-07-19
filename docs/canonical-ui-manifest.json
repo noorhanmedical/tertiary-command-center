@@ -161,7 +161,7 @@
     },
     {
       "path": "client/src/components/HomeDashboard.tsx",
-      "blob": "876087a0b9aec90cd83631a022322c5a4a635e53",
+      "blob": "37bc30474a8db97d9c8088c0fa08736fc9e8695e",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1281,7 +1281,7 @@
     },
     {
       "path": "client/src/components/portal/TeamPortalShell.tsx",
-      "blob": "1dd654ea75263250f827bd6bdbc178fc0cd0e0a4",
+      "blob": "d00eef7d6dcedc4aa2e560710af7d80158afd306",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
