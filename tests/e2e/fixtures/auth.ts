@@ -63,6 +63,14 @@ export async function loginAs(page: Page, role: Role): Promise<void> {
   await page.getByTestId("input-login-password").fill(creds.pass);
   await page.getByTestId("button-login-submit").click();
   await page.waitForURL((url) => !/login$/.test(url.pathname), { timeout: 10_000 });
+  // Wait for the authenticated shell to actually mount. Login page's
+  // onLogin calls refetch() → navigate("/home") in a promise chain,
+  // so the URL can flip to /home before <AuthenticatedApp> renders
+  // (which is what mounts TopBanner). Waiting on this DOM anchor
+  // guarantees the /me query has hydrated and every subsequent
+  // page.goto lands on a fully-hydrated SPA shell — no race between
+  // navigation and hydration on the first assertion of each test.
+  await page.getByTestId("top-banner").waitFor({ state: "visible", timeout: 10_000 });
 }
 
 /**
