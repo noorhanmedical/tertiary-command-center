@@ -16,6 +16,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install --with-deps chromium",
     "smoke:canonical-apis": "tsx script/smokeCanonicalApis.ts",
+    "seed:e2e-users": "tsx script/seedE2EPlaywrightUsers.ts",
     "seed:testguy-flow": "tsx script/seedTestGuyFlow.ts",
     "reconcile:testguy": "tsx script/reconcileTestGuy.ts",
     "seed:visit-flow": "tsx script/seedVisitPatientFlow.ts",
