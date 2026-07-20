@@ -23,6 +23,32 @@ export const featureFlags = {
   clinicalIntelligenceLive: readBool("FEATURE_CLINICAL_INTELLIGENCE_LIVE", false),
   /** Clinician Portal alt backend — Phase 4 kept disabled pending shell canonical decision. */
   clinicianPortalBackend: readBool("FEATURE_CLINICIAN_PORTAL_BACKEND", false),
+
+  // ─── Phase 2A — Global Plexus patient identity ─────────────────
+  // Both flags default OFF. The corresponding SQL migration
+  // (migrations/0049_add_plexus_identity.sql) is NOT applied
+  // automatically. Flipping either flag ON without the migration
+  // applied will fail-fast at write time.
+
+  /**
+   * Enable writes to the Plexus identity tables (global_plexus_patients,
+   * patient_clinic_memberships, patient_external_identifiers, aliases,
+   * merge events, match candidates). Read helpers on the resolver still
+   * function (returning empty results if the migration hasn't been
+   * applied) so screening / clinic-facing endpoints can preview
+   * matches, but nothing is persisted until this is ON.
+   */
+  plexusIdentityWrite: readBool("FEATURE_PLEXUS_IDENTITY_WRITE", false),
+
+  /**
+   * Enable Plexus-internal identity review endpoints (match candidates,
+   * merges, alias management). MUST remain OFF until a Plexus-internal
+   * user role exists — see
+   * server/services/plexusIdentity/authorization.ts for the unresolved
+   * blocker. Clinic users and general clinic administrators must never
+   * receive this access.
+   */
+  plexusIdentityReview: readBool("FEATURE_PLEXUS_IDENTITY_REVIEW", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;
