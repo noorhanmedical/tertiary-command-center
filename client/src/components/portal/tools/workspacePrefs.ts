@@ -8,7 +8,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type TrayTab = "patients" | "direct" | "team";
+// Patient Messages / patient SMS is intentionally absent — the platform
+// ships zero live patient-texting paths. Direct Messages + Team Chat
+// are the only supported tray tabs.
+export type TrayTab = "direct" | "team";
 export type PlaygroundLayout = "docked" | "split";
 export type CalendarBehavior = "playground" | "quickSchedule";
 
@@ -41,6 +44,8 @@ export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
 // Coalesce rapid toggle flips into one PUT.
 const PERSIST_DEBOUNCE_MS = 600;
 
+// Must include every TrayTab the settings dialog offers. Patient
+// Messages is intentionally excluded — no live patient-texting path.
 const TRAY_TABS: TrayTab[] = ["direct", "team"];
 const LAYOUTS: PlaygroundLayout[] = ["docked", "split"];
 const CAL_BEHAVIORS: CalendarBehavior[] = ["playground", "quickSchedule"];
@@ -102,17 +107,24 @@ export function useWorkspacePrefs(storageKey?: string | null) {
   const prefsRef = useRef<WorkspacePrefs>(prefs);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const sendPrefs = useCallback((next: WorkspacePrefs, keepalive: boolean) => {
-    fetch("/api/portal/workspace-prefs", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(next),
-      keepalive,
-    }).catch(() => {
-      /* best-effort; next mutation retries */
-    });
-  }, []);
+  // Returns the fetch promise so callers can await a definitive commit
+  // (used by `flushPersist` below). The keepalive variant is used on
+  // unmount / navigate-away where the promise isn't awaited.
+  const sendPrefs = useCallback(
+    (next: WorkspacePrefs, keepalive: boolean): Promise<Response | null> => {
+      return fetch("/api/portal/workspace-prefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(next),
+        keepalive,
+      }).catch(() => {
+        /* best-effort; next mutation retries */
+        return null;
+      });
+    },
+    [],
+  );
 
   const schedulePersist = useCallback(() => {
     if (persistTimer.current) clearTimeout(persistTimer.current);
@@ -256,5 +268,20 @@ export function useWorkspacePrefs(storageKey?: string | null) {
     );
   }, [applyChange]);
 
-  return { prefs, hydrated, updatePref, resetPrefs } as const;
+  // Force any debounced write to commit NOW and resolve when the
+  // server accepts (or rejects) the request. Callers use this when a
+  // user-visible commit boundary is crossed (e.g., closing the
+  // Workspace Settings dialog) so the pref is guaranteed durable
+  // before the caller may navigate away or reload. If nothing is
+  // dirty this is a cheap no-op that resolves synchronously.
+  const flushPersist = useCallback(async (): Promise<void> => {
+    if (!persistTimer.current) return;
+    clearTimeout(persistTimer.current);
+    persistTimer.current = null;
+    const k = keyRef.current;
+    if (!k || hydratedRef.current !== k) return;
+    await sendPrefs(prefsRef.current, false);
+  }, [sendPrefs]);
+
+  return { prefs, hydrated, updatePref, resetPrefs, flushPersist } as const;
 }

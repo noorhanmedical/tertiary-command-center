@@ -14,9 +14,17 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export function registerHomeStatsRoutes(app: Express) {
-  app.get("/api/home-stats", requireAuth, async (_req, res) => {
+  app.get("/api/home-stats", requireAuth, async (req, res) => {
     try {
-      const stats = await buildHomeStats();
+      // clinicContext middleware attaches req.clinicId:
+      //   • admin role → req.clinicId = null (Home Stats returns
+      //     `sourceMissing: true` for the metrics that need a clinic
+      //     scope; admin should use Mission Control for platform-wide).
+      //   • other roles → req.clinicId = session clinicId (or null if
+      //     unassigned; the service will return sourceMissing for the
+      //     tenant-scoped metrics).
+      const clinicId = req.clinicId ?? null;
+      const stats = await buildHomeStats({ clinicId });
       res.json(stats);
     } catch (error: any) {
       console.error("[home-stats] error:", error?.message ?? error);

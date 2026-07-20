@@ -161,7 +161,7 @@
     },
     {
       "path": "client/src/components/HomeDashboard.tsx",
-      "blob": "876087a0b9aec90cd83631a022322c5a4a635e53",
+      "blob": "37bc30474a8db97d9c8088c0fa08736fc9e8695e",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1281,7 +1281,7 @@
     },
     {
       "path": "client/src/components/portal/TeamPortalShell.tsx",
-      "blob": "1dd654ea75263250f827bd6bdbc178fc0cd0e0a4",
+      "blob": "56627354c816f2900ae777875ba1ce7ebfcac252",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1344,7 +1344,7 @@
     },
     {
       "path": "client/src/components/portal/tools/CommunicationTray.tsx",
-      "blob": "b5352ba15783607817b38d3bc1bfbd9293a2d0d6",
+      "blob": "8d8af637c47c28056267a9af73e2d2e063940669",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1358,7 +1358,7 @@
     },
     {
       "path": "client/src/components/portal/tools/WorkspaceSettingsDialog.tsx",
-      "blob": "11db287c1a271d74f9f2c2df4368eb2417dce3c5",
+      "blob": "c1cbc1e36f973dbecc04049f9e718ff1763c5947",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1372,7 +1372,7 @@
     },
     {
       "path": "client/src/components/portal/tools/workspacePrefs.ts",
-      "blob": "9a5daf9851463433ac44971e930aca69c1e9e1f1",
+      "blob": "c501632ed6d13acb1c0dc5feb2fb794ea4a1d34c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2114,7 +2114,7 @@
     },
     {
       "path": "client/src/hooks/api/home-stats.ts",
-      "blob": "650721e9c4b45cad03e9cf6cb6bad087d4762619",
+      "blob": "c8a8e1b2f1b1892bd7d65dccbd8a278ef7704086",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
