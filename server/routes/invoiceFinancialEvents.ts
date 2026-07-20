@@ -1,16 +1,14 @@
-// /api/invoices/:id/{payments,adjustments,denials,remittance-events,financial-events} — Phase 4 PR 4.6.
+// /api/invoices/:id/{payments,adjustments,denials,remittance-events,financial-events}
+//
+// Phase 5 refactor: no drizzle-orm or ../db imports. All financial-event
+// reads flow through server/repositories/invoiceFinancialEvents.repo.ts.
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { db } from "../db";
-import { eq, desc } from "drizzle-orm";
-import { invoicePayments } from "@shared/schema/invoices";
-import {
-  invoiceAdjustments, invoiceDenials, remittanceEvents,
-} from "@shared/schema/invoiceFinancialEvents";
 import {
   postPayment, postAdjustment, postDenial, postRemittanceEvent, patchDenialStatus,
 } from "../services/billing/invoiceFinancialService";
+import { loadFinancialEventsForInvoice } from "../repositories/invoiceFinancialEvents.repo";
 
 function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -123,13 +121,8 @@ export function registerInvoiceFinancialRoutes(app: Express) {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const [payments, adjustments, denials, remittances] = await Promise.all([
-        db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, id)).orderBy(desc(invoicePayments.createdAt)),
-        db.select().from(invoiceAdjustments).where(eq(invoiceAdjustments.invoiceId, id)).orderBy(desc(invoiceAdjustments.createdAt)),
-        db.select().from(invoiceDenials).where(eq(invoiceDenials.invoiceId, id)).orderBy(desc(invoiceDenials.createdAt)),
-        db.select().from(remittanceEvents).where(eq(remittanceEvents.invoiceId, id)).orderBy(desc(remittanceEvents.createdAt)),
-      ]);
-      res.json({ payments, adjustments, denials, remittances });
+      const bundle = await loadFinancialEventsForInvoice(id);
+      res.json(bundle);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

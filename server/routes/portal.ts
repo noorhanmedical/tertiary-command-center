@@ -3,17 +3,21 @@ import multer from "multer";
 import { PDFDocument } from "pdf-lib";
 import { storage } from "../storage";
 import { saveBlob, getLatestBlobForOwner, readBlob } from "../services/blobStore";
-import { db } from "../db";
 import {
-  documentSurfaceAssignments,
-  documents as documentsTable,
-  ancillaryAppointments,
-  users as usersTable,
   type DocumentSurface,
   type DocumentKind,
   type AncillaryAppointment,
 } from "@shared/schema";
-import { and, eq, gte, lte, inArray, sql } from "drizzle-orm";
+import {
+  assignDocumentToPatientChart,
+  listActiveFacilityUsers,
+  listAncillaryAppointmentsForDate,
+  listAncillaryAppointmentsForRange,
+  listDistinctAncillaryFacilities,
+  listMyRecentPatientsScoped,
+  rollbackDocumentInsert,
+  searchPatientScreeningsScoped,
+} from "../repositories/portal.repo";
 import {
   PORTAL_OUTREACH_BASE_CAP,
   PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD,
@@ -251,9 +255,7 @@ export function registerPortalRoutes(app: Express) {
       const denied = ensureFacility(allowed, facility || null);
       if (denied) return res.status(403).json({ error: denied });
 
-      const conds = [eq(ancillaryAppointments.scheduledDate, date)];
-      if (facility) conds.push(eq(ancillaryAppointments.facility, facility));
-      const appts = await db.select().from(ancillaryAppointments).where(and(...conds));
+      const appts = await listAncillaryAppointmentsForDate(date, facility || null);
 
       // Group by patient + collect tests/times
       type PatientRow = {
@@ -371,12 +373,11 @@ export function registerPortalRoutes(app: Express) {
       const [y, m] = month.split("-").map((s) => parseInt(s, 10));
       const monthEndDate = new Date(y, m, 0);
       const monthEnd = localIso(monthEndDate);
-      const conds = [
-        gte(ancillaryAppointments.scheduledDate, monthStart),
-        lte(ancillaryAppointments.scheduledDate, monthEnd),
-      ];
-      if (facility) conds.push(eq(ancillaryAppointments.facility, facility));
-      const rows = await db.select().from(ancillaryAppointments).where(and(...conds));
+      const rows = await listAncillaryAppointmentsForRange(
+        monthStart,
+        monthEnd,
+        facility || null,
+      );
       const counts = new Map<string, number>();
       for (const r of rows) counts.set(r.scheduledDate, (counts.get(r.scheduledDate) ?? 0) + 1);
       const days: Array<{ date: string; appointmentCount: number }> = [];
@@ -421,9 +422,7 @@ export function registerPortalRoutes(app: Express) {
       // In-clinic ancillary load TODAY (used to detect "heavy" days). The
       // heavier the in-clinic schedule, the LOWER the outreach cap so we
       // protect bandwidth for the patients who are physically here today.
-      const todaysApptsConds = [eq(ancillaryAppointments.scheduledDate, today)];
-      if (facility) todaysApptsConds.push(eq(ancillaryAppointments.facility, facility));
-      const todaysAppts = await db.select().from(ancillaryAppointments).where(and(...todaysApptsConds));
+      const todaysAppts = await listAncillaryAppointmentsForDate(today, facility || null);
 
       type Item = {
         patientScreeningId: number;
@@ -482,10 +481,7 @@ export function registerPortalRoutes(app: Express) {
       const dedup = new Map<string, number>();
       for (const w of facilityWorkers) dedup.set(w.userId, Math.max(dedup.get(w.userId) ?? 0, w.weight));
       const candidateIds = [...dedup.keys()];
-      const activeWorkers = candidateIds.length === 0 ? [] : await db
-        .select({ id: usersTable.id, role: usersTable.role, active: usersTable.active })
-        .from(usersTable)
-        .where(and(inArray(usersTable.id, candidateIds), eq(usersTable.active, true)));
+      const activeWorkers = await listActiveFacilityUsers(candidateIds);
       const workers = activeWorkers
         .filter((u) => u.role === "technician" || u.role === "liaison")
         .map((u) => ({ userId: u.id, weight: dedup.get(u.id) ?? 100 }))
@@ -564,18 +560,14 @@ export function registerPortalRoutes(app: Express) {
       const denied = ensureFacility(allowed, facility);
       if (denied) return res.status(403).json({ error: denied });
 
-      const conds = [eq(ancillaryAppointments.scheduledDate, date), eq(ancillaryAppointments.facility, facility)];
-      const appts = await db.select().from(ancillaryAppointments).where(and(...conds));
+      const appts = await listAncillaryAppointmentsForDate(date, facility);
 
       // Build deterministic role-aware assignee map for this clinic.
       const schedulers = await storage.getOutreachSchedulers();
       const facUserIds = schedulers
         .filter((s) => s.facility === facility && s.userId)
         .map((s) => s.userId!);
-      const facUsers = facUserIds.length === 0 ? [] : await db
-        .select({ id: usersTable.id, role: usersTable.role, active: usersTable.active })
-        .from(usersTable)
-        .where(and(inArray(usersTable.id, facUserIds), eq(usersTable.active, true)));
+      const facUsers = await listActiveFacilityUsers(facUserIds);
       const techUser = facUsers.find((u) => u.role === "technician");
       const liaisonUser = facUsers.find((u) => u.role === "liaison");
       const assignee = techUser?.id ?? liaisonUser?.id ?? null;
@@ -728,10 +720,7 @@ export function registerPortalRoutes(app: Express) {
       });
 
       try {
-        await db.insert(documentSurfaceAssignments).values({
-          documentId: doc.id,
-          surface: "patient_chart" as DocumentSurface,
-        }).onConflictDoNothing();
+        await assignDocumentToPatientChart(doc.id);
 
         await saveBlob({
           ownerType: "library_document",
@@ -741,7 +730,7 @@ export function registerPortalRoutes(app: Express) {
           buffer: req.file.buffer,
         });
       } catch (innerErr) {
-        await db.delete(documentsTable).where(eq(documentsTable.id, doc.id));
+        await rollbackDocumentInsert(doc.id);
         throw innerErr;
       }
 
@@ -863,10 +852,7 @@ export function registerPortalRoutes(app: Express) {
       });
 
       try {
-        await db.insert(documentSurfaceAssignments).values({
-          documentId: newDoc.id,
-          surface: "patient_chart" as DocumentSurface,
-        }).onConflictDoNothing();
+        await assignDocumentToPatientChart(newDoc.id);
 
         await saveBlob({
           ownerType: "library_document",
@@ -876,7 +862,7 @@ export function registerPortalRoutes(app: Express) {
           buffer: flatBytes,
         });
       } catch (innerErr) {
-        await db.delete(documentsTable).where(eq(documentsTable.id, newDoc.id));
+        await rollbackDocumentInsert(newDoc.id);
         throw innerErr;
       }
 
@@ -987,9 +973,8 @@ export function registerPortalRoutes(app: Express) {
       });
       if (allowed.all) {
         // Admin gets every facility ever used by an appointment.
-        const rows = await db.selectDistinct({ facility: ancillaryAppointments.facility })
-          .from(ancillaryAppointments);
-        res.json({ facilities: rows.map((r) => r.facility).sort() });
+        const facilities = await listDistinctAncillaryFacilities();
+        res.json({ facilities: facilities.slice().sort() });
       } else {
         res.json({ facilities: [...allowed.facilities].sort() });
       }
@@ -1055,39 +1040,12 @@ export function registerPortalRoutes(app: Express) {
       if (!allowed.all && allowed.facilities.size === 0) return res.json([]);
 
       const like = `%${query}%`;
-      const facilityConds = facilityFilter
-        ? sql`AND COALESCE(ps.facility, sb.facility) = ${facilityFilter}`
-        : allowed.all
-          ? sql``
-          : sql`AND COALESCE(ps.facility, sb.facility) IN (${sql.join([...allowed.facilities].map((f) => sql`${f}`), sql`, `)})`;
-
-      const result = await db.execute<{
-        id: number;
-        name: string;
-        dob: string | null;
-        facility: string | null;
-        insurance: string | null;
-        phone: string | null;
-        appointment_status: string | null;
-        commit_status: string | null;
-      }>(sql`
-        SELECT ps.id, ps.name, ps.dob,
-               COALESCE(ps.facility, sb.facility) AS facility,
-               ps.insurance, ps.phone_number AS phone,
-               ps.appointment_status, ps.commit_status
-        FROM patient_screenings ps
-        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        WHERE ps.deleted_at IS NULL
-          AND (
-            ps.name ILIKE ${like}
-            OR ps.dob ILIKE ${like}
-            OR ps.phone_number ILIKE ${like}
-            OR ps.insurance ILIKE ${like}
-          )
-          ${facilityConds}
-        ORDER BY ps.name ASC, ps.id DESC
-        LIMIT ${limit}
-      `);
+      const result = await searchPatientScreeningsScoped({
+        like,
+        facilityFilter,
+        allowed,
+        limit,
+      });
 
       res.json(result.rows.map((r) => ({
         patientScreeningId: r.id,
@@ -1123,56 +1081,13 @@ export function registerPortalRoutes(app: Express) {
       }
       if (!allowed.all && allowed.facilities.size === 0) return res.json([]);
 
-      const facilityConds = facilityFilter
-        ? sql`AND COALESCE(ps.facility, sb.facility) = ${facilityFilter}`
-        : allowed.all
-          ? sql``
-          : sql`AND COALESCE(ps.facility, sb.facility) IN (${sql.join([...allowed.facilities].map((f) => sql`${f}`), sql`, `)})`;
-      const queryConds = query
-        ? sql`AND (ps.name ILIKE ${`%${query}%`} OR ps.dob ILIKE ${`%${query}%`})`
-        : sql``;
-
-      const result = await db.execute<{
-        id: number;
-        name: string;
-        dob: string | null;
-        facility: string | null;
-        appointment_status: string | null;
-        commit_status: string | null;
-        last_at: string | null;
-        last_type: string | null;
-        last_summary: string | null;
-      }>(sql`
-        WITH touches AS (
-          SELECT oc.patient_screening_id AS pid, oc.started_at AS at,
-                 'call'::text AS type, oc.outcome AS summary
-          FROM outreach_calls oc
-          WHERE oc.scheduler_user_id = ${me}
-          UNION ALL
-          SELECT pje.patient_screening_id, pje.created_at,
-                 pje.event_type, pje.summary
-          FROM patient_journey_events pje
-          WHERE pje.actor_user_id = ${me}
-            AND pje.patient_screening_id IS NOT NULL
-        ),
-        latest AS (
-          SELECT DISTINCT ON (pid) pid, at, type, summary
-          FROM touches
-          ORDER BY pid, at DESC
-        )
-        SELECT ps.id, ps.name, ps.dob,
-               COALESCE(ps.facility, sb.facility) AS facility,
-               ps.appointment_status, ps.commit_status,
-               l.at AS last_at, l.type AS last_type, l.summary AS last_summary
-        FROM latest l
-        JOIN patient_screenings ps ON ps.id = l.pid AND ps.deleted_at IS NULL
-        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        WHERE TRUE
-          ${facilityConds}
-          ${queryConds}
-        ORDER BY l.at DESC
-        LIMIT ${limit}
-      `);
+      const result = await listMyRecentPatientsScoped({
+        userId: me as any,
+        query,
+        facilityFilter,
+        allowed,
+        limit,
+      });
 
       res.json(result.rows.map((r) => ({
         patientScreeningId: r.id,
