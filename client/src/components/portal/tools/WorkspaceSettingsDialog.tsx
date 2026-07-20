@@ -89,7 +89,8 @@ export function WorkspaceSettingsDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="z-[95]">
-                <SelectItem value="patients">Patient Messages</SelectItem>
+                {/* Patient Messages / patient SMS intentionally absent —
+                    no live patient-texting path on this platform. */}
                 <SelectItem value="direct">Direct Messages</SelectItem>
                 <SelectItem value="team">Team Chat</SelectItem>
               </SelectContent>

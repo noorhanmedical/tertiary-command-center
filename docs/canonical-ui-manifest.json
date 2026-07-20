@@ -1281,7 +1281,7 @@
     },
     {
       "path": "client/src/components/portal/TeamPortalShell.tsx",
-      "blob": "37d6ad4ebb1f6b3170e54e01c614afe177d07458",
+      "blob": "56627354c816f2900ae777875ba1ce7ebfcac252",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1344,7 +1344,7 @@
     },
     {
       "path": "client/src/components/portal/tools/CommunicationTray.tsx",
-      "blob": "b5352ba15783607817b38d3bc1bfbd9293a2d0d6",
+      "blob": "ad064729d96bcce8f1dbf00f994b69bca3d3b5e6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1358,7 +1358,7 @@
     },
     {
       "path": "client/src/components/portal/tools/WorkspaceSettingsDialog.tsx",
-      "blob": "2f04588b770381c9c66791503b12396b3df15d35",
+      "blob": "c1cbc1e36f973dbecc04049f9e718ff1763c5947",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1372,7 +1372,7 @@
     },
     {
       "path": "client/src/components/portal/tools/workspacePrefs.ts",
-      "blob": "03a3b0d54a6d0a0bf8c5030d537427bcd4054b9e",
+      "blob": "c501632ed6d13acb1c0dc5feb2fb794ea4a1d34c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

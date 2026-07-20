@@ -100,19 +100,21 @@ for (const { role, path, label } of [
       page,
     }) => {
       // Real end-to-end persistence path:
-      //   1. Switch left rail to Tools; open the Settings dialog via
-      //      the `left-rail-tool-settings` tool.
-      //   2. Change the default tray tab in the WorkspaceSettingsDialog.
-      //   3. Close the dialog — `flushPersist` on the dialog's
-      //      onOpenChange awaits the PUT.
-      //   4. Reload. The default tray tab must reflect the newly
-      //      persisted value: after opening Tools again, the tray body
-      //      that renders in the Tools rail must match the picked tab.
-      //
-      // The `leftPanelTab` state is intentionally NOT persisted
-      // (session-scoped ephemeral state), so re-opening Tools after
-      // reload is required to surface the tray body. `defaultTrayTab`
-      // IS persisted — verified via the tray-body assertion below.
+      //   1. Reveal the left rail and switch to Tools.
+      //   2. Open the Settings dialog via `left-rail-tool-settings`.
+      //   3. Toggle Default tray tab between Direct Messages and
+      //      Team Chat (the only two supported values — Patient
+      //      Messages is not exposed on this platform).
+      //   4. Close the dialog. `flushPersist` on the dialog's
+      //      onOpenChange awaits the PUT; the test additionally waits
+      //      for the 200 network response.
+      //   5. Reload. Re-open Tools rail (leftPanelTab is session
+      //      state, intentionally not persisted).
+      //   6. Assert the persisted value drove BOTH:
+      //        a) the tray-tab button's aria-selected attribute
+      //           (stable, non-visual state marker)
+      //        b) the corresponding tray body's visibility (which
+      //           requires the Tools rail to have real flex area).
       await openToolsTab(page);
       const settingsBtn = page.getByTestId("left-rail-tool-settings");
       await expect(settingsBtn).toBeVisible();
@@ -124,23 +126,21 @@ for (const { role, path, label } of [
       const traySelect = dialog.getByTestId("setting-default-tray-tab");
       await expect(traySelect).toBeVisible();
 
-      // Read the current select value and pick a DIFFERENT option so
-      // the reload is guaranteed to observe a change. `Patient Messages`
-      // (patients) is the target unless the current default is already
-      // patients — in which case we pick `Team Chat` instead.
+      // Read the current select value and pick the OPPOSITE option so
+      // the reload is guaranteed to observe a change. Only two options
+      // exist: Direct Messages ↔ Team Chat.
       const currentTab = await traySelect.textContent();
       const nextTab =
-        currentTab && /patient/i.test(currentTab)
-          ? { label: "Team Chat", body: "tray-team" }
-          : { label: "Patient Messages", body: "tray-patients" };
+        currentTab && /team/i.test(currentTab)
+          ? { label: "Direct Messages", value: "direct", body: "tray-direct" }
+          : { label: "Team Chat", value: "team", body: "tray-team" };
 
       await traySelect.click();
       await page.getByRole("option", { name: nextTab.label }).click();
 
       // Wait for the persistence PUT to hit the server AND return
       // 200 BEFORE closing the dialog or reloading. This is the
-      // definitive server-side commit signal — if this never fires,
-      // the assertion below would race a still-in-flight write.
+      // definitive server-side commit signal.
       const persistDone = page.waitForResponse(
         (res) =>
           res.request().method() === "PUT" &&
@@ -149,10 +149,8 @@ for (const { role, path, label } of [
         { timeout: 10_000 },
       );
 
-      // Closing the dialog triggers `flushPersist` (see
-      // WorkspaceSettingsDialog.tsx `handleOpenChange`), which
-      // awaits the debounced write. The dialog only unmounts AFTER
-      // that promise resolves.
+      // Closing the dialog triggers `flushPersist`; the dialog only
+      // unmounts after the PUT resolves.
       await page.keyboard.press("Escape");
       await persistDone;
       await expect(dialog).toHaveCount(0);
@@ -166,12 +164,27 @@ for (const { role, path, label } of [
       ).toBeVisible();
 
       // Re-open Tools — the docked layout only surfaces the tray
-      // body inside the Tools rail. If the persisted defaultTrayTab
-      // matches nextTab, that body renders.
+      // inside the Tools rail.
       await openToolsTab(page);
-      await expect(
-        page.getByTestId("portal-left-rail").getByTestId(nextTab.body),
-      ).toBeVisible();
+
+      const rail = page.getByTestId("portal-left-rail");
+      // The tray container is always mounted inside the Tools rail
+      // now that the rail's dock/calendar block cannot consume all
+      // vertical space (see TeamPortalShell.tsx layout contract).
+      await expect(rail.getByTestId("communication-tray")).toBeVisible();
+
+      // Non-visual state marker: the tray-tab button's aria-selected
+      // attribute reflects the active tab regardless of layout, so
+      // the assertion holds even if the tray body has zero animation
+      // frames in.
+      const trayTabButton = rail.getByTestId(`tray-tab-${nextTab.value}`);
+      await expect(trayTabButton).toHaveAttribute("aria-selected", "true");
+
+      // And the body itself must be in the DOM and visible — this
+      // is the layout-fix gate: if the tray's flex area were 0 the
+      // body's bounding box would be 0×0 and `toBeVisible` would
+      // fail.
+      await expect(rail.getByTestId(nextTab.body)).toBeVisible();
     });
   });
 }

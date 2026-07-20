@@ -8,7 +8,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type TrayTab = "patients" | "direct" | "team";
+// Patient Messages / patient SMS is intentionally absent — the platform
+// ships zero live patient-texting paths. Direct Messages + Team Chat
+// are the only supported tray tabs.
+export type TrayTab = "direct" | "team";
 export type PlaygroundLayout = "docked" | "split";
 export type CalendarBehavior = "playground" | "quickSchedule";
 
@@ -41,11 +44,9 @@ export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
 // Coalesce rapid toggle flips into one PUT.
 const PERSIST_DEBOUNCE_MS = 600;
 
-// Must include every TrayTab the settings dialog offers. Prior list
-// dropped "patients" — a persisted "patients" row would parse back
-// to the default ("direct") on GET, so Patient Messages appeared to
-// not persist even when the server accepted the write.
-const TRAY_TABS: TrayTab[] = ["patients", "direct", "team"];
+// Must include every TrayTab the settings dialog offers. Patient
+// Messages is intentionally excluded — no live patient-texting path.
+const TRAY_TABS: TrayTab[] = ["direct", "team"];
 const LAYOUTS: PlaygroundLayout[] = ["docked", "split"];
 const CAL_BEHAVIORS: CalendarBehavior[] = ["playground", "quickSchedule"];
 
