@@ -38,6 +38,10 @@ import {
   extractImagePatients,
 } from "../services/screening";
 import { logAudit } from "../services/auditService";
+import {
+  resolveAndLinkPlexusIdentityForScreening,
+  resolveAndLinkPlexusIdentityForScreeningsBulk,
+} from "../services/plexusIdentity/screeningIntegration";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import {
   findSchedulerForBatch,
@@ -267,6 +271,35 @@ export function registerBatchRoutes(app: Express) {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
+      // Phase 2A — shared identity orchestration. No-op when
+      // FEATURE_PLEXUS_IDENTITY_WRITE is OFF (default). Awaited so any
+      // schema-configuration failure surfaces here rather than being
+      // dropped by a fire-and-forget promise.
+      try {
+        await resolveAndLinkPlexusIdentityForScreening({
+          screeningId: patient.id,
+          clinicId: patient.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_add_patient",
+          demographics: {
+            displayName: patient.name,
+            dob: patient.dob,
+            phone: patient.phoneNumber,
+            email: patient.email ?? null,
+          },
+        });
+      } catch (e) {
+        // Never swallow silently. Log the structured code and continue —
+        // the clinic workflow is not blocked by identity plumbing.
+        console.error(JSON.stringify({
+          level: "error",
+          source: "plexus_identity_integration",
+          route: "POST /api/batches/:id/patients",
+          screeningId: patient.id,
+          code: (e as { code?: string })?.code,
+          message: (e as Error)?.message ?? String(e),
+        }));
+      }
+
       void logAudit(req, "create", "patient", patient.id, { name: patient.name, batchId });
       invalidatePatientDatabase();
       res.json(patient);
@@ -341,6 +374,33 @@ export function registerBatchRoutes(app: Express) {
       const createdIds = new Set(created.map((p) => p.id));
       const enrichedPatients = created.filter((p) => createdIds.has(p.id));
 
+      // Phase 2A — bulk identity orchestration. Bulk helper short-
+      // circuits when FEATURE_PLEXUS_IDENTITY_WRITE is OFF, so this
+      // adds zero latency to the current import path.
+      const identityBulk = await resolveAndLinkPlexusIdentityForScreeningsBulk(
+        created.map((p) => ({
+          screeningId: p.id,
+          clinicId: p.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_import_file",
+          demographics: {
+            displayName: p.name,
+            dob: p.dob,
+            phone: p.phoneNumber,
+            email: p.email ?? null,
+          },
+        })),
+      );
+      for (const err of identityBulk.errors) {
+        console.error(JSON.stringify({
+          level: "error",
+          source: "plexus_identity_integration",
+          route: "POST /api/batches/:id/import-file",
+          screeningId: err.screeningId,
+          code: err.code,
+          message: err.message,
+        }));
+      }
+
       invalidatePatientDatabase();
       res.json({ imported: enrichedPatients.length, patients: enrichedPatients });
     } catch (error: any) {
@@ -389,6 +449,31 @@ export function registerBatchRoutes(app: Express) {
       await storage.updateScreeningBatch(batchId, {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
+
+      // Phase 2A — bulk identity orchestration (see import-file above).
+      const identityBulk2 = await resolveAndLinkPlexusIdentityForScreeningsBulk(
+        created2.map((p) => ({
+          screeningId: p.id,
+          clinicId: p.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_import_text",
+          demographics: {
+            displayName: p.name,
+            dob: p.dob,
+            phone: p.phoneNumber,
+            email: p.email ?? null,
+          },
+        })),
+      );
+      for (const err of identityBulk2.errors) {
+        console.error(JSON.stringify({
+          level: "error",
+          source: "plexus_identity_integration",
+          route: "POST /api/batches/:id/import-text",
+          screeningId: err.screeningId,
+          code: err.code,
+          message: err.message,
+        }));
+      }
 
       invalidatePatientDatabase();
       res.json({ imported: created2.length, patients: created2 });

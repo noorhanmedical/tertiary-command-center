@@ -39,6 +39,7 @@ import {
 } from "../../client/src/lib/patientDirectoryImport";
 import { findFuzzyNameMatches } from "../../shared/patientIdentity";
 import { storage } from "../storage";
+import { resolveAndLinkPlexusIdentityForScreening } from "../services/plexusIdentity/screeningIntegration";
 import {
   createImportBatch,
   deleteImportBatch,
@@ -385,6 +386,38 @@ export function registerPatientDirectoryRoutes(app: Express): void {
           patientScreeningId = result.patientScreeningId;
         }
         created.push(patientScreeningId);
+
+        // Phase 2A — shared identity orchestration. No-op with
+        // FEATURE_PLEXUS_IDENTITY_WRITE=OFF. When ON, this links the
+        // newly created screening to a global Plexus patient + clinic
+        // membership. MRN (when provided) participates as the deterministic
+        // definitive-match signal within the same clinic scope.
+        try {
+          const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+          await resolveAndLinkPlexusIdentityForScreening({
+            screeningId: patientScreeningId,
+            clinicId: reqClinicId,
+            sourceSystem: "patient_directory_import_confirm",
+            clinicMrn: (row.identity?.mrn as string | null | undefined) ?? null,
+            demographics: {
+              displayName: name,
+              dob: (row.identity?.dob as string | null | undefined) ?? null,
+              phone: (row.identity?.phoneNumber as string | null | undefined) ??
+                (row.identity?.phone as string | null | undefined) ?? null,
+              email: (row.identity?.email as string | null | undefined) ?? null,
+            },
+          });
+        } catch (e) {
+          console.error(JSON.stringify({
+            level: "error",
+            source: "plexus_identity_integration",
+            route: "POST /api/patient-directory/import-confirm",
+            screeningId: patientScreeningId,
+            code: (e as { code?: string })?.code,
+            message: (e as Error)?.message ?? String(e),
+          }));
+        }
+
         await writePatientDirectoryEvent({
           patientScreeningId,
           kind: "imported",

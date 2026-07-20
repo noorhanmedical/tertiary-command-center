@@ -17,6 +17,7 @@ import {
   EmptyBatchError,
 } from "../services/batchAnalysisRunner";
 import { extractDateFromPrevTests } from "./helpers";
+import { resolveAndLinkPlexusIdentityForScreeningsBulk } from "../services/plexusIdentity/screeningIntegration";
 
 // Clinical-paste bulk import + durable qualification job routes for
 // Plexus IQ. Re-uses the existing analysis_jobs infra so the client can
@@ -471,6 +472,34 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
 
         for (const row of insertedRows) {
           patientIds.push(row.id);
+        }
+
+        // Phase 2A — shared identity orchestration. MRN is available
+        // on the source row (r.mrn). Bulk helper is a no-op when
+        // FEATURE_PLEXUS_IDENTITY_WRITE is OFF (default).
+        const identityBulk = await resolveAndLinkPlexusIdentityForScreeningsBulk(
+          insertedRows.map((row, i) => ({
+            screeningId: row.id,
+            clinicId: row.clinicId ?? (req as { clinicId?: number | null }).clinicId ?? null,
+            sourceSystem: "plexus_iq_clinical_import",
+            clinicMrn: groupRows[i]?.mrn?.trim() || null,
+            demographics: {
+              displayName: row.name,
+              dob: row.dob,
+              phone: row.phoneNumber,
+              email: row.email ?? null,
+            },
+          })),
+        );
+        for (const err of identityBulk.errors) {
+          console.error(JSON.stringify({
+            level: "error",
+            source: "plexus_identity_integration",
+            route: "POST /api/plexus-iq/clinical-import",
+            screeningId: err.screeningId,
+            code: err.code,
+            message: err.message,
+          }));
         }
 
         await storage.updateScreeningBatch(batchId, {

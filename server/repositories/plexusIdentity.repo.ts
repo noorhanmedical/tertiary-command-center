@@ -33,10 +33,11 @@ import { generateUniquePlexusId } from "../services/plexusIdentity/plexusIdGener
 
 const WRITE_FLAG_OFF_MESSAGE =
   "plexus_identity_write_disabled: enable FEATURE_PLEXUS_IDENTITY_WRITE after applying migration 0049";
-const MIGRATION_MISSING_ERR_CODES = new Set([
-  // Postgres "undefined_table"
-  "42P01",
-]);
+
+// Postgres "undefined_table". If the migration hasn't been applied,
+// every query against the six Plexus identity tables comes back with
+// this SQLSTATE.
+const PG_UNDEFINED_TABLE = "42P01";
 
 function guardWrite(): void {
   if (!featureFlags.plexusIdentityWrite) {
@@ -47,13 +48,75 @@ function guardWrite(): void {
   }
 }
 
-/** Read-path helper — swallow "table does not exist" so preview flows work pre-migration. */
-async function safeRead<T>(op: () => Promise<T>, fallback: T): Promise<T> {
+/**
+ * Structured non-PHI log record. Kept as a helper so tests can spy on
+ * it without pulling in a heavier logger. Emits to stderr as JSON so
+ * ops tooling can pick it up alongside other structured logs. Never
+ * includes patient-facing values.
+ */
+function logSchemaFailure(record: {
+  op: string;
+  code: string;
+  writeFlag: boolean;
+  reviewFlag: boolean;
+}): void {
+  // eslint-disable-next-line no-console
+  console.error(
+    JSON.stringify({
+      level: "error",
+      source: "plexus_identity",
+      kind: "schema_configuration_error",
+      ...record,
+      // Guidance for on-call — no PHI, safe to log.
+      remediation:
+        "Apply migrations/0049_add_plexus_identity.sql before enabling FEATURE_PLEXUS_IDENTITY_WRITE.",
+    }),
+  );
+}
+
+/**
+ * Read-path helper.
+ *
+ * Behavior on Postgres "undefined_table" (42P01):
+ *   • Both flags OFF → swallow. Returns the fallback so preview / probe
+ *     flows can call the resolver pre-migration without crashing the
+ *     screening ingestion path.
+ *   • Either flag ON → structured log + re-throw with a stable code so
+ *     the caller cannot mistake "migration missing" for "no patient
+ *     match found". This prevents the failure mode where a missing
+ *     migration silently returns `no_match` and the resolver commits a
+ *     duplicate global patient.
+ *
+ * Any other error is always re-thrown.
+ */
+async function safeRead<T>(
+  op: () => Promise<T>,
+  fallback: T,
+  opName = "unknown",
+): Promise<T> {
   try {
     return await op();
   } catch (e: unknown) {
     const code = (e as { code?: string })?.code;
-    if (code && MIGRATION_MISSING_ERR_CODES.has(code)) return fallback;
+    if (code === PG_UNDEFINED_TABLE) {
+      const write = featureFlags.plexusIdentityWrite;
+      const review = featureFlags.plexusIdentityReview;
+      if (!write && !review) {
+        return fallback;
+      }
+      logSchemaFailure({
+        op: opName,
+        code,
+        writeFlag: write,
+        reviewFlag: review,
+      });
+      const err = new Error(
+        `plexus_identity_migration_missing: table absent (${PG_UNDEFINED_TABLE}) while a Plexus identity feature flag is ON (op=${opName})`,
+      ) as Error & { code?: string; status?: number };
+      err.code = "PLEXUS_IDENTITY_MIGRATION_MISSING";
+      err.status = 503;
+      throw err;
+    }
     throw e;
   }
 }
@@ -62,27 +125,35 @@ async function safeRead<T>(op: () => Promise<T>, fallback: T): Promise<T> {
 export async function findGlobalPatientByPlexusId(
   plexusId: string,
 ): Promise<GlobalPlexusPatient | null> {
-  return safeRead(async () => {
-    const rows = await db
-      .select()
-      .from(globalPlexusPatients)
-      .where(eq(globalPlexusPatients.plexusId, plexusId))
-      .limit(1);
-    return rows[0] ?? null;
-  }, null);
+  return safeRead(
+    async () => {
+      const rows = await db
+        .select()
+        .from(globalPlexusPatients)
+        .where(eq(globalPlexusPatients.plexusId, plexusId))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    null,
+    "findGlobalPatientByPlexusId",
+  );
 }
 
 export async function findGlobalPatientById(
   id: number,
 ): Promise<GlobalPlexusPatient | null> {
-  return safeRead(async () => {
-    const rows = await db
-      .select()
-      .from(globalPlexusPatients)
-      .where(eq(globalPlexusPatients.id, id))
-      .limit(1);
-    return rows[0] ?? null;
-  }, null);
+  return safeRead(
+    async () => {
+      const rows = await db
+        .select()
+        .from(globalPlexusPatients)
+        .where(eq(globalPlexusPatients.id, id))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    null,
+    "findGlobalPatientById",
+  );
 }
 
 export type CreateGlobalPatientInput = {
@@ -122,20 +193,24 @@ export async function findActiveMembership(args: {
   globalPlexusPatientId: number;
   clinicId: number;
 }): Promise<PatientClinicMembership | null> {
-  return safeRead(async () => {
-    const rows = await db
-      .select()
-      .from(patientClinicMemberships)
-      .where(
-        and(
-          eq(patientClinicMemberships.globalPlexusPatientId, args.globalPlexusPatientId),
-          eq(patientClinicMemberships.clinicId, args.clinicId),
-          eq(patientClinicMemberships.membershipStatus, "active"),
-        ),
-      )
-      .limit(1);
-    return rows[0] ?? null;
-  }, null);
+  return safeRead(
+    async () => {
+      const rows = await db
+        .select()
+        .from(patientClinicMemberships)
+        .where(
+          and(
+            eq(patientClinicMemberships.globalPlexusPatientId, args.globalPlexusPatientId),
+            eq(patientClinicMemberships.clinicId, args.clinicId),
+            eq(patientClinicMemberships.membershipStatus, "active"),
+          ),
+        )
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    null,
+    "findActiveMembership",
+  );
 }
 
 export async function findMembershipByClinicMrn(args: {
@@ -143,19 +218,23 @@ export async function findMembershipByClinicMrn(args: {
   clinicMrn: string;
 }): Promise<PatientClinicMembership | null> {
   if (!args.clinicMrn) return null;
-  return safeRead(async () => {
-    const rows = await db
-      .select()
-      .from(patientClinicMemberships)
-      .where(
-        and(
-          eq(patientClinicMemberships.clinicId, args.clinicId),
-          eq(patientClinicMemberships.clinicMrn, args.clinicMrn),
-        ),
-      )
-      .limit(1);
-    return rows[0] ?? null;
-  }, null);
+  return safeRead(
+    async () => {
+      const rows = await db
+        .select()
+        .from(patientClinicMemberships)
+        .where(
+          and(
+            eq(patientClinicMemberships.clinicId, args.clinicId),
+            eq(patientClinicMemberships.clinicMrn, args.clinicMrn),
+          ),
+        )
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    null,
+    "findMembershipByClinicMrn",
+  );
 }
 
 export type CreateMembershipInput = {
@@ -235,22 +314,26 @@ export async function findExternalIdentifiersByMatchValue(args: {
   identifierType: ExternalIdentifierType;
   normalizedOrHashedMatchValue: string;
 }): Promise<PatientExternalIdentifier[]> {
-  return safeRead(async () => {
-    return db
-      .select()
-      .from(patientExternalIdentifiers)
-      .where(
-        and(
-          eq(patientExternalIdentifiers.identifierType, args.identifierType),
-          eq(
-            patientExternalIdentifiers.normalizedOrHashedMatchValue,
-            args.normalizedOrHashedMatchValue,
+  return safeRead(
+    async () => {
+      return db
+        .select()
+        .from(patientExternalIdentifiers)
+        .where(
+          and(
+            eq(patientExternalIdentifiers.identifierType, args.identifierType),
+            eq(
+              patientExternalIdentifiers.normalizedOrHashedMatchValue,
+              args.normalizedOrHashedMatchValue,
+            ),
+            eq(patientExternalIdentifiers.active, true),
           ),
-          eq(patientExternalIdentifiers.active, true),
-        ),
-      )
-      .limit(20);
-  }, [] as PatientExternalIdentifier[]);
+        )
+        .limit(20);
+    },
+    [] as PatientExternalIdentifier[],
+    "findExternalIdentifiersByMatchValue",
+  );
 }
 
 // ─── patient_identity_match_candidates (Plexus-only) ──────────────
@@ -317,14 +400,18 @@ export async function createMergeEvent(
 export async function findAlias(
   aliasPlexusId: string,
 ): Promise<PlexusIdAlias | null> {
-  return safeRead(async () => {
-    const rows = await db
-      .select()
-      .from(plexusIdAliases)
-      .where(eq(plexusIdAliases.aliasPlexusId, aliasPlexusId))
-      .limit(1);
-    return rows[0] ?? null;
-  }, null);
+  return safeRead(
+    async () => {
+      const rows = await db
+        .select()
+        .from(plexusIdAliases)
+        .where(eq(plexusIdAliases.aliasPlexusId, aliasPlexusId))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    null,
+    "findAlias",
+  );
 }
 
 export async function createAlias(input: {
