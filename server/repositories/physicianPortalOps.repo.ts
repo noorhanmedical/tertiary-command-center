@@ -5,12 +5,13 @@
 // db.execute. All reads are scoped (bounded rows, indexed WHERE) —
 // nothing here does an unfiltered getAll() on a large table.
 
-import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import { procedureNotes } from "@shared/schema/generatedNotes";
 import { procedureEvents } from "@shared/schema/procedureEvents";
 import { patientScreenings } from "@shared/schema/screening";
+import { invoices } from "@shared/schema/invoices";
 
 // ─── Reports ────────────────────────────────────────────────────────────────
 
@@ -245,4 +246,117 @@ export async function buildAncillaryMetrics(
       notesSigned: notes.get(serviceType) ?? 0,
       reportsOutstanding: outstanding.get(serviceType) ?? 0,
     }));
+}
+
+// ─── Physician Portal Summary tile counts ───────────────────────────────────
+//
+// Three bounded counts + one bounded sum drive the physician DashboardHome /
+// HomeDashboard summary card:
+//   - notes needing signature
+//   - reports pending upload / review
+//   - open A/R total (invoices with status != 'Paid')
+//
+// Every query is a single COUNT / SUM against an indexed column. No row
+// materialisation. No getAll. Facility filter is optional and applied at
+// the SQL level.
+
+export type PhysicianPortalSummary = {
+  needsSignature: number;
+  reportsPending: number;
+  pendingAR: number;
+};
+
+export type PhysicianSummaryFilters = {
+  facilityId?: string | null;
+};
+
+export async function countProcedureNotesNeedingSignature(): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(procedureNotes)
+    .where(
+      and(
+        inArray(procedureNotes.generationStatus, ["generated", "approved"]),
+        or(
+          sql`${procedureNotes.signatureStatus} IS NULL`,
+          ne(procedureNotes.signatureStatus, "signed"),
+        ),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+export async function countReportsPending(): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(caseDocumentReadiness)
+    .where(
+      and(
+        eq(caseDocumentReadiness.documentType, "report"),
+        inArray(caseDocumentReadiness.documentStatus, ["uploaded", "pending"]),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+export async function sumOpenAR(filters: PhysicianSummaryFilters = {}): Promise<number> {
+  const conditions = [ne(invoices.status, "Paid")];
+  if (filters.facilityId) {
+    conditions.push(eq(invoices.facility, filters.facilityId));
+  }
+  const [row] = await db
+    .select({ n: sql<number>`COALESCE(SUM(${invoices.totalBalance}), 0)::numeric` })
+    .from(invoices)
+    .where(and(...conditions));
+  const raw = row?.n as unknown as string | number | null | undefined;
+  const num = typeof raw === "number" ? raw : parseFloat(String(raw ?? "0"));
+  return Number.isFinite(num) ? Math.round(num * 100) / 100 : 0;
+}
+
+// ─── Physician Portal Financial Health (overall section only) ─────────────
+//
+// Aggregates the invoices table for the OVERALL snapshot displayed at the
+// top of FinancialHealthTab. Each metric is a scoped SUM / COUNT against
+// an indexed column. The Plexus Ancillary Contribution breakdown is
+// intentionally NOT computed here — it requires a full pricing lookup +
+// service-type matching that has not been audited safe against
+// fabrication. The service returns { unavailable: true } for that section
+// until a follow-up PR delivers it lane-by-lane with tests.
+
+export type FinancialHealthOverall = {
+  totalBilled: number;
+  totalPaid: number;
+  pendingAR: number;
+  invoiceCount: number;
+  collectionRate: number;
+};
+
+export async function buildFinancialHealthOverall(
+  filters: PhysicianSummaryFilters = {},
+): Promise<FinancialHealthOverall> {
+  const conditions = filters.facilityId
+    ? [eq(invoices.facility, filters.facilityId)]
+    : [];
+  const [row] = await db
+    .select({
+      totalBilled: sql<string>`COALESCE(SUM(${invoices.totalCharges}), 0)::numeric`,
+      totalPaid: sql<string>`COALESCE(SUM(${invoices.totalPaid}), 0)::numeric`,
+      pendingAR: sql<string>`COALESCE(SUM(CASE WHEN ${invoices.status} <> 'Paid' THEN ${invoices.totalBalance} ELSE 0 END), 0)::numeric`,
+      invoiceCount: sql<number>`count(*)::int`,
+    })
+    .from(invoices)
+    .where(conditions.length > 0 ? and(...conditions) : sql`true`);
+
+  const round2 = (v: string | number | null | undefined): number => {
+    const n = typeof v === "number" ? v : parseFloat(String(v ?? "0"));
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+  };
+  const totalBilled = round2(row?.totalBilled);
+  const totalPaid = round2(row?.totalPaid);
+  const pendingAR = round2(row?.pendingAR);
+  const invoiceCount = row?.invoiceCount ?? 0;
+  const collectionRate =
+    totalBilled > 0 ? round2((totalPaid / totalBilled) * 100) : 0;
+
+  return { totalBilled, totalPaid, pendingAR, invoiceCount, collectionRate };
 }

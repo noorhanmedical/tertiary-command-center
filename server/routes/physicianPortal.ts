@@ -29,6 +29,10 @@ import {
   returnNoteForCorrection,
 } from "../services/physicianPortal/signatureWorkflow";
 import {
+  getPhysicianPortalSummary,
+  getFinancialHealth,
+} from "../services/physicianPortal/summaryService";
+import {
   listReports,
   ancillaryMetrics,
 } from "../services/physicianPortal/reportsService";
@@ -201,6 +205,47 @@ export function registerPhysicianPortalRoutes(app: Express) {
           error?.message ?? error,
         );
         res.status(500).json({ error: "Failed to load ancillary metrics" });
+      }
+    },
+  );
+
+  // ─── GET /api/physician-portal/summary ─────────────────────────────────
+  // Tile counts for HomeDashboard + physician DashboardHome.
+  // Delegates to summaryService → physicianPortalOps.repo (scoped counts,
+  // no getAll, no raw db.select in this route).
+  app.get(
+    "/api/physician-portal/summary",
+    requireClinicianOrAdmin,
+    async (req, res) => {
+      try {
+        const facility = String((req.query as any).facility ?? "").trim() || null;
+        const summary = await getPhysicianPortalSummary({ facilityId: facility });
+        res.json(summary);
+      } catch (error: any) {
+        console.error("[physician-portal/summary] error:", error?.message ?? error);
+        res.status(500).json({ error: "Failed to load summary" });
+      }
+    },
+  );
+
+  // ─── GET /api/physician-portal/financial-health ────────────────────────
+  // Overall invoice-based aggregation for FinancialHealthTab. The Plexus
+  // service contribution breakdown is returned as { unavailable: true }
+  // until its scoped repo helper lands — no fabricated financial values.
+  app.get(
+    "/api/physician-portal/financial-health",
+    requireClinicianOrAdmin,
+    async (req, res) => {
+      try {
+        const facility = String((req.query as any).facility ?? "").trim() || null;
+        const health = await getFinancialHealth({ facilityId: facility });
+        res.json(health);
+      } catch (error: any) {
+        console.error(
+          "[physician-portal/financial-health] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({ error: "Failed to load financial health" });
       }
     },
   );
