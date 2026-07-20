@@ -56,10 +56,47 @@ export async function loginAs(page: Page, role: Role): Promise<void> {
     return;
   }
   await page.goto("/login");
-  await page.getByLabel(/username/i).fill(creds.user);
-  await page.getByLabel(/password/i).fill(creds.pass);
-  await page.getByRole("button", { name: /log in|sign in/i }).click();
-  await page.waitForURL((url) => !/login$/.test(url.pathname), { timeout: 10_000 });
+  // Stable test IDs from client/src/pages/login.tsx.
+  // Prefer testId over role/label queries — label queries have broken
+  // in the past when a label element wraps the input differently.
+  await page.getByTestId("input-login-username").fill(creds.user);
+  await page.getByTestId("input-login-password").fill(creds.pass);
+  await page.getByTestId("button-login-submit").click();
+
+  // API-level authentication gate: poll /api/auth/me via the browser
+  // context (page.request shares the page's cookies, so the session
+  // set by /api/auth/login flows through here). We wait until the
+  // server confirms the session — this is the correct global auth
+  // signal, independent of any specific page's DOM. A page-specific
+  // DOM anchor (e.g. the top banner) would drift if any authenticated
+  // route ever changed its layout.
+  const AUTH_ME_TIMEOUT_MS = 15_000;
+  const AUTH_ME_POLL_MS = 200;
+  const authDeadline = Date.now() + AUTH_ME_TIMEOUT_MS;
+  let authenticated = false;
+  while (Date.now() < authDeadline) {
+    const res = await page.request.get("/api/auth/me");
+    if (res.status() === 200) {
+      authenticated = true;
+      break;
+    }
+    // Any status other than 200 means the session hasn't been
+    // established yet — /api/auth/login may still be in flight or
+    // the response body may not have hit the cookie store. Retry.
+    await page.waitForTimeout(AUTH_ME_POLL_MS);
+  }
+  if (!authenticated) {
+    throw new Error(
+      `loginAs(${role}): /api/auth/me never returned 200 within ${AUTH_ME_TIMEOUT_MS}ms`,
+    );
+  }
+
+  // Only after the session is confirmed do we wait for the URL to
+  // leave /login. This ordering prevents any race between the client
+  // router's post-login navigate() and the caller's next page.goto.
+  await page.waitForURL((url) => !/login$/.test(url.pathname), {
+    timeout: 10_000,
+  });
 }
 
 /**

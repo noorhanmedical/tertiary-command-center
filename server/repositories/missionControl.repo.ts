@@ -54,17 +54,17 @@ const UNAVAILABLE = <T,>(reason: string): MetricValue<T> => ({
 
 // ─── Active execution cases (clinic-scoped) ─────────────────────
 // Source: patient_execution_cases (has clinic_id + lifecycle_status).
-// Definition: lifecycle_status = 'active'. NULL is coerced to active
-// because the schema default is 'active' but backfill rows may be NULL.
+// Definition: lifecycle_status = 'active'. This mirrors the canonical
+// production check used by executionCase.repo.ts:632 — the schema
+// declares lifecycle_status NOT NULL with default 'active', so a NULL
+// value never legitimately appears; earlier Phase 3 code accepted NULL
+// as a defensive coercion, but that risked counting bad rows silently
+// AND diverged from every other repository. Corrected to the exact
+// authoritative production check.
 export async function countActiveExecutionCases(
   scope: ClinicScope,
 ): Promise<MetricValue<number>> {
-  const conds = [
-    or(
-      isNull(patientExecutionCases.lifecycleStatus),
-      eq(patientExecutionCases.lifecycleStatus, "active"),
-    ),
-  ];
+  const conds = [eq(patientExecutionCases.lifecycleStatus, "active")];
   if (scope.clinicId != null) {
     conds.push(eq(patientExecutionCases.clinicId, scope.clinicId));
   }
@@ -289,9 +289,52 @@ export async function countDistinctPatientsScheduledInWindow(
   return AVAILABLE(row?.n ?? 0);
 }
 
-// Explicitly re-export the notInArray helper so downstream test files
-// can verify the plexus_tasks "open" definition without duplicating
-// the status list.
+// ─── Platform-wide wrappers used by Mission Control ─────────────
+// The Mission Control route is `requireRole("admin")` and the
+// MissionControlSpine client contract does NOT carry a clinic scope
+// parameter — the view is intentionally platform-wide today. Rather
+// than pass `{ clinicId: null }` to the clinic-scoped helpers above
+// (which reads as "clinic-scoped but the scope was silently dropped"),
+// Mission Control calls these explicit wrappers. If Mission Control
+// ever gains a clinic selector, the service will switch to the
+// clinic-scoped helpers directly and these wrappers can be removed.
+//
+// These wrappers accept `PlatformScope` (a phantom type) so the
+// intent is legible at the call site AND the type system prevents
+// a future refactor from silently substituting a `ClinicScope` with
+// a null clinic.
+const PLATFORM: ClinicScope = { clinicId: null };
+
+export function countActiveExecutionCases_platformWide(
+  _scope: PlatformScope,
+): Promise<MetricValue<number>> {
+  return countActiveExecutionCases(PLATFORM);
+}
+export function countPrescreenPending_platformWide(
+  _scope: PlatformScope,
+): Promise<MetricValue<number>> {
+  return countPrescreenPending(PLATFORM);
+}
+export function countReadyForBilling_platformWide(
+  _scope: PlatformScope,
+): Promise<MetricValue<number>> {
+  return countReadyForBilling(PLATFORM);
+}
+export function countReportsMissing_platformWide(
+  _scope: PlatformScope,
+): Promise<MetricValue<number>> {
+  return countReportsMissing(PLATFORM);
+}
+export function countScheduledInWindow_platformWide(
+  _scope: PlatformScope,
+  window: { start: Date; end: Date },
+): Promise<MetricValue<number>> {
+  return countScheduledInWindow(PLATFORM, window);
+}
+
+// ─── Test-visible constants ─────────────────────────────────────
 export const OPEN_PLEXUS_TASK_TERMINAL_STATUSES = ["closed", "done"] as const;
-// Referenced by test — never removed silently.
+// notInArray is intentionally re-exported so the static architecture
+// test can reference the same alternative-definition pattern without
+// duplicating the status list.
 void notInArray;

@@ -14,6 +14,12 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+// Every value here MUST match the client's TrayTab / PlaygroundLayout /
+// CalendarBehavior unions and the SelectItem list in
+// client/src/components/portal/tools/WorkspaceSettingsDialog.tsx.
+// Patient Messages / patient SMS is intentionally NOT exposed — the
+// platform does not ship a live patient-messaging path, so the only
+// tray tabs are Direct Messages and Team Chat.
 const prefsSchema = z.object({
   defaultTrayTab: z.enum(["direct", "team"]),
   stickyNotesVisible: z.boolean(),
