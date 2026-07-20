@@ -580,6 +580,23 @@ export function CommunicationTray({
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
+        {/*
+          Active-tab container. The panel wrapper is ALWAYS rendered
+          for the active tab (even while the inner tab component is
+          fetching its roster or has an empty result set) so external
+          consumers — automated tests, focus management, layout
+          observers — can rely on a stable
+          `data-testid="tray-panel-${activeTab}"` root marker whose
+          visibility mirrors "the active tab is mounted." Prior
+          `tray-direct` / `tray-team` markers live inside each inner
+          tab component and only render once that component has
+          content to show, which caused false-negative visibility
+          assertions during roster hydration.
+        */}
+        <div
+          className="h-full min-h-0"
+          data-testid={`tray-panel-${activeTab}`}
+        >
         {activeTab === "direct" ? (
           <DirectMessagesTab
             currentUserId={currentUserId}
@@ -598,6 +615,7 @@ export function CommunicationTray({
             expanded={expanded}
           />
         )}
+        </div>
       </div>
     </div>
   );

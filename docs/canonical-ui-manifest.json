@@ -1344,7 +1344,7 @@
     },
     {
       "path": "client/src/components/portal/tools/CommunicationTray.tsx",
-      "blob": "ad064729d96bcce8f1dbf00f994b69bca3d3b5e6",
+      "blob": "8d8af637c47c28056267a9af73e2d2e063940669",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

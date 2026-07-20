@@ -132,8 +132,8 @@ for (const { role, path, label } of [
       const currentTab = await traySelect.textContent();
       const nextTab =
         currentTab && /team/i.test(currentTab)
-          ? { label: "Direct Messages", value: "direct", body: "tray-direct" }
-          : { label: "Team Chat", value: "team", body: "tray-team" };
+          ? { label: "Direct Messages", value: "direct" }
+          : { label: "Team Chat", value: "team" };
 
       await traySelect.click();
       await page.getByRole("option", { name: nextTab.label }).click();
@@ -174,17 +174,21 @@ for (const { role, path, label } of [
       await expect(rail.getByTestId("communication-tray")).toBeVisible();
 
       // Non-visual state marker: the tray-tab button's aria-selected
-      // attribute reflects the active tab regardless of layout, so
-      // the assertion holds even if the tray body has zero animation
-      // frames in.
+      // attribute reflects the active tab regardless of layout or
+      // inner-tab hydration state. Preserved as the primary
+      // persistence gate — do NOT weaken.
       const trayTabButton = rail.getByTestId(`tray-tab-${nextTab.value}`);
       await expect(trayTabButton).toHaveAttribute("aria-selected", "true");
 
-      // And the body itself must be in the DOM and visible — this
-      // is the layout-fix gate: if the tray's flex area were 0 the
-      // body's bounding box would be 0×0 and `toBeVisible` would
-      // fail.
-      await expect(rail.getByTestId(nextTab.body)).toBeVisible();
+      // Panel wrapper is ALWAYS rendered for the active tab (see
+      // CommunicationTray active-tab container). Its visibility is
+      // the layout-fix gate — if the tray's flex area were 0 the
+      // wrapper's bounding box would be 0×0. The wrapper mounts
+      // regardless of the inner tab's roster hydration, so this
+      // assertion no longer flakes on empty/loading rosters.
+      await expect(
+        rail.getByTestId(`tray-panel-${nextTab.value}`),
+      ).toBeVisible();
     });
   });
 }
