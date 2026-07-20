@@ -84,12 +84,19 @@ export function getTestDescHTML(test: string): string {
 const PDF_BASE_STYLES = `
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; color: #1e293b; }
-  @page { size: letter portrait; margin: 0.5in; }
+  /* Zero @page margins suppress browser-generated print headers and
+     footers entirely (URL like "about:blank", timestamp, browser page
+     numbers, repeated title) — those artifacts render only inside the
+     browser's page margin band. The 0.5in physical margin is restored
+     as padding on each .page block when printing.
+     SOURCE MARKER: PDF print output has no browser artifacts */
+  @page { size: letter portrait; margin: 0; }
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .page { page-break-after: always; break-after: page; }
+    .page { page-break-after: always; break-after: page; padding: 0.5in !important; }
     .page:last-child { page-break-after: avoid; break-after: avoid; }
   }
+  .plexus-repeat-header { font-size:9px; font-weight:700; color:#1a365d; border-bottom:1px solid #cbd5e1; padding:4px 0 3px; margin-bottom:8px; page-break-before: always; break-before: page; }
   .cover { min-height:9.5in; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#1a365d; color:white; text-align:center; padding:40px; }
   .cover h1 { font-size:30px; font-weight:800; margin:0 0 8px; }
   .cover h2 { font-size:17px; font-weight:400; margin:0 0 20px; opacity:0.8; }
@@ -126,7 +133,122 @@ const PDF_BASE_STYLES = `
 // downloaded — no browser print dialog and therefore no "about:blank"
 // URL footer in the saved file.
 // SOURCE MARKER: PDF footer does not render about blank
-async function renderHtml2Pdf(title: string, bodyHtml: string): Promise<void> {
+// ─────────────────────────────────────────────────────────────────────
+// Physician-facing name / title sanitization
+// ─────────────────────────────────────────────────────────────────────
+//
+// Internal batch names may carry a "(Run N)" suffix so parallel runs
+// are distinguishable in ops lists. That processing metadata must
+// never reach physician-facing output: PDF content, document titles,
+// browser tab titles, or download filenames. Run identifiers stay
+// untouched in the DB and in internal Plexus IQ run selectors — the
+// stripping here is display-side only.
+// SOURCE MARKER: Physician-facing output contains no Run language
+export function stripRunLanguage(name: string | null | undefined): string {
+  if (!name) return "";
+  let out = name;
+  // "(Run 2)" / "[run #3]" / "(Run)" anywhere in the string
+  out = out.replace(/\s*[([]\s*run\s*#?\s*\d*\s*[)\]]/gi, "");
+  // trailing "- Run 2" / "· Run 3" / "Run 4"
+  out = out.replace(/\s*[-–—·]?\s*\brun\s*#?\s*\d+\s*$/i, "");
+  return out.replace(/\s{2,}/g, " ").trim();
+}
+
+// Split a sanitized batch name of the form "<Facility> - <YYYY-MM-DD>"
+// into its parts. Returns the whole name as facility when no trailing
+// ISO date is present.
+function splitBatchNameParts(sanitizedName: string): { facility: string; isoDate: string | null } {
+  const m = sanitizedName.match(/^(.*?)\s*[-–—]\s*(\d{4}-\d{2}-\d{2})\s*$/);
+  if (m) return { facility: m[1].trim(), isoDate: m[2] };
+  return { facility: sanitizedName, isoDate: null };
+}
+
+// Canonical physician-facing document title + download filename.
+//   docTitle:     "Clinician Report — Taylor Family Practice — July 20, 2026"
+//   filenameBase: "Clinician Report — Taylor Family Practice — 2026-07-20"
+// Plexus variant uses the "Plexus Report" prefix.
+// SOURCE MARKER: Physician-facing PDF titles are canonical
+export function buildPhysicianReportTitles(
+  mode: "clinician" | "plexus",
+  batchName: string,
+  scheduleDate?: string | null,
+): { docTitle: string; filenameBase: string } {
+  const prefix = mode === "plexus" ? "Plexus Report" : "Clinician Report";
+  const clean = stripRunLanguage(batchName);
+  const parts = splitBatchNameParts(clean);
+  const iso = parts.isoDate ?? (scheduleDate && /^\d{4}-\d{2}-\d{2}$/.test(scheduleDate) ? scheduleDate : null);
+  const facility = parts.facility || clean || "Schedule";
+  if (!iso) {
+    return { docTitle: `${prefix} — ${facility}`, filenameBase: `${prefix} — ${facility}` };
+  }
+  return {
+    docTitle: `${prefix} — ${facility} — ${formatScheduleDate(iso, null)}`,
+    filenameBase: `${prefix} — ${facility} — ${iso}`,
+  };
+}
+
+// DOM post-processing applied to packet markup right before it is
+// rendered (html2pdf measurement container) or printed (preview
+// popup — injected via toString(), so this function MUST stay fully
+// self-contained: no imports, no outer-scope references).
+//
+// 1) Clinician pages (.page.clinician-page) are hard-capped to one
+//    printed page each: the whole page block is progressively scaled
+//    down (CSS zoom) until it fits — content is never truncated.
+//    SOURCE MARKER: Clinician PDF is one page per patient
+// 2) Plexus pages (.page.plexus-page) stay flow-based; when a patient
+//    section is taller than one page, a controlled page break is
+//    inserted with a compact repeat header (Name · Patient ID · DOB).
+//    SOURCE MARKER: Plexus PDF repeats compact patient header
+export function applyPacketLayoutFixups(scope: ParentNode): void {
+  var PAGE_HEIGHT = 96 * 10.4; // usable letter-page budget in CSS px
+  var clinPages = scope.querySelectorAll(".page.clinician-page");
+  for (var ci = 0; ci < clinPages.length; ci++) {
+    var page = clinPages[ci] as HTMLElement;
+    var scale = 1;
+    var guard = 0;
+    while (page.getBoundingClientRect().height > PAGE_HEIGHT && scale > 0.55 && guard < 12) {
+      scale = Math.round((scale - 0.05) * 100) / 100;
+      (page.style as unknown as { zoom: string }).zoom = String(scale);
+      guard++;
+    }
+  }
+  var plexPages = scope.querySelectorAll(".page.plexus-page");
+  for (var pi = 0; pi < plexPages.length; pi++) {
+    var pp = plexPages[pi] as HTMLElement;
+    if (pp.getBoundingClientRect().height <= PAGE_HEIGHT) continue;
+    var nm = pp.getAttribute("data-patient-name") || "";
+    var pid = pp.getAttribute("data-patient-id") || "";
+    var dob = pp.getAttribute("data-dob") || "";
+    var headerParts = [];
+    if (nm) headerParts.push(nm);
+    if (pid) headerParts.push(pid);
+    if (dob) headerParts.push("DOB: " + dob);
+    var headerText = headerParts.join(" · ");
+    if (!headerText) continue;
+    var boundary = PAGE_HEIGHT;
+    var i = 0;
+    var safety = 0;
+    while (i < pp.children.length && safety < 60) {
+      safety++;
+      var child = pp.children[i] as HTMLElement;
+      if (child.classList && child.classList.contains("plexus-repeat-header")) { i++; continue; }
+      var topInPage = child.getBoundingClientRect().top - pp.getBoundingClientRect().top;
+      if (i > 0 && topInPage >= boundary) {
+        var hdr = (pp.ownerDocument as Document).createElement("div");
+        hdr.className = "plexus-repeat-header";
+        hdr.textContent = headerText;
+        pp.insertBefore(hdr, child);
+        boundary = (hdr.getBoundingClientRect().top - pp.getBoundingClientRect().top) + PAGE_HEIGHT;
+        i += 2;
+        continue;
+      }
+      i++;
+    }
+  }
+}
+
+async function renderHtml2Pdf(title: string, bodyHtml: string, filenameBase?: string): Promise<void> {
   const html2pdfModule = await import("html2pdf.js");
   const html2pdf = (html2pdfModule as { default: any }).default;
   if (typeof html2pdf !== "function") {
@@ -138,7 +260,13 @@ async function renderHtml2Pdf(title: string, bodyHtml: string): Promise<void> {
   // html2pdf needs the node in the DOM for layout measurement.
   document.body.appendChild(container);
   try {
-    const filename = `${title.replace(/[^A-Za-z0-9._-]+/g, "_")}.pdf`;
+    // One-page-per-patient shrink + Plexus repeat headers run on the
+    // live measurement container before html2canvas rasterizes it.
+    applyPacketLayoutFixups(container);
+    // Keep spaces and em-dashes in the download filename (spec:
+    // "Clinician Report — Taylor Family Practice — 2026-07-20.pdf");
+    // only strip characters that are illegal in filenames.
+    const filename = `${(filenameBase ?? title).replace(/[\\/:*?"<>|]+/g, "").trim()}.pdf`;
     // SOURCE MARKER: PDF export uses optimized html2canvas scale
     // SOURCE MARKER: PDF template avoids expensive visual effects
     // SOURCE MARKER: PDF generation optimized for large packets
@@ -172,8 +300,11 @@ async function renderHtml2Pdf(title: string, bodyHtml: string): Promise<void> {
 function openPrintWindowFallback(title: string, bodyHtml: string): boolean {
   const win = window.open("", "_blank");
   if (!win) return false;
+  // Run the shared layout fixups (one page per clinician patient +
+  // Plexus repeat headers) before printing. The function is injected
+  // via toString(), so it must remain self-contained.
   win.document.write(
-    `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>`,
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(stripRunLanguage(title) || title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}<script>window.onload=function(){try{(${applyPacketLayoutFixups.toString()})(document);}catch(e){}setTimeout(function(){window.print();},250);};<\/script></body></html>`,
   );
   win.document.close();
   win.focus();
@@ -190,17 +321,20 @@ function openPrintWindowFallback(title: string, bodyHtml: string): boolean {
 // SOURCE MARKER: html2pdf PDF export error is surfaced
 // SOURCE MARKER: PDF generation does not invalidate data queries
 // SOURCE MARKER: PDF generation runs on demand
-export async function exportPdfDocument(title: string, bodyHtml: string): Promise<void> {
+export async function exportPdfDocument(title: string, bodyHtml: string, filenameBase?: string): Promise<void> {
   if (!bodyHtml || bodyHtml.trim().length === 0) {
     throw new Error("PDF body is empty — nothing to render");
   }
+  // Defensive: no Run language in any physician-facing title/filename.
+  title = stripRunLanguage(title) || title;
+  if (filenameBase) filenameBase = stripRunLanguage(filenameBase) || filenameBase;
   // SOURCE MARKER: Development-only performance instrumentation
   const devTimingLabel = import.meta.env.DEV
     ? `[perf] pdf:export "${title}"`
     : null;
   if (devTimingLabel) console.time(devTimingLabel);
   try {
-    await renderHtml2Pdf(title, bodyHtml);
+    await renderHtml2Pdf(title, bodyHtml, filenameBase);
   } catch (err) {
     console.error("[pdfGeneration] html2pdf export failed:", err);
     // SOURCE MARKER: PDF export falls back when html2pdf fails
@@ -245,6 +379,22 @@ export function buildPrintWindow(title: string, bodyHtml: string, options?: { in
 // with existing callers but are no longer rendered into the block.
 // SOURCE MARKER: PDF demographics include phone and email
 // SOURCE MARKER: PDF demographics omit schedule date
+// Real clinic MRNs arrive through the BatchFlow clinical import, which
+// stores them as an "MRN: <value>" line inside the screening's notes
+// field (there is no dedicated mrn column on patient_screenings).
+// Extract that value when present; return null otherwise. Never
+// fabricate an MRN and never treat the PS-<id> screening ID as one.
+// SOURCE MARKER: Real MRN extracted from import notes only when present
+export function extractRealMrn(p: Pick<PatientScreening, "notes">): string | null {
+  const notes = (p.notes ?? "").trim();
+  if (!notes) return null;
+  const m = notes.match(/^\s*MRN:\s*(.+?)\s*$/im);
+  if (!m) return null;
+  const val = m[1].trim();
+  if (!val || /^(n\/?a|none|null|unknown|not specified)$/i.test(val)) return null;
+  return val;
+}
+
 export function buildPatientDemoBlock(
   p: PatientScreening,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -262,11 +412,22 @@ export function buildPatientDemoBlock(
   const row3Parts: string[] = [];
   if (p.insurance) row3Parts.push(`Insurance: ${esc(p.insurance)}`);
   if (p.facility) row3Parts.push(`Facility: ${esc(p.facility)}`);
+  // Patient ID row: the internal patientScreeningId prefixed "PS-",
+  // rendered for every patient in both PDFs. A real clinic MRN (from
+  // the BatchFlow import notes) is shown alongside it only when it
+  // exists — the screening ID is never labeled "MRN" and "MRN: N/A"
+  // never appears.
+  // SOURCE MARKER: PDF patient header shows Patient ID PS-<id>
+  const realMrn = extractRealMrn(p);
+  const idParts: string[] = [];
+  if (p.id != null) idParts.push(`Patient ID: PS-${esc(String(p.id))}`);
+  if (realMrn) idParts.push(`MRN: ${esc(realMrn)}`);
+  const idRow = idParts.length > 0 ? `<div class="patient-demo-row">${idParts.join(" · ")}</div>` : "";
   const rows = [row1Parts, row2Parts, row3Parts]
     .filter((r) => r.length > 0)
     .map((r) => `<div class="patient-demo-row">${r.join(" · ")}</div>`)
     .join("");
-  return `<div class="patient-demo-block">${rows}</div>`;
+  return `<div class="patient-demo-block">${idRow}${rows}</div>`;
 }
 
 export function buildPatientTop(p: PatientScreening, batchName: string, date: string, reportLabel: string): string {
@@ -374,7 +535,8 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
 // SOURCE MARKER: Clinician PDF export is awaitable
 export async function generateClinicianPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): Promise<void> {
   const body = buildClinicianPdfBody(batchName, patients, scheduleDate, createdAt);
-  await exportPdfDocument(`Clinician Report — ${batchName}`, body);
+  const titles = buildPhysicianReportTitles("clinician", batchName, scheduleDate);
+  await exportPdfDocument(titles.docTitle, body, titles.filenameBase);
 }
 
 // Pure body builder shared by the html2pdf path and the print-preview
@@ -385,6 +547,8 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
 // SOURCE MARKER: Clinician PDF ancillary columns align cleanly
 // SOURCE MARKER: Clinician PDF test rows have stable checkbox title alignment
 export function buildClinicianPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): string {
+  // SOURCE MARKER: Physician-facing output contains no Run language
+  batchName = stripRunLanguage(batchName) || batchName;
   const date = formatScheduleDate(scheduleDate, createdAt);
 
   const oneSentence = (text: string | null | undefined): string => {
@@ -507,7 +671,7 @@ export function buildClinicianPdfBody(batchName: string, patients: PatientScreen
     //   row uses the same left padding so checkboxes, titles, chips,
     //   and reasoning share the same vertical baseline.
     return `
-      <div class="page" style="padding:14px 20px;">
+      <div class="page clinician-page" style="padding:14px 20px;">
         <div style="display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:12px;padding-bottom:4px;margin-bottom:6px;border-bottom:1px solid #cbd5e1;">
           <span style="font-size:9.5px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
           <span style="font-size:8.5px;color:#94a3b8;text-align:right;">Clinician Summary — ${esc(date)}</span>
@@ -557,13 +721,16 @@ export async function generatePlexusPDFAsync(batchName: string, patients: Patien
       "Plexus packet has no qualifying tests for any selected patient. Run qualification or pick a Clinician PDF for an outreach call list.",
     );
   }
-  await exportPdfDocument(`Plexus Team Script — ${batchName}`, body);
+  const titles = buildPhysicianReportTitles("plexus", batchName, scheduleDate);
+  await exportPdfDocument(titles.docTitle, body, titles.filenameBase);
 }
 
 // Pure body builder shared by the html2pdf path and the print-preview
 // popup path. Returns the empty string when no patient has qualifying
 // tests so callers can decide how to surface that.
 export function buildPlexusPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): string {
+  // SOURCE MARKER: Physician-facing output contains no Run language
+  batchName = stripRunLanguage(batchName) || batchName;
   const date = formatScheduleDate(scheduleDate, createdAt);
   const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
 
@@ -587,6 +754,7 @@ export function buildPlexusPdfBody(batchName: string, patients: PatientScreening
       </div>
       <div style="margin-bottom:10px;">
         <div style="font-size:17px;font-weight:800;color:#1a365d;margin-bottom:1px;">${esc(p.name)}</div>
+        ${(() => { const mrn = extractRealMrn(p); const parts: string[] = []; if (p.id != null) parts.push(`Patient ID: PS-${esc(String(p.id))}`); if (mrn) parts.push(`MRN: ${esc(mrn)}`); return parts.length > 0 ? `<div style="font-size:9.5px;color:#475569;">${parts.join(" · ")}</div>` : ""; })()}
         <div style="font-size:10px;color:#64748b;">${demoLine}</div>
         ${clinRow}
       </div>`;
@@ -674,7 +842,10 @@ export function buildPlexusPdfBody(batchName: string, patients: PatientScreening
       sections.push(...otherTests.map((t, i) => renderTest(t, i === otherTests.length - 1)));
     }
 
-    return [`<div class="page" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div>`];
+    // data-* attrs feed the compact repeat header (Name · Patient ID ·
+    // DOB) stamped by applyPacketLayoutFixups when this patient's
+    // section spans more than one printed page.
+    return [`<div class="page plexus-page" data-patient-name="${esc(p.name)}" data-patient-id="${p.id != null ? `PS-${esc(String(p.id))}` : ""}" data-dob="${esc(p.dob ?? "")}" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div>`];
   });
 
   return pages.join("");
@@ -785,6 +956,8 @@ function buildPreviewPopupHtml(
   sections: PacketPrintPreviewSection[],
   printAction: PreviewPrintAction = { kind: "print" },
 ): string {
+  // Defensive: no Run language in the popup tab/print title.
+  docTitle = stripRunLanguage(docTitle) || docTitle;
   const sectionsHtml = sections
     .map((s) => {
       const head = s.heading
@@ -828,6 +1001,10 @@ function buildPreviewPopupHtml(
     `<button type="button" class="preview-close-btn" data-testid="packet-print-preview-close-button" onclick="window.close()">Close</button>` +
     `</div></div>` +
     `<div class="preview-doc">${sectionsHtml}</div>` +
+    // Shared layout fixups: clinician one-page-per-patient shrink and
+    // Plexus compact repeat headers. Injected via toString(), so the
+    // function must stay self-contained.
+    `<script>window.addEventListener('load',function(){try{(${applyPacketLayoutFixups.toString()})(document);}catch(e){}});<\/script>` +
     `</body></html>`
   );
 }
@@ -860,11 +1037,9 @@ export function openPatientPacketPrintPreview(input: {
         : "No patients to render in this packet.",
     );
   }
-  const docTitle =
-    input.title ??
-    (mode === "plexus"
-      ? `Plexus Team Script — ${batchName}`
-      : `Clinician Report — ${batchName}`);
+  const docTitle = input.title
+    ? stripRunLanguage(input.title) || input.title
+    : buildPhysicianReportTitles(mode, batchName, scheduleDate).docTitle;
 
   const win = window.open("", "_blank");
   if (!win) {
@@ -923,11 +1098,12 @@ export function openSchedulerPacketPrintPreview(input: {
     return { ok: false, reason: "no-groups" };
   }
 
-  const docTitle =
+  const docTitle = stripRunLanguage(
     input.title ??
-    (mode === "plexus"
-      ? `Plexus Team Script — ${schedulerName}`
-      : `Clinician Report — ${schedulerName}`);
+      (mode === "plexus"
+        ? `Plexus Report — ${schedulerName}`
+        : `Clinician Report — ${schedulerName}`),
+  );
 
   const sections: PacketPrintPreviewSection[] = [];
   const droppedGroups: string[] = [];
