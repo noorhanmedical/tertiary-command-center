@@ -1,10 +1,16 @@
-# Minimal Patient Journey Wiring Plan — v3
+# Minimal Patient Journey Wiring Plan — v3.1
 
-**Purpose:** Proposed implementation sequence to bring the patient journey to end-to-end continuity, based strictly on the findings in `docs/full-patient-journey-platform-audit.md` (v3) and `docs/ancillary-document-visualization-map.md` (v3).
+**Purpose:** Proposed implementation sequence to bring the patient journey to end-to-end continuity, based strictly on the findings in `docs/full-patient-journey-platform-audit.md` (v3.1) and `docs/ancillary-document-visualization-map.md` (v3.1).
 
-**Status:** Proposed v3 architecture — awaiting final owner approval. Nothing here is implemented. No decision is final until an owner explicitly approves it.
+**Status:** Proposed v3.1 architecture — awaiting final owner approval. Nothing here is implemented. No decision is final until an owner explicitly approves it.
 
-**Revision v3:**
+**Revision v3.1:**
+- Phase 2D: canonical ancillary appointment restricted to `event_type IN ('ancillary_appointment', 'same_day_add')` — `doctor_visit` explicitly excluded from ancillary eligibility. Partial unique index scoped to those two types.
+- Phase 2F: prerequisite classification is service-specific and configurable, not blanket. Consent is not hardcoded as either hard or soft; each ancillary service configuration decides.
+- Phase 2G: adds `billing_document` to `DOCUMENT_KINDS` and every consumer contract BEFORE the generator is enabled. Full contract-touch list added.
+- Phase 2K: full E2E does not unconditionally require a signed Order Note. Order Note signature stays a product decision.
+
+**Revision v3 (retained):**
 
 - Global patient identity is a **Plexus-central** function. Clinics perform normal clinic operations only; the resolver, review queue, merge audit, and aliases are Plexus-only.
 - Six new conceptual tables introduced in Phase 2A: `global_plexus_patients`, `patient_clinic_memberships`, `patient_external_identifiers`, `patient_identity_match_candidates`, `patient_identity_merge_events`, `plexus_id_aliases`.
@@ -300,17 +306,32 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
 
 ## Phase 2D — One canonical appointment across all surfaces
 
-**Goal:** `global_schedule_events` is sole canonical appointment. Every UI surface reads from it. Appointment resolution is via query on `global_schedule_events.ancillary_case_id`.
+**Goal:** `global_schedule_events` is sole canonical appointment. Every UI surface reads from it. Appointment resolution is via query on `global_schedule_events.ancillary_case_id`. **Canonical ancillary appointment eligibility is restricted to `event_type IN ('ancillary_appointment', 'same_day_add')` — `doctor_visit` is excluded.**
+
+**v3.1 canonical event-type restriction:**
+
+- Only `ancillary_appointment` and `same_day_add` may represent a canonical appointment for `patient_ancillary_cases`.
+- `doctor_visit` is a general clinic appointment outside the ancillary lifecycle. It does NOT link to `patient_ancillary_cases` and does NOT satisfy Order Note scheduling eligibility.
+- If a future explicit conversion workflow is needed ("convert a doctor visit into an ancillary appointment"), that must be its own audited transition — not an implicit event-type broadening.
 
 **Schema (additive):**
 
 - **New columns on `global_schedule_events`:**
-  - `ancillary_case_id` int NULL FK → patient_ancillary_cases.id (nullable during backfill; enforce NOT NULL for `event_type IN ('ancillary_appointment','same_day_add')` via check constraint after clean data).
+  - `ancillary_case_id` int NULL FK → patient_ancillary_cases.id. **Enforce NOT NULL for `event_type IN ('ancillary_appointment','same_day_add')` via check constraint after backfill.** `doctor_visit` and every other event type stay `ancillary_case_id = NULL`.
   - `parent_event_id` int NULL FK → global_schedule_events.id (self, reschedule lineage).
   - `cancellation_reason` text NULL
   - `no_show_reason` text NULL
+- **`service_type` enforcement:** existing column is nullable at the schema level; add check constraint requiring NOT NULL when `event_type IN ('ancillary_appointment','same_day_add')`.
 - **New nullable column `ancillary_appointments.global_schedule_event_id`** int (back-pointer for legacy reads).
-- **New partial unique index:** `UNIQUE (ancillary_case_id) WHERE event_type IN ('ancillary_appointment','same_day_add') AND status = 'scheduled'` — one active canonical appointment per ancillary_case.
+- **New partial unique index (scope: ancillary event types only):**
+
+  ```sql
+  UNIQUE (ancillary_case_id)
+  WHERE event_type IN ('ancillary_appointment','same_day_add')
+    AND status = 'scheduled'
+  ```
+
+  `doctor_visit` rows are NOT subject to this index — they are outside ancillary eligibility.
 - **Extend `global_schedule_events.status` enum** with `'rescheduled'` (additive).
 
 **Backfill (one-shot):**
@@ -360,7 +381,7 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
 **Wiring (flag `FEATURE_ORDER_NOTE_ELIGIBILITY_STRICT`, default OFF):**
 
 - Implement `reconcileOrderNoteEligibility(ancillary_case_id)`:
-  - Precondition: `patient_ancillary_cases.admin_review_status = 'approved'` AND active canonical appointment exists for the ancillary_case.
+  - Precondition: `patient_ancillary_cases.admin_review_status = 'approved'` AND an **active or completed canonical ancillary appointment** exists — i.e., a `global_schedule_events` row with `ancillary_case_id = <this case>`, `event_type IN ('ancillary_appointment','same_day_add')` (NOT `doctor_visit`), `status IN ('scheduled','completed')`, and matching `service_type`.
   - If both true and no order note lineage exists: insert `procedure_notes` row with `noteType='order_note'`, `notes_lineage_id=<new uuid>`, `generationStatus='pending'`. Trigger generator.
   - If lineage exists but Admin Review changed since generation: insert amendment row with `correction_of_note_id=<prior>`.
   - If preconditions become false: transition lineage head to `signatureStatus='voided'`.
@@ -400,12 +421,20 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
 **Wiring (flags `FEATURE_PROCEDURE_STATE_MACHINE`, `FEATURE_PROCEDURE_NOTE_ELIGIBILITY_STRICT`):**
 
 - New endpoints: `POST /api/procedure-events/start`, `.../pause`, `.../resume`, `.../cancel`, `.../no-show`, `.../unable-to-complete`.
-- Prerequisites classified in code:
-  - **Hard procedure blocker** — canonical patient identity, valid appointment, active clinic tenancy.
-  - **Soft operational warning** — missing consent, missing screening form.
-  - **Documentation follow-up** — missing marketing intake.
-  - **Billing blocker (not procedure)** — missing insurance verification, missing authorization.
-  - **Claim-submission blocker (not procedure)** — missing coding.
+- **Prerequisites are service-specific and configurable, not hardcoded (v3.1 correction).** Consent, insurance verification, authorization, coding, and every other prerequisite are classified per ancillary service via configuration, not by a global rule. See audit §4B for the five-category model:
+  - **A. Hard procedure blocker** — legally / clinically required consent, missing / unresolved patient identity, invalid or absent canonical ancillary appointment, inactive clinic tenancy, service-specific safety prerequisites.
+  - **B. Soft operational warning** — optional administrative acknowledgment, nonessential demographic gap, information without legal/clinical/safety impact.
+  - **C. Documentation follow-up** — optional nonclinical forms, marketing forms, nonessential administrative documents.
+  - **D. Billing blocker (not procedure)** — missing insurance verification / authorization where payer rules permit performing but block billing; missing billing-specific fields.
+  - **E. Claim-submission blocker (not procedure)** — missing coding, missing payer-required claim field, missing final signature required for claim submission.
+- **Consent classification is not blanket-soft.** Some ancillary services legally or clinically require consent; those are hard blockers. Other services have optional acknowledgments; those are soft. The configuration decides per service:
+  - Whether consent is required.
+  - Which consent document(s) is/are required.
+  - When it must be completed (before scheduling / check-in / procedure start / billing).
+  - Which stage(s) it blocks.
+  - Which roles may override a warning.
+  - Which requirements are non-overrideable.
+- **Configuration storage** — extend `document_requirements` with `blocker_category`, `blocks_stage`, `override_allowed`, `override_roles`, `override_audit_required` columns, OR add a companion table `ancillary_service_prerequisite_config`. Final choice is a Phase 2F/G design decision; the classification model is the requirement.
 - Implement `reconcileProcedureNoteEligibility(ancillary_case_id)`:
   - Precondition: `procedure_events.procedureStatus='complete'` for the ancillary_case AND canonical report document exists linked via `documents.ancillary_case_id`.
   - If both true and no procedure_note lineage exists: insert `procedure_notes` row with `noteType='post_procedure_note'`, `notes_lineage_id=<new>`, `generationStatus='pending'`. Trigger generator.
@@ -429,7 +458,24 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
 
 ## Phase 2G — Billing readiness + Billing Document lifecycle
 
-**Goal:** Billing document request atomically produces a canonical `documents` row via a real generator. `generatedDocumentId` becomes a real FK.
+**Goal:** Billing document request atomically produces a canonical `documents` row via a real generator. `generatedDocumentId` becomes a real FK. **First introduce `billing_document` as a new `DOCUMENT_KIND`** — the current `DOCUMENT_KINDS` tuple in `shared/schema/documents.ts` does NOT include it, and the generator must not run until every consumer of the shared document contract accepts the new value.
+
+**v3.1 required contract additions BEFORE the generator is enabled:**
+
+- Add `"billing_document"` to `DOCUMENT_KINDS` at `shared/schema/documents.ts`.
+- Extend `DocumentKind` TypeScript union.
+- Extend `insertDocumentSchema` Zod validator (and any related insert/update validators).
+- Extend route validation on `POST /api/documents-library` payload schema.
+- Extend Ancillary Documents page label mapping (`client/src/pages/documents.tsx` DOC_KIND_LABELS).
+- Extend Patient EHR document kind rendering.
+- Extend Document Library filter + display mapping.
+- Extend Finance / Billing workspace document mapping (decide whether the workspace lists billing docs alongside invoices or in its own tab).
+- Decide allowed surface assignments — reuse `patient_chart` or introduce a new `billing_workspace` surface value (additive to `DOCUMENT_SURFACES`).
+- New unit test `tests/unit/documentKindContract.test.ts` — asserts every consumer accepts `billing_document`.
+- New integration test — generator writes → readers render.
+- New E2E assertion — Playwright verifies a billing document appears on Patient EHR + Billing workspace after generation.
+
+**Prohibition:** The billing document generator MUST NOT be enabled until every item on the list above lands. Enabling the generator earlier would produce rows that pass insert validation for some paths and fail for others, corrupting the document library.
 
 **Schema (additive):**
 
@@ -440,6 +486,7 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
   - `billing_document_requests.attempt_count` int DEFAULT 0
   - `billing_document_requests.last_error_at` timestamptz NULL
   - `invoices.billing_document_request_id` int NULL FK → billing_document_requests.id
+- **Additive enum extension:** add `"billing_document"` to `DOCUMENT_KINDS` at `shared/schema/documents.ts`.
 
 **Backfill:**
 
@@ -578,11 +625,12 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
   - Global Plexus patient created.
   - Ancillary case created per service.
   - Service-specific Admin Review approval.
-  - Canonical appointment scheduled.
-  - Order Note created + signed.
+  - Canonical ancillary appointment scheduled (`event_type IN ('ancillary_appointment','same_day_add')`; `doctor_visit` does NOT satisfy).
+  - **Order Note generated** when eligibility conditions are met (Admin Review approved + canonical ancillary appointment).
+  - **Order Note signed before procedure ONLY when the configured service rule requires it.** Order Note signature requirement is an unresolved product decision (audit §15.5) — the E2E must not unconditionally require a signed Order Note. If a service's configuration requires signature, the corresponding assertion runs for that service; otherwise the E2E asserts generation only.
   - Procedure complete + report uploaded.
   - Procedure Note created + signed.
-  - Billing readiness + document generated.
+  - Billing readiness + document generated (with `billing_document` DOCUMENT_KIND accepted by every consumer, per Phase 2G).
   - Invoice paid.
   - Journey status view shows `fully_closed`.
   - Ancillary designation derivation triggers.

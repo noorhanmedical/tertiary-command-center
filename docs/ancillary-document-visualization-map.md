@@ -1,14 +1,20 @@
-# Ancillary Document Visualization Map — v3
+# Ancillary Document Visualization Map — v3.1
 
 **Purpose:** Identify exactly where every artifact and state in the patient journey is **created**, **stored**, **read**, and **displayed** across the entire platform, and identify the projection anchors that each surface must consume.
 
-**Companion to:** `docs/full-patient-journey-platform-audit.md` (v3) and `docs/minimal-patient-journey-wiring-plan.md` (v3).
+**Companion to:** `docs/full-patient-journey-platform-audit.md` (v3.1) and `docs/minimal-patient-journey-wiring-plan.md` (v3.1).
 
 **Repository:** noorhanmedical/tertiary-command-center @ `2aaa23b` (branch: `audit/full-patient-journey-platform`).
 
-**Status:** Proposed v3 architecture — awaiting final owner approval. Nothing in this document is implemented.
+**Status:** Proposed v3.1 architecture — awaiting final owner approval. Nothing in this document is implemented.
 
-**Revision v3:**
+**Revision v3.1:**
+- Canonical ancillary appointment event types are ONLY `ancillary_appointment` and `same_day_add`. `doctor_visit` is **excluded** — it does not link to `patient_ancillary_cases` and does not satisfy Order Note scheduling eligibility.
+- Consent classification is now service-specific and configurable (see audit §4B). No blanket "soft warning" default.
+- `documents.kind='billing_document'` is a **proposed additive** kind for Phase 2G. Not currently available. Every consumer of `DOCUMENT_KINDS` must accept the new value before the generator is enabled.
+- Order Note signature requirement remains an unresolved product decision.
+
+**Revision v3 (retained):**
 
 - Patient identity is now a **Plexus-central** function. Every clinic-facing surface reads clinic-owned data via `patient_clinic_memberships` and never touches `global_plexus_patients` directly.
 - `patient_ancillary_cases` (v3 proposal) anchors every per-service artifact. It links to `global_plexus_patient_id`, `patient_clinic_membership_id`, `clinic_id`, and includes `episode_sequence` for repeat services.
@@ -52,7 +58,7 @@
 | Per-service ancillary case | `patient_ancillary_cases.id` (v3) | ✅ own clinic only | ✅ |
 | Ancillary designation | Derived from `patient_ancillary_cases` + `procedure_events`; materialized on `global_plexus_patients` | ⚠️ only "has prior Plexus ancillary" boolean flag; prior clinic chart NEVER visible | ✅ full history |
 | Admin Review event | `ancillary_case_admin_review_events.id` (v3, append-only) + projection `patient_ancillary_cases.admin_review_status` | ✅ own clinic only | ✅ |
-| Appointment | `global_schedule_events.id` where event_type ∈ (ancillary_appointment, same_day_add, doctor_visit) + `ancillary_case_id` link | ✅ own clinic only | ✅ |
+| Appointment (canonical ancillary) | `global_schedule_events.id` where **event_type ∈ (`ancillary_appointment`, `same_day_add`) ONLY** + `ancillary_case_id` link + `service_type` required. `doctor_visit` is NOT part of ancillary eligibility. | ✅ own clinic only | ✅ |
 | Order Note | `procedure_notes.id` (`noteType='order_note'`) + v3 `notes_lineage_id`; anchored to `procedure_notes.ancillary_case_id` | ✅ | ✅ |
 | Procedure event | `procedure_events.id`; v3 anchor `procedure_events.ancillary_case_id` | ✅ | ✅ |
 | Report | `documents.id` (`kind='report'`); v3 anchor `documents.ancillary_case_id`; version via `supersededByDocumentId` | ✅ | ✅ |
@@ -236,23 +242,25 @@ Each row shows: canonical source, canonical table, canonical ID, created by, edi
 | Canonical source | `outreach_calls` row + derived `patient_screenings.appointmentStatus` |
 | Verified | `shared/schema/outreach.ts:35-60`; two writers today: `server/routes/outreach.ts:200-352` and `server/routes/executionCases.ts:158-189` |
 
-### Appointment (v3 — canonical via global_schedule_events with constraints)
+### Appointment (v3.1 — canonical via global_schedule_events with constraints)
 
 | Field | Value |
 |---|---|
 | Canonical source (today) | **Fragmented** — no single truth |
-| Canonical source (v3 target) | `global_schedule_events` where event_type identifies a real appointment AND row links `ancillary_case_id` + `service_type` + one active per case + reschedule lineage + cancellation/no-show reasons preserved |
-| Anchor (v3) | `global_schedule_events.id`; the ancillary_case row does NOT carry `canonical_appointment_id`. Resolve active appointment by querying schedule events. |
-| Every clinic surface | Patient EHR ⚠️, Engagement Center ✅, PCS ✅, ACS ✅, Global Calendar ✅, Ancillary Documents ❌ (missing — should show appointment link on each doc row), Clinician Portal ⚠️, Imaging Central ⚠️, Finance ❌, Billing workspace ❌ |
+| Canonical source (v3.1 target) | `global_schedule_events` where **event_type ∈ (`ancillary_appointment`, `same_day_add`) ONLY** AND row links `ancillary_case_id` + `service_type` + one active per case + reschedule lineage + cancellation/no-show reasons preserved. `doctor_visit` is EXCLUDED from ancillary eligibility — a generic doctor visit does not link to `patient_ancillary_cases` and does not satisfy Order Note scheduling eligibility. |
+| Anchor (v3.1) | `global_schedule_events.id`; the ancillary_case row does NOT carry `canonical_appointment_id`. Resolve active canonical ancillary appointment by querying schedule events filtered to `event_type IN ('ancillary_appointment','same_day_add')`. |
+| Partial unique index | `UNIQUE (ancillary_case_id) WHERE event_type IN ('ancillary_appointment','same_day_add') AND status = 'scheduled'` — one active canonical ancillary appointment per case. `doctor_visit` rows are NOT subject to this index. |
+| Every clinic surface | Patient EHR ⚠️, Engagement Center ✅, PCS ✅, ACS ✅, Global Calendar ✅ (renders every event type), Ancillary Documents ❌ (missing — should show ancillary-only appointment link on each doc row), Clinician Portal ⚠️, Imaging Central ⚠️, Finance ❌, Billing workspace ❌ |
 | Duplicate paths | `ancillary_appointments`, `patient_screenings.appointmentStatus`, `patient_execution_cases.engagementStatus` — all become projections in v3 |
-| Verified | `shared/schema/globalSchedule.ts:47-77`; `shared/schema/appointments.ts:5-30`; `server/routes/globalSchedule.ts:281-378` |
+| Verified | `shared/schema/globalSchedule.ts:47-77` (existing eventType list still includes `doctor_visit` for general clinic visits, which is correct — the v3.1 restriction is on which event types satisfy ancillary eligibility, not on which event types the enum permits); `shared/schema/appointments.ts:5-30`; `server/routes/globalSchedule.ts:281-378` |
 
 ### Consent, Screening Form
 
 | Field | Value |
 |---|---|
 | Canonical source | `documents` (kind='informed_consent' / 'screening_form') + `case_document_readiness` |
-| Anchor today | `documents.patientScreeningId`; v3: also `documents.ancillary_case_id` when applicable |
+| Anchor today | `documents.patientScreeningId`; v3.1: also `documents.ancillary_case_id` when applicable |
+| Blocker classification (v3.1) | **Service-specific and configurable, NOT blanket-soft.** Consent may be a hard procedure blocker for some ancillary services (legally / clinically required) and a soft operational warning for others. Governed by ancillary service configuration (see audit §4B). Never hardcoded globally. Override permissions per role and per requirement. Some requirements are non-overrideable. |
 | Every clinic surface | Patient EHR ✅, Engagement Center ✅, PCS ⚠️, ACS ✅, Ancillary Documents 🟠 (legacy `/api/generated-notes`), Clinician Portal 🎭 (LinkedDocumentsPanel=[]), Document Library ✅ |
 | Verified | `shared/schema/documents.ts:97-149`; `server/routes/documentLibrary.ts:89-438` |
 
@@ -325,9 +333,9 @@ Each row shows: canonical source, canonical table, canonical ID, created by, edi
 
 | Field | Value |
 |---|---|
-| Canonical source (v3) | `documents` row with `kind='billing_document'` linked from `billing_document_requests.generatedDocumentId` FK |
-| Today | Not implemented — orphan int column |
-| Verified | `shared/schema/billingDocuments.ts:33` |
+| Canonical source (v3.1 target) | `documents` row with `kind='billing_document'` linked from `billing_document_requests.generatedDocumentId` FK. **`billing_document` is NOT currently a member of `DOCUMENT_KINDS`** at `shared/schema/documents.ts` — it is a **proposed additive document kind to be introduced in Phase 2G**. Every consumer of `DOCUMENT_KINDS` (shared constant, TypeScript type, Zod validation, insert/update validation, route validation, labels, filters, Document Library display mapping, Ancillary Documents mapping, Patient EHR mapping, Finance/Billing mapping, allowed surface assignments, unit tests, integration tests, E2E assertions) must accept `billing_document` before the generator is enabled. |
+| Today | Not implemented — orphan int column, and `billing_document` is not a valid DOCUMENT_KIND value. |
+| Verified | `shared/schema/billingDocuments.ts:33`; `shared/schema/documents.ts` DOCUMENT_KINDS declaration |
 
 ### Claim / Claim Status / Denial
 
@@ -445,3 +453,10 @@ Patient EHR, Plexus IQ (Admin Review), Engagement Center, Global Calendar, Billi
 ### Corrected statement on `/api/generated-notes`
 
 The route is authenticated globally by `app.use("/api", requireAuth)` at `server/routes.ts:239`, mounted before `registerGeneratedNotesRoutes(app)` at line 270. It is NOT unauthenticated. Its real defects are: (a) not clinic-scoped in the handler, (b) legacy read path from `generated_notes` table, (c) architecturally unsafe as the display path on `/ancillary-documents` while writes go to `procedure_notes`.
+
+### v3.1 additions summary
+
+- **Ancillary appointment event type restriction:** only `ancillary_appointment` and `same_day_add` may represent a canonical appointment for `patient_ancillary_cases`. `doctor_visit` is excluded. The partial unique index for one active canonical appointment per case applies only to those two event types. Order Note scheduling eligibility considers only these.
+- **Configurable consent/blocker classification:** consent is NOT a blanket soft warning. Each ancillary service's configuration determines whether consent is required, which document(s), when, whether it blocks scheduling / check-in / procedure start / billing, which roles may override, and which requirements are non-overrideable.
+- **`billing_document` document kind:** proposed additive for Phase 2G, NOT currently in `DOCUMENT_KINDS`. Every consumer of the shared document contract must accept the new value before the generator is enabled.
+- **Order Note signature requirement:** unresolved product decision. Four sub-questions must be answered together (see audit §15.5). The full E2E does not unconditionally require a signed Order Note.

@@ -1,12 +1,13 @@
-# Full Patient Journey Platform Audit — v3
+# Full Patient Journey Platform Audit — v3.1
 
 **Repository:** noorhanmedical/tertiary-command-center
 **Starting main SHA:** `2aaa23bc75b0940c3c24f20d7abaf149403a322d`
 **Audit branch:** `audit/full-patient-journey-platform`
 **Status:** Documentation-only. Zero application/UI/schema/migration/data changes.
-**Revision v3:** Correct global patient identity operating model — Plexus is a separate platform/operator entity from each clinic. Global identity is a Plexus-central function; clinics never search, review, or approve global matches. Every patient in the platform receives or resolves to one immutable Plexus ID.
+**Revision v3.1:** Correct ancillary-appointment event-type definition (exclude `doctor_visit`); replace blanket "missing consent = soft warning" with a **service-specific and configurable** blocker classification; explicitly document that `billing_document` is a **proposed additive** `DOCUMENT_KIND` (not currently allowed); keep the Order Note signature requirement as an unresolved product decision that does not gate the full E2E.
+**Revision v3 (retained):** Plexus is a separate platform/operator entity from each clinic. Global identity is a Plexus-central function; clinics never search, review, or approve global matches. Every patient in the platform receives or resolves to one immutable Plexus ID.
 
-**Status of every proposal below:** Proposed v3 architecture — awaiting final owner approval. Nothing in this document is implemented. No decision is final until an owner explicitly approves it.
+**Status of every proposal below:** Proposed v3.1 architecture — awaiting final owner approval. Nothing in this document is implemented. No decision is final until an owner explicitly approves it.
 
 The only confirmed business requirements from owner communication so far:
 
@@ -249,6 +250,136 @@ Rules:
 - Internal serial integer `id` remains the database primary key (matches every other domain table's ID convention).
 - The Plexus ID is immutable once assigned.
 - Old Plexus IDs (after merges) are preserved in `plexus_id_aliases` and continue to resolve to the surviving global patient.
+
+## 4A. Canonical Ancillary Appointment — Event-Type Restriction (v3.1)
+
+Only two `global_schedule_events.event_type` values may represent a canonical appointment for a `patient_ancillary_case`:
+
+- `ancillary_appointment`
+- `same_day_add`
+
+A generic `doctor_visit` event **does NOT** link to `patient_ancillary_cases` and **does NOT** satisfy Order Note scheduling eligibility. `doctor_visit` remains a general clinic appointment and is outside the ancillary lifecycle unless a future explicit conversion workflow is designed and approved separately.
+
+### 4A.1 Required constraints
+
+- `global_schedule_events.ancillary_case_id` is **required** for `event_type IN ('ancillary_appointment', 'same_day_add')`. Enforce via check constraint after backfill (Phase 2D).
+- `global_schedule_events.service_type` is **required** for those same two event types.
+- The **partial unique index enforcing one active canonical ancillary appointment per case** applies ONLY to:
+
+  ```sql
+  UNIQUE (ancillary_case_id)
+  WHERE event_type IN ('ancillary_appointment', 'same_day_add')
+    AND status = 'scheduled'
+  ```
+
+- **Order Note eligibility must consider only** an active or completed canonical ancillary appointment linked to the same ancillary case, i.e., a `global_schedule_events` row with:
+  - `ancillary_case_id = <this case>`
+  - `event_type IN ('ancillary_appointment', 'same_day_add')`
+  - `status IN ('scheduled', 'completed')`
+  - matching `service_type`
+
+`doctor_visit` rows must NOT contribute to Order Note eligibility.
+
+### 4A.2 Reasoning
+
+Grouping `doctor_visit` with ancillary appointment events would let a generic clinic visit satisfy an Order Note precondition, which is clinically wrong (an ancillary Order Note is authored for a specific ancillary service delivered on a specific canonical appointment). The clinic doctor visit is a separate encounter with its own workflow.
+
+If a future conversion workflow is needed (e.g., "convert a same-day walk-in doctor visit into an ancillary appointment"), it must be an explicit, auditable transition that creates or links a new `ancillary_appointment` row — not an implicit event-type broadening.
+
+## 4B. Consent & Procedure-Blocker Classification — Service-Specific and Configurable (v3.1)
+
+The prior v3 draft classified "missing consent" as a blanket "soft operational warning." **That is retracted.** Consent classification MUST be service-specific and configurable per ancillary service. Some ancillary services have legally or clinically required consent that is a **hard blocker**; other services have optional administrative acknowledgments that are truly soft.
+
+### 4B.1 Blocker categories
+
+**A. Hard procedure blocker (procedure must not start):**
+
+- Legally required consent (per applicable jurisdiction / service).
+- Clinically required consent (per service's clinical protocol).
+- Missing or unresolved patient identity.
+- Invalid or absent canonical ancillary appointment where required.
+- Inactive clinic tenancy.
+- Service-specific safety prerequisite (e.g., pre-procedure clearance flag on the service configuration).
+
+**B. Soft operational warning (procedure allowed with warning):**
+
+- Optional administrative acknowledgment.
+- Nonessential demographic gap.
+- Information that does not create a legal, clinical, or safety restriction.
+
+**C. Documentation follow-up item (never blocks procedure):**
+
+- Optional nonclinical form.
+- Marketing form.
+- Nonessential administrative document.
+
+**D. Billing blocker (blocks billing / billing-document generation, NOT the procedure):**
+
+- Missing insurance verification when it does not prohibit performing the service.
+- Missing authorization when payer rules permit performance but prevent billing.
+- Missing billing-specific demographic or provider information.
+
+**E. Claim-submission blocker (blocks claim submission, NOT the procedure):**
+
+- Missing coding.
+- Missing payer-required claim field.
+- Missing final signature required for claim submission.
+
+### 4B.2 Rules
+
+- The platform **must not block** a study merely because nonessential information is missing.
+- The platform **must never bypass** required consent, clinical safety, legal, or service-specific prerequisites.
+- Consent is **not hardcoded globally** as either hard or soft. Each ancillary service's configuration determines:
+  - Whether consent is required.
+  - Which consent document(s) is/are required.
+  - When it must be completed (before scheduling / before check-in / before procedure start / before billing).
+  - Whether it blocks scheduling, check-in, procedure start, or only billing.
+  - Which roles may override a warning (only for categories that permit override).
+  - Which requirements are not overrideable (hard blockers cannot be silently bypassed; overrides for hard blockers require an explicit, audited exception path with rationale).
+
+### 4B.3 Storage model (proposed additive — not implemented)
+
+The ancillary service configuration must be data-driven. Proposed conceptual location:
+
+- Extend `document_requirements` (existing table at `shared/schema/documentReadiness.ts`) with columns:
+  - `blocker_category` — enum: `hard_procedure`, `soft_operational`, `documentation_followup`, `billing_blocker`, `claim_blocker`.
+  - `blocks_stage` — enum or set: `scheduling`, `check_in`, `procedure_start`, `billing_document_generation`, `claim_submission`.
+  - `override_allowed` — boolean.
+  - `override_roles` — text[].
+  - `override_audit_required` — boolean.
+- OR add a companion table `ancillary_service_prerequisite_config(service_type, document_type, blocker_category, blocks_stage, override_allowed, override_roles, override_audit_required)`.
+
+Final choice is a Phase 2F/G design decision; the classification is the requirement.
+
+## 4C. `billing_document` Document Kind — Proposed Additive (v3.1)
+
+`shared/schema/documents.ts` today declares a `DOCUMENT_KINDS` tuple used by:
+
+- Zod / insert validation
+- TypeScript type union
+- Route validation for POST `/api/documents-library`
+- Client display labels + filters (Ancillary Documents, Patient EHR, Document Library, Finance/Billing)
+- Surface assignments
+
+**`billing_document` is NOT currently a member of `DOCUMENT_KINDS`.** The audit's Phase 2G references `documents` rows with `kind='billing_document'`; that string is not a valid kind under the current contract. Any generator writing such rows would fail validation and every downstream reader would silently drop them.
+
+**Status:** Proposed additive document kind to be introduced in Phase 2G. Not currently available. The generator must NOT be enabled until the shared document contract accepts the new kind.
+
+**Required Phase 2G changes (all must land before the generator is enabled):**
+
+- Shared document-kind constant / tuple: add `"billing_document"` to `DOCUMENT_KINDS` at `shared/schema/documents.ts`.
+- TypeScript type: `DocumentKind` union extended.
+- Zod validation / `insertDocumentSchema` / update validation.
+- Route validation (`POST /api/documents-library` payload schema).
+- Client display labels — Ancillary Documents (`client/src/pages/documents.tsx` DOC_KIND_LABELS), Patient EHR document mapping, Document Library.
+- Filters + query handling on Document Library and Ancillary Documents.
+- Allowed surface assignments — decide which `document_surface_assignments.surface` values (e.g., `patient_chart`, or a new `billing_workspace`) apply.
+- Finance / Billing workspace document mapping.
+- Unit tests: `tests/unit/documentKindContract.test.ts` asserts every consumer accepts `billing_document`.
+- Integration tests: generator writes → readers render.
+- E2E assertions: Playwright asserts a billing document appears on Patient EHR + Billing workspace after generation.
+
+**Prohibition:** The billing document generator (Phase 2G) MUST NOT be enabled until every consumer on the list above accepts `billing_document`. Enabling the generator earlier would produce rows that pass insert validation for some paths and fail for others, corrupting the document library.
 
 ## 5. Central Matching Flow
 
@@ -554,7 +685,13 @@ Not implemented as aggregate. Discrete completion timestamps proposed on `patien
 2. **Claims strategy.** In-house EDI 837 + clearinghouse + 835 remittance parser OR delegate to external RCM (post charges via partner API, receive statuses via webhook)?
 3. **Revenue allocation.** `projectedInvoices.projectedOurPortionPercentage` defaults to `"50"` (`shared/schema/projectedInvoices.ts:34`). Is this the canonical split? Where should the persisted ledger live?
 4. **Effective clinical date exposure.** `ancillary_case_admin_review_events.effective_clinical_date` is an optional decoupling of clinical intent from action timestamp. Should the UI expose this widely, or restrict to retroactive-review workflows?
-5. **Order-note signature requirement.** `KINDS_REQUIRING_SIGNATURE = ['post_procedure_note','report']` at `server/services/ancillary/signingService.ts:51-54` excludes `order_note`. Is signing required for Order Notes?
+5. **Order-note signature requirement — UNRESOLVED (v3.1).** `KINDS_REQUIRING_SIGNATURE = ['post_procedure_note','report']` at `server/services/ancillary/signingService.ts:51-54` excludes `order_note`. Four sub-questions must be answered together, and none has an implicit default:
+   1. Does an Order Note require clinician signature at all?
+   2. If so, which role may sign it (physician / clinician / any authorized signer)?
+   3. Must the Order Note merely be **generated** before procedure start, or **signed** before procedure start?
+   4. Does the requirement vary by ancillary service (some services require signed order; others do not)?
+
+   Until this is resolved, the full E2E test (Phase 2K) MUST NOT unconditionally require a signed Order Note. The E2E scenario states: "Order Note generated when eligibility conditions are met; Order Note signed before procedure ONLY when required by the configured service rule." If no service configures a signature requirement, the E2E passes without signature; if any service does, the corresponding step asserts signature for that service only.
 6. **Plexus Bank future.** Retiring, moving to a real backend, or staying as a demo shell?
 7. **Ancillary Documents legacy `/api/generated-notes` display.** Retire completely or route through canonical `procedure_notes`?
 8. **Sensitive identifier storage.** Encryption strategy for Medicare/payer identifiers on `patient_external_identifiers`. At-rest column encryption via pgcrypto? External KMS? Column-level policy?
