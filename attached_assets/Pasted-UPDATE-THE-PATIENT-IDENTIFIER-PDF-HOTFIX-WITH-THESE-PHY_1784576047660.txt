@@ -1,0 +1,186 @@
+UPDATE THE PATIENT IDENTIFIER PDF HOTFIX WITH THESE PHYSICIAN-FACING REQUIREMENTS
+
+Use the uploaded example as the exact problem reference:
+
+Clinician Report — Taylor Family Practice - 2026-07-20 (Run 2).pdf
+
+This document is physician-facing.
+
+REMOVE ALL VISIBLE “RUN” LANGUAGE
+
+Do not display any of the following anywhere in the physician-facing PDF:
+
+- Run
+- Run 1
+- Run 2
+- Run number
+- Analysis run
+- Batch run
+- Generation run
+- Internal execution number
+
+The run identifier may remain internally in database records, logs, cache keys, audit metadata, or generation tracking, but it must never appear in:
+
+- PDF filename
+- document title
+- page header
+- page footer
+- browser document title
+- print title
+- download title
+- clinician-facing UI label
+- Plexus PDF visible content
+
+PHYSICIAN-FACING TITLE
+
+Change the visible clinician report title from:
+
+Taylor Family Practice - 2026-07-20 (Run 2) Clinician Summary — July 20, 2026
+
+to a professional title such as:
+
+Clinician Report
+Taylor Family Practice
+July 20, 2026
+
+Or, when rendered on one line:
+
+Clinician Report — Taylor Family Practice — July 20, 2026
+
+Do not include internal processing terminology.
+
+DOWNLOAD FILENAME
+
+Use:
+
+Clinician Report — Taylor Family Practice — 2026-07-20.pdf
+
+Do not use:
+
+Clinician Report — Taylor Family Practice — 2026-07-20 (Run 2).pdf
+
+For the Plexus version, use:
+
+Plexus Report — Taylor Family Practice — 2026-07-20.pdf
+
+REMOVE BROWSER PRINT ARTIFACTS
+
+The example PDF contains browser-generated content such as:
+
+- `7/20/26, 12:20 PM`
+- repeated browser document title
+- `about:blank`
+- browser-generated `1/80`, `2/80`, etc.
+
+These are not appropriate for a physician-facing clinical report.
+
+Ensure the PDF export disables browser default headers and footers.
+
+If using Playwright or Puppeteer PDF generation, use the equivalent of:
+
+displayHeaderFooter: false
+
+Do not rely on browser print-to-PDF settings that insert URL, timestamp, or browser page numbering.
+
+If page numbers are desired, generate professional application-controlled page numbering only:
+
+Page 1 of 80
+
+Do not display `about:blank`.
+
+PATIENT IDENTIFIER PLACEMENT
+
+For every patient section, place the identifier directly in the demographic header.
+
+Current example:
+
+PLEXUS QUALIFYING ANCILLARIES HERN, SANDRA
+DOB: 1957-09-11 · Age: 68 yo · Sex: F
+Phone: ...
+Insurance: ...
+
+Required:
+
+PLEXUS QUALIFYING ANCILLARIES
+HERN, SANDRA
+
+Patient ID: PS-<patientScreeningId>
+MRN: <real clinic MRN only when present>
+DOB: 1957-09-11 · Age: 68 yo · Sex: F
+Phone: ...
+Insurance: Medicare of Texas · Facility: Taylor Family Practice
+
+Rules:
+
+- Patient ID must appear for every patient.
+- Use the real patientScreeningId for this hotfix.
+- Never label the screening ID as MRN.
+- Show MRN only when an actual clinic MRN exists.
+- Omit the MRN row entirely when absent.
+- Do not show `MRN: N/A`.
+- Do not fabricate a Plexus ID before Phase 2A.
+- Do not use list position or page number as the patient ID.
+
+REPEATED PAGE IDENTIFICATION
+
+When one patient section flows across multiple pages, repeat a compact clinical header containing:
+
+Patient Name
+Patient ID
+DOB
+
+Do not repeat the entire demographic block unless necessary.
+
+REPORT DESIGN
+
+Preserve the current clinical content and overall report structure, but make the header physician-appropriate:
+
+- no “Run” language
+- no browser URL
+- no browser timestamp
+- no browser-generated title
+- no internal processing metadata
+- clear patient identity
+- consistent spacing
+- professional page numbering if used
+
+APPLY TO ALL ACTIVE OUTPUTS
+
+Apply the same rules to:
+
+- Clinician PDF preview
+- Clinician PDF download
+- Clinician PDF regeneration
+- Plexus PDF preview
+- Plexus PDF download
+- Plexus PDF regeneration
+- Plexus IQ patient-list PDF generation
+- any print/export action using the same report template
+
+The preview and downloaded PDF must match.
+
+TESTS
+
+Add or update focused tests confirming:
+
+1. No visible string matching `/\bRun\s*\d*\b/i` appears in clinician PDF output.
+2. No visible “Run” text appears in Plexus PDF output.
+3. Download filenames do not contain “Run”.
+4. Browser document title does not contain “Run”.
+5. `about:blank` does not appear.
+6. Browser-generated timestamp does not appear.
+7. Patient ID appears for every patient.
+8. Real MRN appears only when present.
+9. Screening ID is never labeled as MRN.
+10. Clinician and Plexus PDFs use the same patient identifier.
+11. Preview and downloaded PDF match.
+12. Existing clinical content remains intact.
+
+This remains part of:
+
+hotfix/patient-identifiers-pdfs
+
+Do not run migrations.
+Do not modify production data.
+Do not fabricate the future global Plexus ID.
+Do not begin Phase 2A.
