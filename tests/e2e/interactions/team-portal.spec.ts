@@ -30,11 +30,27 @@
 import { test, expect, loginAs } from "../fixtures/auth";
 
 async function openToolsTab(page: import("@playwright/test").Page) {
-  // The left rail defaults to the Messaging tab; the Tools tab is
-  // what mounts `tool-dock` and `left-rail-tool-settings`. Click the
-  // Tools tab and verify the Tools body becomes visible before any
-  // downstream assertion. This is a real behavioural gate — the test
-  // fails if the tab click did not activate the panel.
+  // Step 1 — reveal the left rail via the pin button. On a fresh
+  // portal load the rail's inner panel is translated ~82% off-screen
+  // with 50% opacity (TeamPortalShell.tsx:2849-2853), and only
+  // hover-peek OR the pin button brings it fully visible. The pin
+  // button is the deterministic path.
+  const pinBtn = page.getByTestId("button-pin-left-rail");
+  await expect(pinBtn).toBeVisible();
+  await pinBtn.click();
+
+  // Step 2 — verify the rail is actually pinned/revealed. The pin
+  // button's aria-label flips from "Pin panel" to "Unpin panel"
+  // when `leftRailPinned` becomes true (TeamPortalShell.tsx:2899).
+  // Using this attribute — instead of the always-in-DOM
+  // `portal-left-rail` container — gives us a real "revealed" gate.
+  await expect(pinBtn).toHaveAttribute("aria-label", "Unpin panel");
+  await expect(page.getByTestId("portal-left-rail")).toBeVisible();
+
+  // Step 3 — the rail now shows both left-panel tabs. Click the
+  // Tools tab (the rail defaults to Messaging) and assert the Tools
+  // body renders. No force:true — the pinned rail makes the tab a
+  // normal interactable element via the real user interaction path.
   await page.getByTestId("left-panel-tab-tools").click();
   await expect(page.getByTestId("left-rail-tools-rail")).toBeVisible();
 }

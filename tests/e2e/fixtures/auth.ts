@@ -62,15 +62,41 @@ export async function loginAs(page: Page, role: Role): Promise<void> {
   await page.getByTestId("input-login-username").fill(creds.user);
   await page.getByTestId("input-login-password").fill(creds.pass);
   await page.getByTestId("button-login-submit").click();
-  await page.waitForURL((url) => !/login$/.test(url.pathname), { timeout: 10_000 });
-  // Wait for the authenticated shell to actually mount. Login page's
-  // onLogin calls refetch() → navigate("/home") in a promise chain,
-  // so the URL can flip to /home before <AuthenticatedApp> renders
-  // (which is what mounts TopBanner). Waiting on this DOM anchor
-  // guarantees the /me query has hydrated and every subsequent
-  // page.goto lands on a fully-hydrated SPA shell — no race between
-  // navigation and hydration on the first assertion of each test.
-  await page.getByTestId("top-banner").waitFor({ state: "visible", timeout: 10_000 });
+
+  // API-level authentication gate: poll /api/auth/me via the browser
+  // context (page.request shares the page's cookies, so the session
+  // set by /api/auth/login flows through here). We wait until the
+  // server confirms the session — this is the correct global auth
+  // signal, independent of any specific page's DOM. A page-specific
+  // DOM anchor (e.g. the top banner) would drift if any authenticated
+  // route ever changed its layout.
+  const AUTH_ME_TIMEOUT_MS = 15_000;
+  const AUTH_ME_POLL_MS = 200;
+  const authDeadline = Date.now() + AUTH_ME_TIMEOUT_MS;
+  let authenticated = false;
+  while (Date.now() < authDeadline) {
+    const res = await page.request.get("/api/auth/me");
+    if (res.status() === 200) {
+      authenticated = true;
+      break;
+    }
+    // Any status other than 200 means the session hasn't been
+    // established yet — /api/auth/login may still be in flight or
+    // the response body may not have hit the cookie store. Retry.
+    await page.waitForTimeout(AUTH_ME_POLL_MS);
+  }
+  if (!authenticated) {
+    throw new Error(
+      `loginAs(${role}): /api/auth/me never returned 200 within ${AUTH_ME_TIMEOUT_MS}ms`,
+    );
+  }
+
+  // Only after the session is confirmed do we wait for the URL to
+  // leave /login. This ordering prevents any race between the client
+  // router's post-login navigate() and the caller's next page.goto.
+  await page.waitForURL((url) => !/login$/.test(url.pathname), {
+    timeout: 10_000,
+  });
 }
 
 /**
