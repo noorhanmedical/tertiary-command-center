@@ -103,8 +103,16 @@ for (const { role, path, label } of [
       //   1. Switch left rail to Tools; open the Settings dialog via
       //      the `left-rail-tool-settings` tool.
       //   2. Change the default tray tab in the WorkspaceSettingsDialog.
-      //   3. Reload. The tray body that becomes visible must match the
-      //      newly selected value — persisted via /api/portal/workspace-prefs.
+      //   3. Close the dialog — `flushPersist` on the dialog's
+      //      onOpenChange awaits the PUT.
+      //   4. Reload. The default tray tab must reflect the newly
+      //      persisted value: after opening Tools again, the tray body
+      //      that renders in the Tools rail must match the picked tab.
+      //
+      // The `leftPanelTab` state is intentionally NOT persisted
+      // (session-scoped ephemeral state), so re-opening Tools after
+      // reload is required to surface the tray body. `defaultTrayTab`
+      // IS persisted — verified via the tray-body assertion below.
       await openToolsTab(page);
       const settingsBtn = page.getByTestId("left-rail-tool-settings");
       await expect(settingsBtn).toBeVisible();
@@ -116,25 +124,54 @@ for (const { role, path, label } of [
       const traySelect = dialog.getByTestId("setting-default-tray-tab");
       await expect(traySelect).toBeVisible();
 
-      // Read the current select value and pick the OPPOSITE option so
-      // the reload is guaranteed to observe a change.
+      // Read the current select value and pick a DIFFERENT option so
+      // the reload is guaranteed to observe a change. `Patient Messages`
+      // (patients) is the target unless the current default is already
+      // patients — in which case we pick `Team Chat` instead.
       const currentTab = await traySelect.textContent();
       const nextTab =
-        currentTab && /team/i.test(currentTab)
-          ? { label: "Patient Messages", body: "tray-patients" }
-          : { label: "Team Chat", body: "tray-team" };
+        currentTab && /patient/i.test(currentTab)
+          ? { label: "Team Chat", body: "tray-team" }
+          : { label: "Patient Messages", body: "tray-patients" };
 
       await traySelect.click();
       await page.getByRole("option", { name: nextTab.label }).click();
 
-      // Close the dialog and refresh — the reload picks the new default
-      // from the persisted /api/portal/workspace-prefs value.
+      // Wait for the persistence PUT to hit the server AND return
+      // 200 BEFORE closing the dialog or reloading. This is the
+      // definitive server-side commit signal — if this never fires,
+      // the assertion below would race a still-in-flight write.
+      const persistDone = page.waitForResponse(
+        (res) =>
+          res.request().method() === "PUT" &&
+          /\/api\/portal\/workspace-prefs$/.test(res.url()) &&
+          res.status() === 200,
+        { timeout: 10_000 },
+      );
+
+      // Closing the dialog triggers `flushPersist` (see
+      // WorkspaceSettingsDialog.tsx `handleOpenChange`), which
+      // awaits the debounced write. The dialog only unmounts AFTER
+      // that promise resolves.
       await page.keyboard.press("Escape");
+      await persistDone;
       await expect(dialog).toHaveCount(0);
+
+      // Reload. On mount, TeamPortalShell reads the persisted
+      // defaultTrayTab from /api/portal/workspace-prefs and seeds
+      // trayTab from it.
       await page.reload();
-      await expect(page.locator('[data-team-portal-shell="true"]')).toBeVisible();
-      // The tray body opens at the new default; assert it's visible.
-      await expect(page.getByTestId(nextTab.body)).toBeVisible();
+      await expect(
+        page.locator('[data-team-portal-shell="true"]'),
+      ).toBeVisible();
+
+      // Re-open Tools — the docked layout only surfaces the tray
+      // body inside the Tools rail. If the persisted defaultTrayTab
+      // matches nextTab, that body renders.
+      await openToolsTab(page);
+      await expect(
+        page.getByTestId("portal-left-rail").getByTestId(nextTab.body),
+      ).toBeVisible();
     });
   });
 }

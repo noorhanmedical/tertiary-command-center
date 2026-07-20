@@ -14,8 +14,16 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+// Every value here MUST match the client's TrayTab / PlaygroundLayout /
+// CalendarBehavior unions and the SelectItem list in
+// client/src/components/portal/tools/WorkspaceSettingsDialog.tsx.
+// The dialog offers Patient Messages, Direct Messages, and Team Chat —
+// prior schema omitted "patients" here, so every PUT with
+// { defaultTrayTab: "patients" } was rejected 400 and the client's
+// best-effort `.catch(() => {})` swallowed the failure silently. The
+// tray tab therefore never persisted for Patient Messages.
 const prefsSchema = z.object({
-  defaultTrayTab: z.enum(["direct", "team"]),
+  defaultTrayTab: z.enum(["patients", "direct", "team"]),
   stickyNotesVisible: z.boolean(),
   toolsPinnedByDefault: z.boolean(),
   workQueuePinnedByDefault: z.boolean(),

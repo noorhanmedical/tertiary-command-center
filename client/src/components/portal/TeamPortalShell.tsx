@@ -1118,6 +1118,7 @@ export function TeamPortalShell({
     hydrated: workspacePrefsHydrated,
     updatePref: updateWorkspacePref,
     resetPrefs: resetWorkspacePrefs,
+    flushPersist: flushWorkspacePrefs,
   } = useWorkspacePrefs(currentUserId ?? null);
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   // Communication tray tab (bottom half of Tools panel).
@@ -3960,13 +3961,17 @@ export function TeamPortalShell({
         onClose={() => setMessagesWindowOpen(false)}
       />
 
-      {/* In-session workspace settings (Task #643). Not persisted. */}
+      {/* Persisted per-user workspace settings (Task #643). Closing
+          the dialog awaits `flushPersist` so any pending debounced
+          write commits BEFORE the dialog unmounts, guaranteeing a
+          user who edits + closes + reloads sees the new value. */}
       <WorkspaceSettingsDialog
         open={workspaceSettingsOpen}
         onOpenChange={setWorkspaceSettingsOpen}
         prefs={workspacePrefs}
         updatePref={updateWorkspacePref}
         resetPrefs={resetWorkspacePrefs}
+        flushPersist={flushWorkspacePrefs}
       />
     </div>
   );

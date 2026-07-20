@@ -46,15 +46,30 @@ export function WorkspaceSettingsDialog({
   prefs,
   updatePref,
   resetPrefs,
+  flushPersist,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prefs: WorkspacePrefs;
   updatePref: <K extends keyof WorkspacePrefs>(key: K, value: WorkspacePrefs[K]) => void;
   resetPrefs: () => void;
+  // Optional so existing callers that don't yet supply a flush fall
+  // back to the old debounce-only behavior. When supplied, closing
+  // the dialog awaits any pending debounced write, so a user who
+  // hits Escape/Done and immediately navigates away or reloads
+  // never loses a preference edit.
+  flushPersist?: () => Promise<void>;
 }) {
+  const handleOpenChange = async (next: boolean) => {
+    if (!next && flushPersist) {
+      // Commit any pending write BEFORE the dialog unmounts. Await
+      // so the request lands before any subsequent navigation.
+      await flushPersist();
+    }
+    onOpenChange(next);
+  };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-md" data-testid="workspace-settings-dialog">
         <DialogHeader>
           <DialogTitle>Workspace Settings</DialogTitle>
@@ -140,7 +155,7 @@ export function WorkspaceSettingsDialog({
           <Button variant="ghost" size="sm" onClick={resetPrefs} data-testid="setting-reset">
             Reset to defaults
           </Button>
-          <Button size="sm" onClick={() => onOpenChange(false)} data-testid="setting-done">
+          <Button size="sm" onClick={() => void handleOpenChange(false)} data-testid="setting-done">
             Done
           </Button>
         </DialogFooter>
