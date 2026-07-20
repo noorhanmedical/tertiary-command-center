@@ -51,19 +51,19 @@ const fixedNow = new Date("2026-06-15T00:00:00.000Z");
 let callbackNowSeen: Date | null = null;
 
 const missionFake: MissionRepoDeps = {
-  countActiveExecutionCases: async () =>
+  countActiveExecutionCases_platformWide: async () =>
     ({ available: true, value: 0 }) as MV<number>,
   countOpenPlexusTasks_platformWide: async () =>
     ({ available: true, value: 0 }) as MV<number>,
-  countPrescreenPending: async () =>
+  countPrescreenPending_platformWide: async () =>
     ({ available: true, value: 0 }) as MV<number>,
-  countReadyForBilling: async () =>
+  countReadyForBilling_platformWide: async () =>
     ({ available: true, value: 0 }) as MV<number>,
-  countReportsMissing: async () =>
+  countReportsMissing_platformWide: async () =>
     ({ available: true, value: 0 }) as MV<number>,
   countRunningAnalysisJobs_platformWide: async () =>
     ({ available: true, value: 0 }) as MV<number>,
-  countScheduledInWindow: async (_scope, win) => {
+  countScheduledInWindow_platformWide: async (_scope, win) => {
     // Deterministic window boundaries — start MUST equal UTC midnight
     // of fixedNow, and end MUST be the next day.
     if (win.start.toISOString() !== "2026-06-15T00:00:00.000Z") {

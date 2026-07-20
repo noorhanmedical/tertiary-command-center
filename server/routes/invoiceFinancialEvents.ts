@@ -21,9 +21,19 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+// paymentDate is stored as text on invoice_payments and consumed by
+// text-range comparisons in the Home Stats finance sum. Enforce the
+// YYYY-MM-DD shape at the boundary so a caller cannot poison the
+// column with "01/05/2025" (which would then be excluded from every
+// range query silently).
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const paymentBody = z.object({
   amount: z.number().positive(),
-  paymentDate: z.string().optional().nullable(),
+  paymentDate: z
+    .string()
+    .regex(ISO_DATE_RE, "paymentDate must be YYYY-MM-DD")
+    .optional()
+    .nullable(),
   paymentMethod: z.string().optional().nullable(),
   reference: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),

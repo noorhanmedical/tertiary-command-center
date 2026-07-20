@@ -77,7 +77,7 @@ import { type CanonicalMonthCellSummary } from "@/calendar";
 // workspace settings.
 import { ToolDock, type DockTool, type DockGroup } from "@/components/portal/tools/ToolDock";
 import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
-import { CommunicationTray, type PatientTraySelection } from "@/components/portal/tools/CommunicationTray";
+import { CommunicationTray } from "@/components/portal/tools/CommunicationTray";
 import { WorkspaceSettingsDialog } from "@/components/portal/tools/WorkspaceSettingsDialog";
 import { useWorkspacePrefs, type TrayTab } from "@/components/portal/tools/workspacePrefs";
 import {
@@ -87,7 +87,7 @@ import {
   type PlaygroundWidgetType,
   type WidgetPatientContext,
 } from "@/components/portal/tools/workspaceWidgets";
-import { MessageSquare, Smartphone, StickyNote, Settings as SettingsIcon, MessageCircle } from "lucide-react";
+import { MessageSquare, StickyNote, Settings as SettingsIcon, MessageCircle } from "lucide-react";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
 import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
 import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
@@ -1118,20 +1118,16 @@ export function TeamPortalShell({
     hydrated: workspacePrefsHydrated,
     updatePref: updateWorkspacePref,
     resetPrefs: resetWorkspacePrefs,
+    flushPersist: flushWorkspacePrefs,
   } = useWorkspacePrefs(currentUserId ?? null);
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   // Communication tray tab (bottom half of Tools panel).
   const [trayTab, setTrayTab] = useState<TrayTab>(workspacePrefs.defaultTrayTab);
   const trayTabInitRef = useRef(false);
   // Chat selection lifted to the shell so the docked tray and the expanded
-  // Playground chat share the same active thread across all three tabs. (#761)
+  // Playground chat share the same active thread across both tabs. (#761)
   const [chatDirectActiveUserId, setChatDirectActiveUserId] = useState<string | null>(null);
   const [chatTeamActiveTaskId, setChatTeamActiveTaskId] = useState<number | null>(null);
-  const [chatPatientSelection, setChatPatientSelection] = useState<PatientTraySelection>({
-    phone: null,
-    name: null,
-    screeningId: null,
-  });
   // Bumped on chat dock-tile click / expand to focus the active composer.
   const [chatFocusNonce, setChatFocusNonce] = useState(0);
   // Playground floating widgets (sticky notes / email / team-chat).
@@ -1579,18 +1575,8 @@ export function TeamPortalShell({
   });
   const directUnread = (dmRosterData?.roster ?? []).reduce((sum, r) => sum + (r.unread ?? 0), 0);
 
-  // Unread inbound patient texts (Task #648) — shares the query cache with
-  // the tray's Patients tab so opening the thread there clears this too.
-  const { data: patientThreadsData } = useQuery<{ threads: { unread: number }[]; unreadTotal: number }>({
-    queryKey: ["/api/portal/patient-messages/threads"],
-    queryFn: async () => {
-      const res = await fetch("/api/portal/patient-messages/threads", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load patient threads");
-      return res.json();
-    },
-    refetchInterval: POLL_MS,
-  });
-  const patientsUnread = patientThreadsData?.unreadTotal ?? 0;
+  // Patient SMS is intentionally not part of the live portal — no
+  // /api/portal/patient-messages/* fetch is issued.
 
   const { data: outreachData } = useQuery<{ patients: OutreachItem[]; heavyDay?: boolean; cap?: number; totalPool?: number }>({
     queryKey: ["/api/portal/outreach-call-list", facility],
@@ -2161,7 +2147,7 @@ export function TeamPortalShell({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`}>
+    <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
       {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
           reclaimed space reads as usable canvas. Left: "The Playground" wordmark
           in a cursive script font, blue. Right: the existing Clinic selector,
@@ -2339,7 +2325,6 @@ export function TeamPortalShell({
                     currentUserId={currentUser?.id ?? null}
                     teamTasks={trayTeamTasks}
                     directUnread={directUnread}
-                    patientsUnread={patientsUnread}
                     expanded
                     focusNonce={chatFocusNonce}
                     onCollapse={() => setCenterMode("playground")}
@@ -2347,8 +2332,6 @@ export function TeamPortalShell({
                     onDirectActiveUserIdChange={setChatDirectActiveUserId}
                     teamActiveTaskId={chatTeamActiveTaskId}
                     onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
-                    patientSelection={chatPatientSelection}
-                    onPatientSelectionChange={setChatPatientSelection}
                   />
                 </div>
               ) : centerMode === "consent" && selected ? (
@@ -2791,7 +2774,6 @@ export function TeamPortalShell({
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
                       directUnread={directUnread}
-                      patientsUnread={patientsUnread}
                       focusNonce={chatFocusNonce}
                       onExpand={() => {
                         setCenterMode("chat");
@@ -2801,8 +2783,6 @@ export function TeamPortalShell({
                       onDirectActiveUserIdChange={setChatDirectActiveUserId}
                       teamActiveTaskId={chatTeamActiveTaskId}
                       onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
-                      patientSelection={chatPatientSelection}
-                      onPatientSelectionChange={setChatPatientSelection}
                     />
                   </div>
                 </div>
@@ -2925,7 +2905,22 @@ export function TeamPortalShell({
                 className={`flex min-h-0 flex-1 flex-col ${leftNarrow ? "p-2" : "p-3"}`}
                 data-testid="left-rail-tools-rail"
               >
-                <div className={`overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"} ${leftNarrow ? "flex-1" : ""}`}>
+                {/*
+                  Layout contract:
+                  This container is `flex min-h-0 flex-1 flex-col`. It
+                  hosts TWO children: the dock/calendar block (this div)
+                  and the communication tray (below). Without an
+                  explicit flex share on THIS child, its natural
+                  content height would consume the entire rail and the
+                  tray below (which has `flex-1 min-h-0`) would collapse
+                  to zero px — the tray was mounted but hidden.
+                  Setting `min-h-0 flex-1` here makes both children
+                  share the vertical space (~50/50); `overflow-y-auto`
+                  ensures the dock scrolls internally when its content
+                  is taller than its share. The tray therefore always
+                  has a real visible flex area.
+                */}
+                <div className={`min-h-0 flex-1 overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
                 {/* TEAM PORTAL LEFT TOOLS RAIL (Phase 1.6)
                     Shared general tools rail for PCS and ACS. The rail
                     is identical in both portals; only the work-context
@@ -2963,23 +2958,8 @@ export function TeamPortalShell({
                           badge: messagingUnread > 0 ? messagingUnread : undefined,
                           testId: "left-rail-tool-messages",
                         },
-                        {
-                          id: "patients",
-                          label: "Patients",
-                          icon: Smartphone,
-                          onClick: () => {
-                            setTrayTab("patients");
-                            // In the compact icon rail the docked tray is hidden,
-                            // so fall back to the full-size Playground chat; else
-                            // just peek the rail so the docked tray shows. (#761)
-                            if (leftNarrow) setCenterMode("chat");
-                            else setLeftRailPeek(true);
-                            setChatFocusNonce((n) => n + 1);
-                          },
-                          active: trayTab === "patients",
-                          badge: patientsUnread > 0 ? patientsUnread : undefined,
-                          testId: "left-rail-tool-patients",
-                        },
+                        // Patients dock tool removed — no live patient-SMS
+                        // path on this platform.
                         {
                           id: "direct",
                           label: "Direct",
@@ -3175,7 +3155,6 @@ export function TeamPortalShell({
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
                       directUnread={directUnread}
-                      patientsUnread={patientsUnread}
                       focusNonce={chatFocusNonce}
                       onExpand={() => {
                         setCenterMode("chat");
@@ -3185,8 +3164,6 @@ export function TeamPortalShell({
                       onDirectActiveUserIdChange={setChatDirectActiveUserId}
                       teamActiveTaskId={chatTeamActiveTaskId}
                       onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
-                      patientSelection={chatPatientSelection}
-                      onPatientSelectionChange={setChatPatientSelection}
                     />
                   </div>
                 )}
@@ -3960,13 +3937,17 @@ export function TeamPortalShell({
         onClose={() => setMessagesWindowOpen(false)}
       />
 
-      {/* In-session workspace settings (Task #643). Not persisted. */}
+      {/* Persisted per-user workspace settings (Task #643). Closing
+          the dialog awaits `flushPersist` so any pending debounced
+          write commits BEFORE the dialog unmounts, guaranteeing a
+          user who edits + closes + reloads sees the new value. */}
       <WorkspaceSettingsDialog
         open={workspaceSettingsOpen}
         onOpenChange={setWorkspaceSettingsOpen}
         prefs={workspacePrefs}
         updatePref={updateWorkspacePref}
         resetPrefs={resetWorkspacePrefs}
+        flushPersist={flushWorkspacePrefs}
       />
     </div>
   );
