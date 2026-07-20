@@ -1,18 +1,27 @@
-# Ancillary Document Visualization Map — v2
+# Ancillary Document Visualization Map — v3
 
 **Purpose:** Identify exactly where every artifact and state in the patient journey is **created**, **stored**, **read**, and **displayed** across the entire platform, and identify the projection anchors that each surface must consume.
 
-**Companion to:** `docs/full-patient-journey-platform-audit.md` (v2) and `docs/minimal-patient-journey-wiring-plan.md` (v2).
+**Companion to:** `docs/full-patient-journey-platform-audit.md` (v3) and `docs/minimal-patient-journey-wiring-plan.md` (v3).
 
 **Repository:** noorhanmedical/tertiary-command-center @ `2aaa23b` (branch: `audit/full-patient-journey-platform`).
 
-**Revision v2:** Canonical anchor updated to `patient_ancillary_cases.id` for every per-service artifact. Screening-level Admin Review row treated as a compatibility projection. Corrected auth statement for `/api/generated-notes` — the route is authenticated globally but not clinic-scoped.
+**Status:** Proposed v3 architecture — awaiting final owner approval. Nothing in this document is implemented.
+
+**Revision v3:**
+
+- Patient identity is now a **Plexus-central** function. Every clinic-facing surface reads clinic-owned data via `patient_clinic_memberships` and never touches `global_plexus_patients` directly.
+- `patient_ancillary_cases` (v3 proposal) anchors every per-service artifact. It links to `global_plexus_patient_id`, `patient_clinic_membership_id`, `clinic_id`, and includes `episode_sequence` for repeat services.
+- Canonical appointment ownership is `global_schedule_events.ancillary_case_id`; the ancillary_case row does not carry `canonical_appointment_id`. Query canonical schedule events to resolve the active appointment.
+- Plexus ancillary designation is a **derived** flag from completed cases + procedure events; never manually typed.
+- New Plexus-only surfaces added: identity registry (`global_plexus_patients`), match candidate queue, merge audit, Plexus ID alias table.
+- Corrected auth statement for `/api/generated-notes`: route is authenticated globally; not clinic-scoped.
 
 ## Reading Model
 
 - **Canonical source** = the row-of-truth. Every read should ultimately trace here.
 - **Projection** = a view that references canonical IDs; not a competing copy.
-- **Missing** = the table/route/component that should read from canonical but doesn't.
+- **Missing** = the surface should read from canonical but doesn't.
 - **Duplicate path** = a competing write or read that must be reconciled.
 
 ## Legend
@@ -25,325 +34,367 @@
 | 🟠 | Reads from legacy / competing source |
 | 🎭 | Displays mock or empty static data |
 | 🚫 | Surface / route does not exist |
+| PLX | Plexus-internal only (not visible to clinic users) |
 | N/A | Not applicable to this surface |
 
-## Canonical Anchor Cheat Sheet (v2)
+## Canonical Anchor Cheat Sheet (v3)
 
-| Artifact class | Canonical anchor | Note |
-|----------------|------------------|------|
-| Patient identity | `canonical_patients.id` (v2 target; today: `patient_screenings.id`) | Model A — clinic-scoped |
-| Screening / qualification event | `patient_screenings.id` | Multiple screenings can link to one canonical patient |
-| Engagement / outreach container | `patient_execution_cases.id` | One per screening; references multiple ancillary cases |
-| **Per-service ancillary case** | `patient_ancillary_cases.id` (v2 target) | One per (canonical patient, clinic, service, episode of care) |
-| Admin Review event | `ancillary_case_admin_review_events.id` (v2 target); append-only | `patient_ancillary_cases.admin_review_status` is the projection |
-| Appointment | `global_schedule_events.id` where event_type ∈ (ancillary_appointment, same_day_add, doctor_visit) + `ancillary_case_id` link | Only one active canonical appointment per ancillary_case |
-| Order Note | `procedure_notes.id` (`noteType='order_note'`) + `notes_lineage_id` (v2) | Anchored to `procedure_notes.ancillary_case_id` (v2) |
-| Procedure event | `procedure_events.id` | Anchored to `procedure_events.ancillary_case_id` (v2) |
-| Report | `documents.id` (`kind='report'`) + `supersededByDocumentId` chain | Anchored to `documents.ancillary_case_id` (v2 additive) |
-| Procedure Note | `procedure_notes.id` (`noteType='post_procedure_note'`) + `notes_lineage_id` (v2) | Anchored to `procedure_notes.ancillary_case_id` (v2) |
-| Signature | `procedure_notes.signatureStatus` / `.signedAt` / `.signedByUserId` | Same table anchor |
-| Billing readiness | `billing_readiness_checks.id` | Anchored to `billing_readiness_checks.ancillary_case_id` (v2) |
-| Billing document request | `billing_document_requests.id` | Anchored to `billing_document_requests.ancillary_case_id` (v2) |
-| Billing document (generated file) | `documents.id` (`kind='billing_document'`) — v2 target | Linked from `billing_document_requests.generatedDocumentId` FK (v2) |
-| Claim | Not implemented | Product decision required |
-| Payment | `invoice_payments.id` | Wired |
-| Adjustment | `invoice_adjustments.id` | Wired |
-| Denial | `invoice_denials.id` | Wired |
-| Remittance | `remittance_events.id` | Wired |
-| Invoice | `invoices.id` + `invoices.invoiceNumber` | Wired; missing `closed` state |
-| Revenue allocation | Not implemented — projected columns exist as schema-only | Product decision required |
-| Journey completion | Aggregate `patient_ancillary_cases.clinically_completed_at` + `.financially_completed_at` (v2) + view `patient_journey_status(patient_screening_id)` (v2) | Not implemented |
+| Artifact class | Canonical anchor (v3 target) | Visible to clinic user | Visible to authorized Plexus user |
+|----------------|------------------------------|:----------------------:|:---------------------------------:|
+| Global patient identity | `global_plexus_patients.id` + `.plexus_id` | ⚠️ own membership only | ✅ |
+| Clinic membership | `patient_clinic_memberships.id` | ✅ own clinic only | ✅ |
+| External identifier | `patient_external_identifiers.id` | ⚠️ own-clinic identifiers only; sensitive ones Plexus-only | ✅ |
+| Match candidate | `patient_identity_match_candidates.id` | ❌ | ✅ PLX |
+| Merge event | `patient_identity_merge_events.id` | ❌ | ✅ PLX |
+| Plexus ID alias | `plexus_id_aliases.alias_plexus_id` | ⚠️ alias lookup returns the surviving global only through the caller's own clinic membership | ✅ |
+| Screening | `patient_screenings.id`; v3 adds `patient_clinic_membership_id` FK | ✅ own clinic only | ✅ |
+| Engagement/outreach container | `patient_execution_cases.id` | ✅ | ✅ |
+| Per-service ancillary case | `patient_ancillary_cases.id` (v3) | ✅ own clinic only | ✅ |
+| Ancillary designation | Derived from `patient_ancillary_cases` + `procedure_events`; materialized on `global_plexus_patients` | ⚠️ only "has prior Plexus ancillary" boolean flag; prior clinic chart NEVER visible | ✅ full history |
+| Admin Review event | `ancillary_case_admin_review_events.id` (v3, append-only) + projection `patient_ancillary_cases.admin_review_status` | ✅ own clinic only | ✅ |
+| Appointment | `global_schedule_events.id` where event_type ∈ (ancillary_appointment, same_day_add, doctor_visit) + `ancillary_case_id` link | ✅ own clinic only | ✅ |
+| Order Note | `procedure_notes.id` (`noteType='order_note'`) + v3 `notes_lineage_id`; anchored to `procedure_notes.ancillary_case_id` | ✅ | ✅ |
+| Procedure event | `procedure_events.id`; v3 anchor `procedure_events.ancillary_case_id` | ✅ | ✅ |
+| Report | `documents.id` (`kind='report'`); v3 anchor `documents.ancillary_case_id`; version via `supersededByDocumentId` | ✅ | ✅ |
+| Procedure Note | `procedure_notes.id` (`noteType='post_procedure_note'`) + v3 `notes_lineage_id` | ✅ | ✅ |
+| Signature | `procedure_notes.signatureStatus` / `.signedAt` / `.signedByUserId` | ✅ | ✅ |
+| Billing readiness | `billing_readiness_checks.id`; v3 anchor `.ancillary_case_id` | ✅ | ✅ |
+| Billing document request | `billing_document_requests.id`; v3 anchor `.ancillary_case_id` | ✅ | ✅ |
+| Billing document (generated file) | `documents.id` (`kind='billing_document'`) — v3; linked from `billing_document_requests.generatedDocumentId` FK | ✅ | ✅ |
+| Claim | Not implemented | ❌ | ❌ |
+| Payment / Adjustment / Denial / Remittance | `invoice_payments.id` / `invoice_adjustments.id` / `invoice_denials.id` / `remittance_events.id` | ✅ | ✅ |
+| Invoice | `invoices.id` + `invoices.invoiceNumber` | ✅ | ✅ |
+| Journey completion | `patient_ancillary_cases.clinically_completed_at` + `.financially_completed_at` (v3) + view `patient_journey_status` (v3) | ✅ | ✅ |
 
 ## Artifact & State Table
 
-### Patient record
+Each row shows: canonical source, canonical table, canonical ID, created by, editable/approvable/signable by, versioned, per-surface visibility, missing visualization, duplicate paths, mock/live status, verified repository path.
+
+### Global Plexus Patient (v3 target)
 
 | Field | Value |
 |---|---|
-| Canonical source of truth (today) | `patient_screenings` row |
-| Canonical source of truth (v2 target) | `canonical_patients` row (clinic-scoped Model A) |
-| Canonical table | `patient_screenings` today; `canonical_patients` v2 |
-| Canonical ID | `patient_screenings.id`; `canonical_patients.id` v2 (serial int) |
-| Created by | POST /api/batches, POST /api/plexus-iq/clinical-import, POST /api/patient-directory/import-confirm, POST /api/appointments (stub) |
-| Creation trigger | Batch upload / manual / clinical import / patient directory import / appointment stub |
-| Editable by | admin (PATCH /api/patients/:id — mutates name/dob/phone/insurance) |
-| Approvable by | (screening-level admin approval — see Admin Review row) |
-| Signable by | N/A |
-| Versioned | Soft-delete only (deletedAt) |
-| Patient EHR | ✅ Primary display via encoded roster key resolution |
-| Plexus IQ | ✅ |
-| Admin Review | ✅ |
-| Engagement Center | ⚠️ Via execution_case join |
+| Canonical source of truth | `global_plexus_patients` row (v3 proposal) |
+| Canonical table | `global_plexus_patients` |
+| Canonical ID | serial int `id` (DB PK) + opaque `plexus_id` text (platform-wide public identifier) |
+| Globally unique or clinic-scoped | Globally unique |
+| Created by | Plexus resolver (outcome A reuses; outcome C creates) |
+| Editable by | Authorized Plexus identity users only |
+| Approvable / Signable by | N/A |
+| Versioned | Merge lineage via `merged_into_patient_id`; append-only merge history in `patient_identity_merge_events` |
+| Patient EHR | ⚠️ visible only via the clinic's membership projection; global row NOT surfaced directly |
+| Plexus IQ | ⚠️ same rule |
+| Admin Review | ⚠️ same rule |
+| Engagement Center | ⚠️ |
 | PCS Portal | ⚠️ |
 | ACS Portal | ⚠️ |
-| Global Calendar | ⚠️ Via `global_schedule_events.patientScreeningId` (v2: also ancillary_case_id) |
-| Ancillary Documents | ⚠️ Via `documents.patientScreeningId` (legacy path: exact-name matching) |
+| Global Calendar | ⚠️ |
+| Ancillary Documents | ⚠️ |
 | Clinician Portal | ⚠️ |
 | Imaging Central | ⚠️ |
 | Finance | ⚠️ |
 | Billing workspace | ⚠️ |
-| Document Library | ✅ Direct filter by patientScreeningId |
-| Plexus Bank | 🎭 Mock only |
+| Document Library | ⚠️ |
+| Plexus Bank | 🎭 mock |
+| Plexus Identity Console (new Plexus-only surface, v3) | ✅ PLX — the only surface that displays a global row directly |
 | Clinic Analytics | 🚫 |
-| Mission Control | ✅ Aggregate counts |
-| Patient timeline | ⚠️ Via patient_journey_events |
-| Missing visualization | None material |
-| Duplicate visualization path | `server/modules/patient-directory/repo.ts` canonical grouping unwired |
-| Mock/live status | LIVE |
-| Verified repository path | `shared/schema/screening.ts:46-106`; `server/routes/patients.ts:662-865`; `server/modules/patient-directory/repo.ts:3-232` |
+| Mission Control | ⚠️ (aggregate counts only; scoped by clinic) |
+| Patient timeline | ⚠️ via membership |
+| Missing visualization | None material for clinic surfaces; Plexus Identity Console (v3 proposal) is missing |
+| Duplicate visualization path | Today: no global identity exists; per-clinic `patient_screenings` rows are the closest thing |
+| Mock/live status | v3 proposal; nothing exists today |
+| Verified repository path | — (proposal only) |
+
+### Plexus ID (v3 target)
+
+| Field | Value |
+|---|---|
+| Canonical source of truth | text column on `global_plexus_patients.plexus_id` (unique, immutable, opaque) |
+| Format | Suggested `PLX-` + ULID-derived or secure random; non-PHI; not sequential; not derived from name/DOB/clinic/diagnosis |
+| Globally unique | Yes |
+| Created by | Plexus resolver on outcome C (new global patient) |
+| Editable by | Nobody after assignment; only aliases can be created via merges |
+| Merge behavior | Merged Plexus ID is preserved as `plexus_id_aliases.alias_plexus_id`; alias search resolves to surviving global |
+| Patient EHR / clinic surfaces | ⚠️ rendered where the clinic's own membership row surfaces the identifier |
+| Plexus Identity Console | ✅ PLX |
+| Verified | — |
+
+### Clinic Membership (v3 target)
+
+| Field | Value |
+|---|---|
+| Canonical source | `patient_clinic_memberships` row |
+| Canonical ID | serial int PK |
+| Scope | Clinic-scoped — one active per (global_plexus_patient_id, clinic_id) |
+| Created by | Clinic import path → Plexus resolver → membership creation |
+| Editable by | Clinic (own clinic) — demographics update goes on the membership OR on the global row depending on the field (product decision) |
+| Merge behavior | On merge, memberships from the merged global follow the surviving global |
+| Every clinic surface | ✅ (own clinic only) |
+| Plexus Identity Console | ✅ PLX |
+| Verified | — |
+
+### Clinic MRN
+
+| Field | Value |
+|---|---|
+| Canonical source | `patient_clinic_memberships.clinic_mrn` + row in `patient_external_identifiers` |
+| Scope | Clinic-scoped |
+| Created by | Clinic import supplies |
+| Every clinic surface | ✅ (own clinic only) — the MRN is the clinic's own identifier |
+| Verified | — |
+
+### External Identifier (v3 target)
+
+| Field | Value |
+|---|---|
+| Canonical source | `patient_external_identifiers` row |
+| Types | clinic_mrn, ehr_patient_id, payer_member_id, medicare_identifier, external_import_id, prior_plexus_id_alias |
+| Storage | Sensitive values encrypted; normalized hash for lookup |
+| Every clinic surface | ⚠️ own-clinic identifiers visible; cross-clinic identifiers Plexus-only |
+| Plexus Identity Console | ✅ PLX |
+| Verified | — |
 
 ### Screening
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `patient_screenings` row (screening event) |
-| Anchor | `patient_screenings.id`; v2: `patient_screenings.canonical_patient_id` FK to canonical patient |
-| Every surface | Same as Patient record above (screening = identity today) |
+| Canonical source | `patient_screenings` row (exists today) |
+| Canonical ID | serial int PK |
+| Anchor today | `patient_screenings.clinic_id`; v3 adds `patient_screenings.patient_clinic_membership_id` FK |
+| Every clinic surface | Patient EHR ✅, Plexus IQ ✅, Admin Review ✅, Engagement Center ⚠️, PCS ⚠️, ACS ⚠️, Global Calendar ⚠️, Ancillary Documents ⚠️, Clinician Portal ⚠️, Imaging Central ⚠️, Document Library ⚠️, Finance ❌, Billing ⚠️, Plexus Bank 🎭, Mission Control ✅ (backlog counts) |
 | Verified | `shared/schema/screening.ts:46-106` |
 
 ### Qualification (Plexus IQ result)
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `patient_screenings.qualifyingTests` + `.reasoning` (jsonb) |
-| Anchor | `patient_screenings.id`; per-test data lives on `patient_ancillary_cases` (v2) |
-| Versioned | No — overwritten on batch re-run (audit §5.2 defect: `preserveAdminReviewReasoning` exists but not called) |
-| Patient EHR | ✅ |
-| Plexus IQ | ✅ Full display + edit |
-| Admin Review | ✅ Full display + evidence assignment |
-| Engagement Center | ✅ Reads qualifyingTests |
-| PCS Portal | ⚠️ Via execution_case |
-| ACS Portal | ⚠️ |
-| Global Calendar | ❌ |
-| Ancillary Documents | ❌ |
-| Clinician Portal | ⚠️ Via physicianPortal summary |
-| Imaging Central | ❌ |
-| Finance | ❌ |
-| Billing workspace | ❌ |
-| Document Library | ❌ |
-| Plexus Bank | 🎭 |
-| Clinic Analytics | 🚫 |
-| Mission Control | ✅ Qualification backlog count |
-| Patient timeline | ⚠️ |
-| Verified | `shared/schema/screening.ts:70`; `server/services/batchAnalysisRunner.ts:714-728` |
+| Canonical source | `patient_screenings.qualifyingTests` + `.reasoning` (jsonb) |
+| Anchor v3 | Same; per-service data lives on `patient_ancillary_cases` |
+| Every clinic surface | Patient EHR ✅, Plexus IQ ✅, Admin Review ✅, Engagement Center ✅, PCS ⚠️, ACS ⚠️, others ❌ |
+| Verified | `shared/schema/screening.ts:70`; `server/services/batchAnalysisRunner.ts:714-728` (reasoning-preservation defect) |
 
-### Clinical reasoning
+### Clinical Reasoning
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `patient_screenings.reasoning` jsonb (per test) |
-| Anchor | `patient_screenings.id`; per-service move to `patient_ancillary_cases` (v2) |
-| Versioned | No |
-| Patient EHR | ✅ |
-| Plexus IQ | ✅ |
-| Admin Review | ✅ (evidence chips rebuilt at read-time from Dx/Hx/Rx) |
-| Engagement Center | ⚠️ Summary |
-| Others | ❌ |
+| Canonical source | `patient_screenings.reasoning` jsonb per test |
 | Verified | `shared/schema/screening.ts:131-144`; `shared/plexus-iq/adminReviewEvidence.ts:667-985` |
 
 ### Cooldown
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `cooldown_records` row |
-| Anchor | `cooldown_records.id`; keys on `patientScreeningId` + `serviceType` today; v2 target: `ancillary_case_id` |
-| Every surface | Patient EHR ✅, Plexus IQ ✅, Admin Review ✅, Engagement Center ⚠️, PCS ⚠️, ACS ❌, Global Calendar ❌ |
+| Canonical source | `cooldown_records` row |
+| Anchor today | `patientScreeningId` + `serviceType`; v3: `ancillary_case_id` |
 | Verified | `shared/schema/cooldown.ts:26-54` |
 
-### Insurance eligibility
+### Insurance Eligibility
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `insurance_eligibility_reviews` row |
-| Anchor | Keys on `patientScreeningId` + `serviceType`; v2 target: `ancillary_case_id` |
-| Every surface | Patient EHR ✅, Plexus IQ ✅, Admin Review ✅, Engagement Center ⚠️, PCS ⚠️, ACS ❌, Billing workspace ❌ (missing) |
+| Canonical source | `insurance_eligibility_reviews` row |
+| Anchor today | `patientScreeningId` + `serviceType`; v3: `ancillary_case_id` |
 | Verified | `shared/schema/insuranceEligibility.ts:19-64` |
 
-### Admin Review (v2 — service-specific append-only history)
+### Admin Review (v3 — service-specific append-only history)
 
 | Field | Value |
 |---|---|
-| Canonical source of truth (today) | `patient_screenings.adminApprovalStatus` + `.adminApprovedAt` + `.adminApprovedByUserId` + `.adminApprovalNote` |
-| Canonical source of truth (v2 target) | `ancillary_case_admin_review_events` (append-only) + `patient_ancillary_cases.admin_review_status` (projection) |
-| Screening-level row (today) | Remains as **compatibility projection** — derived from per-service events once history table is authoritative |
-| Anchor | `patient_screenings.id` today; `patient_ancillary_cases.id` v2 |
-| Created by | POST /api/patient-screenings/:id/admin-approval (today); new per-service endpoint (v2) |
-| Timestamps | `actual_reviewed_at = now()` — **never backdated** |
-| Effective clinical date | Optional `effective_clinical_date` — separate from actual review timestamp |
-| Editable by | Any authenticated user (product decision — no role gate today) |
-| Every surface | Patient EHR ✅, Plexus IQ ✅, Admin Review ✅ (this is where it happens), Engagement Center ⚠️, PCS ⚠️, ACS ⚠️, Physician Portal ❌ (missing — approval history should surface here) |
-| Missing visualization | Physician Portal per-service approval history |
+| Canonical source (today) | `patient_screenings.adminApprovalStatus` + `.adminApprovedAt` + `.adminApprovedByUserId` + `.adminApprovalNote` |
+| Canonical source (v3 target) | `ancillary_case_admin_review_events` (append-only) + `patient_ancillary_cases.admin_review_status` (projection) |
+| Screening-level row (today) | Remains as **compatibility projection** in v3 — derived from per-service events |
+| Anchor | v3: `patient_ancillary_cases.id` |
+| Created by | POST /api/patient-screenings/:id/admin-approval today; new per-service endpoint (v3) |
+| Timestamps | `actual_reviewed_at = now()` — **never backdated**; optional `effective_clinical_date` |
+| Every clinic surface | Patient EHR ✅ own clinic only, Plexus IQ ✅, Admin Review ✅ (this is where it happens), Engagement Center ⚠️, PCS ⚠️, ACS ⚠️, Physician Portal ❌ (missing — approval history should surface here) |
 | Verified | `shared/schema/screening.ts:88-93,108-114`; `server/routes/patients.ts:662-865` |
 
-### Engagement case (execution case = engagement/outreach container)
+### Engagement Case
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `patient_execution_cases` row — engagement/outreach container per screening |
-| Anchor | `patient_execution_cases.id`; v2: `patient_execution_cases` may reference multiple `patient_ancillary_cases` |
-| Note (v2) | Execution case is NOT the ancillary case anymore. `patient_ancillary_cases` is the per-service canonical; execution case is the engagement grouping |
-| Created by | `server/services/patientCommitService.ts::ensureCanonicalSpineForScreening` |
-| Editable by | scheduler, admin, liaison |
-| Every surface | Patient EHR ⚠️, Engagement Center ✅ (primary), PCS ✅, ACS ✅, Global Calendar ⚠️, Ancillary Documents ❌, Clinician Portal ⚠️, Finance ❌, Billing workspace ❌ |
+| Canonical source | `patient_execution_cases` (engagement/outreach container per screening) |
+| Note (v3) | Execution case is NOT the ancillary case. `patient_ancillary_cases` is the per-service canonical; execution case is the engagement grouping and may reference multiple ancillary cases |
 | Verified | `shared/schema/executionCase.ts:30-62`; `server/repositories/executionCase.repo.ts:168-172` |
 
-### Per-service ancillary case (v2 target)
+### Per-Service Ancillary Case (v3 target)
 
 | Field | Value |
 |---|---|
-| Canonical source of truth (v2) | `patient_ancillary_cases` row — one per (canonical patient, clinic, service, episode) |
-| Canonical ID (v2) | `patient_ancillary_cases.id` (serial int) |
-| Exists today? | **No.** Every per-service artifact currently keys on `(patient_screening_id, service_type)`. |
-| Anchor conceptual columns | `canonical_patient_id`, `patient_screening_id` (nullable), `execution_case_id` (nullable), `clinic_id`, `service_type`, `lifecycle_status`, `qualification_status`, `admin_review_status`, `canonical_appointment_id`, `clinically_completed_at`, `financially_completed_at` |
-| Every surface (target) | Patient EHR ✅ (primary), Plexus IQ ✅, Admin Review ✅, Engagement Center ✅, PCS ✅, ACS ✅, Global Calendar ⚠️, Ancillary Documents ✅, Clinician Portal ✅, Imaging Central ⚠️, Finance ⚠️, Billing workspace ✅, Document Library ⚠️ |
-| Verified | See canonical-anchor cheat sheet — this row does not exist today |
+| Canonical source | `patient_ancillary_cases` row — one per (global_plexus_patient, clinic, service, episode) |
+| Canonical ID | serial int PK |
+| Anchor | `global_plexus_patient_id`, `patient_clinic_membership_id`, `clinic_id`, `service_type`, `episode_sequence` |
+| Uniqueness | Partial unique on `(global_plexus_patient_id, clinic_id, service_type)` WHERE lifecycle_status IN ('new','active','on_hold'). Closed cases remain; repeated services get incremented episode_sequence. |
+| Every clinic surface (v3 target) | Patient EHR ✅, Plexus IQ ✅, Admin Review ✅, Engagement Center ✅, PCS ✅, ACS ✅, Global Calendar ⚠️, Ancillary Documents ✅, Clinician Portal ✅, Imaging Central ⚠️, Finance ⚠️, Billing workspace ✅, Document Library ⚠️ |
+| Note | This row does not exist today. Every per-service artifact currently keys on `(patient_screening_id, service_type)`. |
+| Verified | — (v3 proposal) |
 
-### Call outcome
-
-| Field | Value |
-|---|---|
-| Canonical source of truth | `outreach_calls` row + derived `patient_screenings.appointmentStatus` |
-| Anchor | `outreach_calls.id` |
-| Verified | `shared/schema/outreach.ts:35-60` |
-| Current defect | Two write paths: `/api/outreach/calls` (writes outreach_calls) vs `/api/engagement-center/call-result` (writes journey event only). Consolidation is a Phase 2D+ item. |
-
-### Appointment (v2 — canonical via global_schedule_events with constraints)
+### Call Outcome
 
 | Field | Value |
 |---|---|
-| Canonical source of truth (today) | **Fragmented** — no single truth |
-| Canonical source of truth (v2 target) | `global_schedule_events` row WHEN it links `ancillary_case_id` + `service_type` + one active per case + reschedule lineage + cancellation/no-show reasons preserved |
-| Anchor (v2) | `global_schedule_events.id`; `patient_ancillary_cases.canonical_appointment_id` points here |
-| Every surface | Patient EHR ⚠️, Plexus IQ ❌, Admin Review ❌, Engagement Center ✅, PCS ✅, ACS ✅, Global Calendar ✅ (primary), Ancillary Documents ❌, Clinician Portal ⚠️, Imaging Central ⚠️, Finance ❌, Billing workspace ❌, Document Library ❌ |
-| Missing visualization | Ancillary Documents (should show appointment link on each document row) |
-| Duplicate paths | `ancillary_appointments`, `patient_screenings.appointmentStatus`, `patient_execution_cases.engagementStatus` — all become projections in v2 |
+| Canonical source | `outreach_calls` row + derived `patient_screenings.appointmentStatus` |
+| Verified | `shared/schema/outreach.ts:35-60`; two writers today: `server/routes/outreach.ts:200-352` and `server/routes/executionCases.ts:158-189` |
+
+### Appointment (v3 — canonical via global_schedule_events with constraints)
+
+| Field | Value |
+|---|---|
+| Canonical source (today) | **Fragmented** — no single truth |
+| Canonical source (v3 target) | `global_schedule_events` where event_type identifies a real appointment AND row links `ancillary_case_id` + `service_type` + one active per case + reschedule lineage + cancellation/no-show reasons preserved |
+| Anchor (v3) | `global_schedule_events.id`; the ancillary_case row does NOT carry `canonical_appointment_id`. Resolve active appointment by querying schedule events. |
+| Every clinic surface | Patient EHR ⚠️, Engagement Center ✅, PCS ✅, ACS ✅, Global Calendar ✅, Ancillary Documents ❌ (missing — should show appointment link on each doc row), Clinician Portal ⚠️, Imaging Central ⚠️, Finance ❌, Billing workspace ❌ |
+| Duplicate paths | `ancillary_appointments`, `patient_screenings.appointmentStatus`, `patient_execution_cases.engagementStatus` — all become projections in v3 |
 | Verified | `shared/schema/globalSchedule.ts:47-77`; `shared/schema/appointments.ts:5-30`; `server/routes/globalSchedule.ts:281-378` |
 
-### Consent, Screening Form (documents kind='informed_consent' / 'screening_form')
+### Consent, Screening Form
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `documents` row + `case_document_readiness` row |
-| Anchor | `documents.id` + `documents.patientScreeningId`; v2: also `documents.ancillary_case_id` when relevant |
-| Version | `documents.supersededByDocumentId` chain |
-| Every surface | Patient EHR ✅, Engagement Center ✅ (Document Readiness lane), PCS ⚠️, ACS ✅ (consent picker), Ancillary Documents 🟠 (legacy `/api/generated-notes` read), Clinician Portal 🎭 (LinkedDocumentsPanel=[]), Imaging Central ⚠️, Document Library ✅, Billing workspace ⚠️ |
+| Canonical source | `documents` (kind='informed_consent' / 'screening_form') + `case_document_readiness` |
+| Anchor today | `documents.patientScreeningId`; v3: also `documents.ancillary_case_id` when applicable |
+| Every clinic surface | Patient EHR ✅, Engagement Center ✅, PCS ⚠️, ACS ✅, Ancillary Documents 🟠 (legacy `/api/generated-notes`), Clinician Portal 🎭 (LinkedDocumentsPanel=[]), Document Library ✅ |
 | Verified | `shared/schema/documents.ts:97-149`; `server/routes/documentLibrary.ts:89-438` |
 
-### Order Note (v2 — reconcileOrderNoteEligibility)
+### Order Note (v3 — reconcileOrderNoteEligibility)
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `procedure_notes` row with `noteType='order_note'` |
+| Canonical source | `procedure_notes` with `noteType='order_note'` |
 | Anchor (today) | `procedure_notes.id` + `(patientScreeningId, serviceType, noteType)` unique |
-| Anchor (v2 target) | `procedure_notes.ancillary_case_id` + `notes_lineage_id` |
-| Created by (today) | Side-effect of `markProcedureComplete` — unconditional, wrong |
-| Created by (v2) | `reconcileOrderNoteEligibility(ancillary_case_id)` — idempotent, gated on (admin_review_status='approved' AND canonical appointment scheduled) |
-| Signable by | Not required today (KINDS_REQUIRING_SIGNATURE excludes `order_note`); product decision §12.5 |
-| Every surface | Patient EHR ✅, Plexus IQ ❌, Admin Review ❌, Engagement Center ✅, PCS ⚠️, ACS ✅, Ancillary Documents 🟠 (legacy read), Clinician Portal 🎭, Imaging Central ⚠️, Finance ❌, Billing workspace ⚠️ (readiness lane), Document Library ⚠️ |
-| Missing visualization | Clinician LinkedDocumentsPanel + Ancillary Documents canonical read |
+| Anchor (v3) | `procedure_notes.ancillary_case_id` + `notes_lineage_id` |
+| Trigger (v3) | `reconcileOrderNoteEligibility(ancillary_case_id)` — idempotent; gated on (admin_review_status='approved' AND canonical appointment scheduled). Order Note must exist BEFORE the procedure workflow when preconditions are met. |
+| Every clinic surface | Patient EHR ✅, Engagement Center ✅, PCS ⚠️, ACS ✅, Ancillary Documents 🟠 (legacy read), Clinician Portal 🎭, Document Library ⚠️ |
 | Verified | `shared/schema/generatedNotes.ts:11-65`; `server/repositories/generatedNotes.repo.ts:82-132` |
 
-### Procedure event
+### Procedure Event
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `procedure_events` row |
-| Anchor (today) | Keys on `patientScreeningId` + `serviceType`; v2: `procedure_events.ancillary_case_id` |
-| Statuses | `not_started, in_progress, complete, cancelled, no_show, reschedule_needed` — only `complete` reachable via route |
-| Every surface | Patient EHR ✅, ACS ✅ (primary), Global Calendar ✅ (mirror event), Imaging Central ✅, Engagement Center ⚠️, PCS ⚠️, Ancillary Documents ⚠️, Clinician Portal ⚠️, Finance ⚠️, Billing workspace ⚠️ |
+| Canonical source | `procedure_events` row |
+| Anchor v3 | `procedure_events.ancillary_case_id` |
+| Statuses today | `not_started, in_progress, complete, cancelled, no_show, reschedule_needed` — only `complete` reachable |
+| Every clinic surface | Patient EHR ✅, ACS ✅ (primary), Global Calendar ✅ (mirror event), Imaging Central ✅, others ⚠️ |
 | Verified | `shared/schema/procedureEvents.ts:11-46`; `server/routes/procedureEvents.ts:56-82` |
 
 ### Report (documents kind='report')
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `documents` row |
-| Anchor (today) | `documents.id` + `documents.patientScreeningId`; v2: `documents.ancillary_case_id` for reports |
-| Every surface | Patient EHR ✅, Plexus IQ ⚠️, Admin Review ⚠️, Engagement Center ✅, PCS ⚠️, ACS ✅, Global Calendar ❌, Ancillary Documents 🟠 (legacy read), Clinician Portal 🎭, Imaging Central ✅, Document Library ✅, Billing workspace ⚠️ |
-| Missing visualization | Clinician LinkedDocumentsPanel canonical read |
-| Duplicate paths | Legacy uploaded_documents migration uses exact-name matching (`server/routes/documentLibrary.ts:104`) |
+| Canonical source | `documents` row + `document_blobs` + `document_surface_assignments` |
+| Anchor v3 | `documents.ancillary_case_id` (additive) |
+| Duplicate paths | Legacy `uploaded_documents` first-read migration uses exact-name matching (`server/routes/documentLibrary.ts:104`) |
+| Every clinic surface | Patient EHR ✅, Engagement Center ✅ (readiness lane), PCS ⚠️, ACS ✅, Ancillary Documents 🟠 (legacy read), Clinician Portal 🎭, Imaging Central ✅, Document Library ✅, Billing workspace ⚠️ |
 | Verified | `shared/schema/documents.ts:31-149`; `server/routes/documentLibrary.ts:89-438` |
 
-### Procedure Note (v2 — reconcileProcedureNoteEligibility)
+### Procedure Note (v3 — reconcileProcedureNoteEligibility)
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `procedure_notes` row with `noteType='post_procedure_note'` |
-| Anchor (v2) | `procedure_notes.ancillary_case_id` + `notes_lineage_id` |
-| Created by (today) | Side-effect of `markProcedureComplete` — unconditional |
-| Created by (v2) | `reconcileProcedureNoteEligibility(ancillary_case_id)` — idempotent, gated on (procedure complete AND canonical report available) |
-| Signable by | Physician (KINDS_REQUIRING_SIGNATURE includes `post_procedure_note`); report presence enforced at signature (`server/services/physicianPortal/signatureRules.ts:114-116`) |
-| Every surface | Patient EHR ✅, Engagement Center ✅, PCS ⚠️, ACS ✅, Ancillary Documents 🟠, Clinician Portal 🎭 (LinkedDocumentsPanel) + ✅ (signature worklist real), Imaging Central ⚠️, Finance ❌, Billing workspace ⚠️ |
-| Missing visualization | Clinician LinkedDocumentsPanel canonical read |
-| Verified | `shared/schema/generatedNotes.ts:35-65`; `server/services/physicianPortal/signatureRules.ts:76-144` |
+| Canonical source | `procedure_notes` with `noteType='post_procedure_note'` |
+| Anchor v3 | `procedure_notes.ancillary_case_id` + `notes_lineage_id` |
+| Trigger (v3) | `reconcileProcedureNoteEligibility(ancillary_case_id)` — idempotent; gated on (procedure complete AND canonical report available) |
+| Every clinic surface | Patient EHR ✅, Engagement Center ✅, ACS ✅, Ancillary Documents 🟠, Clinician Portal 🎭 (LinkedDocumentsPanel empty) + ✅ (signature worklist real), Imaging Central ⚠️ |
+| Verified | `server/services/physicianPortal/signatureRules.ts:76-144` |
 
 ### Signature
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `procedure_notes.signatureStatus` + `signedAt` + `signedByUserId` + `returnReason` |
-| Anchor | `procedure_notes.id` |
-| Every surface | Patient EHR ✅, Engagement Center ✅, PCS ⚠️, ACS ✅, Ancillary Documents 🟠, Clinician Portal ✅ (worklist), Imaging Central ⚠️, Finance ⚠️, Billing workspace ⚠️ |
+| Canonical source | `procedure_notes.signatureStatus` + `signedAt` + `signedByUserId` + `returnReason` |
 | Verified | `shared/schema/generatedNotes.ts:27-33,50-52`; `server/services/physicianPortal/signatureWorkflow.ts:93-117` |
 
-### Billing readiness
+### Billing Readiness
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `billing_readiness_checks` row per (patientScreeningId, serviceType) |
-| Anchor (v2) | `billing_readiness_checks.ancillary_case_id` |
-| Every surface | Patient EHR ✅, Engagement Center ✅, PCS ⚠️, ACS ✅, Finance ✅, Billing workspace ✅ (primary), Ancillary Documents ❌, Clinician Portal ⚠️, Mission Control ✅ |
+| Canonical source | `billing_readiness_checks` row |
+| Anchor v3 | `billing_readiness_checks.ancillary_case_id` |
 | Verified | `shared/schema/billingReadiness.ts:10-42`; `server/repositories/billingReadiness.repo.ts:94-179` |
 
-### Billing Document request
+### Billing Document Request
 
 | Field | Value |
 |---|---|
-| Canonical source of truth | `billing_document_requests` row |
-| Anchor (v2) | `billing_document_requests.ancillary_case_id` |
-| Fix required | `generatedDocumentId` → FK to `documents.id`; generator service |
-| Every surface | Patient EHR ✅, Finance ⚠️, Billing workspace ✅, Ancillary Documents 🟠 (legacy generated_notes docKind='billing'), Clinician Portal 🎭, Plexus Bank 🎭 |
-| Verified | `shared/schema/billingDocuments.ts:11-46`; `server/routes/billingDocuments.ts:11-54` |
+| Canonical source | `billing_document_requests` row |
+| Anchor v3 | `billing_document_requests.ancillary_case_id`; `generatedDocumentId` → FK to `documents.id` |
+| Every clinic surface | Patient EHR ✅, Finance ⚠️, Billing workspace ✅, Ancillary Documents 🟠 (legacy generated_notes docKind='billing'), Clinician Portal 🎭, Plexus Bank 🎭 |
+| Verified | `shared/schema/billingDocuments.ts:11-46` |
 
 ### Generated Billing Document (file)
 
 | Field | Value |
 |---|---|
-| Canonical source of truth (v2 target) | `documents` row with `kind='billing_document'` linked from `billing_document_requests.generatedDocumentId` FK |
-| Exists today? | No — orphan int column, no writer, no reader |
-| Every surface | ❌ everywhere; Plexus Bank 🎭 mock |
+| Canonical source (v3) | `documents` row with `kind='billing_document'` linked from `billing_document_requests.generatedDocumentId` FK |
+| Today | Not implemented — orphan int column |
 | Verified | `shared/schema/billingDocuments.ts:33` |
 
-### Claim / Claim status / Denial
+### Claim / Claim Status / Denial
 
 | Field | Value |
 |---|---|
 | Claim canonical source | Not implemented |
-| Denial canonical source | `invoice_denials` row (implemented for the denial workflow) |
-| Anchor | `invoice_denials.id`; keys on `invoiceId` + `lineItemId` |
-| Every surface (claim) | ❌ everywhere; Plexus Bank 🎭 mock |
-| Every surface (denial) | Patient EHR ❌, Finance ✅, Billing workspace ✅, Others ❌ |
+| Denial canonical source | `invoice_denials` (implemented for the denial workflow) |
 | Verified | `shared/schema/invoiceFinancialEvents.ts:39-55` |
 
-### Remittance, Payment, Adjustment
+### Remittance / Payment / Adjustment
 
-All wired (`invoice_payments`, `invoice_adjustments`, `remittance_events`). Every surface except Finance / Billing shows N/A or ❌. See §5.13, §5.14 in the audit for anchors.
+All wired. See audit §5.13, §5.14.
 
 ### Invoice
 
 | Field | Value |
 |---|---|
 | Canonical source | `invoices` row |
-| Every surface | Patient EHR ⚠️, Finance ✅ (primary), Billing workspace ✅, Clinician Portal 🎭, Plexus Bank 🎭, Mission Control ⚠️ (finance sourceMissing:true deliberately) |
+| Every clinic surface | Patient EHR ⚠️, Finance ✅, Billing workspace ✅, Clinician Portal 🎭, Plexus Bank 🎭, Mission Control ⚠️ (finance sourceMissing:true deliberately) |
 | Verified | `shared/schema/invoices.ts:9-121` |
 
-### Revenue allocation
+### Revenue Allocation
 
-Not implemented as compute. Schema hints only (`projectedInvoices.projectedOurPortionPercentage` default `"50"`). Product decision §12.3.
+| Field | Value |
+|---|---|
+| Canonical source | Not implemented as compute |
+| Schema hints only | `projectedInvoices.projectedOurPortionPercentage` (default `"50"`), `invoice_batch_items.revenueSplit` (jsonb) |
+| Product decision | Required (audit §15) |
+| Verified | `shared/schema/projectedInvoices.ts:34`; `shared/schema/invoiceBatches.ts:72` |
 
-### Journey completion
+### Ancillary Designation (v3 derived)
 
-Not implemented as aggregate. Discrete stages exist on separate tables. `patient_ancillary_cases.clinically_completed_at` and `.financially_completed_at` (v2 target) become the two authoritative timestamps per service; aggregate view `patient_journey_status` (Phase 2K) rolls them up.
+| Field | Value |
+|---|---|
+| Canonical source | Derived from `patient_ancillary_cases` + `procedure_events` completion; materialized onto `global_plexus_patients` |
+| Derived fields | `has_plexus_ancillary_history` bool, `ancillary_case_count` int, `completed_ancillary_case_count` int, `ancillary_services_completed` text[], `first_ancillary_completed_at` timestamptz, `most_recent_ancillary_completed_at` timestamptz |
+| Every clinic surface | ⚠️ clinic sees only "has prior Plexus ancillary" boolean flag; prior clinic chart NEVER visible |
+| Plexus Identity Console | ✅ PLX full history |
+| Rule | Never manually typed onto the patient |
+
+### Match Candidate (v3 Plexus-only)
+
+| Field | Value |
+|---|---|
+| Canonical source | `patient_identity_match_candidates` row |
+| Access | Plexus-central authorized identity users only |
+| Every clinic surface | ❌ never |
+| Plexus Identity Console | ✅ PLX |
+| Rule | Clinic user cannot see, review, or respond to a candidate; clinic workflow continues normally while the candidate is pending |
+
+### Merge Event (v3 Plexus-only)
+
+| Field | Value |
+|---|---|
+| Canonical source | `patient_identity_merge_events` row (append-only) |
+| Access | Plexus-central only |
+| Every clinic surface | ❌ |
+| Plexus Identity Console | ✅ PLX |
+
+### Plexus ID Alias (v3)
+
+| Field | Value |
+|---|---|
+| Canonical source | `plexus_id_aliases` row (alias_plexus_id → surviving global) |
+| Rule | Old Plexus IDs remain searchable; never reused |
+| Every clinic surface | ⚠️ alias search returns surviving global only via the caller's own clinic membership; no cross-clinic reveal |
+| Plexus Identity Console | ✅ PLX |
 
 ## Summary Findings
 
@@ -359,23 +410,28 @@ Patient EHR, Plexus IQ (Admin Review), Engagement Center, Global Calendar, Billi
 4. **Claims / Payments / Invoices in Clinician Portal Finance page** — types-only; no live data.
 5. **Journey completion nowhere** — no single roll-up.
 
+### Missing Plexus-only surface (v3 proposal)
+
+- **Plexus Identity Console** — a Plexus-central surface (not accessible to clinics) that renders `global_plexus_patients`, `patient_identity_match_candidates`, `patient_identity_merge_events`, `plexus_id_aliases`. Missing today.
+
 ### Missing visualization on Physician Portal
 
 - Per-service Admin Review approval history should surface on the physician surface; today only the screening-level status is available.
 
-### Recommended source-of-truth principle (owner-approved)
+### Recommended source-of-truth principle (proposed v3 — awaiting owner approval)
 
-- Patient Directory / Patient EHR = authoritative longitudinal visualization anchored on `canonical_patients` + `patient_ancillary_cases`.
+- Patient Directory / Patient EHR = authoritative longitudinal visualization anchored on `patient_clinic_memberships` (never directly on `global_plexus_patients`).
 - Ancillary Documents = global operational projection reading canonical `procedure_notes` (order + procedure notes) + `documents` (reports + billing docs) + `case_document_readiness` + `billing_document_requests`.
 - Clinician Portal = role-specific clinical review and signature projection.
 - PCS Portal = role-specific outreach, scheduling, and readiness projection.
 - ACS Portal = role-specific execution, report, and readiness projection.
 - Document Library = administrative file and version repository.
 - Finance / Billing = role-specific financial workflow projections.
+- **Plexus Identity Console** = Plexus-only surface for identity registry, match candidates, merge audit, aliases.
 
-**Every projection must reference canonical source IDs.** No independent copies for display.
+**Every projection must reference canonical source IDs.** No independent copies for display. Clinic surfaces join through `patient_clinic_memberships` and never expose a `global_plexus_patients` row directly.
 
-### Current violations (all documented above, with fixes in the wiring plan)
+### Current violations (all documented above)
 
 - `ancillary_appointments` copies patient linkage without linking to `global_schedule_events`.
 - `patient_screenings.appointmentStatus` is a mutable projection derived from outreach calls without a link back to any canonical appointment row.
@@ -383,6 +439,8 @@ Patient EHR, Plexus IQ (Admin Review), Engagement Center, Global Calendar, Billi
 - Legacy `/api/generated-notes` is read by `/ancillary-documents` while writes go to `procedure_notes`.
 - Clinician `LinkedDocumentsPanel` renders empty mock.
 - `billing_document_requests.generatedDocumentId` has no FK — the generated file is never linked back to the request.
+- No global Plexus patient identity exists today; every clinic is an island.
+- No Plexus-only identity console exists.
 
 ### Corrected statement on `/api/generated-notes`
 
