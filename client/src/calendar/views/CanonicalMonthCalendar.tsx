@@ -51,6 +51,10 @@ export type CanonicalMonthCalendarProps = {
   onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
   // Initial month displayed; defaults to today.
   initialMonth?: Date;
+  // Compact density — hides prose (e.g. "3 patients") and renders a
+  // small numeral + dot indicators only. For tight surfaces like the
+  // banner clock popover.
+  compact?: boolean;
   // Optional per-day popover. When provided, clicking a day that has any
   // content opens a Shadcn popover anchored to that cell (in addition to
   // firing onSelectDate). Return null/undefined to suppress the popover
@@ -89,6 +93,7 @@ export function CanonicalMonthCalendar({
   unscheduledItems,
   onUnscheduledItemAction,
   initialMonth,
+  compact = false,
   renderDayPopoverContent,
 }: CanonicalMonthCalendarProps) {
   const [cursor, setCursor] = useState<Date>(() =>
@@ -196,19 +201,25 @@ export function CanonicalMonthCalendar({
                 )}
               </div>
               {hasAny && (
-                <div className="mt-auto space-y-1">
+                <div className={compact ? "mt-auto flex items-end justify-between gap-1" : "mt-auto space-y-1"}>
                   {cell?.count != null && cell.count > 0 && (
-                    <div className="text-[11px] font-medium text-slate-700">
-                      {cell.count}{" "}
-                      {cell.count === 1 ? "patient" : "patients"}
-                    </div>
+                    compact ? (
+                      <span className="text-[10px] font-semibold tabular-nums text-slate-500 leading-none">
+                        {cell.count}
+                      </span>
+                    ) : (
+                      <div className="text-[11px] font-medium text-slate-700">
+                        {cell.count}{" "}
+                        {cell.count === 1 ? "patient" : "patients"}
+                      </div>
+                    )
                   )}
                   {cell?.dots && cell.dots.length > 0 && (
                     <div className="flex items-center gap-1">
                       {cell.dots.map((dot, i) => (
                         <span
                           key={i}
-                          className={`inline-block h-1.5 w-1.5 rounded-full ${dot.className}`}
+                          className={`inline-block ${compact ? "h-1 w-1" : "h-1.5 w-1.5"} rounded-full ${dot.className}`}
                           title={dot.title}
                         />
                       ))}

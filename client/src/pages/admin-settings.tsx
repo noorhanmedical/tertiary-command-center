@@ -11,9 +11,11 @@
 // (e.g. #team); the Logs sub-tabs continue to deep-link via ?log=.
 
 import { useEffect, useState } from "react";
-import { useLocation, useSearch } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   Shield,
+  ShieldCheck,
+  ArrowUpRight,
   Settings as SettingsIcon,
   CreditCard,
   Users,
@@ -296,6 +298,49 @@ export default function AdminSettingsPage() {
                   </Group>
                   <Group>
                     <TestFixtureCard />
+                  </Group>
+                  <Group
+                    title="Clinical Intelligence"
+                    desc="AI Logic knowledge layer — governance, rule library, and repeat-testing review."
+                    Icon={ShieldCheck}
+                  >
+                    <div className="space-y-2">
+                      <Link
+                        href="/clinical-intelligence"
+                        className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 transition-colors hover:bg-slate-50"
+                        data-testid="tile-clinical-intelligence"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-slate-900">
+                            Clinical Intelligence &amp; Governance
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Learning center, rule library, approvals, and audit trail.
+                          </div>
+                        </div>
+                        <ArrowUpRight className="h-4 w-4 shrink-0 text-slate-400" />
+                      </Link>
+                      <Link
+                        href="/clinical-intelligence"
+                        className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 transition-colors hover:bg-slate-50"
+                        data-testid="tile-repeat-testing-review"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-slate-900">
+                              Repeat Testing Review
+                            </span>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                              Preview
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Re-eligibility queue for prior BrainWave / VitalWave / Ultrasound tests — not connected yet.
+                          </div>
+                        </div>
+                        <ArrowUpRight className="h-4 w-4 shrink-0 text-slate-400" />
+                      </Link>
+                    </div>
                   </Group>
                 </div>
               )}

@@ -7,6 +7,8 @@ import {
   Maximize2,
   ChevronRight,
   ChevronLeft,
+  ArrowLeft,
+  CalendarDays,
   Pin,
   PinOff,
 } from "lucide-react";
@@ -14,6 +16,7 @@ import { NAV_ITEMS } from "@/components/GlobalNav";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DialogPortalContainerContext } from "@/components/ui/dialog";
 import { CanonicalMonthCalendar } from "@/calendar";
+import { ANCILLARY_DOT_CLASS } from "@/lib/calendar/commandCalendarViewModel";
 import { buildCommandCalendarCells } from "@/lib/calendar/commandCalendarViewModel";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import { SidebarProvider } from "@/components/ui/sidebar";
@@ -53,6 +56,181 @@ type AppDef = {
   Icon: (typeof NAV_ITEMS)[number]["Icon"];
   href?: string; // iframe-hosted apps
 };
+
+/**
+ * Banner clock calendar. Compact month view with dot/count indicators;
+ * clicking a day that has activity expands into a day-detail pane with
+ * facility / test-type filters and open-in-app actions.
+ */
+function BannerCalendarContent({
+  summary,
+  cells,
+  onOpenApp,
+}: {
+  summary: CalendarSummaryRow[];
+  cells: Record<string, import("@/calendar").CanonicalMonthCellSummary>;
+  onOpenApp: (appId: string) => void;
+}) {
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [facilityFilter, setFacilityFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+
+  const facilities = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of summary) if (row.facility) set.add(row.facility);
+    return Array.from(set).sort();
+  }, [summary]);
+
+  const dayRows = useMemo(() => {
+    if (!expandedDay) return [];
+    return summary.filter((row) => {
+      if (row.scheduleDate !== expandedDay) return false;
+      if (row.patientCount === 0) return false;
+      if (facilityFilter !== "all" && row.facility !== facilityFilter) return false;
+      if (
+        categoryFilter !== "all" &&
+        !(row.categories ?? []).includes(categoryFilter)
+      )
+        return false;
+      return true;
+    });
+  }, [summary, expandedDay, facilityFilter, categoryFilter]);
+
+  const dayLabel = useMemo(() => {
+    if (!expandedDay) return "";
+    const [y, m, d] = expandedDay.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+  }, [expandedDay]);
+
+  const selectClass =
+    "h-8 flex-1 min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-slate-400";
+
+  if (!expandedDay) {
+    return (
+      <CanonicalMonthCalendar
+        cells={cells}
+        compact
+        onSelectDate={(iso) => {
+          if (cells[iso]) setExpandedDay(iso);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="banner-calendar-day-detail">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setExpandedDay(null)}
+          className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+          aria-label="Back to month"
+          data-testid="banner-calendar-back"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </button>
+        <div className="text-sm font-semibold tracking-tight text-slate-900">
+          {dayLabel}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <select
+          value={facilityFilter}
+          onChange={(e) => setFacilityFilter(e.target.value)}
+          className={selectClass}
+          data-testid="banner-calendar-filter-facility"
+        >
+          <option value="all">All clinics</option>
+          {facilities.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className={selectClass}
+          data-testid="banner-calendar-filter-category"
+        >
+          <option value="all">All tests</option>
+          <option value="brainwave">BrainWave</option>
+          <option value="vitalwave">VitalWave</option>
+          <option value="ultrasound">Ultrasound</option>
+        </select>
+      </div>
+
+      <div className="max-h-72 overflow-y-auto -mx-1 px-1">
+        {dayRows.length === 0 ? (
+          <div className="rounded-md border border-slate-200 bg-white px-3 py-6 text-center text-xs text-slate-500">
+            No schedules match these filters.
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {dayRows.map((row) => (
+              <li
+                key={row.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2"
+                data-testid={`banner-calendar-day-row-${row.id}`}
+              >
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium text-slate-900 truncate">
+                    {row.facility ?? "Unassigned clinic"}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-500">
+                    <span className="tabular-nums">
+                      {row.patientCount}
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <div className="flex items-center gap-1">
+                      {(row.categories ?? []).map((c) => {
+                        const dot = ANCILLARY_DOT_CLASS[c];
+                        if (!dot) return null;
+                        return (
+                          <span
+                            key={c}
+                            className={`inline-block h-1.5 w-1.5 rounded-full ${dot.className}`}
+                            title={dot.title}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+        <button
+          type="button"
+          onClick={() => onOpenApp("/schedule")}
+          className="inline-flex items-center gap-1.5 h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+          data-testid="banner-calendar-open-schedule"
+        >
+          <CalendarDays className="w-3.5 h-3.5" />
+          Open Schedule
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpenApp("plexus-iq")}
+          className="inline-flex items-center gap-1.5 h-8 rounded-md bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 transition-colors"
+          data-testid="banner-calendar-open-plexus"
+        >
+          <Brain className="w-3.5 h-3.5" />
+          Plexus IQ
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const slugOf = (appId: string) => (appId === "plexus-iq" ? "plexus-iq" : appId.replace(/\//g, ""));
 
@@ -731,10 +909,14 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
             <PopoverContent
               align="end"
               sideOffset={8}
-              className="w-[420px] p-4 bg-white/95 backdrop-blur-xl border-slate-200/70 shadow-2xl rounded-lg"
+              className="w-[380px] p-4 bg-white/95 backdrop-blur-xl border-slate-200/70 shadow-2xl rounded-lg"
               data-testid="popover-banner-calendar"
             >
-              <CanonicalMonthCalendar cells={bannerCalendarCells} />
+              <BannerCalendarContent
+                summary={calendarSummary}
+                cells={bannerCalendarCells}
+                onOpenApp={(appId) => spawnWindow(appId, "tab")}
+              />
             </PopoverContent>
           </Popover>
         </div>
@@ -856,7 +1038,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                   <div className="absolute -top-12 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
                     {dockExpanded ? "Less" : `More apps (${overflowItems.length})`}
                   </div>
-                  <div className="w-8 h-10 flex items-center justify-center">
+                  <div className="w-7 h-10 flex items-center justify-center">
                     {dockExpanded ? (
                       <ChevronLeft
                         className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-sky-300/90 group-hover:drop-shadow-[0_0_8px_rgba(125,211,252,0.85)] transition-all animate-pulse group-hover:animate-none"
@@ -873,7 +1055,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
               </button>
               <div
                 className={`flex items-end gap-1.5 overflow-hidden transition-all duration-300 ease-out ${
-                  dockExpanded ? "max-w-[900px] opacity-100" : "max-w-0 opacity-0"
+                  dockExpanded ? "max-w-[900px] opacity-100 ml-0" : "max-w-0 opacity-0 -ml-3"
                 }`}
                 data-testid="dock-overflow-section"
               >

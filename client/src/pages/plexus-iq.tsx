@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ShieldCheck, Sparkles } from "lucide-react";
-import { Link } from "wouter";
+import { Loader2 } from "lucide-react";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -918,27 +917,6 @@ export default function PlexusIQPage() {
           onChangeBatch={() => setBatchFlowOpen(true)}
           onViewBatch={(id, facility) => setFocusBatch({ id, facility })}
         />
-        {/* Clinical Intelligence & Governance + Repeat Testing Review —
-            compact icon shortcuts (pure navigation, tooltips carry the
-            detail; no effect on batch/qualification flows). */}
-        <div className="flex items-center justify-end gap-1.5 px-4 pt-3">
-          <Link
-            href="/clinical-intelligence"
-            title="Clinical Intelligence & Governance — AI Logic knowledge layer: learning center, rule library, approvals, and audit"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-violet-200/70 bg-white/80 text-violet-700 shadow-sm transition-colors hover:bg-violet-50 hover:border-violet-300"
-            data-testid="tile-clinical-intelligence"
-          >
-            <ShieldCheck className="h-4 w-4" />
-          </Link>
-          <Link
-            href="/clinical-intelligence"
-            title="Repeat Testing Review — re-eligibility queue for prior BrainWave / VitalWave / Ultrasound tests (not connected yet)"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-sky-200/70 bg-white/80 text-sky-700 shadow-sm transition-colors hover:bg-sky-50 hover:border-sky-300"
-            data-testid="tile-repeat-testing-review"
-          >
-            <Sparkles className="h-4 w-4" />
-          </Link>
-        </div>
         <PlexusIQWorkspace
           summary={summary}
           batches={batches}
