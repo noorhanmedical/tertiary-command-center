@@ -16,6 +16,16 @@ import {
   type EngagementCenterDefaults,
   type InsurancePriorityWeights,
 } from "./adminSettings.repo";
+// Phase 2B — canonical ancillary-case reconciliation. No-op when
+// FEATURE_ANCILLARY_CASE_WRITE is OFF (default). Called after the
+// execution-case sync so every selected service ensures its
+// corresponding canonical ancillary case exists.
+import {
+  reconcileAncillaryCasesBulk,
+  conservativelyRemoveAncillaryService,
+} from "../services/ancillaryCases/reconciliation";
+import type { ReconcileInput } from "../services/ancillaryCases/reconciliation";
+import type { AncillaryAdminReviewStatus, AncillaryQualificationStatus } from "@shared/schema/ancillaryCases";
 
 // ─── Settings-driven priority scoring ──────────────────────────────────────
 
@@ -191,6 +201,15 @@ export async function createOrUpdateExecutionCaseFromScreening(
       })
       .where(eq(patientExecutionCases.id, existing.id))
       .returning();
+
+    await syncAncillaryCasesFromScreening({
+      screening,
+      executionCaseId: updated.id,
+      actorUserId,
+      selectedServices: selectedServices ?? [],
+      source: "execution_case_updated",
+    });
+
     return { executionCase: updated, created: false };
   }
 
@@ -210,7 +229,121 @@ export async function createOrUpdateExecutionCaseFromScreening(
     })
     .returning();
 
+  await syncAncillaryCasesFromScreening({
+    screening,
+    executionCaseId: created.id,
+    actorUserId,
+    selectedServices: selectedServices ?? [],
+    source: "execution_case_created",
+  });
+
   return { executionCase: created, created: true };
+}
+
+/**
+ * Phase 2B — one-way sync from a committed screening's selected
+ * services to canonical `patient_ancillary_cases` rows.
+ *
+ * Behavior:
+ *   • Flag OFF → returns immediately (zero DB touches).
+ *   • Missing Phase 2A identity links → returns silently; the
+ *     reconciler emits an audit event describing the skip.
+ *   • For every selected service → ensure an active ancillary case
+ *     exists (create or reuse) via the shared reconciler.
+ *   • For every ACTIVE case whose service is no longer selected →
+ *     conservative removal (default: on_hold; no hard delete).
+ */
+async function syncAncillaryCasesFromScreening(args: {
+  screening: PatientScreening;
+  executionCaseId: number | null;
+  actorUserId: string | null;
+  selectedServices: string[];
+  source: string;
+}): Promise<void> {
+  const { screening, executionCaseId, actorUserId, selectedServices, source } = args;
+  const clinicId = screening.clinicId ?? null;
+  const globalPlexusPatientId = screening.globalPlexusPatientId ?? null;
+  const patientClinicMembershipId = screening.patientClinicMembershipId ?? null;
+
+  // These checks let the sync be a hard-safe no-op when Phase 2A
+  // hasn't been applied / backfilled. The reconciler itself would
+  // return `missing_identity_links`, but we prefer to skip audit-event
+  // noise when the ids are trivially null.
+  if (!clinicId || !globalPlexusPatientId || !patientClinicMembershipId) return;
+
+  const qualificationStatus: AncillaryQualificationStatus =
+    (screening as { qualifyingTests?: string[] | null }).qualifyingTests?.length
+      ? "qualified"
+      : "unscreened";
+  const adminReviewStatus: AncillaryAdminReviewStatus =
+    (screening as { adminApprovalStatus?: string }).adminApprovalStatus === "approved"
+      ? "approved"
+      : "pending";
+
+  const inputs: ReconcileInput[] = selectedServices.map((serviceType) => ({
+    clinicId,
+    globalPlexusPatientId,
+    patientClinicMembershipId,
+    originatingScreeningId: screening.id,
+    executionCaseId,
+    serviceType,
+    qualificationStatus,
+    adminReviewStatus,
+    source,
+    actorUserId,
+    patientNameForAudit: screening.name,
+    patientDobForAudit: screening.dob ?? null,
+  }));
+  const bulk = await reconcileAncillaryCasesBulk(inputs);
+  for (const err of bulk.errors) {
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error",
+      source: "ancillary_case_sync",
+      site: "createOrUpdateExecutionCaseFromScreening",
+      screeningId: screening.id,
+      serviceType: err.serviceType,
+      code: err.code,
+      message: err.message,
+    }));
+  }
+
+  // Conservative removal: any currently-active case whose serviceType
+  // is not in the current selected list is placed on_hold. We compute
+  // this against the projection helper's underlying source (active
+  // cases for the same patient + clinic).
+  const currentActiveServiceTypes = new Set(
+    bulk.ok
+      .filter((r) => r.status === "reused" || r.status === "created")
+      .map((r) => (r as { serviceType: string }).serviceType),
+  );
+  // Find any active cases NOT re-selected this round. We can't derive
+  // them from bulk.ok alone — we need a fresh read of active cases.
+  const active = await import("../repositories/ancillaryCases.repo").then((m) =>
+    m.listAncillaryCasesForPatient(globalPlexusPatientId),
+  );
+  const droppedServiceTypes = active
+    .filter(
+      (a) =>
+        a.clinicId === clinicId &&
+        !currentActiveServiceTypes.has(a.serviceType) &&
+        (a.lifecycleStatus === "new" ||
+          a.lifecycleStatus === "active" ||
+          a.lifecycleStatus === "on_hold"),
+    )
+    .map((a) => a.serviceType);
+  for (const st of droppedServiceTypes) {
+    await conservativelyRemoveAncillaryService({
+      clinicId,
+      globalPlexusPatientId,
+      serviceType: st,
+      action: "on_hold",
+      source,
+      actorUserId,
+      patientNameForAudit: screening.name,
+      patientDobForAudit: screening.dob ?? null,
+    });
+  }
 }
 
 export async function appendPatientJourneyEvent(

@@ -137,6 +137,12 @@ export async function removeAdminReviewTest(
     reasoning: existingReasoning,
   });
 
+  await conservativelyRemoveAncillaryForScreening({
+    patient: updated,
+    serviceTypes: [testName],
+    source: "admin_review_remove_test",
+  });
+
   invalidatePatientDatabase();
   return { ok: true, patient: updated, removedTestName: testName };
 }
@@ -213,6 +219,12 @@ export async function removeAdminReviewAncillary(
     reasoning: existingReasoning,
   });
 
+  await conservativelyRemoveAncillaryForScreening({
+    patient: updated,
+    serviceTypes: Array.from(toRemove),
+    source: "admin_review_remove_ancillary",
+  });
+
   invalidatePatientDatabase();
   return {
     ok: true,
@@ -220,4 +232,54 @@ export async function removeAdminReviewAncillary(
     ancillaryId,
     removedTests: Array.from(toRemove),
   };
+}
+
+// Phase 2B — canonical ancillary-case conservative removal helper.
+// Called by both removeAdminReviewTest and removeAdminReviewAncillary.
+// No-op with FEATURE_ANCILLARY_CASE_WRITE=OFF (default). Never
+// hard-deletes; places the active case on_hold and emits a status_changed
+// journey event. The removed test's canonical patient.reasoning entry
+// remains preserved by the admin-review workflow (unchanged).
+async function conservativelyRemoveAncillaryForScreening(args: {
+  patient: PatientScreening | undefined;
+  serviceTypes: string[];
+  source: string;
+}): Promise<void> {
+  if (!args.patient || args.serviceTypes.length === 0) return;
+  const p = args.patient as PatientScreening & {
+    clinicId?: number | null;
+    globalPlexusPatientId?: number | null;
+    patientClinicMembershipId?: number | null;
+  };
+  const clinicId = p.clinicId ?? null;
+  const globalPlexusPatientId = p.globalPlexusPatientId ?? null;
+  if (!clinicId || !globalPlexusPatientId) return;
+
+  const { conservativelyRemoveAncillaryService } = await import(
+    "../ancillaryCases/reconciliation"
+  );
+  for (const serviceType of args.serviceTypes) {
+    try {
+      await conservativelyRemoveAncillaryService({
+        clinicId,
+        globalPlexusPatientId,
+        serviceType,
+        action: "on_hold",
+        source: args.source,
+        patientNameForAudit: p.name,
+        patientDobForAudit: p.dob ?? null,
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        level: "error",
+        source: "ancillary_case_reconciliation",
+        site: args.source,
+        patientId: p.id,
+        serviceType,
+        code: (e as { code?: string })?.code,
+        message: (e as Error)?.message ?? String(e),
+      }));
+    }
+  }
 }
