@@ -3033,14 +3033,15 @@ export function AdminReviewDialog({
 
   const shellChildren = (
     <>
-        {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
+        {/* Frosted sub-page header — light glass strip with the patient
+            demographics; intentionally NOT a heavy banner. */}
         <DialogHeader
-          className="px-5 py-2.5 border-b border-white/10 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white"
+          className="px-5 py-2.5 border-b border-slate-200/60 bg-white/60 backdrop-blur-xl text-slate-900"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <DialogTitle className="text-base font-semibold tracking-tight text-white">
+              <DialogTitle className="text-base font-semibold tracking-tight text-slate-900">
                 {patient.name || "Unnamed patient"}
               </DialogTitle>
               <DialogDescription className="sr-only">
@@ -3056,19 +3057,19 @@ export function AdminReviewDialog({
                     Under 16 · Admin approval required
                   </span>
                 )}
-                {patient.facility && <span className="text-white/70">{patient.facility}</span>}
-                {scheduleDate && <span className="text-white/70">· {scheduleDate}</span>}
+                {patient.facility && <span className="text-slate-500">{patient.facility}</span>}
+                {scheduleDate && <span className="text-slate-500">· {scheduleDate}</span>}
                 {patient.dob && (
-                  <span className="text-white/70" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
+                  <span className="text-slate-500" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
                 )}
                 {patient.insurance && (
-                  <span className="text-white/70" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
+                  <span className="text-slate-500" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
                 )}
                 {patient.phoneNumber && (
-                  <span className="text-white/70" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
+                  <span className="text-slate-500" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
                 )}
                 {evidenceQuery.isFetching && (
-                  <span className="text-white/60 inline-flex items-center gap-1">
+                  <span className="text-slate-400 inline-flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
                   </span>
                 )}
@@ -3083,7 +3084,7 @@ export function AdminReviewDialog({
                 aria-label="AI Logic for This Patient"
                 title="AI Logic for This Patient"
                 data-testid="admin-review-ai-logic-button"
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-violet-200/80 hover:text-violet-100 hover:bg-white/15 transition-colors"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-violet-600 hover:text-violet-800 hover:bg-violet-50 transition-colors"
               >
                 <Sparkles className="w-4 h-4" />
               </button>
@@ -3093,7 +3094,7 @@ export function AdminReviewDialog({
                 aria-label="Close admin review"
                 title="Close"
                 data-testid="admin-review-close-button"
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/85 hover:text-white hover:bg-white/15 transition-colors"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-black/5 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -4512,7 +4513,7 @@ export function AdminReviewDialog({
                   title={isUnder16 ? "Admin Override Approve" : "Approve"}
                   data-testid="admin-review-approve-button"
                   data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                  className="inline-flex w-10 items-center justify-center h-9 rounded-md bg-emerald-700 text-white shadow-sm border border-emerald-800/40 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-9 items-center justify-center h-9 rounded-md text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   {approvalMutation.isPending ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
@@ -4531,7 +4532,7 @@ export function AdminReviewDialog({
                   title="Pend"
                   data-testid="admin-review-pend-button"
                   data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                  className="inline-flex w-10 items-center justify-center h-9 rounded-md bg-amber-600 text-white shadow-sm border border-amber-700/40 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-9 items-center justify-center h-9 rounded-md text-amber-600 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <Clock className="w-5 h-5" strokeWidth={2.5} />
                 </button>
@@ -4545,7 +4546,7 @@ export function AdminReviewDialog({
                   aria-label="Reject"
                   title="Reject"
                   data-testid={`admin-review-button-reject-${patient.id}`}
-                  className="inline-flex w-10 items-center justify-center h-9 rounded-md bg-rose-700 text-white shadow-sm border border-rose-800/40 hover:bg-rose-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-9 items-center justify-center h-9 rounded-md text-rose-700 hover:text-rose-800 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <XCircle className="w-5 h-5" strokeWidth={2.5} />
                 </button>

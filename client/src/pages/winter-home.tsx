@@ -160,7 +160,15 @@ function WinterWindow({
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
   const [interacting, setInteracting] = useState(false);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
-  const resizeRef = useRef<{ sx: number; sy: number; ow: number; oh: number } | null>(null);
+  const resizeRef = useRef<{
+    sx: number;
+    sy: number;
+    ox: number;
+    oy: number;
+    ow: number;
+    oh: number;
+    dir: string;
+  } | null>(null);
   const slug = slugOf(win.appId);
 
   const startDrag = (e: React.PointerEvent) => {
@@ -184,20 +192,41 @@ function WinterWindow({
     setInteracting(false);
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (dir: string) => (e: React.PointerEvent) => {
     if (win.maximized) return;
     e.stopPropagation();
     onFocus();
-    resizeRef.current = { sx: e.clientX, sy: e.clientY, ow: win.w, oh: win.h };
+    resizeRef.current = {
+      sx: e.clientX,
+      sy: e.clientY,
+      ox: win.x,
+      oy: win.y,
+      ow: win.w,
+      oh: win.h,
+      dir,
+    };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setInteracting(true);
   };
   const moveResize = (e: React.PointerEvent) => {
     const r = resizeRef.current;
     if (!r) return;
-    const nw = Math.max(480, r.ow + e.clientX - r.sx);
-    const nh = Math.max(320, r.oh + e.clientY - r.sy);
-    onGeometry({ w: nw, h: nh });
+    const dx = e.clientX - r.sx;
+    const dy = e.clientY - r.sy;
+    const patch: Partial<Pick<WinterWin, "x" | "y" | "w" | "h">> = {};
+    if (r.dir.includes("e")) patch.w = Math.max(480, r.ow + dx);
+    if (r.dir.includes("s")) patch.h = Math.max(320, r.oh + dy);
+    if (r.dir.includes("w")) {
+      const nw = Math.max(480, r.ow - dx);
+      patch.w = nw;
+      patch.x = r.ox + (r.ow - nw);
+    }
+    if (r.dir.includes("n")) {
+      const nh = Math.max(320, r.oh - dy);
+      patch.h = nh;
+      patch.y = r.oy + (r.oh - nh);
+    }
+    onGeometry(patch);
   };
   const endResize = () => {
     resizeRef.current = null;
@@ -219,7 +248,7 @@ function WinterWindow({
       data-winter-app={slug}
     >
       <div
-        className="flex items-center gap-2 h-10 px-4 bg-gradient-to-b from-[#12294d] to-[#0b1c3a] backdrop-blur-xl border-b border-white/15 shrink-0 cursor-grab active:cursor-grabbing touch-none"
+        className="flex items-center gap-2 h-10 px-4 bg-gradient-to-b from-sky-700/90 to-blue-900/90 backdrop-blur-xl border-b border-white/15 shrink-0 cursor-grab active:cursor-grabbing touch-none"
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
@@ -292,19 +321,45 @@ function WinterWindow({
         {interacting && <div className="absolute inset-0 z-10" />}
       </div>
       {!win.maximized && (
-        <div
-          className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize touch-none z-20"
-          onPointerDown={startResize}
-          onPointerMove={moveResize}
-          onPointerUp={endResize}
-          onPointerCancel={endResize}
-          aria-label="Resize window"
-          data-testid={`resize-${win.id}`}
-        >
-          <svg viewBox="0 0 20 20" className="w-full h-full text-slate-500/70">
-            <path d="M17 9v2l-6 6H9l8-8zM17 14v2l-1 1h-2l3-3z" fill="currentColor" />
-          </svg>
-        </div>
+        <>
+          {/* Edge + corner resize handles. Thin invisible strips; the SE
+              corner keeps its visible grip (and legacy testid). */}
+          {(
+            [
+              ["n", "top-0 left-3 right-3 h-1.5 cursor-ns-resize"],
+              ["s", "bottom-0 left-3 right-3 h-1.5 cursor-ns-resize"],
+              ["w", "left-0 top-3 bottom-3 w-1.5 cursor-ew-resize"],
+              ["e", "right-0 top-3 bottom-3 w-1.5 cursor-ew-resize"],
+              ["nw", "top-0 left-0 w-3 h-3 cursor-nwse-resize"],
+              ["ne", "top-0 right-0 w-3 h-3 cursor-nesw-resize"],
+              ["sw", "bottom-0 left-0 w-3 h-3 cursor-nesw-resize"],
+            ] as const
+          ).map(([dir, cls]) => (
+            <div
+              key={dir}
+              className={`absolute ${cls} touch-none z-30`}
+              onPointerDown={startResize(dir)}
+              onPointerMove={moveResize}
+              onPointerUp={endResize}
+              onPointerCancel={endResize}
+              aria-label={`Resize window (${dir})`}
+              data-testid={`resize-${dir}-${win.id}`}
+            />
+          ))}
+          <div
+            className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize touch-none z-30"
+            onPointerDown={startResize("se")}
+            onPointerMove={moveResize}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+            aria-label="Resize window"
+            data-testid={`resize-${win.id}`}
+          >
+            <svg viewBox="0 0 20 20" className="w-full h-full text-slate-500/70">
+              <path d="M17 9v2l-6 6H9l8-8zM17 14v2l-1 1h-2l3-3z" fill="currentColor" />
+            </svg>
+          </div>
+        </>
       )}
     </div>
   );
