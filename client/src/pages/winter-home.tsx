@@ -9,6 +9,8 @@ import {
   ChevronLeft,
   ArrowLeft,
   CalendarDays,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { NAV_ITEMS } from "@/components/GlobalNav";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -232,20 +234,32 @@ function BannerCalendarContent({
 
 
 /**
- * Empty full-height glass side panel. A small glass tab sits high up on each
- * screen edge; clicking it slides the panel out over the desktop (same glass
- * treatment as the dock). Content intentionally empty for now.
+ * Empty glass side panel. Hovering the small edge handle slides the panel out;
+ * moving the mouse away closes it again unless it has been pinned open. When
+ * pinned, the parent shrinks the open page so the panel doesn't cover it.
  */
-function WinterEdgePanel({ side }: { side: "left" | "right" }) {
-  const [open, setOpen] = useState(false);
+const EDGE_PANEL_W = 280;
+
+function WinterEdgePanel({
+  side,
+  pinned,
+  onPinnedChange,
+}: {
+  side: "left" | "right";
+  pinned: boolean;
+  onPinnedChange: (pinned: boolean) => void;
+}) {
+  const [hoverOpen, setHoverOpen] = useState(false);
   const isLeft = side === "left";
+  const open = pinned || hoverOpen;
   return (
     <>
       {!open && (
         <button
           type="button"
-          onClick={() => setOpen(true)}
-          className={`absolute top-24 ${isLeft ? "left-0 rounded-r-lg border-l-0" : "right-0 rounded-l-lg border-r-0"} z-[45] flex h-16 w-5 items-center justify-center bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl text-white/80 hover:bg-white/20 hover:text-white transition-colors`}
+          onClick={() => setHoverOpen(true)}
+          onMouseEnter={() => setHoverOpen(true)}
+          className={`absolute top-24 ${isLeft ? "left-0 rounded-r-lg border-l-0" : "right-0 rounded-l-lg border-r-0"} z-[45] flex h-16 w-5 items-center justify-center bg-white/45 backdrop-blur-xl border border-white/60 shadow-2xl text-slate-700 hover:bg-white/65 hover:text-slate-900 transition-colors`}
           aria-label={`Open ${side} panel`}
           data-testid={`edge-panel-handle-${side}`}
         >
@@ -253,20 +267,39 @@ function WinterEdgePanel({ side }: { side: "left" | "right" }) {
         </button>
       )}
       <div
-        className={`absolute inset-y-0 ${isLeft ? "left-0 border-r" : "right-0 border-l"} z-[45] w-[340px] max-w-[85vw] bg-white/10 backdrop-blur-xl border-white/20 shadow-2xl transition-transform duration-300 ease-out ${
+        onMouseLeave={() => {
+          if (!pinned) setHoverOpen(false);
+        }}
+        className={`absolute inset-y-0 ${isLeft ? "left-0 border-r" : "right-0 border-l"} z-[45] w-[280px] max-w-[85vw] bg-white/10 backdrop-blur-xl border-white/20 shadow-2xl transition-transform duration-300 ease-out ${
           open ? "translate-x-0" : isLeft ? "-translate-x-full pointer-events-none" : "translate-x-full pointer-events-none"
         }`}
         data-testid={`edge-panel-${side}`}
       >
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className={`absolute top-24 ${isLeft ? "right-2" : "left-2"} flex h-8 w-8 items-center justify-center rounded-md text-white/80 hover:bg-white/20 hover:text-white transition-colors`}
-          aria-label={`Close ${side} panel`}
-          data-testid={`edge-panel-collapse-${side}`}
-        >
-          {isLeft ? <ChevronLeft className="w-4 h-4" strokeWidth={2.4} /> : <ChevronRight className="w-4 h-4" strokeWidth={2.4} />}
-        </button>
+        <div className={`absolute top-24 ${isLeft ? "right-2" : "left-2"} flex items-center gap-1 ${isLeft ? "" : "flex-row-reverse"}`}>
+          <button
+            type="button"
+            onClick={() => {
+              onPinnedChange(false);
+              setHoverOpen(false);
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-white/80 hover:bg-white/20 hover:text-white transition-colors"
+            aria-label={`Close ${side} panel`}
+            data-testid={`edge-panel-collapse-${side}`}
+          >
+            {isLeft ? <ChevronLeft className="w-4 h-4" strokeWidth={2.4} /> : <ChevronRight className="w-4 h-4" strokeWidth={2.4} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => onPinnedChange(!pinned)}
+            className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+              pinned ? "bg-white/30 text-white" : "text-white/80 hover:bg-white/20 hover:text-white"
+            }`}
+            aria-label={pinned ? `Unpin ${side} panel` : `Pin ${side} panel open`}
+            data-testid={`edge-panel-pin-${side}`}
+          >
+            {pinned ? <PinOff className="w-4 h-4" strokeWidth={2.2} /> : <Pin className="w-4 h-4" strokeWidth={2.2} />}
+          </button>
+        </div>
       </div>
     </>
   );
@@ -285,6 +318,8 @@ function WinterTabPane({
   active,
   region = "full",
   onUnsplit,
+  insetLeft = 0,
+  insetRight = 0,
 }: {
   win: WinterWin;
   app: AppDef;
@@ -292,6 +327,8 @@ function WinterTabPane({
   active: boolean;
   region?: "full" | "left" | "right";
   onUnsplit?: () => void;
+  insetLeft?: number;
+  insetRight?: number;
 }) {
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
   const slug = slugOf(win.appId);
@@ -303,9 +340,13 @@ function WinterTabPane({
         : "left-0 right-0";
   return (
     <div
-      className={`absolute ${regionCls} top-12 bottom-0 z-30 bg-white/30 backdrop-blur-2xl pointer-events-auto ${
+      className={`absolute ${regionCls} top-12 bottom-0 z-30 bg-white/20 backdrop-blur-2xl pointer-events-auto ${
         active ? "" : "hidden"
       }`}
+      style={{
+        ...(region !== "right" && insetLeft ? { left: insetLeft } : null),
+        ...(region !== "left" && insetRight ? { right: insetRight } : null),
+      }}
       data-testid={`tab-pane-${slug}-${win.id}`}
       data-winter-app={slug}
     >
@@ -590,6 +631,10 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const [panelApp, setPanelApp] = useState<string | null>(null);
   const [split, setSplit] = useState<{ id: number; side: "left" | "right" } | null>(null);
+  const [pinnedPanels, setPinnedPanels] = useState<{ left: boolean; right: boolean }>({
+    left: false,
+    right: false,
+  });
   const [splitHint, setSplitHint] = useState<"left" | "right" | null>(null);
   const tabDragRef = useRef<{ id: number; sx: number; sy: number } | null>(null);
   const idRef = useRef(1);
@@ -659,7 +704,21 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     });
   };
 
+  /** Return to the bare desktop: hide tab panes without closing the tabs. */
+  const goHome = () => {
+    setActiveTabId(null);
+    setSplit(null);
+  };
+
   const spawnWindow = (appId: string, mode: "tab" | "window" = "tab") => {
+    if (mode === "tab") {
+      // Reuse an existing tab for this app instead of opening a duplicate.
+      const existing = windows.find((w) => w.appId === appId && w.mode === "tab");
+      if (existing) {
+        setActiveTabId(existing.id);
+        return;
+      }
+    }
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const w = Math.min(1180, vw - 120);
@@ -758,7 +817,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       <button
         key={appId}
         type="button"
-        onClick={() => spawnWindow(appId)}
+        onClick={() => (appId === "plexus-iq" ? goHome() : spawnWindow(appId))}
         className="focus:outline-none"
         data-testid={testId}
       >
@@ -900,12 +959,14 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       {/* Glass status bar */}
       <div className="absolute top-0 left-0 right-0 z-40 flex h-12 items-center justify-between bg-white/10 px-5 backdrop-blur-xl border-b border-white/20 text-sm font-medium text-slate-700 shadow-sm">
         <div className="flex items-center gap-3 min-w-0">
-          <span
-            className="text-[15px] font-bold tracking-tight bg-gradient-to-b from-sky-700 to-blue-900 bg-clip-text text-transparent shrink-0"
+          <button
+            type="button"
+            onClick={goHome}
+            className="text-[15px] font-bold tracking-tight bg-gradient-to-b from-sky-700 to-blue-900 bg-clip-text text-transparent shrink-0 focus:outline-none"
             data-testid="text-banner-brand"
           >
             Plexus Clinical
-          </span>
+          </button>
           {todaySummary && (
             <>
               <div className="w-px h-4 bg-slate-400/40" />
@@ -1019,6 +1080,8 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
               active={shown}
               region={region}
               onUnsplit={isSplit ? () => setSplit(null) : undefined}
+              insetLeft={pinnedPanels.left ? EDGE_PANEL_W : 0}
+              insetRight={pinnedPanels.right ? EDGE_PANEL_W : 0}
             />
           );
         });
@@ -1030,13 +1093,25 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           className={`absolute top-12 bottom-0 ${
             splitHint === "left" ? "left-0 right-1/2" : "left-1/2 right-0"
           } z-[35] bg-sky-300/20 border-2 border-sky-300/60 pointer-events-none`}
+          style={{
+            ...(splitHint === "left" && pinnedPanels.left ? { left: EDGE_PANEL_W } : null),
+            ...(splitHint === "right" && pinnedPanels.right ? { right: EDGE_PANEL_W } : null),
+          }}
           data-testid="split-hint-overlay"
         />
       )}
 
       {/* Full-height glass side panels (empty), toggled by small edge tabs. */}
-      <WinterEdgePanel side="left" />
-      <WinterEdgePanel side="right" />
+      <WinterEdgePanel
+        side="left"
+        pinned={pinnedPanels.left}
+        onPinnedChange={(v) => setPinnedPanels((p) => ({ ...p, left: v }))}
+      />
+      <WinterEdgePanel
+        side="right"
+        pinned={pinnedPanels.right}
+        onPinnedChange={(v) => setPinnedPanels((p) => ({ ...p, right: v }))}
+      />
 
       {/* Desktop windows layer — no scrim: the desktop stays interactive. */}
       <div className="absolute inset-0 z-50 pointer-events-none">
@@ -1107,7 +1182,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         )}
 
         <div
-          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 opacity-20 group-hover/dock:opacity-100`}
+          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 opacity-20 scale-90 group-hover/dock:opacity-100 group-hover/dock:scale-100`}
         >
           <div className="flex items-end gap-1.5">
             {primaryItems.map((item) =>
