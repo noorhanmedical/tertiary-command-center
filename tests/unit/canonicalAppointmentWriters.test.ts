@@ -158,6 +158,77 @@ async function testProjectionExcludesDoctorVisit() {
   );
 }
 
+// ─── (8) Every live call-result route that changes scheduling state
+// routes through the canonical orchestration boundary. ───────────
+const CALL_RESULT_SCHEDULING_ROUTES = [
+  "server/routes/executionCases.ts", // POST /api/engagement-center/call-result
+  "server/routes/plexusTasks.ts",    // POST /api/plexus/tasks/:id/call-outcome
+  "server/routes/outreach.ts",       // POST /api/outreach/calls
+];
+const ORCHESTRATION_TOKENS = ["runCallResultScheduling", "recordOutreachAndSchedulingOutcome"];
+
+async function testCallResultRoutesUseOrchestration() {
+  for (const file of CALL_RESULT_SCHEDULING_ROUTES) {
+    const src = readFileSync(join(REPO_ROOT, file), "utf8");
+    const usesOrchestration = ORCHESTRATION_TOKENS.some((tok) => src.includes(tok));
+    assert.ok(usesOrchestration, `${file} must route scheduling outcomes through the orchestration boundary`);
+    assert.ok(/featureFlags\.canonicalAppointment/.test(src), `${file} orchestration must be flag-gated`);
+  }
+}
+
+// ─── (9) The engagement-center bridge is flag-gated and precedes the
+// legacy triage/engagement writes for scheduling-state outcomes. ──
+async function testEngagementBridgeGatedBeforeLegacy() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes/executionCases.ts"), "utf8");
+  const gateIdx = src.indexOf("if (featureFlags.canonicalAppointment)");
+  const bridgeCallIdx = src.indexOf("await runCallResultScheduling");
+  const legacyTriageIdx = src.indexOf("upsertOpenSchedulingTriageCase({");
+  assert.ok(gateIdx > 0, "engagement route must have a canonical flag gate");
+  assert.ok(bridgeCallIdx > gateIdx, "bridge call must be inside the flag gate");
+  assert.ok(bridgeCallIdx < legacyTriageIdx, "canonical scheduling bridge must precede the legacy triage writer");
+  assert.ok(/engagementActionForOutcome/.test(src), "engagement route must map outcomes to a scheduling action");
+}
+
+// ─── (10) The plexus task direct appointmentStatus write is reachable
+// ONLY when the flag-gated bridge did not handle the request. ─────
+async function testPlexusDirectWriteIsFlagOffOnly() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes/plexusTasks.ts"), "utf8");
+  const bridgeCallIdx = src.indexOf("await runCallResultScheduling");
+  const directWriteIdx = src.search(/updatePatientScreening\([^)]*appointmentStatus/);
+  assert.ok(bridgeCallIdx > 0, "plexus route must call the bridge");
+  assert.ok(directWriteIdx > bridgeCallIdx, "direct appointmentStatus write must sit AFTER the flag-gated bridge (legacy-only)");
+  // The bridge block must return before the legacy write can be reached.
+  const between = src.slice(bridgeCallIdx, directWriteIdx);
+  assert.ok(/return res\./.test(between), "flag-ON scheduling intent must return before the legacy appointmentStatus write");
+}
+
+// ─── (11) No NEW unconditional scheduling-triage / appointmentStatus
+// writer was added outside the wired call-result routes. ─────────
+async function testNoUnwiredSchedulingStateWriter() {
+  // Scope: LIVE call-result / call-outcome route handlers only (not
+  // ingestion, import, or seed paths that legitimately set an initial
+  // appointmentStatus). Any such handler that mutates scheduling state
+  // (appointmentStatus / scheduling triage) MUST route through the
+  // orchestration boundary. This catches a future call-result bypass
+  // without broadly allow-listing whole route files/directories.
+  const offenders: string[] = [];
+  for (const file of ALL_SERVER_FILES) {
+    if (!file.includes("/routes/")) continue;
+    const src = readFileSync(file, "utf8");
+    const isCallResultRoute = /["'`][^"'`]*\/(call-result|call-outcome)["'`]/.test(src) ||
+      /\/api\/engagement-center\/call-result|\/call-outcome/.test(src);
+    if (!isCallResultRoute) continue;
+    const mutatesScheduling =
+      /updatePatientScreening\([^)]*appointmentStatus/.test(src) ||
+      /upsertOpenSchedulingTriageCase/.test(src);
+    if (!mutatesScheduling) continue;
+    const wired = ORCHESTRATION_TOKENS.some((tok) => src.includes(tok)) &&
+      /featureFlags\.canonicalAppointment/.test(src);
+    if (!wired) offenders.push(rel(file));
+  }
+  assert.deepEqual(offenders, [], `call-result scheduling-state writers must route through flag-gated orchestration. Offenders: ${offenders.join(", ")}`);
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
   ["(1) ancillary global_schedule_events writers are allow-listed", testGseAncillaryWritersAllowlisted],
   ["(2) compatibility back-pointer writers are allow-listed", testBackPointerWritersAllowlisted],
@@ -166,6 +237,10 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(5) canonical write repo is flag-guarded", testCanonicalRepoFlagGuarded],
   ["(6) legacy null-case upsert unreachable under flag ON", testLegacyUpsertUnreachableUnderFlagOn],
   ["(7) projection excludes doctor_visit", testProjectionExcludesDoctorVisit],
+  ["(8) live call-result routes use the orchestration boundary", testCallResultRoutesUseOrchestration],
+  ["(9) engagement bridge is flag-gated before legacy writes", testEngagementBridgeGatedBeforeLegacy],
+  ["(10) plexus direct appointmentStatus write is flag-OFF-only", testPlexusDirectWriteIsFlagOffOnly],
+  ["(11) no unwired scheduling-state writer added", testNoUnwiredSchedulingStateWriter],
 ];
 
 async function run() {

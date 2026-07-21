@@ -17,6 +17,11 @@ import {
   recallExecutionCaseToCallList,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import { featureFlags } from "../lib/featureFlags";
+import {
+  runCallResultScheduling,
+  engagementActionForOutcome,
+} from "../services/canonicalAppointments/callResultSchedulingBridge";
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires /api/scheduler-
 // portal/cases through the same role + facility access checks the
 // other portal endpoints already use. See the matching block in
@@ -153,6 +158,13 @@ const callResultBodySchema = z.object({
   assignedRole: z.string().optional().nullable(),
   facilityId: z.string().optional().nullable(),
   metadata: z.record(z.unknown()).optional(),
+  // Phase 2D-B3 — optional real scheduling inputs. Only consulted when
+  // FEATURE_CANONICAL_APPOINTMENT is ON and the callResult maps to a
+  // canonical scheduling transition. Never fabricated by the server.
+  globalScheduleEventId: z.number().int().optional().nullable(),
+  cancelReason: z.string().optional().nullable(),
+  noShowReason: z.string().optional().nullable(),
+  newStartsAt: z.string().optional().nullable(),
 });
 
 const CALL_RESULTS_NEEDING_TRIAGE = new Set([
@@ -498,6 +510,38 @@ export function registerExecutionCaseRoutes(app: Express) {
         return res.status(400).json({
           error: "Could not resolve patient (provide executionCaseId, patientScreeningId, or patientName + patientDob)",
         });
+      }
+
+      // ── Phase 2D-B3: canonical scheduling bridge ───────────────
+      // When the flag is ON, route scheduling-state outcomes
+      // (cancelled / no_show / reschedule) through the canonical
+      // orchestration. The call is recorded first; a scheduling action
+      // is attempted only when the caller supplied the REAL inputs
+      // (event id + reason / newStartsAt) — otherwise 409, never a
+      // fabricated transition. Non-scheduling outcomes fall through to
+      // the legacy engagement writes unchanged.
+      if (featureFlags.canonicalAppointment) {
+        const schedulingAction = engagementActionForOutcome(data.callResult);
+        if (schedulingAction !== "none") {
+          const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+          const bridged = await runCallResultScheduling({
+            clinicId: reqClinicId,
+            executionCaseId,
+            patientScreeningId,
+            callOutcome: data.callResult,
+            schedulingAction,
+            appointmentInput: {
+              eventId: data.globalScheduleEventId ?? undefined,
+              reason: schedulingAction === "cancel" ? (data.cancelReason ?? undefined) : (data.noShowReason ?? undefined),
+              newStartsAt: data.newStartsAt ? new Date(data.newStartsAt) : undefined,
+            },
+            actorUserId,
+            source: "engagement_call_result",
+          });
+          if (bridged.handled) {
+            return res.status(bridged.http).json(bridged.body);
+          }
+        }
       }
 
       // Compute next-action timestamp — explicit value wins, otherwise

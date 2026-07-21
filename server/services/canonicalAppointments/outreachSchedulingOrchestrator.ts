@@ -109,6 +109,13 @@ export async function recordOutreachAndSchedulingOutcome(
     const ok = isSchedulingSuccess(scheduling.status);
     return { ok, callRecorded, scheduling: scheduling.result, projectionDeferred };
   } catch (e) {
+    // A missing-migration / schema-configuration error is NOT a
+    // transient failure — surface it so the caller can return a
+    // controlled 503 rather than masking it as a deferred retry.
+    const code = (e as { code?: string })?.code;
+    if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+      throw e;
+    }
     // Preserve the call record; record durable appointment retry;
     // return deferred — NEVER claim scheduling succeeded.
     try {
