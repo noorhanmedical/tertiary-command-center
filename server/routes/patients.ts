@@ -681,13 +681,156 @@ export function registerPatientRoutes(
         if (!patient) return res.status(404).json({ error: "Patient not found" });
 
         const userId: string | null = req.session.userId ?? null;
+        const userRole: string | null = (req.session as { role?: string }).role ?? null;
         const isApproved = status === "approved";
-        const updated = await storage.updatePatientScreening(id, {
-          adminApprovalStatus: status,
-          adminApprovedAt: isApproved ? new Date() : null,
-          adminApprovedByUserId: isApproved ? userId : null,
-          adminApprovalNote: note,
-        });
+
+        // Phase 2C compatibility bridge — hardened.
+        //
+        // When FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW is ON, this route
+        // MUST NOT directly write the screening-level status as the
+        // canonical truth. It:
+        //   • 403 on cross-clinic mismatch
+        //   • 403 on authorization denied (bubbled from the recorder)
+        //   • 503 on missing migration
+        //   • 409 NO_ACTIVE_ANCILLARY_CASES when there are no active
+        //     cases to review (screening column stays a projection —
+        //     we do not create fake state)
+        //   • 202 partial-deferred when Engagement reconciliation
+        //     deferred (deferred_no_list) — the review event was
+        //     recorded but the queue visibility awaits a list
+        // When FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW is ON, the legacy
+        // screening-level route must NOT be an independent competing
+        // truth. Every applicable ancillary case receives a per-service
+        // review event (append-only history + reviewer authorization +
+        // evidence snapshot + Engagement reconciliation) BEFORE the
+        // legacy column is written. The legacy column then reflects the
+        // canonical screening projection.
+        //
+        // Authorization is enforced through the recorder (currently
+        // always denies for lack of the Plexus-internal role) — so
+        // when the flag is ON, unauthorized callers get a 403 here
+        // instead of a silent legacy bypass.
+        const { featureFlags: ff } = await import("../lib/featureFlags");
+        if (ff.serviceSpecificAdminReview) {
+          const acRepo = await import("../repositories/ancillaryCases.repo");
+          const { recordAncillaryCaseAdminReview } = await import(
+            "../services/adminReview/recordAdminReview"
+          );
+          const activeCases = (await acRepo.listAncillaryCasesForScreening(id)).filter(
+            (c) => c.lifecycleStatus === "new" || c.lifecycleStatus === "active" || c.lifecycleStatus === "on_hold",
+          );
+          if (activeCases.length === 0) {
+            // NO_ACTIVE_ANCILLARY_CASES: do NOT directly write the
+            // screening column as canonical truth. It is a projection
+            // by rule when the flag is ON.
+            return res.status(409).json({
+              error: "No active ancillary cases for this screening — review is service-specific",
+              code: "NO_ACTIVE_ANCILLARY_CASES",
+            });
+          }
+          const perServiceResults: Array<{
+            ancillaryCaseId: number;
+            serviceType: string;
+            engagementStatus: string;
+            retryPending: boolean;
+            errorCode?: string;
+          }> = [];
+          for (const ac of activeCases) {
+            try {
+              const outcome = await recordAncillaryCaseAdminReview({
+                ancillaryCaseId: ac.id,
+                clinicId: ac.clinicId,
+                newStatus: status,
+                effectiveClinicalDate: null,
+                rationale: note,
+                actor: { userId, role: userRole },
+                source: "manual",
+              });
+              if (outcome.status === "cross_clinic_denied") {
+                return res.status(403).json({
+                  error: "cross-clinic review refused",
+                  code: "CROSS_CLINIC_DENIED",
+                });
+              }
+              if (outcome.status === "case_not_found") {
+                // Skip — an active case that vanished between the read
+                // and the review is a race, not a failure of intent.
+                continue;
+              }
+              if (outcome.status === "recorded") {
+                perServiceResults.push({
+                  ancillaryCaseId: outcome.ancillaryCaseId,
+                  serviceType: outcome.serviceType,
+                  engagementStatus: outcome.engagementOutcome,
+                  retryPending: outcome.retryPending,
+                  errorCode: outcome.engagementErrorCode,
+                });
+              }
+            } catch (e) {
+              const err = e as { code?: string; status?: number; message?: string };
+              if (err.code === "ADMIN_REVIEW_ACCESS_DENIED") {
+                return res.status(403).json({
+                  error: "Admin Review access denied",
+                  code: err.code,
+                });
+              }
+              if (
+                err.code === "ADMIN_REVIEW_MIGRATION_MISSING" ||
+                err.code === "ENGAGEMENT_MIGRATION_MISSING"
+              ) {
+                return res.status(503).json({
+                  error: "Admin Review configuration unavailable",
+                  code: err.code,
+                });
+              }
+              throw e;
+            }
+          }
+          // The recorder refreshed the screening projection for each
+          // active case. Legacy consumers still expect the note +
+          // timestamps to reflect the caller's action:
+          await storage.updatePatientScreening(id, {
+            adminApprovalNote: note,
+            adminApprovedAt: isApproved ? new Date() : null,
+            adminApprovedByUserId: isApproved ? userId : null,
+          });
+          const anyDeferred = perServiceResults.some(
+            (r) => r.engagementStatus === "deferred_no_list" || r.retryPending,
+          );
+          const anyFailed = perServiceResults.some((r) => r.engagementStatus === "failed");
+          if (anyFailed) {
+            // A reconciler failure means the review event was recorded
+            // (we made it here) but Engagement synchronization threw
+            // and a durable retry exists. Surface as 503 so operators
+            // see the degradation. Persistent recorded-review + retry
+            // work stay in the DB.
+            return res.status(503).json({
+              error: "Engagement reconciliation failed for one or more services",
+              code: "ENGAGEMENT_RECONCILIATION_FAILED",
+              services: perServiceResults,
+            });
+          }
+          if (anyDeferred) {
+            // Partial success — every review event recorded, but at
+            // least one service has deferred Engagement visibility
+            // pending a source list. Explicitly 202.
+            const updatedRefetched = await storage.getPatientScreening(id);
+            return res.status(202).json({
+              status: "deferred",
+              patient: updatedRefetched,
+              services: perServiceResults,
+            });
+          }
+        }
+
+        const updated = ff.serviceSpecificAdminReview
+          ? await storage.getPatientScreening(id)
+          : await storage.updatePatientScreening(id, {
+              adminApprovalStatus: status,
+              adminApprovedAt: isApproved ? new Date() : null,
+              adminApprovedByUserId: isApproved ? userId : null,
+              adminApprovalNote: note,
+            });
         if (!updated) {
           return res.status(404).json({ error: "Patient not found" });
         }
@@ -909,11 +1052,15 @@ export function registerPatientRoutes(
       // list. Already-committed patients are unchanged (no downgrade).
       let finalPatient = updated;
       let schedulerName: string | null = null;
+      // Phase 2C — capture the commit result so we can propagate
+      // engagementSend to the caller via the shared response mapper.
+      let commitResultData: Awaited<ReturnType<typeof commitPatient>> extends { ok: true; data: infer D } ? D : never | null = null as never;
       try {
         const result = await commitPatient(id, req.session.userId ?? null, { auto: true });
         if (result.ok) {
           finalPatient = result.data.patient;
           schedulerName = result.data.schedulerName;
+          commitResultData = result.data as never;
         }
       } catch (commitErr) {
         console.error("Auto-commit after analyze failed:", commitErr);
@@ -932,7 +1079,21 @@ export function registerPatientRoutes(
           .catch((err) => console.warn("[patients] assignNewlyEligiblePatient failed:", err?.message));
       }
 
-      res.json({ ...finalPatient, autoCommittedSchedulerName: schedulerName });
+      // Phase 2C — if the commit successfully returned commitResultData
+      // AND its engagementSend is deferred or failed, route through the
+      // shared response mapper (200/202/503). Otherwise preserve the
+      // existing analyze payload shape exactly.
+      const analyzeExtra = { ...(finalPatient as object), autoCommittedSchedulerName: schedulerName };
+      if (commitResultData) {
+        const sendStatus = (commitResultData as { engagementSend?: { status?: string } }).engagementSend?.status;
+        if (sendStatus === "deferred" || sendStatus === "failed") {
+          const { respondWithCommitOutcome } = await import(
+            "./helpers/respondWithCommitOutcome"
+          );
+          return respondWithCommitOutcome(res, commitResultData as never, { extra: analyzeExtra });
+        }
+      }
+      res.json(analyzeExtra);
     } catch (error: any) {
       console.error("Per-patient analysis error:", error);
       res.status(500).json({ error: error.message || "Analysis failed" });
@@ -977,7 +1138,19 @@ export function registerPatientRoutes(
         console.warn("[patients] manual commit live assignment hook failed:", assignErr);
       }
 
-      res.json({ ...result.data.patient, schedulerName: result.data.schedulerName });
+      // Phase 2C — shared commit-outcome response mapper. Translates
+      // engagementSend.status into HTTP 200 / 202 / 503 uniformly with
+      // every other route that calls commitPatient(). Preserves the
+      // existing patient payload shape via `extra`.
+      const { respondWithCommitOutcome } = await import(
+        "./helpers/respondWithCommitOutcome"
+      );
+      return respondWithCommitOutcome(res, result.data, {
+        extra: {
+          ...result.data.patient,
+          schedulerName: result.data.schedulerName,
+        },
+      });
     } catch (error: any) {
       console.error("Patient commit error:", error);
       res.status(500).json({ error: error.message || "Commit failed" });

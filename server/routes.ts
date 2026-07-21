@@ -349,6 +349,12 @@ export async function registerRoutes(
   // registerClinicianPortalRoutes(app);
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
+  // Phase 2C — Engagement Repository + service-specific Admin Review.
+  // Both route files are registered unconditionally. Each handler
+  // returns 404 when its feature flag is OFF, preserving previous
+  // "route does not exist" behavior for any consumer.
+  (await import("./routes/engagementRepository")).registerEngagementRepositoryRoutes(app);
+  (await import("./routes/adminReviewEvents")).registerAdminReviewEventsRoutes(app);
   // Priority 4 — clinical intelligence backend deferred; UI runs on local
   // storage prototype. Enable route + seed when schema is approved.
   // registerClinicalIntelligenceRoutes(app, requireRole);

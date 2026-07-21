@@ -238,7 +238,38 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
-      const rows = await listEngagementCenterCases(filters, limit);
+      let rows = await listEngagementCenterCases(filters, limit);
+      // Phase 2C — apply service-level eligibility projection when the
+      // sync flag is ON. Never fall back to unrestricted queue on
+      // failure — return 503.
+      const { featureFlags: ff } = await import("../lib/featureFlags");
+      if (ff.engagementAdminReviewSync && rows.length > 0) {
+        try {
+          const { projectServiceLevelEligibility } = await import(
+            "../services/engagementLists/queueProjection"
+          );
+          const filtered = await projectServiceLevelEligibility({
+            executionCases: rows,
+            requireActiveMembership: ff.engagementMultiListRepository,
+          });
+          rows = filtered.map((f) =>
+            Object.assign(f.executionCase, { eligibleServices: f.eligibleServices }),
+          );
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error(JSON.stringify({
+            level: "error",
+            source: "engagement_center_cases",
+            kind: "phase_2c_projection_failed",
+            code: (e as { code?: string })?.code,
+            message: (e as Error)?.message ?? String(e),
+          }));
+          return res.status(503).json({
+            error: "Engagement eligibility projection unavailable",
+            code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+          });
+        }
+      }
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -290,7 +321,30 @@ export function registerExecutionCaseRoutes(app: Express) {
           }
           if (filters.assignedRole) repoFilters.assignedRole = filters.assignedRole;
           if (filters.engagementStatus) repoFilters.engagementStatus = filters.engagementStatus;
-          const rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
+          let rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
+
+          // Phase 2C — apply service-specific eligibility for the PCS
+          // call list. When the sync flag is ON, only approved services
+          // (with active memberships when multi-list is ON) appear,
+          // and each row is enriched with eligibleServices[]. Projection
+          // failure → throw so the outer route returns a controlled
+          // 503 rather than falling back to the unrestricted legacy list.
+          const { featureFlags: ff } = await import("../lib/featureFlags");
+          // Preserve the eligibleServices map keyed by execution case
+          // id so we can attach it to every returned row.
+          let eligibilityByCase: Map<number, string[]> | null = null;
+          if (ff.engagementAdminReviewSync && rows.length > 0) {
+            const { projectServiceLevelEligibility } = await import(
+              "../services/engagementLists/queueProjection"
+            );
+            const filtered = await projectServiceLevelEligibility({
+              executionCases: rows,
+              requireActiveMembership: ff.engagementMultiListRepository,
+            });
+            rows = filtered.map((f) => f.executionCase);
+            eligibilityByCase = new Map(filtered.map((f) => [f.executionCase.id, f.eligibleServices]));
+          }
+
           return rows.map<EngagementCallListItem>((row) => ({
             patientScreeningId:
               row.patientScreeningId != null ? String(row.patientScreeningId) : "",
@@ -309,6 +363,11 @@ export function registerExecutionCaseRoutes(app: Express) {
               row.nextActionAt instanceof Date ? row.nextActionAt.toISOString() : null,
             facilityId: row.facilityId ?? null,
             callListAssignmentDate: null,
+            // Phase 2C — service-level eligibility carried through to
+            // the serialized PCS response. When the sync flag is OFF,
+            // eligibilityByCase is null and this remains undefined
+            // (legacy contract preserved).
+            eligibleServices: eligibilityByCase?.get(row.id),
           }));
         },
       };
@@ -326,6 +385,16 @@ export function registerExecutionCaseRoutes(app: Express) {
       );
       return res.json(result);
     } catch (error: any) {
+      // Phase 2C — if the projector threw (migration missing, etc.),
+      // return a controlled 503 rather than fall back to the
+      // unrestricted list.
+      const code = (error as { code?: string })?.code;
+      if (code === "ENGAGEMENT_MIGRATION_MISSING" || code === "ANCILLARY_CASE_MIGRATION_MISSING") {
+        return res.status(503).json({
+          error: "PCS call-list eligibility projection unavailable",
+          code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+        });
+      }
       return res.status(500).json({ error: error.message });
     }
   });

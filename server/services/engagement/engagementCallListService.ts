@@ -47,6 +47,13 @@ export type EngagementCallListItem = {
   facilityId: string | null;
   /** Present when joined from scheduler_assignments for the day. */
   callListAssignmentDate: string | null;
+  /**
+   * Phase 2C — service-level eligibility. When
+   * FEATURE_ENGAGEMENT_ADMIN_REVIEW_SYNC is ON, this reflects the
+   * approved-and-membership-active services only. When OFF, this
+   * mirrors selectedServices (legacy compat).
+   */
+  eligibleServices?: string[];
 };
 
 /**

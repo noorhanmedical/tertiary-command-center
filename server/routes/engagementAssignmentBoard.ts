@@ -191,7 +191,7 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
 
         // Pull every active engagement case. Closed/archived cases
         // are filtered out so the board reflects live workload only.
-        const cases = await db
+        let cases = await db
           .select()
           .from(patientExecutionCases)
           .where(
@@ -206,6 +206,48 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
               ),
             ),
           );
+
+        // Phase 2C — Engagement admin-review sync. When the flag is ON,
+        // an execution case is eligible for the active queue only when
+        // at least one ancillary case has admin_review_status='approved'
+        // AND (when multi-list flag also ON) has an active membership.
+        //
+        // FAILURE HANDLING (safety-critical): when the sync flag is ON
+        // and the canonical projection fails, DO NOT broaden visibility
+        // by falling back to the legacy unrestricted queue. Return a
+        // controlled 503 so operators see the degradation instead of
+        // approved-eligibility being silently ignored.
+        const { featureFlags: ff } = await import("../lib/featureFlags");
+        if (ff.engagementAdminReviewSync && cases.length > 0) {
+          try {
+            const { projectServiceLevelEligibility } = await import(
+              "../services/engagementLists/queueProjection"
+            );
+            const filtered = await projectServiceLevelEligibility({
+              executionCases: cases,
+              requireActiveMembership: ff.engagementMultiListRepository,
+            });
+            cases = filtered.map((f) => f.executionCase);
+            // Stash eligible services per execution case so downstream
+            // consumers can build service-level rows.
+            (res.locals as { serviceEligibility?: Map<number, string[]> }).serviceEligibility =
+              new Map(filtered.map((f) => [f.executionCase.id, f.eligibleServices]));
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error(JSON.stringify({
+              level: "error",
+              source: "engagement_board",
+              kind: "phase_2c_projection_failed",
+              code: (e as { code?: string })?.code,
+              message: (e as Error)?.message ?? String(e),
+            }));
+            // Controlled 503 — do NOT broaden visibility.
+            return res.status(503).json({
+              error: "Engagement eligibility projection unavailable",
+              code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+            });
+          }
+        }
 
         if (cases.length === 0) {
           return res.json({
@@ -335,9 +377,35 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             lastActivitySummary: latest?.summary ?? null,
             lastCallOutcome: c.lastCallOutcome ?? null,
             missingInfo: computeMissingInfo(screening),
-            selectedServices: Array.isArray(c.selectedServices)
-              ? (c.selectedServices as string[])
-              : [],
+            // Phase 2C — when the sync flag is ON, expose eligible
+            // services (approved + membership) instead of the raw
+            // stored `selectedServices`. This is the shape the
+            // Assignment Board consumes, so BrainWave approved +
+            // Ultrasound rejected surfaces ["BrainWave"]. The stored
+            // column is never mutated by this read projection.
+            selectedServices: (() => {
+              const eligibilityMap = (res.locals as { serviceEligibility?: Map<number, string[]> })
+                .serviceEligibility;
+              if (eligibilityMap && eligibilityMap.has(c.id)) {
+                return eligibilityMap.get(c.id) ?? [];
+              }
+              return Array.isArray(c.selectedServices)
+                ? (c.selectedServices as string[])
+                : [];
+            })(),
+            // Phase 2C — canonical eligibleServices field. Always
+            // present. When the flag is OFF this mirrors selectedServices;
+            // when ON it carries the service-level projection.
+            eligibleServices: (() => {
+              const eligibilityMap = (res.locals as { serviceEligibility?: Map<number, string[]> })
+                .serviceEligibility;
+              if (eligibilityMap && eligibilityMap.has(c.id)) {
+                return eligibilityMap.get(c.id) ?? [];
+              }
+              return Array.isArray(c.selectedServices)
+                ? (c.selectedServices as string[])
+                : [];
+            })(),
             category: taxonomy.category,
             callType: taxonomy.callType,
             source: taxonomy.source,
