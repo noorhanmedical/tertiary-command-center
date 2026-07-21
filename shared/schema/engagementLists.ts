@@ -63,6 +63,12 @@ export const engagementLists = pgTable(
       .references(() => clinics.id, { onDelete: "no action" }),
     sourceType: text("source_type").notNull(),
     sourceId: text("source_id").notNull(),
+    /**
+     * Explicit idempotency key. Empty string is the "default" bucket
+     * (repeat sends without an explicit key collapse). Distinct keys
+     * enable independent re-sends of the same source.
+     */
+    sendIdempotencyKey: text("send_idempotency_key").notNull().default(""),
     label: text("label").notNull(),
     facility: text("facility"),
     serviceDate: text("service_date"),

@@ -104,14 +104,19 @@ CREATE INDEX IF NOT EXISTS idx_acare_reviewed_at ON ancillary_case_admin_review_
 CREATE INDEX IF NOT EXISTS idx_acare_new_status ON ancillary_case_admin_review_events(new_status);
 
 -- ─── engagement_lists ────────────────────────────────────────────
--- Each independently sent Engagement list gets its own row.
--- (clinic_id, source_type, source_id) is the natural business
--- identity; the surrogate `id` PK is what UIs and joins use.
+-- Each INDEPENDENT SEND creates its own row. A batch/source may be
+-- sent to Engagement multiple times (e.g., after a Draft-reset and
+-- re-analysis); each real send is a separate immutable transmission
+-- with its own sent_to_engagement_at. Idempotency is opt-in via
+-- send_idempotency_key: two calls with the same key produce one row;
+-- explicit distinct keys produce distinct rows even for the same
+-- source. `id` is the stable surrogate PK every reader/UI uses.
 CREATE TABLE IF NOT EXISTS engagement_lists (
   id                        SERIAL PRIMARY KEY,
   clinic_id                 INTEGER NOT NULL,
   source_type               TEXT NOT NULL,
   source_id                 TEXT NOT NULL,
+  send_idempotency_key      TEXT NOT NULL DEFAULT '',
   label                     TEXT NOT NULL,
   facility                  TEXT,
   service_date              TEXT,
@@ -161,11 +166,11 @@ CREATE INDEX IF NOT EXISTS idx_el_sent_at ON engagement_lists(sent_to_engagement
 CREATE INDEX IF NOT EXISTS idx_el_service_date ON engagement_lists(service_date);
 CREATE INDEX IF NOT EXISTS idx_el_source ON engagement_lists(source_type, source_id);
 
--- One row per (clinic_id, source_type, source_id) — the immutable
--- business identity. Multiple lists with the same facility + service
--- date are permitted; date/facility are display fields, not identity.
+-- One row per (clinic_id, source_type, source_id, send_idempotency_key).
+-- Distinct idempotency keys allow the same source to be sent to
+-- Engagement multiple times as independent transmissions.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_el_source_identity
-  ON engagement_lists(clinic_id, source_type, source_id);
+  ON engagement_lists(clinic_id, source_type, source_id, send_idempotency_key);
 
 -- ─── engagement_list_memberships ─────────────────────────────────
 -- Join table: which ancillary cases came in via which lists. One

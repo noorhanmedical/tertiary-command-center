@@ -26,8 +26,10 @@ import {
   listMostRecentlySentEngagementLists,
 } from "../repositories/engagementLists.repo";
 import { db } from "../db";
-import { eq, and } from "drizzle-orm";
-import { engagementLists } from "@shared/schema/engagementLists";
+import { eq, and, sql } from "drizzle-orm";
+import { engagementLists, engagementListMemberships } from "@shared/schema/engagementLists";
+import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
+import { patientExecutionCases } from "@shared/schema/executionCase";
 
 function isMultiListFlagOn(): boolean {
   return featureFlags.engagementMultiListRepository;
@@ -139,6 +141,62 @@ export function registerEngagementRepositoryRoutes(app: Express): void {
       res.json({ memberships: filtered });
     } catch (e: unknown) {
       res.status(500).json({ error: (e as Error)?.message ?? "memberships read failed" });
+    }
+  });
+
+  // GET /api/engagement/repository/work-items — Tenant-scoped
+  // service-level active work items. One row per (ancillary case,
+  // service_type) currently approved with at least one active list
+  // membership.
+  app.get("/api/engagement/repository/work-items", async (req, res) => {
+    if (is404IfFlagOff(res)) return;
+    try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
+      // Read approved ancillary cases with active memberships for the
+      // caller's clinic. Never returns global-registry data or other
+      // clinics' rows.
+      const rows = await db.execute(sql`
+        SELECT
+          ac.id                        AS ancillary_case_id,
+          ac.originating_screening_id  AS patient_screening_id,
+          ac.execution_case_id         AS execution_case_id,
+          ac.service_type              AS service_type,
+          ac.admin_review_status       AS eligibility_status,
+          COUNT(DISTINCT elm.id)       AS active_membership_count,
+          COALESCE(
+            JSON_AGG(DISTINCT elm.engagement_list_id)
+              FILTER (WHERE elm.engagement_list_id IS NOT NULL),
+            '[]'::json
+          )                            AS source_list_ids,
+          pec.assigned_team_member_id  AS assigned_team_member_id,
+          pec.assigned_role            AS assigned_role,
+          pec.engagement_status        AS engagement_status,
+          pec.next_action_at           AS next_action_at
+        FROM patient_ancillary_cases ac
+        LEFT JOIN engagement_list_memberships elm
+          ON elm.ancillary_case_id = ac.id AND elm.status = 'active'
+        LEFT JOIN patient_execution_cases pec
+          ON pec.id = ac.execution_case_id
+        WHERE ac.clinic_id = ${clinicId}
+          AND ac.admin_review_status = 'approved'
+          AND ac.lifecycle_status IN ('new','active','on_hold')
+        GROUP BY ac.id, pec.id
+        HAVING COUNT(DISTINCT elm.id) > 0
+        ORDER BY pec.next_action_at ASC NULLS LAST, ac.id DESC
+        LIMIT 500
+      `);
+      res.json({ workItems: (rows as { rows: unknown[] }).rows ?? [] });
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string };
+      // Migration missing / flag on → controlled 503.
+      if (err.code === "42P01") {
+        return res.status(503).json({
+          error: "Engagement repository unavailable",
+          code: "ENGAGEMENT_MIGRATION_MISSING",
+        });
+      }
+      res.status(500).json({ error: err.message ?? "work-items read failed" });
     }
   });
 }

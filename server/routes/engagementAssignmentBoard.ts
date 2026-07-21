@@ -209,54 +209,44 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
 
         // Phase 2C — Engagement admin-review sync. When the flag is ON,
         // an execution case is eligible for the active queue only when
-        // at least one of its ancillary cases has admin_review_status
-        // = 'approved' AND has an ACTIVE list membership. This is what
-        // makes approved → non-approved visibly remove the service
-        // without deleting the execution case, calls, or assignments.
+        // at least one ancillary case has admin_review_status='approved'
+        // AND (when multi-list flag also ON) has an active membership.
         //
-        // When the flag is OFF, the legacy behavior above is preserved
-        // exactly — every active execution case is included.
-        try {
-          const { featureFlags: ff } = await import("../lib/featureFlags");
-          if (ff.engagementAdminReviewSync && cases.length > 0) {
-            const ancRepo = await import("../repositories/ancillaryCases.repo");
-            const engRepo = await import("../repositories/engagementLists.repo");
-            const eligible: typeof cases = [];
-            for (const c of cases) {
-              // Read the ancillary cases for this execution case.
-              const ac = await ancRepo.listAncillaryCasesForExecutionCase(c.id);
-              const approved = ac.filter((a) => a.adminReviewStatus === "approved");
-              if (approved.length === 0) continue;
-              // At least one approved ancillary case must ALSO have
-              // an active membership OR be in a state that the queue
-              // still surfaces (first-time approval with pending
-              // membership counts as eligible so we don't strand
-              // approvals awaiting a background list write).
-              let hasActiveMembership = false;
-              for (const a of approved) {
-                const memberships = await engRepo.listActiveMembershipsForAncillaryCase(a.id);
-                if (memberships.length > 0) { hasActiveMembership = true; break; }
-              }
-              if (approved.length > 0 && (hasActiveMembership || ff.engagementMultiListRepository === false)) {
-                eligible.push(c);
-              }
-            }
-            cases = eligible;
+        // FAILURE HANDLING (safety-critical): when the sync flag is ON
+        // and the canonical projection fails, DO NOT broaden visibility
+        // by falling back to the legacy unrestricted queue. Return a
+        // controlled 503 so operators see the degradation instead of
+        // approved-eligibility being silently ignored.
+        const { featureFlags: ff } = await import("../lib/featureFlags");
+        if (ff.engagementAdminReviewSync && cases.length > 0) {
+          try {
+            const { projectServiceLevelEligibility } = await import(
+              "../services/engagementLists/queueProjection"
+            );
+            const filtered = await projectServiceLevelEligibility({
+              executionCases: cases,
+              requireActiveMembership: ff.engagementMultiListRepository,
+            });
+            cases = filtered.map((f) => f.executionCase);
+            // Stash eligible services per execution case so downstream
+            // consumers can build service-level rows.
+            (res.locals as { serviceEligibility?: Map<number, string[]> }).serviceEligibility =
+              new Map(filtered.map((f) => [f.executionCase.id, f.eligibleServices]));
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error(JSON.stringify({
+              level: "error",
+              source: "engagement_board",
+              kind: "phase_2c_projection_failed",
+              code: (e as { code?: string })?.code,
+              message: (e as Error)?.message ?? String(e),
+            }));
+            // Controlled 503 — do NOT broaden visibility.
+            return res.status(503).json({
+              error: "Engagement eligibility projection unavailable",
+              code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+            });
           }
-        } catch (e) {
-          // Non-fatal: if the ancillary/engagement tables aren't
-          // present, log + fall back to legacy behavior. The
-          // safeRead helpers in the two repos already re-throw when
-          // migrations are missing while the flag is ON — but the
-          // board must never crash for that reason.
-          // eslint-disable-next-line no-console
-          console.error(JSON.stringify({
-            level: "warn",
-            source: "engagement_board",
-            kind: "phase_2c_projection_failed",
-            code: (e as { code?: string })?.code,
-            message: (e as Error)?.message ?? String(e),
-          }));
         }
 
         if (cases.length === 0) {

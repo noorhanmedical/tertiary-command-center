@@ -238,7 +238,38 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
-      const rows = await listEngagementCenterCases(filters, limit);
+      let rows = await listEngagementCenterCases(filters, limit);
+      // Phase 2C — apply service-level eligibility projection when the
+      // sync flag is ON. Never fall back to unrestricted queue on
+      // failure — return 503.
+      const { featureFlags: ff } = await import("../lib/featureFlags");
+      if (ff.engagementAdminReviewSync && rows.length > 0) {
+        try {
+          const { projectServiceLevelEligibility } = await import(
+            "../services/engagementLists/queueProjection"
+          );
+          const filtered = await projectServiceLevelEligibility({
+            executionCases: rows,
+            requireActiveMembership: ff.engagementMultiListRepository,
+          });
+          rows = filtered.map((f) =>
+            Object.assign(f.executionCase, { eligibleServices: f.eligibleServices }),
+          );
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error(JSON.stringify({
+            level: "error",
+            source: "engagement_center_cases",
+            kind: "phase_2c_projection_failed",
+            code: (e as { code?: string })?.code,
+            message: (e as Error)?.message ?? String(e),
+          }));
+          return res.status(503).json({
+            error: "Engagement eligibility projection unavailable",
+            code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+          });
+        }
+      }
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

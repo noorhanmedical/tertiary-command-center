@@ -385,14 +385,11 @@ async function test14_FlagOffZeroDb() {
 
 // ═════ Section 5 — Engagement eligibility tests (15-30) ═══════════
 
-// (15) Approved service becomes active — reconciler enters activation branch.
+// (15) Approved with NO prior list membership → deferred_no_list.
 async function test15_ApprovedActivates() {
   const t = await loadTables();
   const spec = new Map<unknown, FakeTableSpec>();
-  spec.set(t.memberships, {
-    select: () => [], // no removed memberships to restore
-    update: () => undefined,
-  });
+  spec.set(t.memberships, { select: () => [], update: () => undefined });
   spec.set(t.journeyEvents, { insert: () => [] });
   spec.set(t.engagementFailures, { select: () => [], insert: () => [], update: () => undefined });
   const svc = await import("../../server/services/engagementLists/reconciliation");
@@ -404,7 +401,7 @@ async function test15_ApprovedActivates() {
       changedByUserId: "u", source: "admin_review",
     }),
   );
-  assert.equal(r.status, "activated");
+  assert.equal(r.status, "deferred_no_list", "no prior list → deferred (must NOT claim active visibility)");
 }
 
 // (16-18) Approved → non-approved deactivates.
@@ -453,7 +450,7 @@ async function test19_RestoreOnReApproval() {
       changedByUserId: "u", source: "admin_review",
     }),
   );
-  assert.equal(r.status, "activated");
+  assert.equal(r.status, "restored", "explicit restored outcome distinct from activated");
 }
 
 // (20) One revoked service does not remove another approved service — the
@@ -818,12 +815,11 @@ async function testW4_LegacyReviewBridge() {
     "legacy route must propagate cross-clinic denial");
 }
 
-// (W5) First-approval activation creates memberships.
+// (W5) First-approval activation creates memberships from prior list.
 async function testW5_FirstActivationCreatesMembership() {
   const t = await loadTables();
   const spec = new Map<unknown, FakeTableSpec>();
   const inserted: Record<string, unknown>[] = [];
-  // No memberships exist for this ancillary case — first-time activation.
   spec.set(t.memberships, {
     select: () => [
       { id: 500, engagementListId: 42, ancillaryCaseId: 55, status: "removed", removalReason: null, patientScreeningId: 100, executionCaseId: null, serviceType: "BrainWave" },
@@ -844,7 +840,6 @@ async function testW5_FirstActivationCreatesMembership() {
   );
   assert.equal(r.status, "activated");
   if (r.status === "activated") {
-    assert.ok(r.firstActivation, "must report firstActivation=true when no active membership existed");
     assert.equal(r.membershipsAdded, 1, "first activation adds one membership per prior list");
     assert.equal(inserted.length, 1);
     assert.equal(inserted[0].engagementListId, 42);
@@ -852,15 +847,12 @@ async function testW5_FirstActivationCreatesMembership() {
   }
 }
 
-// (W6) First-approval with NO historical list → durable retry.
+// (W6) First-approval with NO historical list → deferred_no_list + durable retry.
 async function testW6_FirstActivationNoListDurableRetry() {
   const t = await loadTables();
   const spec = new Map<unknown, FakeTableSpec>();
   const failureInserted: Record<string, unknown>[] = [];
-  spec.set(t.memberships, {
-    select: () => [], // no memberships ever
-    update: () => undefined,
-  });
+  spec.set(t.memberships, { select: () => [], update: () => undefined });
   spec.set(t.journeyEvents, { insert: () => [] });
   spec.set(t.engagementFailures, {
     select: () => [],
@@ -876,12 +868,8 @@ async function testW6_FirstActivationNoListDurableRetry() {
       changedByUserId: "u", source: "admin_review",
     }),
   );
-  assert.equal(r.status, "activated");
-  if (r.status === "activated") {
-    assert.ok(r.firstActivation);
-    assert.equal(r.membershipsAdded, 0);
-    assert.equal(r.membershipsRestored, 0);
-  }
+  assert.equal(r.status, "deferred_no_list",
+    "must NOT claim active visibility when there is no list to attach to");
   assert.ok(failureInserted.length >= 1, "durable retry recorded for NO_LIST_ASSIGNMENT");
   assert.equal(failureInserted[0].errorCode, "NO_LIST_ASSIGNMENT");
   assert.equal(failureInserted[0].requestedAction, "activate");
@@ -915,14 +903,17 @@ async function testW8_EngagementCenterWired() {
 // (W9) Engagement Board reader filters by admin_review_status when the sync flag is ON.
 async function testW9_QueueFiltersByReviewStatus() {
   const src = readFileSync(join(REPO_ROOT, "server/routes/engagementAssignmentBoard.ts"), "utf8");
-  assert.ok(/engagementAdminReviewSync/.test(src),
-    "board must check the sync flag");
-  assert.ok(/listAncillaryCasesForExecutionCase/.test(src),
-    "board must load ancillary cases per execution case when flag ON");
-  assert.ok(/adminReviewStatus === "approved"/.test(src),
-    "board must filter to admin_review_status=approved");
-  assert.ok(/listActiveMembershipsForAncillaryCase/.test(src),
-    "board must join active memberships");
+  assert.ok(/engagementAdminReviewSync/.test(src), "board must check the sync flag");
+  assert.ok(/projectServiceLevelEligibility/.test(src),
+    "board must delegate to the shared service-level eligibility projection");
+  // The shared projector actually loads ancillary cases + memberships.
+  const projSrc = readFileSync(
+    join(REPO_ROOT, "server/services/engagementLists/queueProjection.ts"),
+    "utf8",
+  );
+  assert.ok(/listAncillaryCasesForExecutionCase/.test(projSrc));
+  assert.ok(/adminReviewStatus === "approved"/.test(projSrc));
+  assert.ok(/listActiveMembershipsForAncillaryCase/.test(projSrc));
 }
 
 // (W10) Feature-off contract — Repository routes 404, no queries.

@@ -62,16 +62,31 @@ export type ReconcileEngagementResult =
       ancillaryCaseId: number | null;
       membershipsRemoved: number;
     }
+  /** First-time activation — created active memberships. */
   | {
       status: "activated";
       ancillaryCaseId: number | null;
-      /** Memberships that had been previously removed for this exact reason and were restored. */
-      membershipsRestored: number;
-      /** Memberships that did not exist and were freshly added. */
       membershipsAdded: number;
-      /** Distinguishes first-time activation from a restoration. */
-      firstActivation: boolean;
-    };
+    }
+  /** Restored previously-removed-by-us memberships. */
+  | {
+      status: "restored";
+      ancillaryCaseId: number | null;
+      membershipsRestored: number;
+    }
+  /** Already active — nothing to do. Distinct from no_change (which is same-status). */
+  | { status: "already_active"; ancillaryCaseId: number | null }
+  /**
+   * Deferred: approval succeeded conceptually but there is no list to
+   * attach to yet. A durable retry row is recorded. The caller must
+   * NOT report active visibility.
+   */
+  | {
+      status: "deferred_no_list";
+      ancillaryCaseId: number | null;
+    }
+  /** Explicit failure — durable retry row recorded, error rethrown by caller. */
+  | { status: "failed"; ancillaryCaseId: number | null; code: string };
 
 async function appendEngagementJourneyEvent(args: {
   eventType: string;
@@ -169,7 +184,8 @@ export async function reconcileEngagementEligibility(
       return { status: "deactivated", ancillaryCaseId: input.ancillaryCaseId, membershipsRemoved: removed };
     }
 
-    // Non-approved → approved. Three sub-cases:
+    // Non-approved → approved. Five explicit outcomes (activated /
+    // restored / already_active / deferred_no_list / failed).
     //   (a) any active memberships already exist  → no_change effect
     //       (nothing to restore or add). Emit eligibilityRestored so
     //       the audit trail still records the transition.
@@ -184,96 +200,145 @@ export async function reconcileEngagementEligibility(
     //       item root cause: approval must activate even when the
     //       initial membership was never created (write failure) OR
     //       when no removed rows exist to restore.
-    let restored = 0;
-    let added = 0;
-    let firstActivation = false;
-    if (input.ancillaryCaseId != null) {
-      const allForCase = await db
-        .select()
-        .from(engagementListMemberships)
-        .where(eq(engagementListMemberships.ancillaryCaseId, input.ancillaryCaseId));
-      const anyActive = allForCase.some((m) => m.status === "active");
-      const removedForReview = allForCase.filter(
-        (m) =>
-          m.status === "removed" &&
-          m.removalReason === "admin_review_no_longer_approved",
-      );
-      if (!anyActive && removedForReview.length > 0) {
-        // (b) Restore.
-        for (const m of removedForReview) {
-          const [row] = await db
-            .update(engagementListMemberships)
-            .set({ status: "active", removedAt: null, removalReason: null })
-            .where(eq(engagementListMemberships.id, m.id))
-            .returning();
-          if (row) restored++;
-        }
-      } else if (!anyActive) {
-        // (c) First-time activation. If the ancillary case has any
-        // historical membership (removed / withdrawn) we can reuse
-        // its list identity to recreate. Otherwise there is nothing
-        // to activate here — the list writer must create the
-        // membership. We record durable retry work so a background
-        // job can complete this once a list assignment exists.
-        firstActivation = true;
-        const distinctLists = new Set<number>();
-        for (const m of allForCase) distinctLists.add(m.engagementListId);
-        if (distinctLists.size === 0) {
-          // No historical list assignment — record retry so a future
-          // Send-to-Engagement or explicit backfill can wire this up.
-          try {
-            await recordEngagementReconciliationFailure({
-              clinicId: input.clinicId,
-              patientScreeningId: input.patientScreeningId,
-              ancillaryCaseId: input.ancillaryCaseId,
-              serviceType: input.serviceType,
-              requestedAction: "activate",
-              previousAdminReviewStatus: input.previousAdminReviewStatus,
-              newAdminReviewStatus: input.newAdminReviewStatus,
-              sourceSystem: input.source,
-              errorCode: "NO_LIST_ASSIGNMENT",
-            });
-          } catch { /* migration/flag guards */ }
-        } else {
-          // Create one active membership per prior list, preserving
-          // source identity. This is the missing-approved-item fix.
-          for (const listId of distinctLists) {
-            const [row] = await db
-              .insert(engagementListMemberships)
-              .values({
-                engagementListId: listId,
-                ancillaryCaseId: input.ancillaryCaseId,
-                patientScreeningId: input.patientScreeningId,
-                executionCaseId: null,
-                serviceType: input.serviceType,
-                status: "active",
-              })
-              .returning();
-            if (row) added++;
-          }
-        }
+    if (input.ancillaryCaseId == null) {
+      // No ancillary case id → nothing we can attach to. Defer.
+      try {
+        await recordEngagementReconciliationFailure({
+          clinicId: input.clinicId,
+          patientScreeningId: input.patientScreeningId,
+          ancillaryCaseId: null,
+          serviceType: input.serviceType,
+          requestedAction: "activate",
+          previousAdminReviewStatus: input.previousAdminReviewStatus,
+          newAdminReviewStatus: input.newAdminReviewStatus,
+          sourceSystem: input.source,
+          errorCode: "NO_ANCILLARY_CASE_ID",
+        });
+      } catch { /* migration/flag guards */ }
+      await appendEngagementJourneyEvent({
+        eventType: ENGAGEMENT_JOURNEY_EVENT_TYPES.reconciliationFailed,
+        input,
+        metadata: { deferred: true, reason_code: "NO_ANCILLARY_CASE_ID" },
+        summary: `Engagement activation deferred (no ancillary case id)`,
+      });
+      return { status: "deferred_no_list", ancillaryCaseId: null };
+    }
+
+    const allForCase = await db
+      .select()
+      .from(engagementListMemberships)
+      .where(eq(engagementListMemberships.ancillaryCaseId, input.ancillaryCaseId));
+    const anyActive = allForCase.some((m) => m.status === "active");
+
+    if (anyActive) {
+      // Already visibly active — record no state change but still close
+      // any lingering unresolved deactivate retry row.
+      await resolveEngagementReconciliationFailure({
+        ancillaryCaseId: input.ancillaryCaseId,
+        patientScreeningId: input.patientScreeningId ?? undefined,
+        serviceType: input.serviceType,
+        requestedAction: "deactivate",
+      });
+      return { status: "already_active", ancillaryCaseId: input.ancillaryCaseId };
+    }
+
+    const removedForReview = allForCase.filter(
+      (m) =>
+        m.status === "removed" &&
+        m.removalReason === "admin_review_no_longer_approved",
+    );
+
+    if (removedForReview.length > 0) {
+      // Restoration path.
+      let restored = 0;
+      for (const m of removedForReview) {
+        const [row] = await db
+          .update(engagementListMemberships)
+          .set({ status: "active", removedAt: null, removalReason: null })
+          .where(eq(engagementListMemberships.id, m.id))
+          .returning();
+        if (row) restored++;
       }
-      // else (anyActive == true) → already active. Nothing to do.
+      await appendEngagementJourneyEvent({
+        eventType: ENGAGEMENT_JOURNEY_EVENT_TYPES.eligibilityRestored,
+        input,
+        metadata: {
+          memberships_restored: restored,
+          reason_code: "admin_review_re_approved",
+        },
+        summary: `Engagement eligibility restored (${input.serviceType})`,
+      });
+      await resolveEngagementReconciliationFailure({
+        ancillaryCaseId: input.ancillaryCaseId,
+        patientScreeningId: input.patientScreeningId ?? undefined,
+        serviceType: input.serviceType,
+        requestedAction: "deactivate",
+      });
+      return {
+        status: "restored",
+        ancillaryCaseId: input.ancillaryCaseId,
+        membershipsRestored: restored,
+      };
+    }
+
+    // First-time activation via historical list assignments.
+    const distinctLists = new Set<number>();
+    for (const m of allForCase) distinctLists.add(m.engagementListId);
+    if (distinctLists.size === 0) {
+      // No list to attach to. Record durable retry + emit deferred
+      // event. DO NOT claim active visibility.
+      try {
+        await recordEngagementReconciliationFailure({
+          clinicId: input.clinicId,
+          patientScreeningId: input.patientScreeningId,
+          ancillaryCaseId: input.ancillaryCaseId,
+          serviceType: input.serviceType,
+          requestedAction: "activate",
+          previousAdminReviewStatus: input.previousAdminReviewStatus,
+          newAdminReviewStatus: input.newAdminReviewStatus,
+          sourceSystem: input.source,
+          errorCode: "NO_LIST_ASSIGNMENT",
+        });
+      } catch { /* migration/flag guards */ }
+      await appendEngagementJourneyEvent({
+        eventType: ENGAGEMENT_JOURNEY_EVENT_TYPES.reconciliationFailed,
+        input,
+        metadata: {
+          deferred: true,
+          reason_code: "NO_LIST_ASSIGNMENT",
+        },
+        summary: `Engagement activation deferred (no list assignment)`,
+      });
+      return { status: "deferred_no_list", ancillaryCaseId: input.ancillaryCaseId };
+    }
+
+    // Create one active membership per prior list.
+    let added = 0;
+    for (const listId of distinctLists) {
+      const [row] = await db
+        .insert(engagementListMemberships)
+        .values({
+          engagementListId: listId,
+          ancillaryCaseId: input.ancillaryCaseId,
+          patientScreeningId: input.patientScreeningId,
+          executionCaseId: null,
+          serviceType: input.serviceType,
+          status: "active",
+        })
+        .returning();
+      if (row) added++;
     }
     await appendEngagementJourneyEvent({
-      eventType:
-        added > 0
-          ? ENGAGEMENT_JOURNEY_EVENT_TYPES.eligibilityAdded
-          : ENGAGEMENT_JOURNEY_EVENT_TYPES.eligibilityRestored,
+      eventType: ENGAGEMENT_JOURNEY_EVENT_TYPES.eligibilityAdded,
       input,
       metadata: {
-        memberships_restored: restored,
         memberships_added: added,
-        first_activation: firstActivation,
-        reason_code: added > 0 ? "admin_review_first_approved" : "admin_review_re_approved",
+        reason_code: "admin_review_first_approved",
       },
-      summary:
-        added > 0
-          ? `Engagement eligibility added (${input.serviceType})`
-          : `Engagement eligibility restored (${input.serviceType})`,
+      summary: `Engagement eligibility added (${input.serviceType})`,
     });
     await resolveEngagementReconciliationFailure({
-      ancillaryCaseId: input.ancillaryCaseId ?? undefined,
+      ancillaryCaseId: input.ancillaryCaseId,
       patientScreeningId: input.patientScreeningId ?? undefined,
       serviceType: input.serviceType,
       requestedAction: "deactivate",
@@ -281,9 +346,7 @@ export async function reconcileEngagementEligibility(
     return {
       status: "activated",
       ancillaryCaseId: input.ancillaryCaseId,
-      membershipsRestored: restored,
       membershipsAdded: added,
-      firstActivation,
     };
   } catch (e) {
     // Record a durable retry row + emit failure audit. Do not swallow.

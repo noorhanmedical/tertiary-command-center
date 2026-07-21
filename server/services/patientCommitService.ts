@@ -114,6 +114,67 @@ export async function commitPatient(
   try {
     const { executionCase, created } = await createOrUpdateExecutionCaseFromScreening(updated, userId);
 
+    // Phase 2C — Send-to-Engagement writer integration.
+    //
+    // When FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY is ON, every real
+    // commit that lands a screening into the engagement queue creates
+    // (or reuses idempotently) an engagement_lists row and one
+    // membership per approved ancillary service. The idempotency key
+    // is derived from the CURRENT COMMIT — screening.committedAt +
+    // batchId — so a genuine Draft-reset + re-analysis + re-commit
+    // creates an INDEPENDENT SEND. Flag OFF → complete no-op.
+    try {
+      const { featureFlags: ff } = await import("../lib/featureFlags");
+      if (ff.engagementMultiListRepository) {
+        const { sendToEngagement } = await import(
+          "./engagementLists/sendToEngagement"
+        );
+        const { listAncillaryCasesForExecutionCase } = await import(
+          "../repositories/ancillaryCases.repo"
+        );
+        const ac = await listAncillaryCasesForExecutionCase(executionCase.id);
+        const approvedItems = ac
+          .filter((a) => a.adminReviewStatus === "approved")
+          .map((a) => ({
+            ancillaryCaseId: a.id,
+            patientScreeningId: updated.id,
+            executionCaseId: executionCase.id,
+            serviceType: a.serviceType,
+          }));
+        if (approvedItems.length > 0 && updated.clinicId != null && updated.batchId != null) {
+          const committedAt = updated.committedAt ?? new Date();
+          await sendToEngagement({
+            clinicId: updated.clinicId,
+            sourceType: "batch",
+            sourceId: String(updated.batchId),
+            // Idempotency key ties this SEND to this commit moment.
+            // A fresh commit (post-reset re-analysis) has a distinct
+            // committedAt → produces an independent send row.
+            sendIdempotencyKey: String(committedAt.getTime()),
+            label: updated.facility
+              ? `${updated.facility} — ${committedAt.toISOString().slice(0, 10)}`
+              : `Batch ${updated.batchId} — ${committedAt.toISOString().slice(0, 10)}`,
+            facility: updated.facility ?? null,
+            serviceDate: null,
+            actor: { userId },
+            items: approvedItems,
+            sentAt: committedAt,
+          });
+        }
+      }
+    } catch (sendErr) {
+      // Never break the commit on a send failure — the writer already
+      // records a durable retry row for the individual membership.
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        level: "warn",
+        source: "patient_commit_service",
+        kind: "send_to_engagement_failed",
+        code: (sendErr as { code?: string })?.code,
+        message: (sendErr as Error)?.message ?? String(sendErr),
+      }));
+    }
+
     // Auto-pick a scheduler for the freshly committed case so it shows up in
     // the right scheduler's queue without a manual reconcile. This is awaited
     // (not fire-and-forget) so the caller can truthfully report whether the

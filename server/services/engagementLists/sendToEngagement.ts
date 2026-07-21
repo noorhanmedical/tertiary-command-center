@@ -53,6 +53,13 @@ export type SendToEngagementInput = {
   sourceType: string;
   /** Immutable source-domain id (batch id, import session id, etc.). */
   sourceId: string;
+  /**
+   * Explicit idempotency key. When omitted → default bucket (repeat
+   * sends are collapsed). Distinct values → independent immutable sends.
+   * Callers that legitimately re-send the same source (e.g. after a
+   * Draft reset + re-analysis) MUST provide a distinct key.
+   */
+  sendIdempotencyKey?: string;
   /** Human-friendly professional list label — never "Run 1"/"Analysis Run". */
   label: string;
   facility?: string | null;
@@ -132,20 +139,21 @@ export async function sendToEngagement(
 
   const sentAt = input.sentAt ?? new Date();
 
-  // (2) Upsert list — the repo enforces (clinicId, sourceType, sourceId).
-  const list = await upsertEngagementList({
+  // (2) Upsert list — identity now includes sendIdempotencyKey so
+  // independent re-sends of the same source create distinct rows.
+  const { list, isNew: isNewList } = await upsertEngagementList({
     clinicId: input.clinicId,
     sourceType: input.sourceType,
     sourceId: input.sourceId,
+    sendIdempotencyKey: input.sendIdempotencyKey ?? "",
     label: input.label,
     facility: input.facility ?? null,
     serviceDate: input.serviceDate ?? null,
     createdByUserId: input.actor.userId,
   });
 
-  // (3) sentToEngagementAt — set exactly once (first-time creation).
-  // The repo doesn't overwrite this on repeat send.
-  const isNewList = list.sentToEngagementAt.getTime() >= sentAt.getTime() - 5000;
+  // (3) sentToEngagementAt — set at INSERT only (default CURRENT_TIMESTAMP).
+  // Repeat idempotent calls never overwrite the immutable send time.
   if (isNewList) {
     await appendListJourneyEvent({
       eventType: ENGAGEMENT_JOURNEY_EVENT_TYPES.listCreated,

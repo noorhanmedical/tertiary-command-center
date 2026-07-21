@@ -29,6 +29,7 @@ import {
   ENGAGEMENT_TAB_REPOSITORY,
   type EngagementTab,
 } from "@/lib/engagementRepositoryTab";
+import { EngagementRepository } from "@/components/engagement/EngagementRepository";
 import { Search, Shuffle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -120,11 +121,16 @@ export default function EngagementCenterPage() {
   // by the resolver while the flag is OFF.
   const multiListFlagOn = (() => {
     try {
-      // Vite exposes flags via import.meta.env; client-side flag is
-      // separate from the server flag (both default OFF). In this
-      // build the client reads the env var name for symmetry.
       return (import.meta as { env?: Record<string, string | undefined> })?.env
         ?.VITE_FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY === "true";
+    } catch {
+      return false;
+    }
+  })();
+  const recentListsFlagOn = (() => {
+    try {
+      return (import.meta as { env?: Record<string, string | undefined> })?.env
+        ?.VITE_FEATURE_ENGAGEMENT_RECENT_LISTS === "true";
     } catch {
       return false;
     }
@@ -349,6 +355,20 @@ export default function EngagementCenterPage() {
             className="ml-auto inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-800 dark:bg-slate-800"
             data-testid="engagement-view-switcher"
           >
+            {multiListFlagOn ? (
+              <button
+                type="button"
+                onClick={() => setView("repository")}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  view === "repository"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                }`}
+                data-testid="button-view-repository"
+              >
+                Repository
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setView("pool")}
@@ -473,7 +493,16 @@ export default function EngagementCenterPage() {
         ) : null}
       </header>
 
-      {view === "callSettings" ? (
+      {view === "repository" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-6xl">
+            <EngagementRepository
+              multiListFlagOn={multiListFlagOn}
+              recentListsFlagOn={recentListsFlagOn}
+            />
+          </div>
+        </main>
+      ) : view === "callSettings" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <EngagementCallSettings />

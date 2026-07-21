@@ -80,6 +80,13 @@ export type UpsertEngagementListInput = {
   clinicId: number;
   sourceType: string;
   sourceId: string;
+  /**
+   * Optional. When omitted, defaults to "" (the "default bucket") —
+   * repeat calls without an explicit key collapse into a single list.
+   * Pass a distinct value (e.g. UUID, timestamp, run id) to create an
+   * independent send for the same source.
+   */
+  sendIdempotencyKey?: string;
   label: string;
   facility?: string | null;
   serviceDate?: string | null;
@@ -87,17 +94,23 @@ export type UpsertEngagementListInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type UpsertEngagementListResult = {
+  list: EngagementList;
+  /** True when this call INSERTed a new row; false when the existing row was returned. */
+  isNew: boolean;
+};
+
 /**
- * Insert-or-fetch: the identity is (clinicId, sourceType, sourceId).
- * The migration's unique index makes the write idempotent. Returns
- * the existing row on conflict instead of a duplicate. Never
- * overwrites the existing label / metadata (Repository ordering
- * depends on the immutable sentToEngagementAt).
+ * Insert-or-fetch: identity is (clinicId, sourceType, sourceId,
+ * sendIdempotencyKey). Two calls with matching identity return the
+ * same row; distinct idempotency keys create independent sends.
+ * Never overwrites label / metadata / sentToEngagementAt on repeat.
  */
 export async function upsertEngagementList(
   input: UpsertEngagementListInput,
-): Promise<EngagementList> {
+): Promise<UpsertEngagementListResult> {
   guardMultiListWrite();
+  const key = input.sendIdempotencyKey ?? "";
   const existing = await db
     .select()
     .from(engagementLists)
@@ -106,16 +119,18 @@ export async function upsertEngagementList(
         eq(engagementLists.clinicId, input.clinicId),
         eq(engagementLists.sourceType, input.sourceType),
         eq(engagementLists.sourceId, input.sourceId),
+        eq(engagementLists.sendIdempotencyKey, key),
       ),
     )
     .limit(1);
-  if (existing[0]) return existing[0];
+  if (existing[0]) return { list: existing[0], isNew: false };
   const [row] = await db
     .insert(engagementLists)
     .values({
       clinicId: input.clinicId,
       sourceType: input.sourceType,
       sourceId: input.sourceId,
+      sendIdempotencyKey: key,
       label: input.label,
       facility: input.facility ?? null,
       serviceDate: input.serviceDate ?? null,
@@ -123,7 +138,7 @@ export async function upsertEngagementList(
       metadata: (input.metadata ?? {}) as unknown as never,
     })
     .returning();
-  return row;
+  return { list: row, isNew: true };
 }
 
 /** Repository listing: Most-Recently-Sent first, then id DESC as tiebreaker. */
