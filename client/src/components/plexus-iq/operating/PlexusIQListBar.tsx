@@ -58,17 +58,17 @@ export function PlexusIQListBar({
   onSortModeChange,
 }: PlexusIQListBarProps) {
   const iconBtn =
-    "inline-flex items-center justify-center h-8 w-8 rounded-full bg-white text-slate-900 shadow-sm transition-colors hover:bg-slate-200 disabled:bg-white/30 disabled:text-slate-500 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center h-8 w-8 rounded-md border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed";
 
   return (
     <div
-      className="flex min-h-[3.5rem] items-center px-3 border-b border-white/10 bg-black"
+      className="flex min-h-[3.5rem] items-center px-3 border-b border-slate-200 bg-slate-50"
       data-testid="plexus-iq-list-bar"
     >
       <div className="flex flex-1 items-center">
         {sortMode && onSortModeChange && patientCount > 0 && (
           <div
-            className="inline-flex items-center rounded-full bg-white/10 p-0.5"
+            className="inline-flex items-center rounded-md border border-slate-200 bg-white p-0.5"
             role="group"
             aria-label="Sort patient list"
             data-testid="toggle-list-sort"
@@ -78,10 +78,10 @@ export function PlexusIQListBar({
               onClick={() => onSortModeChange("time")}
               aria-pressed={sortMode === "time"}
               title="Sort by appointment time"
-              className={`inline-flex items-center gap-1 h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+              className={`inline-flex items-center gap-1 h-7 rounded px-2.5 text-[11px] font-semibold transition-colors ${
                 sortMode === "time"
-                  ? "bg-white text-slate-900 shadow-sm"
-                  : "text-white/70 hover:text-white"
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
               }`}
               data-testid="button-list-sort-time"
             >
@@ -93,10 +93,10 @@ export function PlexusIQListBar({
               onClick={() => onSortModeChange("name")}
               aria-pressed={sortMode === "name"}
               title="Sort by name (A–Z)"
-              className={`inline-flex items-center gap-1 h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+              className={`inline-flex items-center gap-1 h-7 rounded px-2.5 text-[11px] font-semibold transition-colors ${
                 sortMode === "name"
-                  ? "bg-white text-slate-900 shadow-sm"
-                  : "text-white/70 hover:text-white"
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
               }`}
               data-testid="button-list-sort-name"
             >
@@ -107,7 +107,7 @@ export function PlexusIQListBar({
         )}
       </div>
       <div
-        className="shrink-0 text-sm font-semibold tracking-widest text-white uppercase"
+        className="shrink-0 text-xs font-semibold tracking-[0.14em] text-slate-500 uppercase"
         data-testid="text-list-bar-title"
       >
         Patient List
@@ -119,7 +119,7 @@ export function PlexusIQListBar({
         {(pendingCount > 0 || isGenerating) && (
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 h-8 rounded-full bg-white px-3 text-xs font-semibold text-slate-900 shadow-sm transition-colors hover:bg-slate-200 disabled:bg-white/30 disabled:text-slate-500 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1.5 h-8 rounded-md bg-plexus-navy-800 px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-plexus-navy-700 disabled:opacity-40 disabled:cursor-not-allowed"
             disabled={!canAct || isGenerating || pendingCount === 0}
             onClick={onGenerate}
             aria-label={

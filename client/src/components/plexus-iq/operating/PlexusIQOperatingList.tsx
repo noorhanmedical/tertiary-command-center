@@ -630,7 +630,7 @@ export function PlexusIQOperatingList({
             <Button
               size="sm"
               onClick={onAddPatient}
-              className="h-9 gap-1.5 rounded-xl"
+              className="h-9 gap-1.5 rounded-md"
               data-testid="button-plexus-iq-add-patient"
             >
               <Plus className="w-4 h-4" />
@@ -652,7 +652,7 @@ export function PlexusIQOperatingList({
         </div>
       </div>
 
-      <div className="grid grid-cols-[240px_minmax(0,1fr)] rounded-2xl border border-slate-200 overflow-hidden bg-white h-[calc(100vh-220px)] min-h-[480px]">
+      <div className="grid grid-cols-[240px_minmax(0,1fr)] rounded-md border border-slate-200 overflow-hidden bg-white h-[calc(100vh-220px)] min-h-[480px]">
         {/* Left: Date panel */}
         <PlexusIQDatePanel
           groups={dateGroups}
@@ -698,7 +698,7 @@ export function PlexusIQOperatingList({
             ) : (
               <>
                 <div
-                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-sky-300/60 rounded-xl bg-sky-200/60 backdrop-blur-md shadow-sm text-[10px] font-bold uppercase tracking-wider text-sky-900`}
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-md bg-slate-50/95 backdrop-blur-md text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
                   data-testid="plexus-iq-operating-header"
                 >
                   {/* Checkbox column (no label) */}

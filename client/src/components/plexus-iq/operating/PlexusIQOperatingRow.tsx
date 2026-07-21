@@ -78,7 +78,7 @@ export function PlexusIQOperatingRow({
 
   return (
     <div
-      className={`grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white hover:bg-slate-50/60 transition-colors`}
+      className={`grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-md bg-white hover:bg-slate-50 transition-colors`}
       data-testid={`plexus-iq-operating-row-${patient.id}`}
       data-row-type="plexus-iq-operating-row"
     >

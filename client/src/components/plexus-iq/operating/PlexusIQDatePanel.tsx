@@ -94,7 +94,7 @@ function BatchRows({
               type="button"
               onClick={() => onSelectBatch(b.batchId)}
               className={`min-w-0 flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
-                active ? "bg-sky-50 ring-1 ring-sky-200" : "hover:bg-sky-50/60"
+                active ? "bg-slate-100 ring-1 ring-slate-300" : "hover:bg-slate-50"
               }`}
               data-testid={`button-batch-node-${b.batchId}`}
               aria-current={active ? "true" : undefined}
@@ -125,7 +125,7 @@ function BatchRows({
                 onClick={() => onChangeDate(b.batchId)}
                 title="Change date"
                 aria-label="Change date"
-                className={`shrink-0 p-1 rounded-md text-slate-400 hover:text-sky-700 hover:bg-sky-100 transition-all ${
+                className={`shrink-0 p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-all ${
                   active
                     ? "opacity-100"
                     : "opacity-0 group-hover/batchrow:opacity-100 focus-visible:opacity-100"
@@ -225,14 +225,14 @@ function ListView({
               type="button"
               onClick={() => onToggleDate(group.key)}
               className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-                selected ? "bg-black shadow-sm" : "hover:bg-sky-50"
+                selected ? "bg-plexus-navy-800 shadow-sm" : "hover:bg-slate-100"
               }`}
               data-testid={`button-date-group-${group.key}`}
             >
               {expanded ? (
-                <ChevronDown className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-white/70" : "text-slate-400"}`} />
               ) : (
-                <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
+                <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-white/70" : "text-slate-400"}`} />
               )}
               <span
                 className={`text-sm font-medium truncate flex-1 ${
@@ -379,9 +379,9 @@ function CalendarView({
                   setExpandedDay((cur) => (cur === iso ? null : iso));
                 }}
                 className={`relative flex flex-col items-center justify-center rounded py-0.5 my-0.5 text-[11px] font-medium transition-colors
-                  ${!hasBatches ? "text-slate-300 cursor-default" : isSelected ? "text-white cursor-pointer" : "text-slate-700 hover:bg-sky-50 cursor-pointer"}
-                  ${isSelected ? "bg-black shadow-sm" : ""}
-                  ${isToday && !isSelected ? "ring-1 ring-sky-400 rounded" : ""}
+                  ${!hasBatches ? "text-slate-300 cursor-default" : isSelected ? "text-white cursor-pointer" : "text-slate-700 hover:bg-slate-100 cursor-pointer"}
+                  ${isSelected ? "bg-plexus-navy-800 shadow-sm" : ""}
+                  ${isToday && !isSelected ? "ring-1 ring-plexus-navy-800 rounded" : ""}
                 `}
                 data-testid={`button-cal-day-${iso}`}
               >
@@ -389,7 +389,7 @@ function CalendarView({
                 {hasBatches && (
                   <span
                     className={`absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full ${
-                      isSelected ? "bg-white" : "bg-sky-500"
+                      isSelected ? "bg-white" : "bg-plexus-navy-800"
                     }`}
                   />
                 )}
@@ -474,14 +474,14 @@ function MostRecentView({
           type="button"
           onClick={() => onToggleDate(mostRecent.key)}
           className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-            selected ? "bg-black shadow-sm" : "hover:bg-sky-50"
+            selected ? "bg-plexus-navy-800 shadow-sm" : "hover:bg-slate-100"
           }`}
           data-testid={`button-date-group-${mostRecent.key}`}
         >
           {expanded ? (
-            <ChevronDown className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
+            <ChevronDown className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-white/70" : "text-slate-400"}`} />
           ) : (
-            <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
+            <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-white/70" : "text-slate-400"}`} />
           )}
           <span
             className={`text-sm font-medium truncate flex-1 ${
@@ -575,8 +575,8 @@ export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
             onClick={() => setViewMode(mode)}
             className={`flex items-center justify-center w-7 h-7 rounded-md transition-colors ${
               viewMode === mode
-                ? "bg-sky-200/60 ring-1 ring-sky-300/60 text-sky-900 shadow-sm"
-                : "text-sky-600 hover:text-sky-800 hover:bg-sky-50"
+                ? "bg-white ring-1 ring-slate-300 text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"
             }`}
             data-testid={testId}
             aria-pressed={viewMode === mode}

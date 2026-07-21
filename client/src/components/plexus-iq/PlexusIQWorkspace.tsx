@@ -919,7 +919,7 @@ export function PlexusIQWorkspace({
   if (grouped.length === 0) {
     return (
       <div className="w-full px-4 sm:px-6 lg:px-8 py-12">
-        <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <div className="mx-auto max-w-md rounded-md border border-slate-200 bg-white p-8 text-center shadow-sm">
           <div className="text-sm font-semibold text-slate-900">No patients yet</div>
           <p className="mt-2 text-xs text-slate-500">
             Use <span className="font-medium">Add Patient</span> or{" "}
@@ -996,7 +996,7 @@ export function PlexusIQWorkspace({
           </button>
         </div>
         <div
-          className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
+          className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3"
           data-testid="plexus-iq-facility-tile-grid"
           data-tile-grid-legacy="plexus-iq-clinic-tiles"
         >
@@ -1009,14 +1009,14 @@ export function PlexusIQWorkspace({
                 // Completed is the default Plexus IQ facility bucket.
                 setClinicStatusFilter("completed");
               }}
-              className="group flex flex-col overflow-hidden rounded-2xl bg-white text-left shadow-[0_2px_8px_rgba(15,23,42,0.06)] hover:shadow-[0_6px_20px_rgba(15,23,42,0.10)] transition-shadow"
+              className="group flex flex-col overflow-hidden rounded-md border border-slate-200 bg-white text-left shadow-sm hover:border-slate-300 hover:shadow-md transition-all"
               data-testid="plexus-iq-facility-tile"
               data-facility={c.facility}
               data-legacy-testid={`plexus-iq-clinic-tile-${c.facility}`}
             >
               {/* Black header strip — clinic name only, no counts. */}
-              <div className="bg-slate-900 group-hover:bg-slate-800 transition-colors px-4 py-3">
-                <div className="text-sm font-semibold tracking-tight text-white truncate">
+              <div className="border-b border-slate-200 bg-slate-50 group-hover:bg-slate-100 transition-colors px-4 py-2.5">
+                <div className="text-[13px] font-semibold tracking-tight text-slate-900 truncate">
                   {c.facility}
                 </div>
               </div>
@@ -1050,7 +1050,7 @@ export function PlexusIQWorkspace({
               </div>
 
               {/* Footer: total patients. */}
-              <div className="border-t border-slate-100 px-4 py-2 flex items-center justify-between text-[11px] text-slate-500">
+              <div className="border-t border-slate-200 bg-slate-50/60 px-4 py-2 flex items-center justify-between text-[11px] text-slate-500">
                 <span>Total patients</span>
                 <span className="font-semibold text-slate-900">{c.totalCount}</span>
               </div>
@@ -1130,7 +1130,7 @@ export function PlexusIQWorkspace({
 
         <TabsContent value="needs" className="mt-3" data-testid="plexus-iq-tab-content-needs">
           {needsGroups.length === 0 ? (
-            <div className="rounded-2xl bg-white p-6 text-center text-xs text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+            <div className="rounded-md border border-slate-200 bg-white p-6 text-center text-xs text-slate-500">
               <CheckCircle2 className="mx-auto mb-2 h-5 w-5 text-emerald-600" />
               All visible patients are finalized. Use Finalized, Scheduled,
               or All Patients to review completed work.
@@ -1168,7 +1168,7 @@ export function PlexusIQWorkspace({
 
         <TabsContent value="finalized" className="mt-3" data-testid="plexus-iq-tab-content-finalized">
           {finalizedGroups.length === 0 ? (
-            <div className="rounded-2xl bg-white p-6 text-center text-xs text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+            <div className="rounded-md border border-slate-200 bg-white p-6 text-center text-xs text-slate-500">
               No finalized patients yet. Run Generate on a batch to populate.
             </div>
           ) : (
@@ -1204,7 +1204,7 @@ export function PlexusIQWorkspace({
 
         <TabsContent value="scheduled" className="mt-3" data-testid="plexus-iq-tab-content-scheduled">
           {scheduledGroups.length === 0 ? (
-            <div className="rounded-2xl bg-white p-6 text-center text-xs text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+            <div className="rounded-md border border-slate-200 bg-white p-6 text-center text-xs text-slate-500">
               No scheduled facility/date groups yet. The right-panel calendar
               still shows available dates.
             </div>
@@ -1257,12 +1257,12 @@ export function PlexusIQWorkspace({
               <AccordionItem
                 key={facility}
                 value={facility}
-                className="rounded-2xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden border-0"
+                className="rounded-md border border-slate-200 bg-white shadow-sm overflow-hidden"
                 data-testid={`plexus-iq-facility-${facility}`}
               >
-                <div className="relative bg-slate-900 hover:bg-slate-800 transition-colors">
-                  <AccordionTrigger className="w-full hover:no-underline px-5 py-3 pr-24 text-white text-left [&>svg]:text-white/70 [&>svg]:hover:text-white">
-                    <span className="text-sm font-semibold tracking-tight text-white truncate">
+                <div className="relative border-b border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors">
+                  <AccordionTrigger className="w-full hover:no-underline px-5 py-3 pr-24 text-slate-900 text-left [&>svg]:text-slate-400 [&>svg]:hover:text-slate-600">
+                    <span className="text-sm font-semibold tracking-tight text-slate-900 truncate">
                       {facility}
                     </span>
                   </AccordionTrigger>
@@ -1274,7 +1274,7 @@ export function PlexusIQWorkspace({
                     }}
                     aria-label={`Delete all patients in ${facility}`}
                     title={`Delete all patients in ${facility}`}
-                    className="absolute right-12 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-8 w-8 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors z-10"
+                    className="absolute right-12 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors z-10"
                     data-testid={`button-plexus-iq-delete-facility-${facility}`}
                   >
                     <Trash2 className="w-4 h-4" />
@@ -1295,7 +1295,7 @@ export function PlexusIQWorkspace({
                         <AccordionItem
                           key={row.id}
                           value={`${row.id}`}
-                          className="rounded-xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden border-0"
+                          className="rounded-md border border-slate-200 bg-white overflow-hidden"
                           data-testid={`plexus-iq-date-${row.id}`}
                         >
                           <div className="relative hover:bg-slate-50 transition-colors">
