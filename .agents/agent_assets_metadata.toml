@@ -1,5 +1,10 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "J4J84RZox6MSI2IHh3k-Q"
+uri = "file://artifacts/mockup-sandbox/public/images/winter-mountains.png"
+type = "image"
+title = "Winter mountain wallpaper"
 
 [[outputs]]
 id = "7a8FL86w8z1EI0GUgg5Q5"
