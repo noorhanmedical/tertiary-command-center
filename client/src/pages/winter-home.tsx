@@ -921,8 +921,19 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           [data-winter-window] .bg-slate-100 {
             background-color: transparent;
           }
-          [data-winter-window] .bg-white {
-            background-color: rgba(255, 255, 255, 0.2);
+          [data-winter-window] [class*="bg-gradient"] {
+            background-image: none;
+          }
+          [data-winter-window] .bg-white,
+          [data-winter-window] .bg-card {
+            background-color: rgba(255, 255, 255, 0.25);
+          }
+          [data-winter-window] tr.bg-white,
+          [data-winter-window] li.bg-white,
+          [data-winter-window] [role="row"],
+          [data-winter-window] [data-row-type],
+          [data-winter-window] tbody tr {
+            background-color: rgba(255, 255, 255, 0.3);
           }
           [data-winter-window] .rounded-3xl { border-radius: 0.625rem; }
           [data-winter-window] .rounded-2xl { border-radius: 0.5rem; }

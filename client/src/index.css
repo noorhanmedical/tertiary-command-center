@@ -641,8 +641,19 @@ html.winter-embed .bg-slate-50,
 html.winter-embed .bg-slate-100 {
   background-color: transparent;
 }
-html.winter-embed .bg-white {
-  background-color: rgba(255, 255, 255, 0.2);
+html.winter-embed [class*="bg-gradient"] {
+  background-image: none;
+}
+html.winter-embed .bg-white,
+html.winter-embed .bg-card {
+  background-color: rgba(255, 255, 255, 0.25);
+}
+html.winter-embed tr.bg-white,
+html.winter-embed li.bg-white,
+html.winter-embed [role="row"],
+html.winter-embed [data-row-type],
+html.winter-embed tbody tr {
+  background-color: rgba(255, 255, 255, 0.3);
 }
 html.winter-embed .rounded-3xl { border-radius: 0.625rem; }
 html.winter-embed .rounded-2xl { border-radius: 0.5rem; }
