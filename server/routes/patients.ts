@@ -1052,11 +1052,15 @@ export function registerPatientRoutes(
       // list. Already-committed patients are unchanged (no downgrade).
       let finalPatient = updated;
       let schedulerName: string | null = null;
+      // Phase 2C — capture the commit result so we can propagate
+      // engagementSend to the caller via the shared response mapper.
+      let commitResultData: Awaited<ReturnType<typeof commitPatient>> extends { ok: true; data: infer D } ? D : never | null = null as never;
       try {
         const result = await commitPatient(id, req.session.userId ?? null, { auto: true });
         if (result.ok) {
           finalPatient = result.data.patient;
           schedulerName = result.data.schedulerName;
+          commitResultData = result.data as never;
         }
       } catch (commitErr) {
         console.error("Auto-commit after analyze failed:", commitErr);
@@ -1075,7 +1079,21 @@ export function registerPatientRoutes(
           .catch((err) => console.warn("[patients] assignNewlyEligiblePatient failed:", err?.message));
       }
 
-      res.json({ ...finalPatient, autoCommittedSchedulerName: schedulerName });
+      // Phase 2C — if the commit successfully returned commitResultData
+      // AND its engagementSend is deferred or failed, route through the
+      // shared response mapper (200/202/503). Otherwise preserve the
+      // existing analyze payload shape exactly.
+      const analyzeExtra = { ...(finalPatient as object), autoCommittedSchedulerName: schedulerName };
+      if (commitResultData) {
+        const sendStatus = (commitResultData as { engagementSend?: { status?: string } }).engagementSend?.status;
+        if (sendStatus === "deferred" || sendStatus === "failed") {
+          const { respondWithCommitOutcome } = await import(
+            "./helpers/respondWithCommitOutcome"
+          );
+          return respondWithCommitOutcome(res, commitResultData as never, { extra: analyzeExtra });
+        }
+      }
+      res.json(analyzeExtra);
     } catch (error: any) {
       console.error("Per-patient analysis error:", error);
       res.status(500).json({ error: error.message || "Analysis failed" });
@@ -1120,29 +1138,18 @@ export function registerPatientRoutes(
         console.warn("[patients] manual commit live assignment hook failed:", assignErr);
       }
 
-      // Phase 2C — surface the engagementSend status as an explicit
-      // HTTP status. 200 sent/idempotent, 202 deferred, 503 failed.
-      const sendStatus = result.data.engagementSend?.status;
-      if (sendStatus === "failed") {
-        return res.status(503).json({
-          patient: result.data.patient,
+      // Phase 2C — shared commit-outcome response mapper. Translates
+      // engagementSend.status into HTTP 200 / 202 / 503 uniformly with
+      // every other route that calls commitPatient(). Preserves the
+      // existing patient payload shape via `extra`.
+      const { respondWithCommitOutcome } = await import(
+        "./helpers/respondWithCommitOutcome"
+      );
+      return respondWithCommitOutcome(res, result.data, {
+        extra: {
+          ...result.data.patient,
           schedulerName: result.data.schedulerName,
-          engagementSend: result.data.engagementSend,
-          error: "Engagement send failed — durable retry queued",
-          code: "ENGAGEMENT_SEND_FAILED",
-        });
-      }
-      if (sendStatus === "deferred") {
-        return res.status(202).json({
-          patient: result.data.patient,
-          schedulerName: result.data.schedulerName,
-          engagementSend: result.data.engagementSend,
-        });
-      }
-      res.json({
-        ...result.data.patient,
-        schedulerName: result.data.schedulerName,
-        engagementSend: result.data.engagementSend,
+        },
       });
     } catch (error: any) {
       console.error("Patient commit error:", error);

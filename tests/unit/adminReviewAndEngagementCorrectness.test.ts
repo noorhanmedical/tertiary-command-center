@@ -259,14 +259,23 @@ async function testCommitReturnsEngagementSend() {
 
 // ═════ (6) POST /api/patients/:id/commit returns 202/503/200 ══════
 async function testCommitRouteHttpStatuses() {
+  // With the shared mapper, the commit route no longer inlines the
+  // 503/202/200 branches. Assert the mapper is invoked; the mapper's
+  // own unit tests (adminReviewAndEngagementResponseMapping.test.ts)
+  // prove the branch behavior.
   const src = readFileSync(join(REPO_ROOT, "server/routes/patients.ts"), "utf8");
   const idx = src.indexOf('"/api/patients/:id/commit"');
   const window = src.slice(idx, idx + 3000);
-  assert.ok(/sendStatus === "failed"/.test(window));
-  assert.ok(/status\(503\)/.test(window));
-  assert.ok(/ENGAGEMENT_SEND_FAILED/.test(window));
-  assert.ok(/sendStatus === "deferred"/.test(window));
-  assert.ok(/status\(202\)/.test(window));
+  assert.ok(/respondWithCommitOutcome\(res, result\.data,/.test(window),
+    "commit route delegates to the shared response mapper");
+  // The mapper's contract:
+  const mapperSrc = readFileSync(
+    join(REPO_ROOT, "server/routes/helpers/respondWithCommitOutcome.ts"),
+    "utf8",
+  );
+  assert.ok(/status\(503\)/.test(mapperSrc));
+  assert.ok(/ENGAGEMENT_SEND_FAILED/.test(mapperSrc));
+  assert.ok(/status\(202\)/.test(mapperSrc));
 }
 
 // ═════ (7) Real-send call-path inventory + architecture test ═════
@@ -376,11 +385,16 @@ async function testBoardBrainWaveApprovedUltrasoundRejected() {
 
 // ═════ (10-11) PCS call-list applies projection + 503 fail-safe ══
 async function testPcsCallListApplication() {
+  // The PCS call-list projection is applied inside the deps closure
+  // AND the 503 fail-safe is in the OUTER catch of the same handler.
+  // Assert both are present in the file — the handler contract is
+  // covered end-to-end.
   const src = readFileSync(join(REPO_ROOT, "server/routes/executionCases.ts"), "utf8");
   const idx = src.indexOf('"/api/engagement-center/call-list"');
-  // Grab a large window covering both the deps closure and the outer
-  // catch that translates ENGAGEMENT_MIGRATION_MISSING to 503.
-  const window = src.slice(idx, idx + 4500);
+  assert.ok(idx > 0, "PCS call-list handler must exist");
+  // Find the outer catch block that translates ENGAGEMENT_MIGRATION_MISSING
+  // → 503. It appears after the deps closure ends.
+  const window = src.slice(idx, idx + 8000);
   assert.ok(/projectServiceLevelEligibility/.test(window),
     "PCS call-list must apply the service-level projection");
   assert.ok(/engagementAdminReviewSync/.test(window),
@@ -450,11 +464,15 @@ async function testCanonicalUiManifestResolved() {
 // chain which isn't easily mockable end-to-end. Structural evidence
 // suffices per project convention.
 async function testHttpBranchContracts() {
-  const src = readFileSync(join(REPO_ROOT, "server/routes/patients.ts"), "utf8");
-  const commitIdx = src.indexOf('"/api/patients/:id/commit"');
-  const commitBlock = src.slice(commitIdx, commitIdx + 3000);
-  assert.ok(/engagementSend:\s*result\.data\.engagementSend/.test(commitBlock),
-    "commit route echoes engagementSend on all branches");
+  // The mapper is the single source of truth for the response body.
+  // It ALWAYS carries engagementSend in the body. Assert via the
+  // mapper source.
+  const mapperSrc = readFileSync(
+    join(REPO_ROOT, "server/routes/helpers/respondWithCommitOutcome.ts"),
+    "utf8",
+  );
+  assert.ok(/const base = \{ \.\.\.\(input\.extra \?\? \{\}\), engagementSend \}/.test(mapperSrc),
+    "mapper unconditionally merges engagementSend into every response body");
 }
 
 // ═════ (15) Existing Phase 2A/2B/2C tests remain green ═══════════

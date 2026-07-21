@@ -324,12 +324,15 @@ export function registerExecutionCaseRoutes(app: Express) {
           let rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
 
           // Phase 2C — apply service-specific eligibility for the PCS
-          // call list. When the sync flag is ON, only approved
-          // services (with active memberships when multi-list is ON)
-          // appear. Projection failure → throw so the outer route
-          // returns a controlled 503 rather than falling back to the
-          // unrestricted legacy list.
+          // call list. When the sync flag is ON, only approved services
+          // (with active memberships when multi-list is ON) appear,
+          // and each row is enriched with eligibleServices[]. Projection
+          // failure → throw so the outer route returns a controlled
+          // 503 rather than falling back to the unrestricted legacy list.
           const { featureFlags: ff } = await import("../lib/featureFlags");
+          // Preserve the eligibleServices map keyed by execution case
+          // id so we can attach it to every returned row.
+          let eligibilityByCase: Map<number, string[]> | null = null;
           if (ff.engagementAdminReviewSync && rows.length > 0) {
             const { projectServiceLevelEligibility } = await import(
               "../services/engagementLists/queueProjection"
@@ -339,6 +342,7 @@ export function registerExecutionCaseRoutes(app: Express) {
               requireActiveMembership: ff.engagementMultiListRepository,
             });
             rows = filtered.map((f) => f.executionCase);
+            eligibilityByCase = new Map(filtered.map((f) => [f.executionCase.id, f.eligibleServices]));
           }
 
           return rows.map<EngagementCallListItem>((row) => ({
@@ -359,6 +363,11 @@ export function registerExecutionCaseRoutes(app: Express) {
               row.nextActionAt instanceof Date ? row.nextActionAt.toISOString() : null,
             facilityId: row.facilityId ?? null,
             callListAssignmentDate: null,
+            // Phase 2C — service-level eligibility carried through to
+            // the serialized PCS response. When the sync flag is OFF,
+            // eligibilityByCase is null and this remains undefined
+            // (legacy contract preserved).
+            eligibleServices: eligibilityByCase?.get(row.id),
           }));
         },
       };
