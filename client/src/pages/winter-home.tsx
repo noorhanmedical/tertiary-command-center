@@ -1,10 +1,7 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Shield,
-  Clock,
-  FileText,
   Activity,
   Phone,
   DollarSign,
@@ -16,6 +13,10 @@ import {
   ChevronLeft,
 } from "lucide-react";
 import { NAV_ITEMS } from "@/components/GlobalNav";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CanonicalMonthCalendar } from "@/calendar";
+import { buildCommandCalendarCells } from "@/lib/calendar/commandCalendarViewModel";
+import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useHomeStats } from "@/hooks/api/home-stats";
 import { SIDEBAR_STYLE, type AuthUser } from "@/App";
@@ -139,6 +140,15 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     refetchInterval: 60_000,
   });
 
+  const { data: calendarSummary = [] } = useQuery<CalendarSummaryRow[]>({
+    queryKey: ["/api/screening-batches/calendar-summary"],
+    staleTime: 60_000,
+  });
+  const bannerCalendarCells = useMemo(
+    () => buildCommandCalendarCells({ summary: calendarSummary }),
+    [calendarSummary],
+  );
+
   const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
   const primaryItems = visibleItems.filter((i) => PRIMARY_HREFS.includes(i.href));
   const overflowItems = visibleItems.filter((i) => !PRIMARY_HREFS.includes(i.href));
@@ -216,6 +226,13 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       {/* Glass status bar */}
       <div className="absolute top-0 left-0 right-0 z-40 flex h-12 items-center justify-between bg-white/10 px-5 backdrop-blur-xl border-b border-white/20 text-sm font-medium text-slate-700 shadow-sm">
         <div className="flex items-center gap-3 min-w-0">
+          <span
+            className="text-[15px] font-bold tracking-tight bg-gradient-to-b from-sky-700 to-blue-900 bg-clip-text text-transparent shrink-0"
+            data-testid="text-banner-brand"
+          >
+            Plexus Clinical
+          </span>
+          <div className="w-px h-4 bg-slate-400/40" />
           <PracticePulseCompact />
           {todaySummary && (
             <>
@@ -227,23 +244,26 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           )}
         </div>
         <div className="flex items-center gap-4 shrink-0">
-          <div className="flex items-center gap-1.5 opacity-90 cursor-default hover:bg-white/20 px-2 py-0.5 rounded transition-colors">
-            <Shield className="w-4 h-4" />
-            <span>VPN</span>
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 ml-0.5" />
-          </div>
-          <div className="flex items-center gap-1.5 opacity-90 cursor-default hover:bg-white/20 px-2 py-0.5 rounded transition-colors">
-            <Clock className="w-4 h-4" />
-            <span>Time Doctor</span>
-          </div>
-          <div className="flex items-center gap-1.5 opacity-90 cursor-default hover:bg-white/20 px-2 py-0.5 rounded transition-colors">
-            <FileText className="w-4 h-4" />
-            <span>EOD Report</span>
-          </div>
-          <div className="flex items-center gap-2 pl-2" data-testid="text-clock">
-            <span>{date}</span>
-            <span>{time}</span>
-          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-2 px-2 py-0.5 rounded hover:bg-white/25 transition-colors focus:outline-none"
+                data-testid="text-clock"
+              >
+                <span>{date}</span>
+                <span>{time}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              className="w-[380px] p-3 bg-white/90 backdrop-blur-xl border-white/50 shadow-2xl"
+              data-testid="popover-banner-calendar"
+            >
+              <CanonicalMonthCalendar cells={bannerCalendarCells} />
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 
@@ -317,7 +337,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
 
       {/* Dock */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 group/dock" data-testid="dock-container">
-        <div className="flex items-end gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl opacity-25 group-hover/dock:opacity-100 transition-opacity duration-300">
+        <div className="flex items-end gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl opacity-[0.12] scale-[0.88] origin-bottom group-hover/dock:opacity-100 group-hover/dock:scale-100 transition-all duration-300">
           {primaryItems.map(renderDockItem)}
 
           {/* Plexus IQ — opens as a window over the desktop */}
@@ -343,12 +363,28 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                 aria-label={dockExpanded ? "Show fewer apps" : "Show more apps"}
                 data-testid="button-dock-expand"
               >
-                {renderDockIcon(
-                  dockExpanded ? ChevronLeft : ChevronRight,
-                  dockExpanded ? "Less" : `More (${overflowItems.length})`,
-                  false,
-                  "dock-expand-icon",
-                )}
+                <div
+                  className="relative group flex flex-col items-center cursor-pointer"
+                  data-testid="dock-expand-icon"
+                >
+                  <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
+                    {dockExpanded ? "Less" : `More (${overflowItems.length})`}
+                  </div>
+                  <div className="w-7 h-10 flex items-center justify-center transform transition-all duration-200 origin-bottom group-hover:scale-[1.35] group-hover:-translate-y-2">
+                    {dockExpanded ? (
+                      <ChevronLeft
+                        className="w-6 h-6 text-white/50 group-hover:text-white drop-shadow transition-colors"
+                        strokeWidth={2}
+                      />
+                    ) : (
+                      <ChevronRight
+                        className="w-6 h-6 text-white/50 group-hover:text-white drop-shadow transition-colors"
+                        strokeWidth={2}
+                      />
+                    )}
+                  </div>
+                  <div className="w-1 h-1 mt-1" />
+                </div>
               </button>
               <div
                 className={`flex items-end gap-1.5 overflow-hidden transition-all duration-300 ease-out ${
