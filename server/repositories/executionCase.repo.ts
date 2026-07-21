@@ -16,6 +16,19 @@ import {
   type EngagementCenterDefaults,
   type InsurancePriorityWeights,
 } from "./adminSettings.repo";
+// Phase 2B — canonical ancillary-case reconciliation. No-op when
+// FEATURE_ANCILLARY_CASE_WRITE is OFF (default). Called after the
+// execution-case sync so every selected service ensures its
+// corresponding canonical ancillary case exists.
+import {
+  reconcileAncillaryCasesBulk,
+  conservativelyRemoveAncillaryService,
+  projectSelectedServicesFromAncillaryCases,
+} from "../services/ancillaryCases/reconciliation";
+import type { ReconcileInput } from "../services/ancillaryCases/reconciliation";
+import type { AncillaryAdminReviewStatus, AncillaryQualificationStatus } from "@shared/schema/ancillaryCases";
+import { recordAncillaryReconciliationFailure } from "./ancillaryCases.repo";
+import { featureFlags as plexusFeatureFlags } from "../lib/featureFlags";
 
 // ─── Settings-driven priority scoring ──────────────────────────────────────
 
@@ -173,44 +186,175 @@ export async function createOrUpdateExecutionCaseFromScreening(
 
   const engagementBucket = deriveEngagementBucket(screening);
   const qualificationStatus = deriveQualificationStatus(screening);
-  const selectedServices = Array.isArray(screening.qualifyingTests) && screening.qualifyingTests.length > 0
-    ? (screening.qualifyingTests as string[])
-    : undefined;
+  const flagOn = plexusFeatureFlags.ancillaryCaseWrite;
+
+  // `requestedServices` is what the caller asked for. When Phase 2B
+  // is OFF this becomes the value written to selected_services (byte-
+  // identical legacy behavior). When ON, the RECONCILER's projection
+  // becomes the source of truth for selected_services and this list is
+  // only used as the input to reconciliation.
+  //
+  // We treat "qualifyingTests missing/undefined" as unavailable (not
+  // an intentional empty). Only an actual array is a positive
+  // statement of the caller's intent.
+  const requestedServicesRaw = (screening as { qualifyingTests?: string[] | null })
+    .qualifyingTests;
+  const requestedServicesDefined = Array.isArray(requestedServicesRaw);
+  const requestedServices: string[] = requestedServicesDefined
+    ? (requestedServicesRaw as string[])
+    : [];
+  // Legacy semantic for the selected_services column: null/undefined
+  // when nothing was selected, array otherwise.
+  const legacySelectedServices =
+    requestedServicesDefined && requestedServices.length > 0
+      ? requestedServices
+      : undefined;
 
   if (existing) {
-    const [updated] = await db
-      .update(patientExecutionCases)
-      .set({
-        patientName: screening.name,
-        patientDob: screening.dob ?? undefined,
-        facilityId: screening.facility ?? undefined,
-        engagementBucket,
-        qualificationStatus,
-        selectedServices,
-        updatedAt: new Date(),
-      })
-      .where(eq(patientExecutionCases.id, existing.id))
-      .returning();
-    return { executionCase: updated, created: false };
-  }
-
-  const [created] = await db
-    .insert(patientExecutionCases)
-    .values({
-      patientScreeningId: screening.id,
+    // Insert-or-update WITHOUT touching selectedServices when the flag
+    // is ON. The projection step below computes the canonical set and
+    // writes it back — only after reconciliation succeeds.
+    const setValues: Record<string, unknown> = {
       patientName: screening.name,
       patientDob: screening.dob ?? undefined,
       facilityId: screening.facility ?? undefined,
-      source: "system_generated",
       engagementBucket,
       qualificationStatus,
-      lifecycleStatus: "active",
-      engagementStatus: "new",
-      selectedServices,
-    })
+      updatedAt: new Date(),
+    };
+    if (!flagOn) {
+      setValues.selectedServices = legacySelectedServices;
+    }
+    const [updated] = await db
+      .update(patientExecutionCases)
+      .set(setValues)
+      .where(eq(patientExecutionCases.id, existing.id))
+      .returning();
+
+    const syncOutcome = await syncAncillaryCasesFromScreening({
+      screening,
+      executionCaseId: updated.id,
+      actorUserId,
+      requestedServices,
+      requestedServicesDefined,
+      source: "execution_case_updated",
+    });
+
+    // When the flag is ON, apply the projection so selectedServices
+    // reflects reality — the successfully-reconciled active cases.
+    let finalRow = updated;
+    if (flagOn && syncOutcome.projection !== null) {
+      const [rowAfterProjection] = await db
+        .update(patientExecutionCases)
+        .set({ selectedServices: syncOutcome.projection.length > 0 ? syncOutcome.projection : null })
+        .where(eq(patientExecutionCases.id, updated.id))
+        .returning();
+      if (rowAfterProjection) finalRow = rowAfterProjection;
+    }
+
+    return { executionCase: finalRow, created: false };
+  }
+
+  const insertValues: Record<string, unknown> = {
+    patientScreeningId: screening.id,
+    patientName: screening.name,
+    patientDob: screening.dob ?? undefined,
+    facilityId: screening.facility ?? undefined,
+    source: "system_generated",
+    engagementBucket,
+    qualificationStatus,
+    lifecycleStatus: "active",
+    engagementStatus: "new",
+  };
+  if (!flagOn) {
+    insertValues.selectedServices = legacySelectedServices;
+  }
+  const [created] = await db
+    .insert(patientExecutionCases)
+    .values(insertValues as never)
     .returning();
 
-  return { executionCase: created, created: true };
+  const syncOutcome = await syncAncillaryCasesFromScreening({
+    screening,
+    executionCaseId: created.id,
+    actorUserId,
+    requestedServices,
+    requestedServicesDefined,
+    source: "execution_case_created",
+  });
+
+  let finalCreated = created;
+  if (flagOn && syncOutcome.projection !== null) {
+    const [rowAfterProjection] = await db
+      .update(patientExecutionCases)
+      .set({ selectedServices: syncOutcome.projection.length > 0 ? syncOutcome.projection : null })
+      .where(eq(patientExecutionCases.id, created.id))
+      .returning();
+    if (rowAfterProjection) finalCreated = rowAfterProjection;
+  }
+
+  return { executionCase: finalCreated, created: true };
+}
+
+/**
+ * Phase 2B (hardened) — canonical sync from a committed screening.
+ *
+ * Contract:
+ *
+ *   FEATURE_ANCILLARY_CASE_WRITE = OFF:
+ *     Returns { projection: null, deferred: false, reconciledCount: 0,
+ *               retryCount: 0, missingIdentityLinks: false }.
+ *     Zero DB reads/writes. Caller preserves existing behavior.
+ *
+ *   FEATURE_ANCILLARY_CASE_WRITE = ON, identity links complete:
+ *     1. Reconcile every requested service (bulk).
+ *     2. For every failed request → record durable retry work
+ *        (requested_action = "ensure_active"). Existing active case
+ *        is NOT touched.
+ *     3. Compute "intentionally dropped" services = (was-active in
+ *        this (patient, clinic)) − (requested set) − (failed set).
+ *        Only when the caller supplied a defined selectedServices
+ *        list. Place these on_hold via the shared conservative helper.
+ *     4. Refresh projection from active cases and return it.
+ *     Returns { projection, deferred: false, ... }.
+ *
+ *   FEATURE_ANCILLARY_CASE_WRITE = ON, identity links MISSING:
+ *     Record durable retry work for every requested service with
+ *     requested_action="ensure_active". Do NOT touch any existing
+ *     ancillary case. Do NOT compute a projection.
+ *     Returns { projection: null, deferred: true, missingIdentityLinks: true }.
+ *
+ * The projection is what the caller will use to overwrite
+ * `patient_execution_cases.selectedServices`. When `projection` is
+ * null, the caller does NOT overwrite selectedServices.
+ */
+type SyncFromScreeningResult = {
+  /**
+   * Deduped list of active service_types for (patient, clinic) after
+   * reconciliation, or null when we should NOT overwrite selectedServices
+   * (flag off, deferred, or errored before reconciliation).
+   */
+  projection: string[] | null;
+  deferred: boolean;
+  missingIdentityLinks: boolean;
+  reconciledCount: number;
+  retryCount: number;
+};
+
+async function syncAncillaryCasesFromScreening(args: {
+  screening: PatientScreening;
+  executionCaseId: number | null;
+  actorUserId: string | null;
+  requestedServices: string[];
+  requestedServicesDefined: boolean;
+  source: string;
+}): Promise<SyncFromScreeningResult> {
+  // Delegate to the shared service — same code path used by admin-
+  // review regeneration services so behavior stays identical.
+  const { syncScreeningAncillaryCases } = await import(
+    "../services/ancillaryCases/screeningSync"
+  );
+  return syncScreeningAncillaryCases(args);
 }
 
 export async function appendPatientJourneyEvent(

@@ -351,6 +351,45 @@ export function registerGlobalScheduleRoutes(app: Express) {
           });
           executionCaseId = executionCase.id;
           createdStubCase = true;
+
+          // Phase 2B (hardened) — quick-schedule creates a walk-in
+          // execution case WITHOUT Phase 2A identity. If
+          // FEATURE_ANCILLARY_CASE_WRITE is ON, record durable retry
+          // work so a future Phase 2A identity completion (or the
+          // backfill) creates the canonical ancillary case for this
+          // service. Never fabricates identity ids. No-op with flag OFF.
+          try {
+            const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+            if (reqClinicId) {
+              const { featureFlags: ff } = await import("../lib/featureFlags");
+              if (ff.ancillaryCaseWrite) {
+                const { recordAncillaryReconciliationFailure } = await import(
+                  "../repositories/ancillaryCases.repo"
+                );
+                await recordAncillaryReconciliationFailure({
+                  patientScreeningId: null,
+                  executionCaseId: executionCase.id,
+                  clinicId: reqClinicId,
+                  globalPlexusPatientId: null,
+                  patientClinicMembershipId: null,
+                  serviceType: data.serviceType,
+                  requestedAction: "ensure_active",
+                  sourceSystem: "quick_schedule_walk_in",
+                  errorCode: "MISSING_IDENTITY_LINKS_QUICK_SCHEDULE",
+                });
+              }
+            }
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error(JSON.stringify({
+              level: "warn",
+              source: "ancillary_case_retry",
+              site: "quick_schedule_deferred",
+              executionCaseId: executionCase.id,
+              code: (e as { code?: string })?.code,
+              message: (e as Error)?.message ?? String(e),
+            }));
+          }
         }
       }
 

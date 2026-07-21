@@ -70,4 +70,9 @@ export * from "./portalPrefs";
 // and the SQL migration (migrations/0049_add_plexus_identity.sql) is
 // not applied automatically.
 export * from "./plexusIdentity";
+// Phase 2B — Canonical per-service ancillary case model. Every write
+// path is guarded by FEATURE_ANCILLARY_CASE_WRITE (default OFF) and
+// the SQL migration (migrations/0050_add_patient_ancillary_cases.sql)
+// is not applied automatically.
+export * from "./ancillaryCases";
 export * from "../models/chat";
