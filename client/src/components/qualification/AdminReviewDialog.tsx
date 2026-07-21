@@ -3041,9 +3041,17 @@ export function AdminReviewDialog({
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <DialogTitle className="text-base font-semibold tracking-tight text-slate-900">
-                {patient.name || "Unnamed patient"}
-              </DialogTitle>
+              <div className="flex items-baseline gap-2 min-w-0">
+                <DialogTitle className="text-base font-semibold tracking-tight text-slate-900 truncate">
+                  {patient.name || "Unnamed patient"}
+                </DialogTitle>
+                <span
+                  className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-500 tabular-nums"
+                  data-testid="admin-review-banner-mrn"
+                >
+                  MRN {(patient as { mrn?: string | null }).mrn || `PS-${patient.id}`}
+                </span>
+              </div>
               <DialogDescription className="sr-only">
                 Admin review for {patient.name || "patient"}
               </DialogDescription>
@@ -3057,16 +3065,20 @@ export function AdminReviewDialog({
                     Under 16 · Admin approval required
                   </span>
                 )}
-                {patient.facility && <span className="text-slate-500">{patient.facility}</span>}
-                {scheduleDate && <span className="text-slate-500">· {scheduleDate}</span>}
-                {patient.dob && (
-                  <span className="text-slate-500" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
+                {patient.facility && (
+                  <span className="text-slate-500" data-testid="admin-review-banner-practice">{patient.facility}</span>
                 )}
                 {patient.insurance && (
                   <span className="text-slate-500" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
                 )}
+                {patient.dob && (
+                  <span className="text-slate-500" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
+                )}
                 {patient.phoneNumber && (
                   <span className="text-slate-500" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
+                )}
+                {patient.email && (
+                  <span className="text-slate-500" data-testid="admin-review-banner-email">· {patient.email}</span>
                 )}
                 {evidenceQuery.isFetching && (
                   <span className="text-slate-400 inline-flex items-center gap-1">
@@ -3162,7 +3174,7 @@ export function AdminReviewDialog({
                     </button>
                   </PopoverTrigger>
                   <PopoverContent
-                    className="w-72 p-2"
+                    className="z-[80] w-72 p-2"
                     align="end"
                     data-testid="admin-review-add-ancillary-menu"
                   >
@@ -3825,7 +3837,7 @@ export function AdminReviewDialog({
                           </PopoverTrigger>
                           <PopoverContent
                             align="end"
-                            className="w-[520px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
+                            className="z-[80] w-[520px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
                             data-testid="admin-review-source-popover"
                           >
                 <div className="px-0 py-0" data-testid="admin-review-source-tab-content">
@@ -3987,7 +3999,7 @@ export function AdminReviewDialog({
                           </PopoverTrigger>
                           <PopoverContent
                             align="end"
-                            className="w-[420px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
+                            className="z-[80] w-[420px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
                             data-testid="admin-review-icd-popover"
                           >
                 <div className="px-0 py-0" data-testid="admin-review-icd-tab-content">
@@ -4117,7 +4129,7 @@ export function AdminReviewDialog({
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
+                      className="z-[80] w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
                       data-testid="admin-review-right-popover-diagnosis"
                     >
                       <AvailableButtonsRow
@@ -4181,7 +4193,7 @@ export function AdminReviewDialog({
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[320px] p-3 space-y-2"
+                      className="z-[80] w-[320px] p-3 space-y-2"
                       data-testid="admin-review-right-popover-medications"
                     >
                       <AvailableButtonsRow
@@ -4217,7 +4229,7 @@ export function AdminReviewDialog({
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[320px] p-3 space-y-2"
+                      className="z-[80] w-[320px] p-3 space-y-2"
                       data-testid="admin-review-right-popover-symptoms"
                     >
                       <AvailableButtonsRow
@@ -4259,7 +4271,7 @@ export function AdminReviewDialog({
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
+                      className="z-[80] w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
                       data-testid="admin-review-right-popover-prior-testing"
                     >
                       {(() => {
@@ -4746,7 +4758,7 @@ function AssignMenu({
   void btn;
 
   return (
-    <PopoverContent className="w-60 p-1" data-testid="admin-review-assign-evidence">
+    <PopoverContent className="z-[80] w-60 p-1" data-testid="admin-review-assign-evidence">
       {row(
         { type: "ancillary", ancillaryId: "brainwave" },
         "Assign to BrainWave",

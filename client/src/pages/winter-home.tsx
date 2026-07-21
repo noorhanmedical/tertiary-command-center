@@ -9,8 +9,6 @@ import {
   ChevronLeft,
   ArrowLeft,
   CalendarDays,
-  Pin,
-  PinOff,
 } from "lucide-react";
 import { NAV_ITEMS } from "@/components/GlobalNav";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -35,7 +33,6 @@ const PRIMARY_HREFS = [
   "/plexus-tasks",
 ];
 
-const DOCK_PIN_KEY = "winterHome.dockPinned";
 
 type WinterWin = {
   id: number;
@@ -525,13 +522,6 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const [time, setTime] = useState("");
   const [date, setDate] = useState("");
   const [dockExpanded, setDockExpanded] = useState(false);
-  const [dockPinned, setDockPinned] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(DOCK_PIN_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
   const [windows, setWindows] = useState<WinterWin[]>([]);
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const [panelApp, setPanelApp] = useState<string | null>(null);
@@ -541,14 +531,6 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const spawnCountRef = useRef(0);
 
   const userRole = user?.role ?? "clinician";
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(DOCK_PIN_KEY, dockPinned ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [dockPinned]);
 
   useEffect(() => {
     const anyOpen = windows.some((w) => !w.minimized);
@@ -1006,11 +988,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         )}
 
         <div
-          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 ${
-            dockPinned
-              ? "opacity-100 scale-100"
-              : "opacity-20 group-hover/dock:opacity-100"
-          }`}
+          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 opacity-100`}
         >
           <div className="flex items-end gap-1.5">
             {primaryItems.map((item) =>
@@ -1065,22 +1043,6 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
               </div>
             </>
           )}
-
-          <div className="w-px h-10 bg-white/30 mx-0.5" />
-          <button
-            type="button"
-            onClick={() => setDockPinned((v) => !v)}
-            className="self-center w-7 h-7 rounded-md flex items-center justify-center text-white/70 hover:text-white hover:bg-white/15 transition-colors focus:outline-none"
-            aria-label={dockPinned ? "Unpin dock (fade when not in use)" : "Pin dock (always visible)"}
-            title={dockPinned ? "Unpin dock" : "Pin dock"}
-            data-testid="button-dock-pin"
-          >
-            {dockPinned ? (
-              <Pin className="w-4 h-4 drop-shadow" strokeWidth={2.2} />
-            ) : (
-              <PinOff className="w-4 h-4 drop-shadow" strokeWidth={2.2} />
-            )}
-          </button>
         </div>
       </div>
     </div>

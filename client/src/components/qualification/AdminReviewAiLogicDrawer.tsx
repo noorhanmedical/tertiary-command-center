@@ -428,7 +428,7 @@ export function AdminReviewAiLogicDrawer({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden p-0 gap-0"
+        className="z-[75] max-w-2xl max-h-[85vh] flex flex-col overflow-hidden p-0 gap-0"
         data-testid="dialog-ai-logic"
       >
         <DialogHeader className="px-5 py-3 border-b bg-gradient-to-r from-violet-50 to-indigo-50">
