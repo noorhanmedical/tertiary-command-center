@@ -219,7 +219,7 @@ function WinterWindow({
       data-winter-app={slug}
     >
       <div
-        className="flex items-center gap-2 h-10 px-4 bg-gradient-to-b from-sky-700/50 to-blue-900/50 backdrop-blur-xl border-b border-white/20 shrink-0 cursor-grab active:cursor-grabbing touch-none"
+        className="flex items-center gap-2 h-10 px-4 bg-gradient-to-b from-[#12294d] to-[#0b1c3a] backdrop-blur-xl border-b border-white/15 shrink-0 cursor-grab active:cursor-grabbing touch-none"
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
