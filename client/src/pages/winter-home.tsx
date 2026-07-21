@@ -259,23 +259,21 @@ function WinterEdgePanel({
           type="button"
           onClick={() => setHoverOpen(true)}
           onMouseEnter={() => setHoverOpen(true)}
-          className={`absolute top-24 ${isLeft ? "left-0 rounded-r-lg border-l-0" : "right-0 rounded-l-lg border-r-0"} z-[45] flex h-16 w-5 items-center justify-center bg-white/45 backdrop-blur-xl border border-white/60 shadow-2xl text-slate-700 hover:bg-white/65 hover:text-slate-900 transition-colors`}
+          className={`absolute top-24 ${isLeft ? "left-0 rounded-r-lg border-l-0" : "right-0 rounded-l-lg border-r-0"} z-[45] h-16 w-5 bg-white/45 backdrop-blur-xl border border-white/60 shadow-2xl hover:bg-white/65 transition-colors`}
           aria-label={`Open ${side} panel`}
           data-testid={`edge-panel-handle-${side}`}
-        >
-          {isLeft ? <ChevronRight className="w-4 h-4" strokeWidth={2.4} /> : <ChevronLeft className="w-4 h-4" strokeWidth={2.4} />}
-        </button>
+        />
       )}
       <div
         onMouseLeave={() => {
           if (!pinned) setHoverOpen(false);
         }}
-        className={`absolute inset-y-0 ${isLeft ? "left-0 border-r" : "right-0 border-l"} z-[45] w-[280px] max-w-[85vw] bg-white/10 backdrop-blur-xl border-white/20 shadow-2xl transition-transform duration-300 ease-out ${
+        className={`absolute top-12 bottom-0 ${isLeft ? "left-0 border-r" : "right-0 border-l"} z-[45] w-[280px] max-w-[85vw] bg-white/10 backdrop-blur-xl border-white/20 shadow-2xl transition-transform duration-300 ease-out ${
           open ? "translate-x-0" : isLeft ? "-translate-x-full pointer-events-none" : "translate-x-full pointer-events-none"
         }`}
         data-testid={`edge-panel-${side}`}
       >
-        <div className={`absolute top-24 ${isLeft ? "right-2" : "left-2"} flex items-center gap-1 ${isLeft ? "" : "flex-row-reverse"}`}>
+        <div className={`absolute top-3 ${isLeft ? "right-2" : "left-2"} flex items-center gap-1 ${isLeft ? "" : "flex-row-reverse"}`}>
           <button
             type="button"
             onClick={() => {
@@ -817,7 +815,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       <button
         key={appId}
         type="button"
-        onClick={() => (appId === "plexus-iq" ? goHome() : spawnWindow(appId))}
+        onClick={() => spawnWindow(appId)}
         className="focus:outline-none"
         data-testid={testId}
       >
@@ -924,7 +922,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
             background-color: transparent;
           }
           [data-winter-window] .bg-white {
-            background-color: rgba(255, 255, 255, 0.72);
+            background-color: rgba(255, 255, 255, 0.2);
           }
           [data-winter-window] .rounded-3xl { border-radius: 0.625rem; }
           [data-winter-window] .rounded-2xl { border-radius: 0.5rem; }
@@ -1182,7 +1180,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         )}
 
         <div
-          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 opacity-20 scale-90 group-hover/dock:opacity-100 group-hover/dock:scale-100`}
+          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 opacity-10 scale-90 group-hover/dock:opacity-100 group-hover/dock:scale-100`}
         >
           <div className="flex items-end gap-1.5">
             {primaryItems.map((item) =>
