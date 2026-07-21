@@ -113,6 +113,16 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const [dockExpanded, setDockExpanded] = useState(false);
   const [openWindow, setOpenWindow] = useState<"plexus-iq" | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
+  const [windowMinimized, setWindowMinimized] = useState(false);
+
+  useEffect(() => {
+    if (openWindow && !windowMinimized) {
+      document.body.classList.add("winter-window-open");
+    } else {
+      document.body.classList.remove("winter-window-open");
+    }
+    return () => document.body.classList.remove("winter-window-open");
+  }, [openWindow, windowMinimized]);
   const userRole = user?.role ?? "clinician";
 
   useEffect(() => {
@@ -219,6 +229,25 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           [data-winter-window] .rounded-3xl { border-radius: 0.625rem; }
           [data-winter-window] .rounded-2xl { border-radius: 0.5rem; }
           [data-winter-window] .rounded-xl { border-radius: 0.375rem; }
+          /* Portaled dialogs (Admin Review etc.) render outside the window
+             DOM, so mirror the same glass treatment on them while a winter
+             window is open. */
+          body.winter-window-open [role="dialog"] {
+            background-color: rgba(255, 255, 255, 0.86);
+            backdrop-filter: blur(24px);
+            border-radius: 0.5rem;
+          }
+          body.winter-window-open [role="dialog"] .bg-slate-50\\/40,
+          body.winter-window-open [role="dialog"] .bg-slate-50,
+          body.winter-window-open [role="dialog"] .bg-slate-100 {
+            background-color: transparent;
+          }
+          body.winter-window-open [role="dialog"] .bg-white {
+            background-color: rgba(255, 255, 255, 0.72);
+          }
+          body.winter-window-open [role="dialog"] .rounded-3xl { border-radius: 0.625rem; }
+          body.winter-window-open [role="dialog"] .rounded-2xl { border-radius: 0.5rem; }
+          body.winter-window-open [role="dialog"] .rounded-xl { border-radius: 0.375rem; }
           `,
         }}
       />
@@ -286,7 +315,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         <div
           className={`absolute inset-0 z-50 flex items-center justify-center transition-all duration-200 ${
             windowMaximized ? "p-0" : "p-4 pt-16 pb-24"
-          }`}
+          } ${windowMinimized ? "hidden" : ""}`}
         >
           <div
             className="absolute inset-0 bg-slate-900/25 backdrop-blur-[2px]"
@@ -307,30 +336,30 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
               <div className="ml-auto flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setWindowMaximized(false)}
-                  className="w-3.5 h-3.5 rounded-full bg-yellow-400 hover:bg-yellow-500 flex items-center justify-center group transition-colors"
-                  aria-label="Restore window size"
+                  onClick={() => setWindowMinimized(true)}
+                  className="w-3.5 h-3.5 rounded-full bg-amber-500 hover:bg-amber-600 flex items-center justify-center group transition-colors"
+                  aria-label="Minimize to dock"
                   data-testid="button-restore-window"
                 >
-                  <Minus className="w-2.5 h-2.5 text-yellow-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                  <Minus className="w-2.5 h-2.5 text-amber-950 opacity-0 group-hover:opacity-100" strokeWidth={3} />
                 </button>
                 <button
                   type="button"
-                  onClick={() => setWindowMaximized(true)}
-                  className="w-3.5 h-3.5 rounded-full bg-green-400 hover:bg-green-500 flex items-center justify-center group transition-colors"
-                  aria-label="Expand window"
+                  onClick={() => setWindowMaximized((v) => !v)}
+                  className="w-3.5 h-3.5 rounded-full bg-green-600 hover:bg-green-700 flex items-center justify-center group transition-colors"
+                  aria-label={windowMaximized ? "Restore window size" : "Expand window"}
                   data-testid="button-maximize-window"
                 >
-                  <Maximize2 className="w-2 h-2 text-green-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                  <Maximize2 className="w-2 h-2 text-green-950 opacity-0 group-hover:opacity-100" strokeWidth={3} />
                 </button>
                 <button
                   type="button"
                   onClick={() => setOpenWindow(null)}
-                  className="w-3.5 h-3.5 rounded-full bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
+                  className="w-3.5 h-3.5 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center group transition-colors"
                   aria-label="Close window"
                   data-testid="button-close-window"
                 >
-                  <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                  <X className="w-2.5 h-2.5 text-red-100 opacity-0 group-hover:opacity-100" strokeWidth={3} />
                 </button>
               </div>
             </div>
@@ -360,8 +389,13 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           <button
             type="button"
             onClick={() => {
-              setWindowMaximized(false);
-              setOpenWindow("plexus-iq");
+              if (openWindow === "plexus-iq" && windowMinimized) {
+                setWindowMinimized(false);
+              } else {
+                setWindowMaximized(false);
+                setWindowMinimized(false);
+                setOpenWindow("plexus-iq");
+              }
             }}
             className="focus:outline-none"
             data-testid="dock-item-plexus-iq-window"
