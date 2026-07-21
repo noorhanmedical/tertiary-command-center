@@ -110,46 +110,49 @@ export function CanonicalMonthCalendar({
       className="flex flex-col gap-3"
       data-testid="canonical-month-calendar"
     >
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() =>
-            setCursor((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))
-          }
-          className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-          aria-label="Previous month"
-          data-testid="canonical-month-prev"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
+      <div className="flex items-center justify-between gap-2 px-0.5">
         <div
-          className="text-sm font-semibold text-slate-900"
+          className="text-[13px] font-semibold tracking-tight text-slate-900"
           data-testid="canonical-month-label"
         >
           {monthLabel}
         </div>
-        <button
-          type="button"
-          onClick={() =>
-            setCursor((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))
-          }
-          className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-          aria-label="Next month"
-          data-testid="canonical-month-next"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() =>
+              setCursor((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))
+            }
+            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            aria-label="Previous month"
+            data-testid="canonical-month-prev"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setCursor((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))
+            }
+            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            aria-label="Next month"
+            data-testid="canonical-month-next"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-1 text-[10px] uppercase tracking-wider text-slate-400 px-1">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="text-center py-1">
-            {d}
-          </div>
-        ))}
-      </div>
+      <div className="border border-slate-200 rounded-md overflow-hidden">
+        <div className="grid grid-cols-7 bg-slate-50/80 border-b border-slate-200 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <div key={d} className="text-center py-1.5">
+              {d}
+            </div>
+          ))}
+        </div>
 
-      <div className="grid grid-cols-7 gap-1">
+        <div className="grid grid-cols-7 gap-px bg-slate-200/70">
         {grid.map((d) => {
           const key = ymd(d);
           const inMonth = d.getMonth() === cursorMonth;
@@ -163,17 +166,21 @@ export function CanonicalMonthCalendar({
             <button
               type="button"
               onClick={() => onSelectDate?.(key)}
-              className={`min-h-[88px] rounded-xl border text-left p-2 transition-colors flex flex-col ${
+              className={`min-h-[76px] text-left p-1.5 transition-colors flex flex-col cursor-pointer ${
                 inMonth
-                  ? "border-slate-200 bg-white hover:border-plexus-navy-800/40 hover:bg-slate-50 cursor-pointer"
-                  : "border-transparent bg-slate-50/50 text-slate-400 cursor-pointer hover:bg-slate-100/60"
-              } ${isToday ? "ring-1 ring-plexus-navy-800 ring-offset-1" : ""}`}
+                  ? "bg-white hover:bg-slate-50"
+                  : "bg-slate-50/60 text-slate-400 hover:bg-slate-100/60"
+              } ${isToday ? "ring-1 ring-inset ring-plexus-navy-800" : ""}`}
               data-testid={`canonical-month-day-${key}`}
             >
               <div className="flex items-center justify-between gap-1">
                 <span
-                  className={`text-sm font-semibold ${
-                    inMonth ? "text-slate-900" : "text-slate-400"
+                  className={`text-[12px] font-semibold tabular-nums leading-5 ${
+                    isToday
+                      ? "text-plexus-navy-800"
+                      : inMonth
+                        ? "text-slate-700"
+                        : "text-slate-400"
                   }`}
                 >
                   {d.getDate()}
@@ -238,11 +245,12 @@ export function CanonicalMonthCalendar({
 
           return <Fragment key={key}>{dayButton}</Fragment>;
         })}
+        </div>
       </div>
 
       {unscheduledItems && unscheduledItems.length > 0 && (
         <section
-          className="rounded-2xl border border-slate-200 bg-white p-3 space-y-2"
+          className="rounded-md border border-slate-200 bg-white p-3 space-y-2"
           data-testid="canonical-month-unscheduled-panel"
         >
           <div className="flex items-baseline justify-between gap-2">
@@ -258,7 +266,7 @@ export function CanonicalMonthCalendar({
             {unscheduledItems.map((item) => (
               <li
                 key={`${item.id}`}
-                className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2"
+                className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-3 py-2"
                 data-testid={`canonical-month-unscheduled-item-${item.id}`}
               >
                 <div className="min-w-0">
@@ -284,7 +292,7 @@ export function CanonicalMonthCalendar({
                   <button
                     type="button"
                     onClick={() => onUnscheduledItemAction(item)}
-                    className="text-[11px] font-medium rounded-full px-2.5 h-7 bg-plexus-navy-800 text-white hover:bg-plexus-navy-700 transition-colors shrink-0"
+                    className="text-[11px] font-medium rounded-md px-2.5 h-7 bg-plexus-navy-800 text-white hover:bg-plexus-navy-700 transition-colors shrink-0"
                     data-testid={`canonical-month-unscheduled-action-${item.id}`}
                   >
                     {item.actionLabel ?? "Assign date"}

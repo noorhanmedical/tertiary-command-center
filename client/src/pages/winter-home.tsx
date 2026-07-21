@@ -1,9 +1,6 @@
 import { useState, useEffect, useMemo, useRef, lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity,
-  Phone,
-  DollarSign,
   Brain,
   X,
   Minus,
@@ -20,7 +17,6 @@ import { CanonicalMonthCalendar } from "@/calendar";
 import { buildCommandCalendarCells } from "@/lib/calendar/commandCalendarViewModel";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { useHomeStats } from "@/hooks/api/home-stats";
 import { SIDEBAR_STYLE, type AuthUser } from "@/App";
 
 const PlexusIQPage = lazy(() => import("@/pages/plexus-iq"));
@@ -59,78 +55,6 @@ type AppDef = {
 };
 
 const slugOf = (appId: string) => (appId === "plexus-iq" ? "plexus-iq" : appId.replace(/\//g, ""));
-
-function formatDollarsShort(value: number): string {
-  if (value >= 1000) return `$${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
-  return `$${Math.round(value)}`;
-}
-
-function PulseChip({
-  icon,
-  value,
-  upcoming,
-  title,
-  testId,
-}: {
-  icon: React.ReactNode;
-  value: React.ReactNode;
-  upcoming?: React.ReactNode;
-  title: string;
-  testId: string;
-}) {
-  return (
-    <div
-      className="flex items-center gap-1 cursor-default rounded px-1.5 py-0.5 hover:bg-white/20 transition-colors"
-      title={title}
-      data-testid={testId}
-    >
-      {icon}
-      <span className="font-semibold tabular-nums">{value}</span>
-      {upcoming !== undefined && (
-        <span className="text-emerald-600 font-semibold tabular-nums">{upcoming}</span>
-      )}
-    </div>
-  );
-}
-
-function PracticePulseCompact() {
-  const { data } = useHomeStats();
-  if (!data) return null;
-  const last7 = data.windows?.last7;
-  const upcoming = data.upcoming;
-  const finance = data.finance;
-  return (
-    <div className="flex items-center gap-2" data-testid="pulse-compact">
-      <div className="flex items-center gap-1.5 pr-1">
-        <Activity className="w-4 h-4 text-indigo-500" strokeWidth={2.25} />
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
-          Pulse
-        </span>
-      </div>
-      <PulseChip
-        icon={<Activity className="w-3.5 h-3.5 opacity-70" />}
-        value={last7?.ancillaries ?? 0}
-        upcoming={upcoming?.ancillaryPatients ?? 0}
-        title={`Ancillaries: ${last7?.ancillaries ?? 0} last 7 days · ${upcoming?.ancillaryPatients ?? 0} scheduled next 7 days`}
-        testId="pulse-ancillaries"
-      />
-      <PulseChip
-        icon={<Phone className="w-3.5 h-3.5 opacity-70" />}
-        value={last7?.callsPlanned ?? 0}
-        upcoming={upcoming?.callsDistributed ?? 0}
-        title={`Calls: ${last7?.callsPlanned ?? 0} last 7 days · ${upcoming?.callsDistributed ?? 0} anticipated next 7 days`}
-        testId="pulse-calls"
-      />
-      <PulseChip
-        icon={<DollarSign className="w-3.5 h-3.5 opacity-70" />}
-        value={formatDollarsShort(finance?.last7 ?? 0)}
-        upcoming={formatDollarsShort(finance?.upcoming ?? 0)}
-        title={`Collected last 7 days: $${finance?.last7 ?? 0} · anticipated next 7 days: $${finance?.upcoming ?? 0}`}
-        testId="pulse-finance"
-      />
-    </div>
-  );
-}
 
 /**
  * Full-screen frosted pane hosting an app opened as a banner tab. All panes
@@ -740,8 +664,6 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           >
             Plexus Clinical
           </span>
-          <div className="w-px h-4 bg-slate-400/40" />
-          <PracticePulseCompact />
           {todaySummary && (
             <>
               <div className="w-px h-4 bg-slate-400/40" />
