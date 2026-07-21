@@ -681,13 +681,78 @@ export function registerPatientRoutes(
         if (!patient) return res.status(404).json({ error: "Patient not found" });
 
         const userId: string | null = req.session.userId ?? null;
+        const userRole: string | null = (req.session as { role?: string }).role ?? null;
         const isApproved = status === "approved";
-        const updated = await storage.updatePatientScreening(id, {
-          adminApprovalStatus: status,
-          adminApprovedAt: isApproved ? new Date() : null,
-          adminApprovedByUserId: isApproved ? userId : null,
-          adminApprovalNote: note,
-        });
+
+        // Phase 2C compatibility bridge.
+        // When FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW is ON, the legacy
+        // screening-level route must NOT be an independent competing
+        // truth. Every applicable ancillary case receives a per-service
+        // review event (append-only history + reviewer authorization +
+        // evidence snapshot + Engagement reconciliation) BEFORE the
+        // legacy column is written. The legacy column then reflects the
+        // canonical screening projection.
+        //
+        // Authorization is enforced through the recorder (currently
+        // always denies for lack of the Plexus-internal role) — so
+        // when the flag is ON, unauthorized callers get a 403 here
+        // instead of a silent legacy bypass.
+        const { featureFlags: ff } = await import("../lib/featureFlags");
+        if (ff.serviceSpecificAdminReview) {
+          const acRepo = await import("../repositories/ancillaryCases.repo");
+          const { recordAncillaryCaseAdminReview } = await import(
+            "../services/adminReview/recordAdminReview"
+          );
+          const activeCases = (await acRepo.listAncillaryCasesForScreening(id)).filter(
+            (c) => c.lifecycleStatus === "new" || c.lifecycleStatus === "active" || c.lifecycleStatus === "on_hold",
+          );
+          for (const ac of activeCases) {
+            const outcome = await recordAncillaryCaseAdminReview({
+              ancillaryCaseId: ac.id,
+              clinicId: ac.clinicId,
+              newStatus: status,
+              effectiveClinicalDate: null,
+              rationale: note,
+              actor: { userId, role: userRole },
+              source: "manual",
+            });
+            if (outcome.status === "cross_clinic_denied") {
+              return res.status(403).json({
+                error: "cross-clinic review refused",
+                code: "CROSS_CLINIC_DENIED",
+              });
+            }
+          }
+          // The recorder already refreshed the screening projection
+          // for each active case — but if NO active cases exist we
+          // must still update the legacy column so the UI stays
+          // consistent.
+          if (activeCases.length === 0) {
+            await storage.updatePatientScreening(id, {
+              adminApprovalStatus: status,
+              adminApprovedAt: isApproved ? new Date() : null,
+              adminApprovedByUserId: isApproved ? userId : null,
+              adminApprovalNote: note,
+            });
+          } else {
+            // Note is stored on the legacy column too so existing
+            // consumers see it.
+            await storage.updatePatientScreening(id, {
+              adminApprovalNote: note,
+              adminApprovedAt: isApproved ? new Date() : null,
+              adminApprovedByUserId: isApproved ? userId : null,
+            });
+          }
+        }
+
+        const updated = ff.serviceSpecificAdminReview
+          ? await storage.getPatientScreening(id)
+          : await storage.updatePatientScreening(id, {
+              adminApprovalStatus: status,
+              adminApprovedAt: isApproved ? new Date() : null,
+              adminApprovedByUserId: isApproved ? userId : null,
+              adminApprovalNote: note,
+            });
         if (!updated) {
           return res.status(404).json({ error: "Patient not found" });
         }

@@ -21,8 +21,14 @@
 //   /scheduler-portal → OutreachPage (unchanged)
 //   /engagement-center → this page (assignment manager view)
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  resolveEngagementTab,
+  buildEngagementTabSearchString,
+  ENGAGEMENT_TAB_REPOSITORY,
+  type EngagementTab,
+} from "@/lib/engagementRepositoryTab";
 import { Search, Shuffle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -106,9 +112,51 @@ export default function EngagementCenterPage() {
   // Exactly three tabs. Distribution is an ACTION inside Assignment Pool
   // (the Auto-Distribute dialog + the per-selection round-robin in the
   // worklist toolbar), never its own tab.
-  const [view, setView] = useState<"pool" | "callResults" | "callSettings">(
-    "pool",
-  );
+  // Phase 2C — Repository tab wiring. When
+  // FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY is ON, the default tab
+  // is Repository AND the URL ?tab= param is honored. When OFF, the
+  // legacy default ("pool") + existing three tabs are preserved
+  // exactly. Stale localStorage referring to "repository" is REJECTED
+  // by the resolver while the flag is OFF.
+  const multiListFlagOn = (() => {
+    try {
+      // Vite exposes flags via import.meta.env; client-side flag is
+      // separate from the server flag (both default OFF). In this
+      // build the client reads the env var name for symmetry.
+      return (import.meta as { env?: Record<string, string | undefined> })?.env
+        ?.VITE_FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY === "true";
+    } catch {
+      return false;
+    }
+  })();
+  const initialTab = (): EngagementTab => {
+    if (typeof window === "undefined") return multiListFlagOn ? ENGAGEMENT_TAB_REPOSITORY : "pool";
+    // Saved preference is intentionally NOT read from localStorage
+    // here — the spec forbids stale saved tabs from overriding the
+    // Repository fallback.
+    return resolveEngagementTab(window.location.search, multiListFlagOn);
+  };
+  const [view, setView] = useState<EngagementTab>(initialTab);
+
+  // URL sync (bidirectional): when `setView` is called, mirror to the
+  // URL; when the browser back/forward changes the URL, mirror back
+  // to state. Only active when the multi-list flag is ON; otherwise
+  // legacy behavior is preserved.
+  useEffect(() => {
+    if (!multiListFlagOn || typeof window === "undefined") return;
+    const newSearch = buildEngagementTabSearchString(window.location.search, view);
+    if (newSearch !== window.location.search) {
+      window.history.replaceState({}, "", `${window.location.pathname}${newSearch}${window.location.hash}`);
+    }
+  }, [view, multiListFlagOn]);
+  useEffect(() => {
+    if (!multiListFlagOn || typeof window === "undefined") return;
+    const onPop = () => {
+      setView(resolveEngagementTab(window.location.search, multiListFlagOn));
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [multiListFlagOn]);
   const [distributeOpen, setDistributeOpen] = useState(false);
 
   const board = useQuery<BoardResponse>({

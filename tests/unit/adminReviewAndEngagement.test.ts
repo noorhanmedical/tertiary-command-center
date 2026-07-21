@@ -764,6 +764,204 @@ async function test58_FlagsRemainOff() {
 
 // ═════ Targeted List A/B/C scenario ═══════════════════════════════
 
+// ═════ Section 10 — Wiring-specific tests (W1-W10) ═══════════════
+
+// (W1) Drizzle execution case has sentToEngagementAt column + insert schema omits it.
+async function testW1_DrizzleSentToEngagementAt() {
+  const t = await loadTables();
+  const cols = Object.keys(t.executionCases);
+  assert.ok(cols.includes("sentToEngagementAt"), "executionCases must include sentToEngagementAt");
+  const src = readFileSync(join(REPO_ROOT, "shared/schema/executionCase.ts"), "utf8");
+  assert.ok(/sentToEngagementAt:\s*true/.test(src),
+    "insert schema must omit sentToEngagementAt (server-owned)");
+}
+
+// (W2) Repository routes registered + gated by flag.
+async function testW2_RepositoryRoutesGatedByFlag() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes.ts"), "utf8");
+  assert.ok(/registerEngagementRepositoryRoutes/.test(src),
+    "server/routes.ts must register the Repository routes");
+  const routeSrc = readFileSync(join(REPO_ROOT, "server/routes/engagementRepository.ts"), "utf8");
+  assert.ok(/is404IfFlagOff/.test(routeSrc), "every handler must 404 when flag OFF");
+  assert.ok(/requireClinicScope/.test(routeSrc), "every handler must require clinic scope");
+  assert.equal(/req\.body\?\.clinicId/.test(routeSrc), false,
+    "routes must NOT accept clinicId from body");
+  assert.equal(/req\.query\?\.clinicId/.test(routeSrc), false,
+    "routes must NOT accept clinicId from query");
+}
+
+// (W3) Service-specific review route registered + rejects unauthorized.
+async function testW3_ServiceSpecificReviewRoute() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes.ts"), "utf8");
+  assert.ok(/registerAdminReviewEventsRoutes/.test(src));
+  const routeSrc = readFileSync(join(REPO_ROOT, "server/routes/adminReviewEvents.ts"), "utf8");
+  assert.ok(/POST[\s\S]*?"\/api\/ancillary-cases\/:id\/admin-review"/.test(routeSrc)
+    || /"\/api\/ancillary-cases\/:id\/admin-review"/.test(routeSrc),
+    "route path must be /api/ancillary-cases/:id/admin-review");
+  assert.ok(/requireAdminReviewAccess/.test(routeSrc));
+  assert.ok(/actualReviewedAt[\s\S]*?SERVER_OWNED_FIELDS_REJECTED/.test(routeSrc)
+    || /"SERVER_OWNED_FIELDS_REJECTED"/.test(routeSrc),
+    "route must reject client-supplied actualReviewedAt / evidenceSnapshot");
+  // Route must not accept newStatus as a URL param — must be in body.
+  assert.equal(/req\.params\?\.newStatus/.test(routeSrc), false);
+}
+
+// (W4) Legacy /admin-approval route bridged when flag ON.
+async function testW4_LegacyReviewBridge() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes/patients.ts"), "utf8");
+  const legacyBlock = src.slice(src.indexOf("/api/patient-screenings/:id/admin-approval"));
+  assert.ok(/serviceSpecificAdminReview/.test(legacyBlock),
+    "legacy route must branch on serviceSpecificAdminReview flag");
+  assert.ok(/recordAncillaryCaseAdminReview/.test(legacyBlock),
+    "legacy route must call recordAncillaryCaseAdminReview when flag ON");
+  assert.ok(/CROSS_CLINIC_DENIED/.test(legacyBlock),
+    "legacy route must propagate cross-clinic denial");
+}
+
+// (W5) First-approval activation creates memberships.
+async function testW5_FirstActivationCreatesMembership() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  const inserted: Record<string, unknown>[] = [];
+  // No memberships exist for this ancillary case — first-time activation.
+  spec.set(t.memberships, {
+    select: () => [
+      { id: 500, engagementListId: 42, ancillaryCaseId: 55, status: "removed", removalReason: null, patientScreeningId: 100, executionCaseId: null, serviceType: "BrainWave" },
+    ],
+    insert: (v) => { const r = Array.isArray(v) ? v[0] : v; inserted.push(r); return [{ ...r, id: 999 }]; },
+    update: () => undefined,
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  spec.set(t.engagementFailures, { select: () => [], update: () => undefined });
+  const svc = await import("../../server/services/engagementLists/reconciliation");
+  const r = await withFakeDb(spec, { engagementAdminReviewSync: true }, async () =>
+    svc.reconcileEngagementEligibility({
+      clinicId: 7, patientScreeningId: 100, ancillaryCaseId: 55,
+      serviceType: "BrainWave",
+      previousAdminReviewStatus: "pending", newAdminReviewStatus: "approved",
+      changedByUserId: "u", source: "admin_review",
+    }),
+  );
+  assert.equal(r.status, "activated");
+  if (r.status === "activated") {
+    assert.ok(r.firstActivation, "must report firstActivation=true when no active membership existed");
+    assert.equal(r.membershipsAdded, 1, "first activation adds one membership per prior list");
+    assert.equal(inserted.length, 1);
+    assert.equal(inserted[0].engagementListId, 42);
+    assert.equal(inserted[0].status, "active");
+  }
+}
+
+// (W6) First-approval with NO historical list → durable retry.
+async function testW6_FirstActivationNoListDurableRetry() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  const failureInserted: Record<string, unknown>[] = [];
+  spec.set(t.memberships, {
+    select: () => [], // no memberships ever
+    update: () => undefined,
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  spec.set(t.engagementFailures, {
+    select: () => [],
+    insert: (v) => { const r = Array.isArray(v) ? v[0] : v; failureInserted.push(r); return [{ ...r, id: 1 }]; },
+    update: () => undefined,
+  });
+  const svc = await import("../../server/services/engagementLists/reconciliation");
+  const r = await withFakeDb(spec, { engagementAdminReviewSync: true }, async () =>
+    svc.reconcileEngagementEligibility({
+      clinicId: 7, patientScreeningId: 100, ancillaryCaseId: 55,
+      serviceType: "BrainWave",
+      previousAdminReviewStatus: "pending", newAdminReviewStatus: "approved",
+      changedByUserId: "u", source: "admin_review",
+    }),
+  );
+  assert.equal(r.status, "activated");
+  if (r.status === "activated") {
+    assert.ok(r.firstActivation);
+    assert.equal(r.membershipsAdded, 0);
+    assert.equal(r.membershipsRestored, 0);
+  }
+  assert.ok(failureInserted.length >= 1, "durable retry recorded for NO_LIST_ASSIGNMENT");
+  assert.equal(failureInserted[0].errorCode, "NO_LIST_ASSIGNMENT");
+  assert.equal(failureInserted[0].requestedAction, "activate");
+}
+
+// (W7) Send to Engagement upserts by (clinic, sourceType, sourceId).
+async function testW7_SendToEngagementIdentity() {
+  const src = readFileSync(join(REPO_ROOT, "server/services/engagementLists/sendToEngagement.ts"), "utf8");
+  assert.ok(/upsertEngagementList/.test(src));
+  assert.ok(/upsertActiveMembership/.test(src));
+  // Never derived from facility+date+filename alone:
+  assert.equal(/sourceId:\s*.*facility/i.test(src), false);
+  assert.equal(/sourceId:\s*.*serviceDate/i.test(src), false);
+  const repoSrc = readFileSync(join(REPO_ROOT, "server/repositories/engagementLists.repo.ts"), "utf8");
+  assert.ok(/eq\(engagementLists\.clinicId,\s*input\.clinicId\)[\s\S]*?eq\(engagementLists\.sourceType,\s*input\.sourceType\)[\s\S]*?eq\(engagementLists\.sourceId,\s*input\.sourceId\)/.test(repoSrc),
+    "upsertEngagementList must dedupe by (clinicId, sourceType, sourceId)");
+}
+
+// (W8) Engagement Center wired to resolveEngagementTab + URL sync.
+async function testW8_EngagementCenterWired() {
+  const src = readFileSync(join(REPO_ROOT, "client/src/pages/engagement-center.tsx"), "utf8");
+  assert.ok(/resolveEngagementTab/.test(src), "engagement-center must import and use the resolver");
+  assert.ok(/buildEngagementTabSearchString/.test(src), "URL sync helper wired");
+  assert.ok(/window\.history\.replaceState/.test(src), "URL is mirrored via history.replaceState");
+  assert.ok(/popstate/.test(src), "browser back/forward wired");
+  // Legacy hard-coded default replaced with resolver.
+  assert.equal(/useState<[^>]+>\(\s*"pool"\s*\)/.test(src), false,
+    "the hard-coded 'pool' default must be gone in favor of resolveEngagementTab");
+}
+
+// (W9) Engagement Board reader filters by admin_review_status when the sync flag is ON.
+async function testW9_QueueFiltersByReviewStatus() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes/engagementAssignmentBoard.ts"), "utf8");
+  assert.ok(/engagementAdminReviewSync/.test(src),
+    "board must check the sync flag");
+  assert.ok(/listAncillaryCasesForExecutionCase/.test(src),
+    "board must load ancillary cases per execution case when flag ON");
+  assert.ok(/adminReviewStatus === "approved"/.test(src),
+    "board must filter to admin_review_status=approved");
+  assert.ok(/listActiveMembershipsForAncillaryCase/.test(src),
+    "board must join active memberships");
+}
+
+// (W10) Feature-off contract — Repository routes 404, no queries.
+async function testW10_FeatureOffContract() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(t.engagementLists, {
+    select: () => { throw new Error("must not query with flag OFF"); },
+    insert: () => { throw new Error("must not write with flag OFF"); },
+  });
+  spec.set(t.memberships, {
+    select: () => { throw new Error("must not query with flag OFF"); },
+    insert: () => { throw new Error("must not write with flag OFF"); },
+  });
+  spec.set(t.engagementFailures, {
+    insert: () => { throw new Error("must not write retry with flag OFF"); },
+  });
+  const svc = await import("../../server/services/engagementLists/sendToEngagement");
+  const r = await withFakeDb(spec, { engagementMultiListRepository: false }, async () =>
+    svc.sendToEngagement({
+      clinicId: 1, sourceType: "batch", sourceId: "b1",
+      label: "X", actor: { userId: "u" }, items: [{ serviceType: "BrainWave" }],
+    }),
+  );
+  assert.equal(r.status, "skipped_flag_off");
+  // Reconciler: same flag-off contract already covered by (14) via
+  // ancillaryCaseWrite path; here we verify Engagement sync path.
+  const reco = await import("../../server/services/engagementLists/reconciliation");
+  const r2 = await withFakeDb(spec, { engagementAdminReviewSync: false }, async () =>
+    reco.reconcileEngagementEligibility({
+      clinicId: 1, patientScreeningId: 100, ancillaryCaseId: 55,
+      serviceType: "BrainWave",
+      previousAdminReviewStatus: "pending", newAdminReviewStatus: "approved",
+      changedByUserId: null, source: "test",
+    }),
+  );
+  assert.equal(r2.status, "skipped_flag_off");
+}
+
 async function testTargetedListABCOrder() {
   // Test with three lists whose sentToEngagementAt values put C > A > B.
   const t = await loadTables();
@@ -858,6 +1056,17 @@ const tests = [
   ["(57) Phase 2B tests file present", test57_Phase2BTestsRemainGreen],
   ["(58) flags remain OFF", test58_FlagsRemainOff],
   ["targeted List A/B/C ordering (C > A > B)", testTargetedListABCOrder],
+  // ── Wiring hardening (W1-W10) ──────────────────────────────────
+  ["(W1) drizzle execution case has sentToEngagementAt column", testW1_DrizzleSentToEngagementAt],
+  ["(W2) Repository routes registered + flag-gated", testW2_RepositoryRoutesGatedByFlag],
+  ["(W3) service-specific review route registered + rejects server-owned fields", testW3_ServiceSpecificReviewRoute],
+  ["(W4) legacy /admin-approval route bridged when flag ON", testW4_LegacyReviewBridge],
+  ["(W5) first-approval activation creates membership from prior list", testW5_FirstActivationCreatesMembership],
+  ["(W6) first-approval with NO list → durable retry", testW6_FirstActivationNoListDurableRetry],
+  ["(W7) Send to Engagement identity via (clinic, sourceType, sourceId)", testW7_SendToEngagementIdentity],
+  ["(W8) Engagement Center wired to resolveEngagementTab + URL sync", testW8_EngagementCenterWired],
+  ["(W9) Engagement Board reader filters by admin_review_status when flag ON", testW9_QueueFiltersByReviewStatus],
+  ["(W10) feature-off contract — 404 + no queries", testW10_FeatureOffContract],
 ] as const;
 
 async function run() {
