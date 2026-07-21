@@ -1,14 +1,114 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Shield, Clock, FileText } from "lucide-react";
+import {
+  Shield,
+  Clock,
+  FileText,
+  Activity,
+  Phone,
+  DollarSign,
+  Brain,
+  X,
+  ChevronRight,
+  ChevronLeft,
+} from "lucide-react";
 import { NAV_ITEMS } from "@/components/GlobalNav";
-import type { AuthUser } from "@/App";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { useHomeStats } from "@/hooks/api/home-stats";
+import { SIDEBAR_STYLE, type AuthUser } from "@/App";
+
+const PlexusIQPage = lazy(() => import("@/pages/plexus-iq"));
+
+const PRIMARY_HREFS = [
+  "/home",
+  "/mission-control",
+  "/schedule",
+  "/scheduler-portal",
+  "/patient-directory",
+  "/ancillary-documents",
+  "/billing",
+  "/plexus-tasks",
+];
+
+function formatDollarsShort(value: number): string {
+  if (value >= 1000) return `$${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `$${Math.round(value)}`;
+}
+
+function PulseChip({
+  icon,
+  value,
+  upcoming,
+  title,
+  testId,
+}: {
+  icon: React.ReactNode;
+  value: React.ReactNode;
+  upcoming?: React.ReactNode;
+  title: string;
+  testId: string;
+}) {
+  return (
+    <div
+      className="flex items-center gap-1 cursor-default rounded px-1.5 py-0.5 hover:bg-white/20 transition-colors"
+      title={title}
+      data-testid={testId}
+    >
+      {icon}
+      <span className="font-semibold tabular-nums">{value}</span>
+      {upcoming !== undefined && (
+        <span className="text-emerald-600 font-semibold tabular-nums">{upcoming}</span>
+      )}
+    </div>
+  );
+}
+
+function PracticePulseCompact() {
+  const { data } = useHomeStats();
+  if (!data) return null;
+  const last7 = data.windows?.last7;
+  const upcoming = data.upcoming;
+  const finance = data.finance;
+  return (
+    <div className="flex items-center gap-2" data-testid="pulse-compact">
+      <div className="flex items-center gap-1.5 pr-1">
+        <Activity className="w-4 h-4 text-indigo-500" strokeWidth={2.25} />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+          Pulse
+        </span>
+      </div>
+      <PulseChip
+        icon={<Activity className="w-3.5 h-3.5 opacity-70" />}
+        value={last7?.ancillaries ?? 0}
+        upcoming={upcoming?.ancillaryPatients ?? 0}
+        title={`Ancillaries: ${last7?.ancillaries ?? 0} last 7 days · ${upcoming?.ancillaryPatients ?? 0} scheduled next 7 days`}
+        testId="pulse-ancillaries"
+      />
+      <PulseChip
+        icon={<Phone className="w-3.5 h-3.5 opacity-70" />}
+        value={last7?.callsPlanned ?? 0}
+        upcoming={upcoming?.callsDistributed ?? 0}
+        title={`Calls: ${last7?.callsPlanned ?? 0} last 7 days · ${upcoming?.callsDistributed ?? 0} anticipated next 7 days`}
+        testId="pulse-calls"
+      />
+      <PulseChip
+        icon={<DollarSign className="w-3.5 h-3.5 opacity-70" />}
+        value={formatDollarsShort(finance?.last7 ?? 0)}
+        upcoming={formatDollarsShort(finance?.upcoming ?? 0)}
+        title={`Collected last 7 days: $${finance?.last7 ?? 0} · anticipated next 7 days: $${finance?.upcoming ?? 0}`}
+        testId="pulse-finance"
+      />
+    </div>
+  );
+}
 
 export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const [location] = useLocation();
   const [time, setTime] = useState("");
   const [date, setDate] = useState("");
+  const [dockExpanded, setDockExpanded] = useState(false);
+  const [openWindow, setOpenWindow] = useState<"plexus-iq" | null>(null);
   const userRole = user?.role ?? "clinician";
 
   useEffect(() => {
@@ -22,35 +122,49 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (openWindow === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenWindow(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openWindow]);
+
   const { data: todaySummary } = useQuery<{ patientCount: number; batchCount: number }>({
     queryKey: ["/api/schedule/today-summary"],
     refetchInterval: 60_000,
   });
 
   const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
-  const mainItems = visibleItems.filter(
-    (i) => !["/clinician-portal", "/technician-portal", "/liaison-technician-portal", "/admin/settings"].includes(i.href),
-  );
-  const portalItems = visibleItems.filter(
-    (i) => ["/clinician-portal", "/technician-portal", "/liaison-technician-portal", "/admin/settings"].includes(i.href),
+  const primaryItems = visibleItems.filter((i) => PRIMARY_HREFS.includes(i.href));
+  const overflowItems = visibleItems.filter((i) => !PRIMARY_HREFS.includes(i.href));
+
+  const dockIconBase =
+    "w-10 h-10 rounded-[10px] flex items-center justify-center transform transition-all duration-200 origin-bottom group-hover:scale-[1.35] group-hover:-translate-y-2 border border-white/25 bg-white/15 backdrop-blur-md shadow-sm group-hover:bg-gradient-to-b group-hover:from-cyan-400 group-hover:to-teal-500 group-hover:shadow-[0_0_18px_rgba(45,212,191,0.8)] group-hover:border-cyan-200/60";
+
+  const renderDockIcon = (
+    Icon: (typeof NAV_ITEMS)[number]["Icon"],
+    label: string,
+    isActive: boolean,
+    testId: string,
+  ) => (
+    <div className="relative group flex flex-col items-center cursor-pointer" data-testid={testId}>
+      <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
+        {label}
+      </div>
+      <div className={dockIconBase}>
+        <Icon className="w-[22px] h-[22px] text-slate-700/80 group-hover:text-white transition-colors" strokeWidth={1.6} />
+      </div>
+      <div className={`w-1 h-1 rounded-full mt-1 ${isActive ? "bg-cyan-300" : "bg-transparent"}`} />
+    </div>
   );
 
   const renderDockItem = (item: (typeof NAV_ITEMS)[number]) => {
     const isActive = location === item.href || location.startsWith(item.href + "/");
     return (
       <Link key={item.href} href={item.href}>
-        <div
-          className="relative group flex flex-col items-center cursor-pointer"
-          data-testid={`dock-item-${item.href.replace(/\//g, "")}`}
-        >
-          <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
-            {item.label}
-          </div>
-          <div className="w-11 h-11 rounded-[10px] flex items-center justify-center shadow-lg transform transition-all duration-200 origin-bottom group-hover:scale-[1.3] group-hover:-translate-y-2 border border-white/20 bg-gradient-to-b from-sky-700/90 to-blue-900/90 group-hover:from-cyan-400 group-hover:to-teal-500 group-hover:shadow-[0_0_18px_rgba(45,212,191,0.8)] group-hover:border-cyan-200/60">
-            <item.Icon className="w-6 h-6 text-sky-100 group-hover:text-white transition-colors" strokeWidth={1.5} />
-          </div>
-          <div className={`w-1 h-1 rounded-full mt-1.5 ${isActive ? "bg-cyan-300" : "bg-transparent"}`} />
-        </div>
+        {renderDockIcon(item.Icon, item.label, isActive, `dock-item-${item.href.replace(/\//g, "")}`)}
       </Link>
     );
   };
@@ -98,14 +212,18 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
 
       {/* Glass status bar */}
       <div className="absolute top-0 left-0 right-0 z-40 flex h-12 items-center justify-between bg-white/10 px-5 backdrop-blur-xl border-b border-white/20 text-sm font-medium text-slate-700 shadow-sm">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <PracticePulseCompact />
           {todaySummary && (
-            <span className="opacity-80" data-testid="text-today-summary">
-              Today: {todaySummary.patientCount} patients · {todaySummary.batchCount} schedules
-            </span>
+            <>
+              <div className="w-px h-4 bg-slate-400/40" />
+              <span className="opacity-80 truncate" data-testid="text-today-summary">
+                Today: {todaySummary.patientCount} pts · {todaySummary.batchCount} schedules
+              </span>
+            </>
           )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 shrink-0">
           <div className="flex items-center gap-1.5 opacity-90 cursor-default hover:bg-white/20 px-2 py-0.5 rounded transition-colors">
             <Shield className="w-4 h-4" />
             <span>VPN</span>
@@ -126,12 +244,92 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         </div>
       </div>
 
+      {/* App window overlay */}
+      {openWindow === "plexus-iq" && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 pt-16 pb-24">
+          <div
+            className="absolute inset-0 bg-slate-900/25 backdrop-blur-[2px]"
+            onClick={() => setOpenWindow(null)}
+            data-testid="window-scrim"
+          />
+          <div
+            className="relative flex flex-col w-full h-full max-w-[1500px] rounded-2xl border border-white/40 bg-white/90 backdrop-blur-2xl shadow-[0_40px_120px_rgba(15,23,42,0.45)] overflow-hidden"
+            data-testid="window-plexus-iq"
+          >
+            <div className="flex items-center gap-3 h-10 px-4 bg-white/60 border-b border-slate-200/70 shrink-0">
+              <button
+                type="button"
+                onClick={() => setOpenWindow(null)}
+                className="w-3.5 h-3.5 rounded-full bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
+                aria-label="Close window"
+                data-testid="button-close-window"
+              >
+                <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+              </button>
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-slate-600">
+                <Brain className="w-4 h-4 text-indigo-500" />
+                Plexus IQ
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto bg-white/70">
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+                    Opening Plexus IQ…
+                  </div>
+                }
+              >
+                <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                  <PlexusIQPage />
+                </SidebarProvider>
+              </Suspense>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Dock */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40">
-        <div className="flex items-end gap-2 px-3 pb-2 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl">
-          {mainItems.map(renderDockItem)}
-          {portalItems.length > 0 && <div className="w-px h-11 bg-white/30 mx-1 self-start mt-2" />}
-          {portalItems.map(renderDockItem)}
+        <div className="flex items-end gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl">
+          {primaryItems.map(renderDockItem)}
+
+          {/* Plexus IQ — opens as a window over the desktop */}
+          <button
+            type="button"
+            onClick={() => setOpenWindow("plexus-iq")}
+            className="focus:outline-none"
+            data-testid="dock-item-plexus-iq-window"
+          >
+            {renderDockIcon(Brain, "Plexus IQ", openWindow === "plexus-iq", "dock-icon-plexus-iq")}
+          </button>
+
+          {overflowItems.length > 0 && (
+            <>
+              <div className="w-px h-10 bg-white/30 mx-0.5 self-start mt-2" />
+              <button
+                type="button"
+                onClick={() => setDockExpanded((v) => !v)}
+                className="focus:outline-none"
+                aria-label={dockExpanded ? "Show fewer apps" : "Show more apps"}
+                data-testid="button-dock-expand"
+              >
+                {renderDockIcon(
+                  dockExpanded ? ChevronLeft : ChevronRight,
+                  dockExpanded ? "Less" : `More (${overflowItems.length})`,
+                  false,
+                  "dock-expand-icon",
+                )}
+              </button>
+              <div
+                className={`flex items-end gap-1.5 overflow-hidden transition-all duration-300 ease-out ${
+                  dockExpanded ? "max-w-[900px] opacity-100" : "max-w-0 opacity-0"
+                }`}
+                data-testid="dock-overflow-section"
+              >
+                {overflowItems.map(renderDockItem)}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

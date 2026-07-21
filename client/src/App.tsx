@@ -55,7 +55,7 @@ import EngagementCenterPage from "@/pages/engagement-center";
 // Slice 1.5: PatientDirectoryLiveRoute import removed — the
 // /patient-directory/live route now redirects to /patient-directory.
 
-const SIDEBAR_STYLE = {
+export const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
   "--sidebar-width-icon": "3rem",
 } as React.CSSProperties;
