@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Switch, Route, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -85,6 +86,13 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
   const isEmbed =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).has("embed");
+  // Embedded pages get the same frosted-glass treatment as the inline
+  // Plexus IQ window: transparent shell so the winter pane behind the
+  // iframe shows through, glassy cards, tighter radii (see index.css).
+  useEffect(() => {
+    document.documentElement.classList.toggle("winter-embed", isEmbed);
+    return () => document.documentElement.classList.remove("winter-embed");
+  }, [isEmbed]);
   return (
     <Switch>
       <Route path="/schedule/:id" component={SharedSchedule} />

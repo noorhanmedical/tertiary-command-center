@@ -166,7 +166,7 @@ export function CanonicalMonthCalendar({
             <button
               type="button"
               onClick={() => onSelectDate?.(key)}
-              className={`min-h-[76px] text-left p-1.5 transition-colors flex flex-col cursor-pointer ${
+              className={`aspect-square text-left p-1.5 transition-colors flex flex-col cursor-pointer ${
                 inMonth
                   ? "bg-white hover:bg-slate-50"
                   : "bg-slate-50/60 text-slate-400 hover:bg-slate-100/60"

@@ -100,7 +100,7 @@ function WinterTabPane({
           <iframe
             src={`${app.href}?embed=1`}
             title={title}
-            className="absolute inset-0 w-full h-full border-0 bg-white/60"
+            className="absolute inset-0 w-full h-full border-0 bg-transparent"
             data-testid={`tab-iframe-${win.id}`}
           />
         )}
@@ -290,7 +290,7 @@ function WinterWindow({
           <iframe
             src={`${app.href}?embed=1`}
             title={title}
-            className="absolute inset-0 w-full h-full border-0 bg-white/80"
+            className="absolute inset-0 w-full h-full border-0 bg-transparent"
             data-testid={`window-iframe-${win.id}`}
           />
         )}

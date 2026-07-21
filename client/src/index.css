@@ -626,3 +626,29 @@
     inset: -1px;
   }
 }
+
+/* Winter desktop embed mode (?embed=1 iframes hosted by /winter-home).
+   Mirrors the [data-winter-window] glass treatment given to the inline
+   Plexus IQ window: transparent shell so the frosted pane behind the
+   iframe shows through, translucent white cards, tighter radii. */
+html.winter-embed,
+html.winter-embed body,
+html.winter-embed #root {
+  background: transparent !important;
+}
+html.winter-embed .bg-slate-50\/40,
+html.winter-embed .bg-slate-50,
+html.winter-embed .bg-slate-100 {
+  background-color: transparent;
+}
+html.winter-embed .bg-white {
+  background-color: rgba(255, 255, 255, 0.72);
+}
+html.winter-embed .rounded-3xl { border-radius: 0.625rem; }
+html.winter-embed .rounded-2xl { border-radius: 0.5rem; }
+html.winter-embed .rounded-xl { border-radius: 0.375rem; }
+html.winter-embed [role="dialog"] {
+  background-color: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(24px);
+  border-radius: 0.5rem;
+}
