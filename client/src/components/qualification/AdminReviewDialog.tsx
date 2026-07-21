@@ -3111,7 +3111,7 @@ export function AdminReviewDialog({
         >
           {/* ─── LEFT panel — Ancillaries playground ─── */}
           <main
-            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/75 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-lg border border-white/60 bg-white/75 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
             data-testid="admin-review-ancillary-panel"
           >
               <ScrollArea className="flex-1 min-h-0 px-5 py-4">
@@ -3356,7 +3356,7 @@ export function AdminReviewDialog({
                 return (
                   <div
                     key={id}
-                    className={`rounded-2xl border overflow-hidden shadow-sm ring-1 ring-black/5 transition-shadow hover:shadow-md ${style.bg} ${style.border}`}
+                    className={`rounded-lg border overflow-hidden shadow-sm ring-1 ring-black/5 transition-shadow hover:shadow-md ${style.bg} ${style.border}`}
                     data-testid="admin-review-ancillary-colored-panel"
                     data-ancillary={id}
                   >
@@ -3373,8 +3373,8 @@ export function AdminReviewDialog({
                           ) : (
                             <ChevronRight className={`w-4 h-4 shrink-0 ${style.accent}`} />
                           )}
-                          <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${style.icon}`}>
-                            <Icon className="w-5 h-5" strokeWidth={2} fill="none" />
+                          <div className={`shrink-0 w-7 h-7 rounded-md bg-white/80 border border-black/5 inline-flex items-center justify-center ${style.icon}`}>
+                            <Icon className="w-4 h-4" strokeWidth={1.8} fill="none" />
                           </div>
                           <div className="min-w-0 flex items-center gap-2 flex-wrap">
                             <div className={`font-semibold text-sm ${style.accent} shrink-0`}>
@@ -3521,7 +3521,7 @@ export function AdminReviewDialog({
               {/* Ultrasound parent + child bars — simplified to the same
                   chip-only / icon-only pattern as BrainWave/VitalWave. */}
               <div
-                className={`rounded-2xl border overflow-hidden ${categoryStyles.ultrasound.bg} ${categoryStyles.ultrasound.border}`}
+                className={`rounded-lg border overflow-hidden ${categoryStyles.ultrasound.bg} ${categoryStyles.ultrasound.border}`}
                 data-testid="admin-review-ultrasound-parent-panel"
                 data-ancillary="ultrasound"
               >
@@ -3538,7 +3538,7 @@ export function AdminReviewDialog({
                       ) : (
                         <ChevronRight className={`w-4 h-4 shrink-0 ${categoryStyles.ultrasound.accent}`} />
                       )}
-                      <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
+                      <div className={`shrink-0 w-7 h-7 rounded-md bg-white/80 border border-black/5 inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
                         {(() => {
                           const Icon = categoryIcons.ultrasound;
                           return <Icon className="w-5 h-5" strokeWidth={2} fill="none" />;
@@ -3791,7 +3791,7 @@ export function AdminReviewDialog({
               surfaces (documents, note, scheduler) collapse into popovers so
               the column stays narrow. ─── */}
           <aside
-            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden rounded-lg border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
             data-testid="admin-review-action-panel"
           >
             {/* Scrollable middle zone — Reference + AI clues + Changes. Keeping
@@ -3991,7 +3991,7 @@ export function AdminReviewDialog({
                           >
                 <div className="px-0 py-0" data-testid="admin-review-icd-tab-content">
                         <section
-                          className="space-y-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-3"
+                          className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3"
                           data-testid="admin-review-icd-search-left"
                         >
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
@@ -4351,7 +4351,7 @@ export function AdminReviewDialog({
 
             {/* Changes — flex-1 tinted workbench card; fills remaining height */}
             <div
-              className="mx-3 mb-2 flex min-h-[140px] flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70"
+              className="mx-3 mb-2 flex min-h-[140px] flex-1 basis-0 flex-col overflow-hidden rounded-lg border border-slate-200/70 bg-slate-50/70"
               data-testid="admin-review-updates-group"
             >
               <div
@@ -4477,7 +4477,7 @@ export function AdminReviewDialog({
                     aria-label="Previous patient"
                     title="Previous patient"
                     data-testid="admin-review-sibling-prev"
-                    className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
@@ -4494,7 +4494,7 @@ export function AdminReviewDialog({
                     aria-label="Next patient"
                     title={hasNext ? "Next patient" : "No more patients"}
                     data-testid="admin-review-sibling-next"
-                    className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
@@ -4512,7 +4512,7 @@ export function AdminReviewDialog({
                   title={isUnder16 ? "Admin Override Approve" : "Approve"}
                   data-testid="admin-review-approve-button"
                   data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-emerald-600 text-white shadow-[0_8px_20px_rgba(5,150,105,0.4)] hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-10 items-center justify-center h-9 rounded-md bg-emerald-700 text-white shadow-sm border border-emerald-800/40 hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {approvalMutation.isPending ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
@@ -4531,7 +4531,7 @@ export function AdminReviewDialog({
                   title="Pend"
                   data-testid="admin-review-pend-button"
                   data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-amber-500 text-white shadow-[0_8px_20px_rgba(217,119,6,0.4)] hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-10 items-center justify-center h-9 rounded-md bg-amber-600 text-white shadow-sm border border-amber-700/40 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <Clock className="w-5 h-5" strokeWidth={2.5} />
                 </button>
@@ -4545,7 +4545,7 @@ export function AdminReviewDialog({
                   aria-label="Reject"
                   title="Reject"
                   data-testid={`admin-review-button-reject-${patient.id}`}
-                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-rose-600 text-white shadow-[0_8px_20px_rgba(225,29,72,0.4)] hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-10 items-center justify-center h-9 rounded-md bg-rose-700 text-white shadow-sm border border-rose-800/40 hover:bg-rose-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <XCircle className="w-5 h-5" strokeWidth={2.5} />
                 </button>
@@ -4573,7 +4573,7 @@ export function AdminReviewDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className="flex flex-col w-[calc(100vw-0.75rem)] md:w-[calc(100vw-3rem)] max-w-[1040px] h-[min(96dvh,760px)] md:h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-3xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
+          className="flex flex-col w-[calc(100vw-0.75rem)] md:w-[calc(100vw-3rem)] max-w-[1040px] h-[min(96dvh,760px)] md:h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
           overlayClassName="bg-slate-900/30 backdrop-blur-[2px]"
           hideClose
           data-testid={`dialog-admin-review-${patient.id}`}

@@ -23,6 +23,15 @@ import { SIDEBAR_STYLE, type AuthUser } from "@/App";
 
 const PlexusIQPage = lazy(() => import("@/pages/plexus-iq"));
 
+// Floating-window side cushion presets, smallest window (most cushion)
+// first. Index = windowSizeLevel; +/- buttons in the title bar step it.
+const WINDOW_SIZE_PADDING = [
+  "px-44 pt-24 pb-32",
+  "px-24 pt-16 pb-28",
+  "px-12 pt-16 pb-24",
+  "px-4 pt-14 pb-20",
+];
+
 const PRIMARY_HREFS = [
   "/home",
   "/mission-control",
@@ -114,6 +123,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const [openWindow, setOpenWindow] = useState<"plexus-iq" | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [windowMinimized, setWindowMinimized] = useState(false);
+  const [windowSizeLevel, setWindowSizeLevel] = useState(1);
 
   useEffect(() => {
     if (openWindow && !windowMinimized) {
@@ -314,7 +324,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       {openWindow === "plexus-iq" && (
         <div
           className={`absolute inset-0 z-50 flex items-center justify-center transition-all duration-200 ${
-            windowMaximized ? "p-0" : "p-4 pt-16 pb-24"
+            windowMaximized ? "p-0" : WINDOW_SIZE_PADDING[windowSizeLevel]
           } ${windowMinimized ? "hidden" : ""}`}
         >
           <div
@@ -334,32 +344,54 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                 Plexus IQ
               </div>
               <div className="ml-auto flex items-center gap-2">
+                <div className="flex items-center gap-1 mr-2">
+                  <button
+                    type="button"
+                    onClick={() => setWindowSizeLevel((v) => Math.max(0, v - 1))}
+                    disabled={windowMaximized || windowSizeLevel === 0}
+                    className="w-5 h-5 rounded-[4px] flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 disabled:opacity-30 transition-colors text-[13px] font-bold leading-none"
+                    aria-label="Make window smaller"
+                    data-testid="button-window-smaller"
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWindowSizeLevel((v) => Math.min(WINDOW_SIZE_PADDING.length - 1, v + 1))}
+                    disabled={windowMaximized || windowSizeLevel === WINDOW_SIZE_PADDING.length - 1}
+                    className="w-5 h-5 rounded-[4px] flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 disabled:opacity-30 transition-colors text-[13px] font-bold leading-none"
+                    aria-label="Make window bigger"
+                    data-testid="button-window-bigger"
+                  >
+                    +
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => setWindowMinimized(true)}
-                  className="w-3.5 h-3.5 rounded-full bg-amber-500 hover:bg-amber-600 flex items-center justify-center group transition-colors"
+                  className="w-3.5 h-3.5 rounded-[4px] bg-yellow-400 hover:bg-yellow-500 flex items-center justify-center group transition-colors"
                   aria-label="Minimize to dock"
                   data-testid="button-restore-window"
                 >
-                  <Minus className="w-2.5 h-2.5 text-amber-950 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                  <Minus className="w-2.5 h-2.5 text-yellow-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
                 </button>
                 <button
                   type="button"
                   onClick={() => setWindowMaximized((v) => !v)}
-                  className="w-3.5 h-3.5 rounded-full bg-green-600 hover:bg-green-700 flex items-center justify-center group transition-colors"
+                  className="w-3.5 h-3.5 rounded-[4px] bg-green-400 hover:bg-green-500 flex items-center justify-center group transition-colors"
                   aria-label={windowMaximized ? "Restore window size" : "Expand window"}
                   data-testid="button-maximize-window"
                 >
-                  <Maximize2 className="w-2 h-2 text-green-950 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                  <Maximize2 className="w-2 h-2 text-green-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
                 </button>
                 <button
                   type="button"
                   onClick={() => setOpenWindow(null)}
-                  className="w-3.5 h-3.5 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center group transition-colors"
+                  className="w-3.5 h-3.5 rounded-[4px] bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
                   aria-label="Close window"
                   data-testid="button-close-window"
                 >
-                  <X className="w-2.5 h-2.5 text-red-100 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                  <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
                 </button>
               </div>
             </div>
