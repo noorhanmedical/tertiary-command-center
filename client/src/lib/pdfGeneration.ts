@@ -96,7 +96,6 @@ const PDF_BASE_STYLES = `
     .page { page-break-after: always; break-after: page; padding: 0.5in !important; }
     .page:last-child { page-break-after: avoid; break-after: avoid; }
   }
-  .plexus-repeat-header { font-size:9px; font-weight:700; color:#1a365d; border-bottom:1px solid #cbd5e1; padding:4px 0 3px; margin-bottom:8px; page-break-before: always; break-before: page; }
   .cover { min-height:9.5in; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#1a365d; color:white; text-align:center; padding:40px; }
   .cover h1 { font-size:30px; font-weight:800; margin:0 0 8px; }
   .cover h2 { font-size:17px; font-weight:400; margin:0 0 20px; opacity:0.8; }
@@ -196,10 +195,14 @@ export function buildPhysicianReportTitles(
 //    printed page each: the whole page block is progressively scaled
 //    down (CSS zoom) until it fits — content is never truncated.
 //    SOURCE MARKER: Clinician PDF is one page per patient
-// 2) Plexus pages (.page.plexus-page) stay flow-based; when a patient
-//    section is taller than one page, a controlled page break is
-//    inserted with a compact repeat header (Name · Patient ID · DOB).
-//    SOURCE MARKER: Plexus PDF repeats compact patient header
+// 2) Plexus pages (.page.plexus-page) are pre-paginated: a page block
+//    taller than one printed page is split into whole continuation
+//    .page blocks (children are moved, never sliced mid-element), so
+//    every printed page keeps its full 0.5in padding — content never
+//    touches the paper edge. Plexus pages render at true paper
+//    geometry (8.5in wide, 0.5in padding) so on-screen measurement
+//    matches print output.
+//    SOURCE MARKER: Plexus PDF paginates with full page margins
 export function applyPacketLayoutFixups(scope: ParentNode): void {
   var PAGE_HEIGHT = 96 * 10.4; // usable letter-page budget in CSS px
   var clinPages = scope.querySelectorAll(".page.clinician-page");
@@ -213,37 +216,34 @@ export function applyPacketLayoutFixups(scope: ParentNode): void {
       guard++;
     }
   }
+  // Plexus pre-pagination. Pages are laid out at print geometry
+  // (8.5in wide, 0.5in padding), so a full letter page is 11in tall.
+  // Budget is kept slightly under 11in for print-engine rounding.
+  var PLEX_PAGE = 96 * 10.7; // max rendered page-block height
+  var PLEX_BOTTOM = 96 * 10.3; // children must end above this line
   var plexPages = scope.querySelectorAll(".page.plexus-page");
   for (var pi = 0; pi < plexPages.length; pi++) {
-    var pp = plexPages[pi] as HTMLElement;
-    if (pp.getBoundingClientRect().height <= PAGE_HEIGHT) continue;
-    var nm = pp.getAttribute("data-patient-name") || "";
-    var pid = pp.getAttribute("data-patient-id") || "";
-    var dob = pp.getAttribute("data-dob") || "";
-    var headerParts = [];
-    if (nm) headerParts.push(nm);
-    if (pid) headerParts.push(pid);
-    if (dob) headerParts.push("DOB: " + dob);
-    var headerText = headerParts.join(" · ");
-    if (!headerText) continue;
-    var boundary = PAGE_HEIGHT;
-    var i = 0;
+    var current = plexPages[pi] as HTMLElement;
     var safety = 0;
-    while (i < pp.children.length && safety < 60) {
+    while (current.getBoundingClientRect().height > PLEX_PAGE && safety < 40) {
       safety++;
-      var child = pp.children[i] as HTMLElement;
-      if (child.classList && child.classList.contains("plexus-repeat-header")) { i++; continue; }
-      var topInPage = child.getBoundingClientRect().top - pp.getBoundingClientRect().top;
-      if (i > 0 && topInPage >= boundary) {
-        var hdr = (pp.ownerDocument as Document).createElement("div");
-        hdr.className = "plexus-repeat-header";
-        hdr.textContent = headerText;
-        pp.insertBefore(hdr, child);
-        boundary = (hdr.getBoundingClientRect().top - pp.getBoundingClientRect().top) + PAGE_HEIGHT;
-        i += 2;
-        continue;
+      var curTop = current.getBoundingClientRect().top;
+      var splitAt = -1;
+      for (var k = 1; k < current.children.length; k++) {
+        var ch = current.children[k] as HTMLElement;
+        if (ch.getBoundingClientRect().bottom - curTop > PLEX_BOTTOM) {
+          splitAt = k;
+          break;
+        }
       }
-      i++;
+      if (splitAt < 1) break;
+      var next = current.cloneNode(false) as HTMLElement;
+      while (current.children.length > splitAt) {
+        next.appendChild(current.children[splitAt]);
+      }
+      if (!next.children.length || !current.parentNode) break;
+      current.parentNode.insertBefore(next, current.nextSibling);
+      current = next;
     }
   }
 }
@@ -842,10 +842,11 @@ export function buildPlexusPdfBody(batchName: string, patients: PatientScreening
       sections.push(...otherTests.map((t, i) => renderTest(t, i === otherTests.length - 1)));
     }
 
-    // data-* attrs feed the compact repeat header (Name · Patient ID ·
-    // DOB) stamped by applyPacketLayoutFixups when this patient's
-    // section spans more than one printed page.
-    return [`<div class="page plexus-page" data-patient-name="${esc(p.name)}" data-patient-id="${p.id != null ? `PS-${esc(String(p.id))}` : ""}" data-dob="${esc(p.dob ?? "")}" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div>`];
+    // data-* attrs identify the patient on each page block (Name ·
+    // Patient ID · DOB). Pages render at true paper geometry
+    // (8.5in wide, 0.5in padding) so applyPacketLayoutFixups can
+    // pre-paginate with measurements that match the printed output.
+    return [`<div class="page plexus-page" data-patient-name="${esc(p.name)}" data-patient-id="${p.id != null ? `PS-${esc(String(p.id))}` : ""}" data-dob="${esc(p.dob ?? "")}" style="width:8.5in;margin:0 auto;padding:0.5in;background:#ffffff;">${buildCompactTop(p)}${sections.join("")}</div>`];
   });
 
   return pages.join("");

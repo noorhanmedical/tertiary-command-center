@@ -165,7 +165,7 @@ describe("plexus PDF body", () => {
   it("never labels the screening ID as MRN when no real MRN exists", () => {
     expect(body).not.toMatch(/MRN/i);
   });
-  it("carries repeat-header data attributes for controlled page breaks", () => {
+  it("carries patient identity data attributes on plexus pages", () => {
     expect(body).toContain('data-patient-id="PS-101"');
     expect(body).toContain('data-patient-name="Smith, Alice"');
     expect(body).toContain('data-dob="1955-03-02"');
