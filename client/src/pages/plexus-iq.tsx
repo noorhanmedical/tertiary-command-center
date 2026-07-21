@@ -918,57 +918,25 @@ export default function PlexusIQPage() {
           onChangeBatch={() => setBatchFlowOpen(true)}
           onViewBatch={(id, facility) => setFocusBatch({ id, facility })}
         />
-        {/* Clinical Intelligence & Governance knowledge tile (prototype).
-            Pure navigation — no effect on batch/qualification flows. */}
-        <div className="px-4 pt-3">
+        {/* Clinical Intelligence & Governance + Repeat Testing Review —
+            compact icon shortcuts (pure navigation, tooltips carry the
+            detail; no effect on batch/qualification flows). */}
+        <div className="flex items-center justify-end gap-1.5 px-4 pt-3">
           <Link
             href="/clinical-intelligence"
-            className="group flex items-center gap-3 rounded-2xl border border-violet-200/70 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
+            title="Clinical Intelligence & Governance — AI Logic knowledge layer: learning center, rule library, approvals, and audit"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-violet-200/70 bg-white/80 text-violet-700 shadow-sm transition-colors hover:bg-violet-50 hover:border-violet-300"
             data-testid="tile-clinical-intelligence"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
-              <Sparkles className="h-4 w-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-slate-900">
-                Clinical Intelligence &amp; Governance
-              </span>
-              <span className="block truncate text-xs text-slate-500">
-                AI Logic knowledge layer — learning center, rule library, approvals, and audit. CMS audit-ready
-                and legally defensible.
-              </span>
-            </span>
-            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-700 sm:inline-flex">
-              <ShieldCheck className="h-3.5 w-3.5" /> Governance
-            </span>
+            <ShieldCheck className="h-4 w-4" />
           </Link>
-        </div>
-        {/* Repeat Testing Review — prototype shell. Plexus IQ supports two
-            review types: Initial Qualification Review (the batch board below)
-            and Repeat Testing / Re-Eligibility Review (this queue). The repeat
-            queue is not wired yet; it will populate from repeat opportunities
-            created by Clinical Intelligence after report upload, opening ~1
-            month before the payer repeat-due date. Blueprint:
-            docs/architecture/clinical-intelligence-repeat-testing-loop.md */}
-        <div className="px-4 pt-3">
           <Link
             href="/clinical-intelligence"
-            className="group flex items-center gap-3 rounded-2xl border border-sky-200/70 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
+            title="Repeat Testing Review — re-eligibility queue for prior BrainWave / VitalWave / Ultrasound tests (not connected yet)"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-sky-200/70 bg-white/80 text-sky-700 shadow-sm transition-colors hover:bg-sky-50 hover:border-sky-300"
             data-testid="tile-repeat-testing-review"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
-              <Sparkles className="h-4 w-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-slate-900">Repeat Testing Review</span>
-              <span className="block truncate text-xs text-slate-500">
-                Re-eligibility queue for prior BrainWave / VitalWave / Ultrasound tests — payer interval,
-                repeat due date, and medical-necessity rationale. Separate from Initial Qualification.
-              </span>
-            </span>
-            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 sm:inline-flex">
-              Not connected yet
-            </span>
+            <Sparkles className="h-4 w-4" />
           </Link>
         </div>
         <PlexusIQWorkspace

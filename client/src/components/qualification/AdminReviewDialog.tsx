@@ -3111,7 +3111,7 @@ export function AdminReviewDialog({
         >
           {/* ─── LEFT panel — Ancillaries playground ─── */}
           <main
-            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-lg border border-white/60 bg-white/75 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden"
             data-testid="admin-review-ancillary-panel"
           >
               <ScrollArea className="flex-1 min-h-0 px-5 py-4">
@@ -3150,7 +3150,7 @@ export function AdminReviewDialog({
                             ? "Remaining ancillaries are in cooldown"
                             : "All ancillaries already added"
                       }
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-gradient-to-b from-sky-50 to-sky-100/60 text-sky-800 hover:from-sky-100 hover:to-sky-100 shadow-sm px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white/80 text-slate-700 hover:bg-white hover:text-slate-900 hover:border-slate-300 shadow-sm px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {addAncillaryMutation.isPending ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -3373,9 +3373,9 @@ export function AdminReviewDialog({
                           ) : (
                             <ChevronRight className={`w-4 h-4 shrink-0 ${style.accent}`} />
                           )}
-                          <div className={`shrink-0 w-7 h-7 rounded-md bg-white/80 border border-black/5 inline-flex items-center justify-center ${style.icon}`}>
+                          <span className={`shrink-0 inline-flex items-center justify-center ${style.icon}`}>
                             <Icon className="w-4 h-4" strokeWidth={1.8} fill="none" />
-                          </div>
+                          </span>
                           <div className="min-w-0 flex items-center gap-2 flex-wrap">
                             <div className={`font-semibold text-sm ${style.accent} shrink-0`}>
                               {categoryLabels[id]}
@@ -3422,7 +3422,7 @@ export function AdminReviewDialog({
                             data-bar-testid={REGENERATE_TEST_IDS[id]}
                             data-regenerate="admin-review-regenerate-ancillary"
                             data-ancillary={id}
-                            className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-slate-900 transition-colors disabled:opacity-50"
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-black/5 transition-colors disabled:opacity-50"
                           >
                             {regenInFlight[id] ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
@@ -3453,7 +3453,7 @@ export function AdminReviewDialog({
                             }
                             data-remove-ancillary="admin-review-remove-ancillary"
                             data-ancillary={id}
-                            className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-rose-50 text-slate-700 hover:text-rose-700 transition-colors disabled:opacity-50"
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-rose-700 hover:bg-rose-50 transition-colors disabled:opacity-50"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -3538,12 +3538,12 @@ export function AdminReviewDialog({
                       ) : (
                         <ChevronRight className={`w-4 h-4 shrink-0 ${categoryStyles.ultrasound.accent}`} />
                       )}
-                      <div className={`shrink-0 w-7 h-7 rounded-md bg-white/80 border border-black/5 inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
+                      <span className={`shrink-0 inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
                         {(() => {
                           const Icon = categoryIcons.ultrasound;
                           return <Icon className="w-5 h-5" strokeWidth={2} fill="none" />;
                         })()}
-                      </div>
+                      </span>
                       <div className="min-w-0 flex items-center gap-2 flex-wrap">
                         <div className={`font-semibold text-sm ${categoryStyles.ultrasound.accent} shrink-0`}>
                           {categoryLabels.ultrasound}
@@ -3586,7 +3586,7 @@ export function AdminReviewDialog({
                         data-bar-testid={REGENERATE_TEST_IDS.ultrasound}
                         data-regenerate="admin-review-regenerate-ancillary"
                         data-ancillary="ultrasound"
-                        className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-slate-900 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-black/5 transition-colors disabled:opacity-50"
                       >
                         {regenInFlight.ultrasound ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -3613,7 +3613,7 @@ export function AdminReviewDialog({
                         data-bar-testid="admin-review-remove-ultrasound-parent"
                         data-remove-ancillary="admin-review-remove-ancillary"
                         data-ancillary="ultrasound"
-                        className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-rose-50 text-slate-700 hover:text-rose-700 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-rose-700 hover:bg-rose-50 transition-colors disabled:opacity-50"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -3791,7 +3791,7 @@ export function AdminReviewDialog({
               surfaces (documents, note, scheduler) collapse into popovers so
               the column stays narrow. ─── */}
           <aside
-            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden rounded-lg border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden md:border-l md:border-slate-200/60 md:pl-1"
             data-testid="admin-review-action-panel"
           >
             {/* Scrollable middle zone — Reference + AI clues + Changes. Keeping
@@ -5093,12 +5093,12 @@ function PremiumFactorChip({
 }: PremiumFactorChipProps) {
   const kindTone =
     chip.kind === "icd_disease"
-      ? "bg-blue-50 text-blue-900 border-blue-300"
+      ? "bg-blue-50/70 text-blue-900 border-blue-200/80"
       : chip.kind === "medication"
-        ? "bg-purple-50 text-purple-900 border-purple-300"
+        ? "bg-purple-50/70 text-purple-900 border-purple-200/80"
         : chip.kind === "prior_test"
-          ? "bg-teal-50 text-teal-900 border-teal-300"
-          : "bg-amber-50 text-amber-900 border-amber-300";
+          ? "bg-teal-50/70 text-teal-900 border-teal-200/80"
+          : "bg-amber-50/70 text-amber-900 border-amber-200/80";
   const originStyle =
     chip.origin === "rule-seeded"
       ? "border-dashed"
@@ -5123,7 +5123,7 @@ function PremiumFactorChip({
       : "admin-review-remove-qualifying-factor-chip";
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${kindTone} ${originStyle}`}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium ${kindTone} ${originStyle}`}
       data-testid={originTestId}
       data-bar-testid={barTestId}
       data-kind-testid={kindTestId}

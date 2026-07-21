@@ -238,29 +238,29 @@ function WinterWindow({
           <button
             type="button"
             onClick={onMinimize}
-            className="w-3.5 h-3.5 rounded-[4px] bg-yellow-400 hover:bg-yellow-500 flex items-center justify-center group transition-colors"
+            className="w-6 h-6 rounded-md flex items-center justify-center text-white/70 hover:text-white hover:bg-white/15 transition-colors"
             aria-label="Minimize to dock"
             data-testid={`button-minimize-${win.id}`}
           >
-            <Minus className="w-2.5 h-2.5 text-yellow-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+            <Minus className="w-3.5 h-3.5" strokeWidth={2.2} />
           </button>
           <button
             type="button"
             onClick={onToggleMax}
-            className="w-3.5 h-3.5 rounded-[4px] bg-green-400 hover:bg-green-500 flex items-center justify-center group transition-colors"
+            className="w-6 h-6 rounded-md flex items-center justify-center text-white/70 hover:text-white hover:bg-white/15 transition-colors"
             aria-label={win.maximized ? "Restore window size" : "Expand window"}
             data-testid={`button-maximize-${win.id}`}
           >
-            <Maximize2 className="w-2 h-2 text-green-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+            <Maximize2 className="w-3 h-3" strokeWidth={2.2} />
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="w-3.5 h-3.5 rounded-[4px] bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
+            className="w-6 h-6 rounded-md flex items-center justify-center text-white/70 hover:text-white hover:bg-rose-500/70 transition-colors"
             aria-label="Close window"
             data-testid={`button-close-${win.id}`}
           >
-            <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+            <X className="w-3.5 h-3.5" strokeWidth={2.2} />
           </button>
         </div>
       </div>
@@ -434,7 +434,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   };
 
   const dockIconBase =
-    "w-10 h-10 rounded-[10px] flex items-center justify-center shadow-lg transform transition-all duration-200 origin-bottom group-hover:scale-[1.35] group-hover:-translate-y-2 border border-white/20 bg-gradient-to-b from-sky-700/90 to-blue-900/90 group-hover:from-cyan-400 group-hover:to-teal-500 group-hover:shadow-[0_0_18px_rgba(45,212,191,0.8)] group-hover:border-cyan-200/60";
+    "w-10 h-10 rounded-[10px] flex items-center justify-center shadow-lg transition-all duration-200 border border-white/20 bg-gradient-to-b from-sky-700/90 to-blue-900/90 group-hover:from-cyan-400 group-hover:to-teal-500 group-hover:shadow-[0_0_18px_rgba(45,212,191,0.8)] group-hover:border-cyan-200/60";
 
   const renderDockIcon = (
     Icon: (typeof NAV_ITEMS)[number]["Icon"],
@@ -673,7 +673,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 ${
             dockPinned
               ? "opacity-100 scale-100"
-              : "opacity-40 scale-[0.92] group-hover/dock:opacity-100 group-hover/dock:scale-100"
+              : "opacity-40 group-hover/dock:opacity-100"
           }`}
         >
           <div className="flex items-end gap-1.5">
@@ -702,7 +702,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                   <div className="absolute -top-12 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
                     {dockExpanded ? "Less" : `More apps (${overflowItems.length})`}
                   </div>
-                  <div className="w-8 h-10 flex items-center justify-center transform transition-all duration-200 group-hover:scale-125">
+                  <div className="w-8 h-10 flex items-center justify-center">
                     {dockExpanded ? (
                       <ChevronLeft
                         className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-white transition-colors animate-pulse group-hover:animate-none"
