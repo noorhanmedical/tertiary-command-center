@@ -6,6 +6,12 @@ uri = "file://artifacts/mockup-sandbox/public/images/winter-mountains.png"
 type = "image"
 title = "Winter mountain wallpaper"
 
+[[generated]]
+id = "sE8HCCD8eIVLuiFOJdkha"
+uri = "file://artifacts/mockup-sandbox/public/images/winter-flat.png"
+type = "image"
+title = "generated_image"
+
 [[outputs]]
 id = "7a8FL86w8z1EI0GUgg5Q5"
 uri = "file://plexus-ancillary-screening.tar.gz"
