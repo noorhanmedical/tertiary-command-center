@@ -80,4 +80,9 @@ export * from "./ancillaryCases";
 // flags (all default OFF); migration 0051 is not applied automatically.
 export * from "./adminReviewEvents";
 export * from "./engagementLists";
+// Phase 2D — Canonical ancillary appointments in global_schedule_events.
+// Additive columns added to globalScheduleEvents; new failures ledger.
+// Guarded by FEATURE_CANONICAL_APPOINTMENT (default OFF); migration
+// 0052 is not applied automatically.
+export * from "./canonicalAppointments";
 export * from "../models/chat";
