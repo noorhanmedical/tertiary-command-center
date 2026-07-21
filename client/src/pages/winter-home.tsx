@@ -41,6 +41,7 @@ const DOCK_PIN_KEY = "winterHome.dockPinned";
 type WinterWin = {
   id: number;
   appId: string; // "plexus-iq" or a NAV_ITEMS href
+  mode: "tab" | "window";
   x: number;
   y: number;
   w: number;
@@ -127,6 +128,59 @@ function PracticePulseCompact() {
         title={`Collected last 7 days: $${finance?.last7 ?? 0} · anticipated next 7 days: $${finance?.upcoming ?? 0}`}
         testId="pulse-finance"
       />
+    </div>
+  );
+}
+
+/**
+ * Full-screen frosted pane hosting an app opened as a banner tab. All panes
+ * stay mounted (so iframes keep their state); only the active one is shown.
+ */
+function WinterTabPane({
+  win,
+  app,
+  title,
+  active,
+}: {
+  win: WinterWin;
+  app: AppDef;
+  title: string;
+  active: boolean;
+}) {
+  const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
+  const slug = slugOf(win.appId);
+  return (
+    <div
+      className={`absolute left-0 right-0 top-12 bottom-0 z-30 bg-white/30 backdrop-blur-2xl pointer-events-auto ${
+        active ? "" : "hidden"
+      }`}
+      data-testid={`tab-pane-${slug}-${win.id}`}
+      data-winter-app={slug}
+    >
+      <div ref={setBodyEl} className="relative h-full w-full overflow-auto" data-winter-window>
+        {win.appId === "plexus-iq" ? (
+          <DialogPortalContainerContext.Provider value={bodyEl}>
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+                  Opening Plexus IQ…
+                </div>
+              }
+            >
+              <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                <PlexusIQPage />
+              </SidebarProvider>
+            </Suspense>
+          </DialogPortalContainerContext.Provider>
+        ) : (
+          <iframe
+            src={`${app.href}?embed=1`}
+            title={title}
+            className="absolute inset-0 w-full h-full border-0 bg-white/60"
+            data-testid={`tab-iframe-${win.id}`}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -377,7 +431,9 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     }
   });
   const [windows, setWindows] = useState<WinterWin[]>([]);
+  const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const [panelApp, setPanelApp] = useState<string | null>(null);
+  const tabDragRef = useRef<{ id: number; sx: number; sy: number } | null>(null);
   const idRef = useRef(1);
   const zRef = useRef(100);
   const spawnCountRef = useRef(0);
@@ -447,7 +503,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     });
   };
 
-  const spawnWindow = (appId: string) => {
+  const spawnWindow = (appId: string, mode: "tab" | "window" = "tab") => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const w = Math.min(1180, vw - 120);
@@ -461,6 +517,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       {
         id,
         appId,
+        mode,
         x: Math.max(20, (vw - w) / 2 + step * 30),
         y: Math.min(64 + step * 26, vh - h - 40 > 48 ? 64 + step * 26 : 56),
         w,
@@ -470,12 +527,55 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         z: zRef.current,
       },
     ]);
+    if (mode === "tab") setActiveTabId(id);
   };
 
   const patchWindow = (id: number, patch: Partial<WinterWin>) =>
     setWindows((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
 
-  const closeWindow = (id: number) => setWindows((prev) => prev.filter((w) => w.id !== id));
+  const closeWindow = (id: number) =>
+    setWindows((prev) => {
+      const next = prev.filter((w) => w.id !== id);
+      setActiveTabId((cur) => {
+        if (cur !== id) return cur;
+        const remaining = next.filter((w) => w.mode === "tab");
+        return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+      });
+      return next;
+    });
+
+  /** Detach a banner tab into a floating window near the pointer. */
+  const detachTab = (id: number, cx: number, cy: number) => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const w = Math.min(1180, vw - 120);
+    const h = Math.min(680, vh - 180);
+    zRef.current += 1;
+    const z = zRef.current;
+    setWindows((prev) => {
+      const next = prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              mode: "window" as const,
+              x: Math.min(Math.max(cx - w / 2, 8), Math.max(8, vw - w - 8)),
+              y: Math.min(Math.max(cy - 16, 48), Math.max(48, vh - 90)),
+              w,
+              h,
+              maximized: false,
+              minimized: false,
+              z,
+            }
+          : t,
+      );
+      setActiveTabId((cur) => {
+        if (cur !== id) return cur;
+        const remaining = next.filter((t) => t.mode === "tab");
+        return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+      });
+      return next;
+    });
+  };
 
   const windowsFor = (appId: string) => windows.filter((w) => w.appId === appId);
   const minimizedFor = (appId: string) => windowsFor(appId).filter((w) => w.minimized);
@@ -547,6 +647,25 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   };
 
   const panelWindows = panelApp ? minimizedFor(panelApp) : [];
+  const tabs = windows.filter((w) => w.mode === "tab");
+  const floatingWindows = windows.filter((w) => w.mode === "window");
+
+  const onTabPointerDown = (id: number) => (e: React.PointerEvent) => {
+    tabDragRef.current = { id, sx: e.clientX, sy: e.clientY };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onTabPointerMove = (id: number) => (e: React.PointerEvent) => {
+    const d = tabDragRef.current;
+    if (!d || d.id !== id) return;
+    // Dragging the tab out of the banner turns it into a floating window.
+    if (e.clientY - d.sy > 44) {
+      tabDragRef.current = null;
+      detachTab(id, e.clientX, e.clientY);
+    }
+  };
+  const onTabPointerEnd = () => {
+    tabDragRef.current = null;
+  };
 
   return (
     <div className="relative h-full w-full overflow-hidden font-sans select-none">
@@ -632,6 +751,49 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
             </>
           )}
         </div>
+
+        {/* Banner tabs — dock apps open here; drag a tab down to float it. */}
+        {tabs.length > 0 && (
+          <div
+            className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto px-3"
+            data-testid="banner-tab-strip"
+          >
+            {tabs.map((t) => {
+              const active = t.id === activeTabId;
+              return (
+                <div
+                  key={t.id}
+                  className={`group/tab flex items-center gap-1.5 shrink-0 rounded-md pl-3 pr-1.5 py-1 text-[13px] font-medium cursor-grab active:cursor-grabbing touch-none transition-colors select-none ${
+                    active
+                      ? "bg-white/30 text-slate-800 shadow-sm"
+                      : "text-slate-600 hover:bg-white/20 hover:text-slate-800"
+                  }`}
+                  onPointerDown={onTabPointerDown(t.id)}
+                  onPointerMove={onTabPointerMove(t.id)}
+                  onPointerUp={onTabPointerEnd}
+                  onPointerCancel={onTabPointerEnd}
+                  onClick={() => setActiveTabId(t.id)}
+                  data-testid={`banner-tab-${t.id}`}
+                >
+                  <span className="truncate max-w-[160px]">{titleFor(t)}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeWindow(t.id);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="w-5 h-5 rounded flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-white/40 transition-colors"
+                    aria-label={`Close ${titleFor(t)} tab`}
+                    data-testid={`banner-tab-close-${t.id}`}
+                  >
+                    <X className="w-3.5 h-3.5" strokeWidth={2.2} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="flex items-center gap-4 shrink-0">
           <Popover>
             <PopoverTrigger asChild>
@@ -656,9 +818,24 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         </div>
       </div>
 
+      {/* Tab panes — full-screen frosted layers under the floating windows. */}
+      {tabs.map((t) => {
+        const app = apps[t.appId];
+        if (!app) return null;
+        return (
+          <WinterTabPane
+            key={t.id}
+            win={t}
+            app={app}
+            title={titleFor(t)}
+            active={t.id === activeTabId}
+          />
+        );
+      })}
+
       {/* Desktop windows layer — no scrim: the desktop stays interactive. */}
       <div className="absolute inset-0 z-50 pointer-events-none">
-        {windows.map((win) => {
+        {floatingWindows.map((win) => {
           const app = apps[win.appId];
           if (!app) return null;
           return (
@@ -728,7 +905,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 ${
             dockPinned
               ? "opacity-100 scale-100"
-              : "opacity-40 group-hover/dock:opacity-100"
+              : "opacity-20 group-hover/dock:opacity-100"
           }`}
         >
           <div className="flex items-end gap-1.5">
@@ -760,12 +937,12 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                   <div className="w-8 h-10 flex items-center justify-center">
                     {dockExpanded ? (
                       <ChevronLeft
-                        className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-white transition-colors animate-pulse group-hover:animate-none"
+                        className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-sky-300/90 group-hover:drop-shadow-[0_0_8px_rgba(125,211,252,0.85)] transition-all animate-pulse group-hover:animate-none"
                         strokeWidth={2.5}
                       />
                     ) : (
                       <ChevronRight
-                        className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-white transition-colors animate-pulse group-hover:animate-none"
+                        className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-sky-300/90 group-hover:drop-shadow-[0_0_8px_rgba(125,211,252,0.85)] transition-all animate-pulse group-hover:animate-none"
                         strokeWidth={2.5}
                       />
                     )}
