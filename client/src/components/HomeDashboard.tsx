@@ -431,7 +431,7 @@ export function HomeDashboard({
           <div className="max-w-5xl mx-auto">
             <div className="space-y-6">
               <div className="flex justify-end">
-                <Link href="/home-preview">
+                <Link href="/winter-home">
                   <Button
                     variant="outline"
                     className="gap-2"

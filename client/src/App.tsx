@@ -7,7 +7,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
-import HomePreview from "@/pages/home-preview";
 import WinterHomePage from "@/pages/winter-home";
 import MissionControlPage from "@/pages/mission-control";
 import ImagingCentralPage from "@/pages/imaging-central";
@@ -109,11 +108,6 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/winter-home">
                   <WinterHomePage user={user} />
-                </Route>
-                <Route path="/home-preview">
-                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <HomePreview />
-                  </SidebarProvider>
                 </Route>
                 <Route path="/mission-control">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
