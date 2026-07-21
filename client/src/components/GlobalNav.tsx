@@ -26,14 +26,14 @@ import {
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
 
-type NavItemDef = {
+export type NavItemDef = {
   href: string;
   label: string;
   Icon: React.ComponentType<{ className?: string; strokeWidth?: number | string }>;
   roles: string[];
 };
 
-const NAV_ITEMS: NavItemDef[] = [
+export const NAV_ITEMS: NavItemDef[] = [
   { href: "/home",             label: "Home",             Icon: HomeIcon,     roles: ["admin", "clinician", "scheduler"] },
   { href: "/mission-control",  label: "Mission Control",  Icon: Radar,        roles: ["admin"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },

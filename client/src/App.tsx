@@ -8,6 +8,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import HomePreview from "@/pages/home-preview";
+import WinterHomePage from "@/pages/winter-home";
 import MissionControlPage from "@/pages/mission-control";
 import ImagingCentralPage from "@/pages/imaging-central";
 import ClinicAnalyticsPage from "@/pages/clinic-analytics";
@@ -79,13 +80,14 @@ function RoleGuard({ user, roles, children }: { user: AuthUser; roles: string[];
 function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const [currentPath] = useLocation();
   const showGlobalNav = shouldShowGlobalNav(currentPath);
+  const isWinterHome = currentPath === "/winter-home" || currentPath.startsWith("/winter-home/");
   return (
     <Switch>
       <Route path="/schedule/:id" component={SharedSchedule} />
       <Route>
         <div className="flex flex-col h-screen w-full overflow-hidden">
-          <TopBanner user={user} onLogout={onLogout} />
-          <GlobalFloatingDock />
+          {!isWinterHome && <TopBanner user={user} onLogout={onLogout} />}
+          {!isWinterHome && <GlobalFloatingDock />}
           <div className="flex flex-1 min-h-0 min-w-0">
             {showGlobalNav && <GlobalNav user={user} onLogout={onLogout} />}
             <div className="flex flex-col flex-1 min-w-0 min-h-0">
@@ -104,6 +106,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <Home />
                   </SidebarProvider>
+                </Route>
+                <Route path="/winter-home">
+                  <WinterHomePage user={user} />
                 </Route>
                 <Route path="/home-preview">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
