@@ -46,14 +46,6 @@ export type ReconcileInput = {
   adminReviewStatus?: AncillaryAdminReviewStatus;
   source: string;
   actorUserId?: string | null;
-  /**
-   * For journey-event PHI columns (patient_name is NOT NULL in the
-   * existing schema). NOT part of the ancillary case's own row. When
-   * omitted, journey events are still written using the sentinel
-   * "[ancillary_case_audit]" name — no additional PHI is fabricated.
-   */
-  patientNameForAudit?: string | null;
-  patientDobForAudit?: string | null;
 };
 
 export type ReconcileResult =
@@ -81,7 +73,12 @@ export type ReconcileResult =
       isNewEpisode: boolean;
     };
 
-const AUDIT_SENTINEL_NAME = "[ancillary_case_audit]";
+// The existing `patient_journey_events` table declares `patient_name`
+// as NOT NULL. All new Phase 2B events use this sentinel — the real
+// patient name is NEVER stored on ancillary-case journey events. The
+// existing PHI-column requirement of the shared table is satisfied by
+// a stable, non-identifying string. Stable IDs remain in metadata.
+export const ANCILLARY_AUDIT_SENTINEL_NAME = "[ancillary_case_audit]";
 
 async function appendAncillaryJourneyEvent(args: {
   eventType: string;
@@ -92,12 +89,11 @@ async function appendAncillaryJourneyEvent(args: {
 }): Promise<void> {
   try {
     await db.insert(patientJourneyEvents).values({
-      // patientName is NOT NULL on the existing schema. We use a
-      // sentinel when the caller cannot provide a real value — this
-      // preserves the "no additional PHI" rule while keeping the row
-      // schema-valid.
-      patientName: args.input.patientNameForAudit ?? AUDIT_SENTINEL_NAME,
-      patientDob: args.input.patientDobForAudit ?? null,
+      // Non-PHI sentinel — see ANCILLARY_AUDIT_SENTINEL_NAME. Never
+      // the real patient name.
+      patientName: ANCILLARY_AUDIT_SENTINEL_NAME,
+      // NEVER store DOB on ancillary-case events.
+      patientDob: null,
       patientScreeningId: args.input.originatingScreeningId ?? null,
       executionCaseId: args.input.executionCaseId ?? null,
       eventType: args.eventType,
@@ -370,8 +366,6 @@ export async function conservativelyRemoveAncillaryService(args: {
   action?: "on_hold" | "cancelled" | "archived";
   actorUserId?: string | null;
   source: string;
-  patientNameForAudit?: string | null;
-  patientDobForAudit?: string | null;
 }): Promise<
   | { status: "skipped_flag_off" }
   | { status: "no_active_case"; serviceType: string }
@@ -424,8 +418,6 @@ export async function conservativelyRemoveAncillaryService(args: {
       serviceType: args.serviceType,
       source: args.source,
       actorUserId: args.actorUserId ?? null,
-      patientNameForAudit: args.patientNameForAudit ?? null,
-      patientDobForAudit: args.patientDobForAudit ?? null,
     },
     ancillaryCaseId: active.id,
     metadata: {

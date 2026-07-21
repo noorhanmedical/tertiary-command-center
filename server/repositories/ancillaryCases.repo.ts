@@ -16,12 +16,16 @@ import { db } from "../db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   patientAncillaryCases,
+  ancillaryCaseReconciliationFailures,
   ANCILLARY_ACTIVE_LIFECYCLE_STATUSES,
+  type AncillaryCaseReconciliationFailure,
   type AncillaryLifecycleStatus,
   type AncillaryQualificationStatus,
   type AncillaryAdminReviewStatus,
   type PatientAncillaryCase,
+  type ReconciliationFailureAction,
 } from "@shared/schema/ancillaryCases";
+import { isNull } from "drizzle-orm";
 import { featureFlags } from "../lib/featureFlags";
 
 const WRITE_FLAG_OFF_MESSAGE =
@@ -352,4 +356,165 @@ export async function reactivateOnHoldAncillaryCase(
     )
     .returning();
   return row ?? null;
+}
+
+// ─── ancillary_case_reconciliation_failures (durable retry ledger) ──
+//
+// Recording a failure is NOT gated by featureFlags.ancillaryCaseWrite:
+// once the primary reconciliation has failed we still need durable
+// retry state, and refusing to record because of the same flag would
+// be self-defeating. safeRead's own guard already re-throws
+// ANCILLARY_CASE_MIGRATION_MISSING when the migration is absent.
+
+export type RecordAncillaryReconciliationFailureInput = {
+  patientScreeningId?: number | null;
+  executionCaseId?: number | null;
+  clinicId: number;
+  globalPlexusPatientId?: number | null;
+  patientClinicMembershipId?: number | null;
+  serviceType: string;
+  requestedAction: ReconciliationFailureAction;
+  sourceSystem?: string | null;
+  errorCode?: string | null;
+};
+
+/**
+ * Record a failure OR bump the attempt counter on an existing
+ * unresolved row for the same canonical work request
+ * (execution_case_id + service_type + requested_action, or
+ * patient_screening_id + service_type + requested_action when the
+ * former is null).
+ *
+ * The partial-unique-indexes on the ledger enforce one unresolved
+ * row per canonical work request. Retry updates rather than duplicating.
+ */
+export async function recordAncillaryReconciliationFailure(
+  input: RecordAncillaryReconciliationFailureInput,
+): Promise<AncillaryCaseReconciliationFailure> {
+  const dedupeConds = [
+    eq(ancillaryCaseReconciliationFailures.serviceType, input.serviceType),
+    eq(ancillaryCaseReconciliationFailures.requestedAction, input.requestedAction),
+    isNull(ancillaryCaseReconciliationFailures.resolvedAt),
+  ];
+  if (input.executionCaseId != null) {
+    dedupeConds.push(
+      eq(ancillaryCaseReconciliationFailures.executionCaseId, input.executionCaseId),
+    );
+  } else if (input.patientScreeningId != null) {
+    dedupeConds.push(
+      eq(ancillaryCaseReconciliationFailures.patientScreeningId, input.patientScreeningId),
+    );
+    // Also require execution_case_id IS NULL for this dedup — matches
+    // the migration's uq_acrf_unresolved_by_screening index predicate.
+    dedupeConds.push(isNull(ancillaryCaseReconciliationFailures.executionCaseId));
+  }
+
+  const existing = await db
+    .select()
+    .from(ancillaryCaseReconciliationFailures)
+    .where(and(...dedupeConds))
+    .limit(1);
+
+  if (existing[0]) {
+    const [updated] = await db
+      .update(ancillaryCaseReconciliationFailures)
+      .set({
+        attemptCount: (existing[0].attemptCount ?? 0) + 1,
+        lastAttemptedAt: sql`CURRENT_TIMESTAMP`,
+        errorCode: input.errorCode ?? existing[0].errorCode,
+        sourceSystem: input.sourceSystem ?? existing[0].sourceSystem,
+        // Refresh nullable identity ids in case Phase 2A links have
+        // been resolved since the previous attempt.
+        globalPlexusPatientId:
+          input.globalPlexusPatientId ?? existing[0].globalPlexusPatientId,
+        patientClinicMembershipId:
+          input.patientClinicMembershipId ?? existing[0].patientClinicMembershipId,
+      })
+      .where(eq(ancillaryCaseReconciliationFailures.id, existing[0].id))
+      .returning();
+    return updated;
+  }
+
+  const [inserted] = await db
+    .insert(ancillaryCaseReconciliationFailures)
+    .values({
+      patientScreeningId: input.patientScreeningId ?? null,
+      executionCaseId: input.executionCaseId ?? null,
+      clinicId: input.clinicId,
+      globalPlexusPatientId: input.globalPlexusPatientId ?? null,
+      patientClinicMembershipId: input.patientClinicMembershipId ?? null,
+      serviceType: input.serviceType,
+      requestedAction: input.requestedAction,
+      sourceSystem: input.sourceSystem ?? null,
+      errorCode: input.errorCode ?? null,
+      attemptCount: 1,
+    })
+    .returning();
+  return inserted;
+}
+
+/**
+ * Mark unresolved rows matching the canonical work request as
+ * resolved. Idempotent — resolving an already-resolved row is a no-op.
+ */
+export async function resolveAncillaryReconciliationFailure(args: {
+  serviceType: string;
+  executionCaseId?: number | null;
+  patientScreeningId?: number | null;
+  requestedAction?: ReconciliationFailureAction;
+}): Promise<void> {
+  const conds = [
+    eq(ancillaryCaseReconciliationFailures.serviceType, args.serviceType),
+    isNull(ancillaryCaseReconciliationFailures.resolvedAt),
+  ];
+  if (args.executionCaseId != null) {
+    conds.push(eq(ancillaryCaseReconciliationFailures.executionCaseId, args.executionCaseId));
+  } else if (args.patientScreeningId != null) {
+    conds.push(eq(ancillaryCaseReconciliationFailures.patientScreeningId, args.patientScreeningId));
+  }
+  if (args.requestedAction) {
+    conds.push(eq(ancillaryCaseReconciliationFailures.requestedAction, args.requestedAction));
+  }
+  await db
+    .update(ancillaryCaseReconciliationFailures)
+    .set({ resolvedAt: sql`CURRENT_TIMESTAMP` })
+    .where(and(...conds));
+}
+
+/**
+ * List unresolved failures, oldest-first. Used by the retry service
+ * and the Phase 2A identity-completion trigger.
+ */
+export async function listUnresolvedAncillaryReconciliationFailures(args?: {
+  clinicId?: number;
+  screeningId?: number;
+  executionCaseId?: number;
+  limit?: number;
+}): Promise<AncillaryCaseReconciliationFailure[]> {
+  return safeRead(
+    async () => {
+      const conds = [isNull(ancillaryCaseReconciliationFailures.resolvedAt)];
+      if (args?.clinicId != null) {
+        conds.push(eq(ancillaryCaseReconciliationFailures.clinicId, args.clinicId));
+      }
+      if (args?.screeningId != null) {
+        conds.push(
+          eq(ancillaryCaseReconciliationFailures.patientScreeningId, args.screeningId),
+        );
+      }
+      if (args?.executionCaseId != null) {
+        conds.push(
+          eq(ancillaryCaseReconciliationFailures.executionCaseId, args.executionCaseId),
+        );
+      }
+      return db
+        .select()
+        .from(ancillaryCaseReconciliationFailures)
+        .where(and(...conds))
+        .orderBy(ancillaryCaseReconciliationFailures.firstFailedAt)
+        .limit(Math.min(Math.max(1, args?.limit ?? 100), 500));
+    },
+    [] as AncillaryCaseReconciliationFailure[],
+    "listUnresolvedAncillaryReconciliationFailures",
+  );
 }

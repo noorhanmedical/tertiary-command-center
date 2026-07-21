@@ -163,6 +163,70 @@ export type InsertPatientAncillaryCase = z.infer<
   typeof insertPatientAncillaryCaseSchema
 >;
 
+// ─── ancillary_case_reconciliation_failures ─────────────────────
+// Durable retry ledger. Populated when the reconciler cannot commit
+// (missing Phase 2A links, integrity failure, DB error, race). Never
+// stores PHI — only ids, timestamps, action, source, error code.
+//
+// The FKs to patient_screenings / patient_execution_cases /
+// global_plexus_patients / patient_clinic_memberships are declared
+// in the migration only. Circular-import avoidance: this file lives
+// in shared/schema and the referenced tables live in other schema
+// modules that already import from here or from siblings.
+export const RECONCILIATION_FAILURE_ACTIONS = [
+  "ensure_active",
+  "place_on_hold",
+  "cancel",
+  "archive",
+  "refresh_projection",
+] as const;
+export type ReconciliationFailureAction =
+  (typeof RECONCILIATION_FAILURE_ACTIONS)[number];
+
+export const ancillaryCaseReconciliationFailures = pgTable(
+  "ancillary_case_reconciliation_failures",
+  {
+    id: serial("id").primaryKey(),
+    patientScreeningId: integer("patient_screening_id"),
+    executionCaseId: integer("execution_case_id"),
+    clinicId: integer("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    globalPlexusPatientId: integer("global_plexus_patient_id"),
+    patientClinicMembershipId: integer("patient_clinic_membership_id"),
+    serviceType: text("service_type").notNull(),
+    requestedAction: text("requested_action").notNull(),
+    sourceSystem: text("source_system"),
+    errorCode: text("error_code"),
+    attemptCount: integer("attempt_count").notNull().default(1),
+    firstFailedAt: timestamp("first_failed_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    lastAttemptedAt: timestamp("last_attempted_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    resolvedAt: timestamp("resolved_at"),
+  },
+  (table) => [
+    index("idx_acrf_screening").on(table.patientScreeningId),
+    index("idx_acrf_execution_case").on(table.executionCaseId),
+    index("idx_acrf_clinic").on(table.clinicId),
+  ],
+);
+
+export const insertAncillaryCaseReconciliationFailureSchema = createInsertSchema(
+  ancillaryCaseReconciliationFailures,
+).omit({
+  id: true,
+  firstFailedAt: true,
+  lastAttemptedAt: true,
+});
+export type AncillaryCaseReconciliationFailure =
+  typeof ancillaryCaseReconciliationFailures.$inferSelect;
+export type InsertAncillaryCaseReconciliationFailure = z.infer<
+  typeof insertAncillaryCaseReconciliationFailureSchema
+>;
+
 // ─── Journey event type catalog (Phase 2B additions) ────────────
 //
 // These event kinds are appended to the existing

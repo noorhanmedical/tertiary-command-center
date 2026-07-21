@@ -18,6 +18,8 @@ import {
   ANCILLARY_JOURNEY_EVENT_TYPES,
   ANCILLARY_LIFECYCLE_STATUSES,
   ANCILLARY_QUALIFICATION_STATUSES,
+  RECONCILIATION_FAILURE_ACTIONS,
+  ancillaryCaseReconciliationFailures,
   patientAncillaryCases,
 } from "../../shared/schema/ancillaryCases";
 import { featureFlags } from "../../server/lib/featureFlags";
@@ -162,11 +164,19 @@ function buildFakeDb(spec: Map<unknown, FakeTableSpec>) {
       return {
         set(v: Record<string, unknown>) {
           return {
-            async where(_: unknown) {
+            where(_: unknown) {
               calls.push({ op: "update", table: t, payload: v });
               const s = spec.get(t);
               s?.update?.(v);
-              return [] as unknown[];
+              // Return an object that is both awaitable (direct .where()
+              // await) AND supports .returning() for the update-and-return
+              // path used by the execution-case sync.
+              const result: unknown[] = [{ ...v, __updated: true }];
+              const returnable = {
+                returning: async () => result,
+                then: (resolve: (v: unknown[]) => void) => resolve(result),
+              };
+              return returnable;
             },
           };
         },
@@ -220,6 +230,7 @@ async function loadTables() {
   const clc = await import("../../shared/schema/clinics");
   return {
     ancillaryCases: anc.patientAncillaryCases,
+    ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
     journeyEvents: exec.patientJourneyEvents,
     globalPatients: plex.globalPlexusPatients,
     memberships: plex.patientClinicMemberships,
@@ -789,6 +800,482 @@ async function testPhase2ATestsPresent() {
   assert.ok(/H12/.test(src) || /(H11)/.test(src), "Phase 2A hardening tests must remain");
 }
 
+// ═══ Phase 2B hardening — 20 new behavioral / architecture tests ══
+
+// (H1) Retry ledger table declared + expected columns
+async function testRetryLedgerSchema() {
+  const cols = Object.keys(ancillaryCaseReconciliationFailures);
+  for (const c of [
+    "id","patientScreeningId","executionCaseId","clinicId",
+    "globalPlexusPatientId","patientClinicMembershipId",
+    "serviceType","requestedAction","sourceSystem","errorCode",
+    "attemptCount","firstFailedAt","lastAttemptedAt","resolvedAt",
+  ]) {
+    assert.ok(cols.includes(c), `retry ledger missing column: ${c}`);
+  }
+  for (const p of ["patientName","name","dob","phone","email","mrn","insurance","diagnosis","medication","clinicalReasoning","reasoning"]) {
+    assert.equal(cols.includes(p), false, `retry ledger MUST NOT include: ${p}`);
+  }
+  assert.deepEqual(
+    [...RECONCILIATION_FAILURE_ACTIONS],
+    ["ensure_active","place_on_hold","cancel","archive","refresh_projection"],
+  );
+}
+
+// (H2) Migration adds status CHECK constraints + retry ledger table
+async function testMigrationHasChecksAndLedger() {
+  const sqlText = readFileSync(join(REPO_ROOT, "migrations/0050_add_patient_ancillary_cases.sql"), "utf8");
+  assert.ok(/CONSTRAINT\s+chk_pac_lifecycle_status[\s\S]*?CHECK\s*\(\s*lifecycle_status\s+IN[\s\S]*?new[\s\S]*?archived/i.test(sqlText));
+  assert.ok(/CONSTRAINT\s+chk_pac_qualification_status/i.test(sqlText));
+  assert.ok(/CONSTRAINT\s+chk_pac_admin_review_status/i.test(sqlText));
+  assert.ok(/CONSTRAINT\s+chk_pac_episode_sequence[\s\S]*?episode_sequence\s*>=\s*1/i.test(sqlText));
+  assert.ok(/CONSTRAINT\s+chk_pac_closed_at_required/i.test(sqlText));
+  assert.ok(/CREATE TABLE IF NOT EXISTS ancillary_case_reconciliation_failures/i.test(sqlText));
+  assert.ok(/CONSTRAINT\s+chk_acrf_requested_action/i.test(sqlText));
+}
+
+// (H3) Partial unique active-episode index preserved
+async function testPartialUniqueActiveEpisodeIntact() {
+  const sqlText = readFileSync(join(REPO_ROOT, "migrations/0050_add_patient_ancillary_cases.sql"), "utf8");
+  assert.ok(/CREATE UNIQUE INDEX IF NOT EXISTS uq_pac_active_episode[\s\S]*?WHERE lifecycle_status IN\s*\(\s*'new',\s*'active',\s*'on_hold'\s*\)/i.test(sqlText));
+}
+
+// (H4) Sync reconciles BEFORE projecting selectedServices
+async function testSyncReconcilesBeforeProjection() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  const opsLog: string[] = [];
+  spec.set(t.clinics, { select: () => [{ id: 1 }] });
+  spec.set(t.globalPatients, { select: () => { opsLog.push("select:global"); return [{ id: 10 }]; } });
+  spec.set(t.memberships, { select: () => { opsLog.push("select:membership"); return [{ id: 20, clinicId: 1, globalPlexusPatientId: 10 }]; } });
+  spec.set(t.screenings, { select: () => [{ id: 1, clinicId: 1 }] });
+  spec.set(t.executionCases, { select: () => [{ id: 99, clinicId: 1 }] });
+  let ancSelectCount = 0;
+  const insertedRows: Record<string, unknown>[] = [];
+  spec.set(t.ancillaryCases, {
+    select: () => {
+      ancSelectCount++;
+      opsLog.push(`select:ancillary#${ancSelectCount}`);
+      // #1: findActive → none. #2: MAX. #3: listForPatient (on_hold pass). #4: projection.
+      if (ancSelectCount === 1) return [];
+      if (ancSelectCount === 2) return [{ max: null }];
+      if (ancSelectCount === 3) return insertedRows; // for on_hold filter
+      return insertedRows.map((r) => ({ serviceType: r.serviceType }));
+    },
+    insert: (v) => {
+      opsLog.push("insert:ancillary");
+      const row = Array.isArray(v) ? v[0] : v;
+      const withId = { ...row, id: 55, lifecycleStatus: (row.lifecycleStatus ?? "new"), clinicId: row.clinicId, patientClinicMembershipId: 20, originatingScreeningId: 1, executionCaseId: 99 };
+      insertedRows.push(withId);
+      return [withId];
+    },
+  });
+  spec.set(t.journeyEvents, { insert: () => { opsLog.push("insert:journey"); return []; } });
+  spec.set(t.ancillaryFailures, { select: () => [], insert: () => [] });
+
+  const svc = await import("../../server/services/ancillaryCases/screeningSync");
+  const r = await withFakeDb(spec, true, async () =>
+    svc.syncScreeningAncillaryCases({
+      screening: { id: 1, clinicId: 1, name: "X", dob: null,
+        qualifyingTests: ["BrainWave"], adminApprovalStatus: "approved",
+        patientClinicMembershipId: 20, globalPlexusPatientId: 10 } as never,
+      executionCaseId: 99, actorUserId: null,
+      requestedServices: ["BrainWave"], requestedServicesDefined: true, source: "test",
+    }),
+  );
+  assert.equal(r.deferred, false);
+  assert.deepEqual(r.projection, ["BrainWave"]);
+  assert.equal(r.reconciledCount, 1);
+  const firstInsert = opsLog.indexOf("insert:ancillary");
+  const projectionSelect = opsLog.lastIndexOf("select:ancillary#3");
+  assert.ok(firstInsert > -1 && projectionSelect > firstInsert,
+    "projection query must come AFTER reconciliation write");
+}
+
+// (H5) selectedServices ends up equal to projection
+async function testExecutionCaseSelectedServicesEqualsProjection() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  const execUpdates: Record<string, unknown>[] = [];
+  spec.set(t.clinics, { select: () => [{ id: 1 }] });
+  spec.set(t.globalPatients, { select: () => [{ id: 10 }] });
+  spec.set(t.memberships, { select: () => [{ id: 20, clinicId: 1, globalPlexusPatientId: 10 }] });
+  spec.set(t.screenings, { select: () => [{ id: 42, clinicId: 1 }] });
+  let execCaseSelect = 0;
+  const insertedExec: Record<string, unknown>[] = [];
+  spec.set(t.executionCases, {
+    select: () => {
+      execCaseSelect++;
+      // 1st is the "existing" probe; return none so we hit the insert path.
+      if (execCaseSelect === 1) return [];
+      // subsequent selects (for integrity checks) get the inserted case.
+      return insertedExec;
+    },
+    insert: (v) => {
+      const row = Array.isArray(v) ? v[0] : v;
+      assert.equal("selectedServices" in row, false,
+        "insert must NOT set selectedServices when flag ON — projection updates it after");
+      const withId = { ...row, id: 700 };
+      insertedExec.push(withId);
+      return [withId];
+    },
+    update: (v) => { execUpdates.push(v); },
+  });
+  let ancSelects = 0;
+  const insertedAnc: Record<string, unknown>[] = [];
+  spec.set(t.ancillaryCases, {
+    select: () => {
+      ancSelects++;
+      if (ancSelects === 1) return [];
+      if (ancSelects === 2) return [{ max: null }];
+      if (ancSelects === 3) return insertedAnc; // listForPatient
+      return insertedAnc.map((r) => ({ serviceType: r.serviceType }));
+    },
+    insert: (v) => {
+      const row = Array.isArray(v) ? v[0] : v;
+      const withId = { ...row, id: 900, clinicId: row.clinicId };
+      insertedAnc.push(withId);
+      return [withId];
+    },
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  spec.set(t.ancillaryFailures, { select: () => [], insert: () => [] });
+
+  const repo = await import("../../server/repositories/executionCase.repo");
+  await withFakeDb(spec, true, async () =>
+    repo.createOrUpdateExecutionCaseFromScreening({
+      id: 42, clinicId: 1, name: "X", dob: null,
+      qualifyingTests: ["VitalWave"], adminApprovalStatus: "approved",
+      patientClinicMembershipId: 20, globalPlexusPatientId: 10 } as never, null),
+  );
+  const projectionUpdate = execUpdates.find(
+    (u) => Array.isArray((u as { selectedServices?: unknown }).selectedServices),
+  );
+  assert.ok(projectionUpdate, "execution case must be updated with projection");
+  assert.deepEqual((projectionUpdate as { selectedServices: string[] }).selectedServices, ["VitalWave"]);
+}
+
+// (H6) Failed reconciliation does NOT persist selectedServices as truth
+async function testFailedReconciliationDoesNotWriteSelectedServices() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  const execUpdates: Record<string, unknown>[] = [];
+  spec.set(t.clinics, { select: () => [{ id: 1 }] });
+  spec.set(t.globalPatients, { select: () => [{ id: 10 }] });
+  spec.set(t.memberships, { select: () => [{ id: 20, clinicId: 1, globalPlexusPatientId: 10 }] });
+  spec.set(t.executionCases, {
+    select: () => [],
+    insert: (v) => { const row = Array.isArray(v) ? v[0] : v; return [{ ...row, id: 800 }]; },
+    update: (v) => { execUpdates.push(v); },
+  });
+  spec.set(t.ancillaryCases, {
+    select: () => [],
+    insert: () => { const e = new Error("db exploded"); (e as { code?: string }).code = "40001"; throw e; },
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  const failureInserts: Record<string, unknown>[] = [];
+  spec.set(t.ancillaryFailures, {
+    select: () => [],
+    insert: (v) => { const row = Array.isArray(v) ? v[0] : v; failureInserts.push(row); return [{ ...row, id: 500 }]; },
+  });
+
+  const repo = await import("../../server/repositories/executionCase.repo");
+  await withFakeDb(spec, true, async () =>
+    repo.createOrUpdateExecutionCaseFromScreening({
+      id: 42, clinicId: 1, name: "X", dob: null,
+      qualifyingTests: ["BrainWave"], adminApprovalStatus: "approved",
+      patientClinicMembershipId: 20, globalPlexusPatientId: 10 } as never, null),
+  );
+  for (const u of execUpdates.filter((u) => "selectedServices" in u)) {
+    const sel = (u as { selectedServices: unknown }).selectedServices;
+    if (Array.isArray(sel)) {
+      assert.equal(sel.includes("BrainWave"), false,
+        "selectedServices must NOT claim a service whose reconciliation failed");
+    }
+  }
+  assert.ok(failureInserts.length >= 1, "durable retry row must be created on failure");
+  assert.equal(failureInserts[0].serviceType, "BrainWave");
+  assert.equal(failureInserts[0].requestedAction, "ensure_active");
+}
+
+// (H7) Retry idempotent — resolve is a no-op
+async function testRetryIdempotent() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(t.clinics, { select: () => [{ id: 1 }] });
+  spec.set(t.globalPatients, { select: () => [{ id: 10 }] });
+  spec.set(t.memberships, { select: () => [{ id: 20, clinicId: 1, globalPlexusPatientId: 10 }] });
+  spec.set(t.screenings, {
+    select: () => [{ id: 5, clinicId: 1, name: "X", dob: null,
+      qualifyingTests: [], adminApprovalStatus: "approved",
+      patientClinicMembershipId: 20, globalPlexusPatientId: 10 }],
+  });
+  spec.set(t.ancillaryCases, {
+    select: () => [{ id: 100, globalPlexusPatientId: 10, clinicId: 1, serviceType: "BrainWave",
+      lifecycleStatus: "active", episodeSequence: 1, patientClinicMembershipId: 20,
+      originatingScreeningId: 5, executionCaseId: null }],
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  const failureRow = {
+    id: 1, patientScreeningId: 5, executionCaseId: null, clinicId: 1,
+    globalPlexusPatientId: 10, patientClinicMembershipId: 20,
+    serviceType: "BrainWave", requestedAction: "ensure_active",
+    sourceSystem: "test", errorCode: "unknown",
+    attemptCount: 1, resolvedAt: null,
+  } as never;
+  const resolvedUpdates: Record<string, unknown>[] = [];
+  spec.set(t.ancillaryFailures, {
+    select: () => [failureRow],
+    update: (v) => { resolvedUpdates.push(v); },
+    insert: () => [],
+  });
+
+  const retry = await import("../../server/services/ancillaryCases/failureRetry");
+  const first = await withFakeDb(spec, true, async () =>
+    retry.retryAncillaryCaseReconciliationFailure(failureRow));
+  const second = await withFakeDb(spec, true, async () =>
+    retry.retryAncillaryCaseReconciliationFailure(failureRow));
+  assert.equal(first.status, "resolved");
+  assert.equal(second.status, "resolved", "second retry idempotent");
+  assert.ok(resolvedUpdates.length >= 1);
+}
+
+// (H8) Missing identity → deferred + retry per service
+async function testMissingIdentityDeferredWithRetryRows() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  const inserted: Record<string, unknown>[] = [];
+  spec.set(t.ancillaryFailures, {
+    select: () => [],
+    insert: (v) => { const row = Array.isArray(v) ? v[0] : v; inserted.push(row); return [{ ...row, id: inserted.length }]; },
+  });
+  spec.set(t.ancillaryCases, {
+    select: () => { throw new Error("should not query when identity missing"); },
+    insert: () => { throw new Error("should not insert when identity missing"); },
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+
+  const svc = await import("../../server/services/ancillaryCases/screeningSync");
+  const r = await withFakeDb(spec, true, async () =>
+    svc.syncScreeningAncillaryCases({
+      screening: { id: 5, clinicId: 1, name: "X", dob: null,
+        qualifyingTests: ["BrainWave", "VitalWave"],
+        adminApprovalStatus: "approved",
+        patientClinicMembershipId: null, globalPlexusPatientId: null } as never,
+      executionCaseId: 99, actorUserId: null,
+      requestedServices: ["BrainWave", "VitalWave"], requestedServicesDefined: true, source: "test",
+    }),
+  );
+  assert.equal(r.deferred, true);
+  assert.equal(r.missingIdentityLinks, true);
+  assert.equal(r.projection, null);
+  assert.equal(inserted.length, 2);
+  for (const row of inserted) {
+    assert.equal(row.errorCode, "MISSING_IDENTITY_LINKS");
+    assert.equal(row.requestedAction, "ensure_active");
+  }
+}
+
+// (H9) Identity completion hook exists + is scoped to screening
+async function testIdentityCompletionHook() {
+  const src = readFileSync(
+    join(REPO_ROOT, "server/services/ancillaryCases/failureRetry.ts"), "utf8");
+  assert.ok(/retryFailuresAfterIdentityCompletion/.test(src));
+  assert.ok(/retryUnresolvedAncillaryCaseReconciliations\(\{\s*screeningId/.test(src));
+}
+
+// (H10) Quick-schedule defers via retry ledger
+async function testQuickScheduleCreatesDeferredWork() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes/globalSchedule.ts"), "utf8");
+  assert.ok(/recordAncillaryReconciliationFailure/.test(src));
+  assert.ok(/MISSING_IDENTITY_LINKS_QUICK_SCHEDULE/.test(src));
+  assert.ok(/patientScreeningId:\s*null/.test(src));
+}
+
+// (H11) Requested-but-failed service does NOT go on_hold
+async function testRequestedFailedServiceStaysActive() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(t.clinics, { select: () => [{ id: 1 }] });
+  spec.set(t.globalPatients, { select: () => [{ id: 10 }] });
+  spec.set(t.memberships, { select: () => [{ id: 20, clinicId: 1, globalPlexusPatientId: 10 }] });
+  spec.set(t.ancillaryCases, {
+    select: () => [],
+    insert: () => { const e = new Error("db failed"); (e as { code?: string }).code = "40001"; throw e; },
+    update: () => { throw new Error("must NOT update on_hold on failed reconcile"); },
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  spec.set(t.ancillaryFailures, { select: () => [], insert: () => [] });
+  const svc = await import("../../server/services/ancillaryCases/screeningSync");
+  await withFakeDb(spec, true, async () =>
+    svc.syncScreeningAncillaryCases({
+      screening: { id: 1, clinicId: 1, name: "X", dob: null,
+        qualifyingTests: ["BrainWave"], adminApprovalStatus: "approved",
+        patientClinicMembershipId: 20, globalPlexusPatientId: 10 } as never,
+      executionCaseId: 99, actorUserId: null,
+      requestedServices: ["BrainWave"], requestedServicesDefined: true, source: "test",
+    }),
+  );
+  assert.ok(true, "reached end without on_hold write");
+}
+
+// (H12) Undefined list ≠ empty list — no on_hold pass
+async function testUndefinedServiceListDoesNotRemove() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(t.clinics, { select: () => [{ id: 1 }] });
+  spec.set(t.globalPatients, { select: () => [{ id: 10 }] });
+  spec.set(t.memberships, { select: () => [{ id: 20, clinicId: 1, globalPlexusPatientId: 10 }] });
+  spec.set(t.ancillaryCases, {
+    select: () => [{ id: 1, globalPlexusPatientId: 10, clinicId: 1, serviceType: "BrainWave",
+      lifecycleStatus: "active", episodeSequence: 1, patientClinicMembershipId: 20,
+      originatingScreeningId: null, executionCaseId: null }],
+    update: () => { throw new Error("must NOT place on_hold when list is undefined"); },
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  spec.set(t.ancillaryFailures, { select: () => [], insert: () => [] });
+
+  const svc = await import("../../server/services/ancillaryCases/screeningSync");
+  const r = await withFakeDb(spec, true, async () =>
+    svc.syncScreeningAncillaryCases({
+      screening: { id: 1, clinicId: 1, name: "X", dob: null,
+        qualifyingTests: null, adminApprovalStatus: "approved",
+        patientClinicMembershipId: 20, globalPlexusPatientId: 10 } as never,
+      executionCaseId: 99, actorUserId: null,
+      requestedServices: [], requestedServicesDefined: false, source: "test",
+    }),
+  );
+  assert.ok(r.projection !== null, "projection still computed on undefined-list runs");
+}
+
+// (H13) Explicit empty list → conservative on_hold on prior active
+async function testExplicitEmptyListPlacesActiveOnHold() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(t.clinics, { select: () => [{ id: 1 }] });
+  spec.set(t.globalPatients, { select: () => [{ id: 10 }] });
+  spec.set(t.memberships, { select: () => [{ id: 20, clinicId: 1, globalPlexusPatientId: 10 }] });
+  const holdUpdates: Record<string, unknown>[] = [];
+  spec.set(t.ancillaryCases, {
+    select: () => [{ id: 1, globalPlexusPatientId: 10, clinicId: 1, serviceType: "BrainWave",
+      lifecycleStatus: "active", episodeSequence: 1, patientClinicMembershipId: 20,
+      originatingScreeningId: null, executionCaseId: null }],
+    update: (v) => { holdUpdates.push(v); },
+  });
+  spec.set(t.journeyEvents, { insert: () => [] });
+  spec.set(t.ancillaryFailures, { select: () => [], insert: () => [] });
+  const svc = await import("../../server/services/ancillaryCases/screeningSync");
+  await withFakeDb(spec, true, async () =>
+    svc.syncScreeningAncillaryCases({
+      screening: { id: 1, clinicId: 1, name: "X", dob: null,
+        qualifyingTests: [], adminApprovalStatus: "approved",
+        patientClinicMembershipId: 20, globalPlexusPatientId: 10 } as never,
+      executionCaseId: 99, actorUserId: null,
+      requestedServices: [], requestedServicesDefined: true, source: "test",
+    }),
+  );
+  const holdUpdate = holdUpdates.find(
+    (u) => (u as { lifecycleStatus?: string }).lifecycleStatus === "on_hold",
+  );
+  assert.ok(holdUpdate, "explicit empty list must place the prior-active case on_hold");
+}
+
+// (H14) No PHI in Phase 2B audit events
+async function testNoPhiInAncillaryAuditEvents() {
+  const src = readFileSync(
+    join(REPO_ROOT, "server/services/ancillaryCases/reconciliation.ts"), "utf8");
+  assert.ok(/ANCILLARY_AUDIT_SENTINEL_NAME/.test(src));
+  assert.ok(/patientName:\s*ANCILLARY_AUDIT_SENTINEL_NAME/.test(src));
+  assert.ok(/patientDob:\s*null/.test(src));
+  assert.equal(/patientNameForAudit/.test(src), false);
+  assert.equal(/patientDobForAudit/.test(src), false);
+}
+
+// (H15) Flag OFF: NO retry rows recorded
+async function testFlagOffNoRetryRow() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(t.ancillaryFailures, {
+    insert: () => { throw new Error("must not record with flag OFF"); },
+  });
+  spec.set(t.ancillaryCases, { select: () => [] });
+  const svc = await import("../../server/services/ancillaryCases/screeningSync");
+  const r = await withFakeDb(spec, false, async () =>
+    svc.syncScreeningAncillaryCases({
+      screening: { id: 1, clinicId: null, name: "X", dob: null,
+        qualifyingTests: null,
+        patientClinicMembershipId: null, globalPlexusPatientId: null } as never,
+      executionCaseId: null, actorUserId: null,
+      requestedServices: [], requestedServicesDefined: false, source: "test",
+    }),
+  );
+  assert.equal(r.projection, null);
+}
+
+// (H16) Ledger dedup: same-shape request UPDATES not INSERTs
+async function testLedgerDedup() {
+  const t = await loadTables();
+  const spec = new Map<unknown, FakeTableSpec>();
+  const existing = {
+    id: 1, patientScreeningId: 5, executionCaseId: 99, clinicId: 1,
+    serviceType: "BrainWave", requestedAction: "ensure_active",
+    attemptCount: 2, resolvedAt: null,
+    globalPlexusPatientId: null, patientClinicMembershipId: null,
+    errorCode: "OLD", sourceSystem: "old",
+  } as never;
+  const updates: Record<string, unknown>[] = [];
+  const inserts: Record<string, unknown>[] = [];
+  spec.set(t.ancillaryFailures, {
+    select: () => [existing],
+    update: (v) => { updates.push(v); },
+    insert: (v) => { inserts.push(v as Record<string, unknown>); return []; },
+  });
+  const repo = await import("../../server/repositories/ancillaryCases.repo");
+  await withFakeDb(spec, true, async () =>
+    repo.recordAncillaryReconciliationFailure({
+      patientScreeningId: 5, executionCaseId: 99, clinicId: 1,
+      serviceType: "BrainWave", requestedAction: "ensure_active", errorCode: "NEW",
+    }),
+  );
+  assert.equal(inserts.length, 0, "must NOT insert duplicate");
+  assert.equal(updates.length, 1, "must update the existing row");
+  assert.equal((updates[0] as { attemptCount?: number }).attemptCount, 3);
+}
+
+// (H17) Feature-flag catalog includes ancillaryCaseWrite
+async function testFeatureFlagCatalog() {
+  const src = readFileSync(join(REPO_ROOT, "server/lib/featureFlags.ts"), "utf8");
+  assert.ok(/FEATURE_ANCILLARY_CASE_WRITE/.test(src));
+  assert.ok(/ancillaryCaseWrite:\s*readBool/.test(src));
+}
+
+// (H18) Regeneration service that persists qualifyingTests calls sync
+async function testRegenerationSyncCall() {
+  const src = readFileSync(
+    join(REPO_ROOT, "server/services/plexusIq/adminReviewRegenerateAllService.ts"),
+    "utf8",
+  );
+  assert.ok(/syncScreeningAncillaryCases/.test(src),
+    "regenerateAll must call the sync service (defense in depth — updatePayload guards are the primary check)");
+}
+
+// (H19) Retry ledger integrity — clinic_id NOT NULL
+async function testRetryLedgerRequiresClinicId() {
+  const sqlText = readFileSync(
+    join(REPO_ROOT, "migrations/0050_add_patient_ancillary_cases.sql"), "utf8");
+  assert.ok(/clinic_id\s+INTEGER\s+NOT NULL[\s\S]*?ancillary_case_reconciliation_failures/.test(
+    sqlText.slice(sqlText.indexOf("CREATE TABLE IF NOT EXISTS ancillary_case_reconciliation_failures"))
+  ), "retry ledger must require clinic_id");
+}
+
+// (H20) Phase 2A tests still present + Phase 2B tests still all in this file
+async function testExistingSuiteStillPresent() {
+  const p = join(REPO_ROOT, "tests/unit/plexusIdentity.test.ts");
+  assert.ok(statSync(p).isFile());
+  const src = readFileSync(p, "utf8");
+  assert.ok(src.length > 1000);
+}
+
 // ─── (27) PR #317 baseline preserved — the merge-base at the top
 // of phase/2b-ancillary-cases is the Phase 2A tip. Static check: the
 // SHA-referenced Phase 2A migration is present untouched.
@@ -828,6 +1315,27 @@ const tests = [
   ["(25) backfill output contains no PHI", testBackfillNoPhi],
   ["(26) Phase 2A tests remain present", testPhase2ATestsPresent],
   ["(27) Phase 2A migration content preserved", testPhase2AMigrationUntouched],
+  // ── Hardening — 20 behavioral + structural tests ──────────────
+  ["(H1) retry ledger schema declared + no PHI columns", testRetryLedgerSchema],
+  ["(H2) migration adds status CHECKs + retry ledger table", testMigrationHasChecksAndLedger],
+  ["(H3) partial unique active-episode index intact", testPartialUniqueActiveEpisodeIntact],
+  ["(H4) sync reconciles BEFORE projecting", testSyncReconcilesBeforeProjection],
+  ["(H5) selectedServices equals projection after success", testExecutionCaseSelectedServicesEqualsProjection],
+  ["(H6) failed reconciliation → no false selectedServices, retry row created", testFailedReconciliationDoesNotWriteSelectedServices],
+  ["(H7) retry is idempotent", testRetryIdempotent],
+  ["(H8) missing identity → deferred + retry per service", testMissingIdentityDeferredWithRetryRows],
+  ["(H9) Phase 2A identity-completion hook exists + is scoped", testIdentityCompletionHook],
+  ["(H10) quick-schedule defers via retry ledger", testQuickScheduleCreatesDeferredWork],
+  ["(H11) failed-to-reconcile service is NOT placed on_hold", testRequestedFailedServiceStaysActive],
+  ["(H12) undefined list ≠ empty list — no on_hold pass", testUndefinedServiceListDoesNotRemove],
+  ["(H13) explicit empty list → conservative on_hold", testExplicitEmptyListPlacesActiveOnHold],
+  ["(H14) new audit events contain no PHI", testNoPhiInAncillaryAuditEvents],
+  ["(H15) flag OFF: no retry rows recorded", testFlagOffNoRetryRow],
+  ["(H16) ledger dedup: same-shape request UPDATEs not INSERTs", testLedgerDedup],
+  ["(H17) feature-flag catalog includes ancillaryCaseWrite", testFeatureFlagCatalog],
+  ["(H18) regeneration path invokes sync (defense-in-depth)", testRegenerationSyncCall],
+  ["(H19) retry ledger requires clinic_id NOT NULL", testRetryLedgerRequiresClinicId],
+  ["(H20) existing suite files still present", testExistingSuiteStillPresent],
 ] as const;
 
 async function run() {

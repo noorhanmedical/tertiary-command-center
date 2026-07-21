@@ -491,8 +491,6 @@ export async function addAdminReviewAncillary(
           adminReviewStatus: "approved",
           source: "admin_review_add_ancillary",
           actorUserId,
-          patientNameForAudit: (updated as { name?: string } | null)?.name ?? null,
-          patientDobForAudit: (updated as { dob?: string | null } | null)?.dob ?? null,
         });
       } catch (e) {
         // eslint-disable-next-line no-console

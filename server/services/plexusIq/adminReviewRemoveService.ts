@@ -266,8 +266,6 @@ async function conservativelyRemoveAncillaryForScreening(args: {
         serviceType,
         action: "on_hold",
         source: args.source,
-        patientNameForAudit: p.name,
-        patientDobForAudit: p.dob ?? null,
       });
     } catch (e) {
       // eslint-disable-next-line no-console
