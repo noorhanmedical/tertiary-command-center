@@ -6,7 +6,20 @@ import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
-const Dialog = DialogPrimitive.Root
+/**
+ * When set, dialogs rendered beneath this provider portal INTO the given
+ * element (instead of document.body) and become non-modal, so they only
+ * cover/lock their host container. Used by the winter-home desktop to keep
+ * app modals (e.g. Admin Review) inside their floating window. The host
+ * element must create a CSS containing block (e.g. `transform`) so the
+ * dialog's `fixed` positioning resolves against it.
+ */
+const DialogPortalContainerContext = React.createContext<HTMLElement | null>(null)
+
+const Dialog = ({ modal, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) => {
+  const container = React.useContext(DialogPortalContainerContext)
+  return <DialogPrimitive.Root {...props} modal={container ? false : modal} />
+}
 
 const DialogTrigger = DialogPrimitive.Trigger
 
@@ -35,8 +48,28 @@ const DialogContent = React.forwardRef<
     overlayClassName?: string
     hideClose?: boolean
   }
->(({ className, children, overlayClassName, hideClose, ...props }, ref) => (
-  <DialogPortal>
+>(({ className, children, overlayClassName, hideClose, ...props }, ref) => {
+  const container = React.useContext(DialogPortalContainerContext)
+  // Inside a portal container the dialog is non-modal; keep it from
+  // dismissing when the user interacts with the desktop outside its window.
+  const containedProps = container
+    ? {
+        onInteractOutside: (e: Parameters<NonNullable<typeof props.onInteractOutside>>[0]) => {
+          props.onInteractOutside?.(e)
+          e.preventDefault()
+        },
+        onPointerDownOutside: (e: Parameters<NonNullable<typeof props.onPointerDownOutside>>[0]) => {
+          props.onPointerDownOutside?.(e)
+          e.preventDefault()
+        },
+        onFocusOutside: (e: Parameters<NonNullable<typeof props.onFocusOutside>>[0]) => {
+          props.onFocusOutside?.(e)
+          e.preventDefault()
+        },
+      }
+    : undefined
+  return (
+  <DialogPortal container={container ?? undefined}>
     <DialogOverlay className={overlayClassName} />
     <DialogPrimitive.Content
       ref={ref}
@@ -45,6 +78,7 @@ const DialogContent = React.forwardRef<
         className
       )}
       {...props}
+      {...containedProps}
     >
       {children}
       {!hideClose && (
@@ -55,7 +89,8 @@ const DialogContent = React.forwardRef<
       )}
     </DialogPrimitive.Content>
   </DialogPortal>
-))
+  )
+})
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 const DialogHeader = ({
@@ -115,6 +150,7 @@ DialogDescription.displayName = DialogPrimitive.Description.displayName
 
 export {
   Dialog,
+  DialogPortalContainerContext,
   DialogPortal,
   DialogOverlay,
   DialogClose,

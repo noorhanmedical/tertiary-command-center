@@ -80,13 +80,18 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
   const [currentPath] = useLocation();
   const showGlobalNav = shouldShowGlobalNav(currentPath);
   const isWinterHome = currentPath === "/winter-home" || currentPath.startsWith("/winter-home/");
+  // Embedded mode: the winter-home desktop hosts other app pages inside
+  // floating-window iframes with ?embed=1 — hide the top chrome there.
+  const isEmbed =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).has("embed");
   return (
     <Switch>
       <Route path="/schedule/:id" component={SharedSchedule} />
       <Route>
         <div className="flex flex-col h-screen w-full overflow-hidden">
-          {!isWinterHome && <TopBanner user={user} onLogout={onLogout} />}
-          {!isWinterHome && <GlobalFloatingDock />}
+          {!isWinterHome && !isEmbed && <TopBanner user={user} onLogout={onLogout} />}
+          {!isWinterHome && !isEmbed && <GlobalFloatingDock />}
           <div className="flex flex-1 min-h-0 min-w-0">
             {showGlobalNav && <GlobalNav user={user} onLogout={onLogout} />}
             <div className="flex flex-col flex-1 min-w-0 min-h-0">

@@ -1,5 +1,4 @@
-import { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { Link, useLocation } from "wouter";
+import { useState, useEffect, useMemo, useRef, lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -11,9 +10,12 @@ import {
   Maximize2,
   ChevronRight,
   ChevronLeft,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { NAV_ITEMS } from "@/components/GlobalNav";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DialogPortalContainerContext } from "@/components/ui/dialog";
 import { CanonicalMonthCalendar } from "@/calendar";
 import { buildCommandCalendarCells } from "@/lib/calendar/commandCalendarViewModel";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
@@ -22,15 +24,6 @@ import { useHomeStats } from "@/hooks/api/home-stats";
 import { SIDEBAR_STYLE, type AuthUser } from "@/App";
 
 const PlexusIQPage = lazy(() => import("@/pages/plexus-iq"));
-
-// Floating-window side cushion presets, smallest window (most cushion)
-// first. Index = windowSizeLevel; +/- buttons in the title bar step it.
-const WINDOW_SIZE_PADDING = [
-  "px-44 pt-24 pb-32",
-  "px-24 pt-16 pb-28",
-  "px-12 pt-16 pb-24",
-  "px-4 pt-14 pb-20",
-];
 
 const PRIMARY_HREFS = [
   "/home",
@@ -42,6 +35,29 @@ const PRIMARY_HREFS = [
   "/billing",
   "/plexus-tasks",
 ];
+
+const DOCK_PIN_KEY = "winterHome.dockPinned";
+
+type WinterWin = {
+  id: number;
+  appId: string; // "plexus-iq" or a NAV_ITEMS href
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  minimized: boolean;
+  maximized: boolean;
+  z: number;
+};
+
+type AppDef = {
+  appId: string;
+  label: string;
+  Icon: (typeof NAV_ITEMS)[number]["Icon"];
+  href?: string; // iframe-hosted apps
+};
+
+const slugOf = (appId: string) => (appId === "plexus-iq" ? "plexus-iq" : appId.replace(/\//g, ""));
 
 function formatDollarsShort(value: number): string {
   if (value >= 1000) return `$${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
@@ -115,25 +131,217 @@ function PracticePulseCompact() {
   );
 }
 
+/**
+ * One floating desktop window. Draggable by its title bar, resizable via the
+ * bottom-right grip. Plexus IQ renders inline (glass treatment + dialogs
+ * portaled INTO the window body so app modals only cover this window);
+ * every other app is hosted in an ?embed=1 iframe so multiple full apps can
+ * run side by side.
+ */
+function WinterWindow({
+  win,
+  app,
+  title,
+  onFocus,
+  onClose,
+  onMinimize,
+  onToggleMax,
+  onGeometry,
+}: {
+  win: WinterWin;
+  app: AppDef;
+  title: string;
+  onFocus: () => void;
+  onClose: () => void;
+  onMinimize: () => void;
+  onToggleMax: () => void;
+  onGeometry: (patch: Partial<Pick<WinterWin, "x" | "y" | "w" | "h">>) => void;
+}) {
+  const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
+  const [interacting, setInteracting] = useState(false);
+  const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const resizeRef = useRef<{ sx: number; sy: number; ow: number; oh: number } | null>(null);
+  const slug = slugOf(win.appId);
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (win.maximized) return;
+    onFocus();
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: win.x, oy: win.y };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setInteracting(true);
+  };
+  const moveDrag = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const nx = Math.min(Math.max(d.ox + e.clientX - d.sx, -win.w + 160), vw - 160);
+    const ny = Math.min(Math.max(d.oy + e.clientY - d.sy, 48), vh - 90);
+    onGeometry({ x: nx, y: ny });
+  };
+  const endDrag = () => {
+    dragRef.current = null;
+    setInteracting(false);
+  };
+
+  const startResize = (e: React.PointerEvent) => {
+    if (win.maximized) return;
+    e.stopPropagation();
+    onFocus();
+    resizeRef.current = { sx: e.clientX, sy: e.clientY, ow: win.w, oh: win.h };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setInteracting(true);
+  };
+  const moveResize = (e: React.PointerEvent) => {
+    const r = resizeRef.current;
+    if (!r) return;
+    const nw = Math.max(480, r.ow + e.clientX - r.sx);
+    const nh = Math.max(320, r.oh + e.clientY - r.sy);
+    onGeometry({ w: nw, h: nh });
+  };
+  const endResize = () => {
+    resizeRef.current = null;
+    setInteracting(false);
+  };
+
+  const geometry = win.maximized
+    ? { left: 0, top: 0, width: "100%", height: "100%" }
+    : { left: win.x, top: win.y, width: win.w, height: win.h };
+
+  return (
+    <div
+      className={`absolute flex flex-col border border-white/40 bg-white/35 backdrop-blur-2xl shadow-[0_40px_120px_rgba(15,23,42,0.45)] overflow-hidden pointer-events-auto ${
+        win.maximized ? "rounded-none" : "rounded-lg"
+      } ${win.minimized ? "hidden" : ""}`}
+      style={{ ...geometry, zIndex: win.z, transform: "translateZ(0)" }}
+      onPointerDown={onFocus}
+      data-testid={`window-${slug}-${win.id}`}
+      data-winter-app={slug}
+    >
+      <div
+        className="flex items-center gap-2 h-10 px-4 bg-gradient-to-b from-sky-700/50 to-blue-900/50 backdrop-blur-xl border-b border-white/20 shrink-0 cursor-grab active:cursor-grabbing touch-none"
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onDoubleClick={onToggleMax}
+        data-testid={`titlebar-${win.id}`}
+      >
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-white/95 select-none">
+          <app.Icon className="w-4 h-4 text-sky-200" />
+          {title}
+        </div>
+        <div
+          className="ml-auto flex items-center gap-2"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={onMinimize}
+            className="w-3.5 h-3.5 rounded-[4px] bg-yellow-400 hover:bg-yellow-500 flex items-center justify-center group transition-colors"
+            aria-label="Minimize to dock"
+            data-testid={`button-minimize-${win.id}`}
+          >
+            <Minus className="w-2.5 h-2.5 text-yellow-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+          </button>
+          <button
+            type="button"
+            onClick={onToggleMax}
+            className="w-3.5 h-3.5 rounded-[4px] bg-green-400 hover:bg-green-500 flex items-center justify-center group transition-colors"
+            aria-label={win.maximized ? "Restore window size" : "Expand window"}
+            data-testid={`button-maximize-${win.id}`}
+          >
+            <Maximize2 className="w-2 h-2 text-green-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-3.5 h-3.5 rounded-[4px] bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
+            aria-label="Close window"
+            data-testid={`button-close-${win.id}`}
+          >
+            <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+          </button>
+        </div>
+      </div>
+      <div ref={setBodyEl} className="relative flex-1 min-h-0 overflow-auto" data-winter-window>
+        {win.appId === "plexus-iq" ? (
+          <DialogPortalContainerContext.Provider value={bodyEl}>
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+                  Opening Plexus IQ…
+                </div>
+              }
+            >
+              <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                <PlexusIQPage />
+              </SidebarProvider>
+            </Suspense>
+          </DialogPortalContainerContext.Provider>
+        ) : (
+          <iframe
+            src={`${app.href}?embed=1`}
+            title={title}
+            className="absolute inset-0 w-full h-full border-0 bg-white/80"
+            data-testid={`window-iframe-${win.id}`}
+          />
+        )}
+        {/* While dragging/resizing, shield iframes so pointer events keep
+            flowing to the captured handle. */}
+        {interacting && <div className="absolute inset-0 z-10" />}
+      </div>
+      {!win.maximized && (
+        <div
+          className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize touch-none z-20"
+          onPointerDown={startResize}
+          onPointerMove={moveResize}
+          onPointerUp={endResize}
+          onPointerCancel={endResize}
+          aria-label="Resize window"
+          data-testid={`resize-${win.id}`}
+        >
+          <svg viewBox="0 0 20 20" className="w-full h-full text-slate-500/70">
+            <path d="M17 9v2l-6 6H9l8-8zM17 14v2l-1 1h-2l3-3z" fill="currentColor" />
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WinterHomePage({ user }: { user?: AuthUser }) {
-  const [location] = useLocation();
   const [time, setTime] = useState("");
   const [date, setDate] = useState("");
   const [dockExpanded, setDockExpanded] = useState(false);
-  const [openWindow, setOpenWindow] = useState<"plexus-iq" | null>(null);
-  const [windowMaximized, setWindowMaximized] = useState(false);
-  const [windowMinimized, setWindowMinimized] = useState(false);
-  const [windowSizeLevel, setWindowSizeLevel] = useState(1);
+  const [dockPinned, setDockPinned] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(DOCK_PIN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [windows, setWindows] = useState<WinterWin[]>([]);
+  const [panelApp, setPanelApp] = useState<string | null>(null);
+  const idRef = useRef(1);
+  const zRef = useRef(100);
+  const spawnCountRef = useRef(0);
+
+  const userRole = user?.role ?? "clinician";
 
   useEffect(() => {
-    if (openWindow && !windowMinimized) {
-      document.body.classList.add("winter-window-open");
-    } else {
-      document.body.classList.remove("winter-window-open");
+    try {
+      localStorage.setItem(DOCK_PIN_KEY, dockPinned ? "1" : "0");
+    } catch {
+      /* ignore */
     }
+  }, [dockPinned]);
+
+  useEffect(() => {
+    const anyOpen = windows.some((w) => !w.minimized);
+    document.body.classList.toggle("winter-window-open", anyOpen);
     return () => document.body.classList.remove("winter-window-open");
-  }, [openWindow, windowMinimized]);
-  const userRole = user?.role ?? "clinician";
+  }, [windows]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -145,15 +353,6 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
-
-  useEffect(() => {
-    if (openWindow === null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpenWindow(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openWindow]);
 
   const { data: todaySummary } = useQuery<{ patientCount: number; batchCount: number }>({
     queryKey: ["/api/schedule/today-summary"],
@@ -173,6 +372,67 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const primaryItems = visibleItems.filter((i) => PRIMARY_HREFS.includes(i.href));
   const overflowItems = visibleItems.filter((i) => !PRIMARY_HREFS.includes(i.href));
 
+  const apps = useMemo<Record<string, AppDef>>(() => {
+    const map: Record<string, AppDef> = {
+      "plexus-iq": { appId: "plexus-iq", label: "Plexus IQ", Icon: Brain },
+    };
+    for (const item of visibleItems) {
+      map[item.href] = { appId: item.href, label: item.label, Icon: item.Icon, href: item.href };
+    }
+    return map;
+  }, [visibleItems]);
+
+  const bringToFront = (id: number) => {
+    setWindows((prev) => {
+      const win = prev.find((w) => w.id === id);
+      if (!win || win.z === zRef.current) return prev;
+      zRef.current += 1;
+      const z = zRef.current;
+      return prev.map((w) => (w.id === id ? { ...w, z } : w));
+    });
+  };
+
+  const spawnWindow = (appId: string) => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const w = Math.min(1180, vw - 120);
+    const h = Math.min(680, vh - 180);
+    const step = spawnCountRef.current % 5;
+    spawnCountRef.current += 1;
+    zRef.current += 1;
+    const id = idRef.current++;
+    setWindows((prev) => [
+      ...prev,
+      {
+        id,
+        appId,
+        x: Math.max(20, (vw - w) / 2 + step * 30),
+        y: Math.min(64 + step * 26, vh - h - 40 > 48 ? 64 + step * 26 : 56),
+        w,
+        h,
+        minimized: false,
+        maximized: false,
+        z: zRef.current,
+      },
+    ]);
+  };
+
+  const patchWindow = (id: number, patch: Partial<WinterWin>) =>
+    setWindows((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+
+  const closeWindow = (id: number) => setWindows((prev) => prev.filter((w) => w.id !== id));
+
+  const windowsFor = (appId: string) => windows.filter((w) => w.appId === appId);
+  const minimizedFor = (appId: string) => windowsFor(appId).filter((w) => w.minimized);
+
+  const titleFor = (win: WinterWin) => {
+    const app = apps[win.appId];
+    const siblings = windowsFor(win.appId);
+    if (siblings.length <= 1) return app?.label ?? win.appId;
+    const idx = siblings.findIndex((w) => w.id === win.id) + 1;
+    return `${app?.label ?? win.appId} ${idx}`;
+  };
+
   const dockIconBase =
     "w-10 h-10 rounded-[10px] flex items-center justify-center shadow-lg transform transition-all duration-200 origin-bottom group-hover:scale-[1.35] group-hover:-translate-y-2 border border-white/20 bg-gradient-to-b from-sky-700/90 to-blue-900/90 group-hover:from-cyan-400 group-hover:to-teal-500 group-hover:shadow-[0_0_18px_rgba(45,212,191,0.8)] group-hover:border-cyan-200/60";
 
@@ -181,6 +441,8 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     label: string,
     isActive: boolean,
     testId: string,
+    minimizedCount: number,
+    onBadgeClick?: () => void,
   ) => (
     <div className="relative group flex flex-col items-center cursor-pointer" data-testid={testId}>
       <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
@@ -189,18 +451,47 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       <div className={dockIconBase}>
         <Icon className="w-[22px] h-[22px] text-sky-100 group-hover:text-white transition-colors" strokeWidth={1.6} />
       </div>
+      {minimizedCount > 0 && (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onBadgeClick?.();
+          }}
+          className="absolute -top-1.5 -right-1.5 z-20 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center border border-white/60 shadow cursor-pointer hover:bg-rose-600"
+          aria-label={`${minimizedCount} minimized ${label} window${minimizedCount > 1 ? "s" : ""}`}
+          data-testid={`dock-badge-${testId}`}
+        >
+          {minimizedCount}
+        </span>
+      )}
       <div className={`w-1 h-1 rounded-full mt-1 ${isActive ? "bg-cyan-300" : "bg-transparent"}`} />
     </div>
   );
 
-  const renderDockItem = (item: (typeof NAV_ITEMS)[number]) => {
-    const isActive = location === item.href || location.startsWith(item.href + "/");
+  const renderDockApp = (appId: string, testId: string) => {
+    const app = apps[appId];
+    if (!app) return null;
+    const minCount = minimizedFor(appId).length;
+    const hasOpen = windowsFor(appId).length > 0;
     return (
-      <Link key={item.href} href={item.href}>
-        {renderDockIcon(item.Icon, item.label, isActive, `dock-item-${item.href.replace(/\//g, "")}`)}
-      </Link>
+      <button
+        key={appId}
+        type="button"
+        onClick={() => spawnWindow(appId)}
+        className="focus:outline-none"
+        data-testid={testId}
+      >
+        {renderDockIcon(app.Icon, app.label, hasOpen, `dock-icon-${slugOf(appId)}`, minCount, () =>
+          setPanelApp((cur) => (cur === appId ? null : appId)),
+        )}
+      </button>
     );
   };
+
+  const panelWindows = panelApp ? minimizedFor(panelApp) : [];
 
   return (
     <div className="relative h-full w-full overflow-hidden font-sans select-none">
@@ -239,25 +530,15 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           [data-winter-window] .rounded-3xl { border-radius: 0.625rem; }
           [data-winter-window] .rounded-2xl { border-radius: 0.5rem; }
           [data-winter-window] .rounded-xl { border-radius: 0.375rem; }
-          /* Portaled dialogs (Admin Review etc.) render outside the window
-             DOM, so mirror the same glass treatment on them while a winter
-             window is open. */
-          body.winter-window-open [role="dialog"] {
+          /* Dialogs are portaled INTO the window body, so give them the
+             glass treatment there; keep the body-level mirror for any
+             stray portals that still land on <body>. */
+          [data-winter-window] [role="dialog"],
+          body.winter-window-open > [role="dialog"] {
             background-color: rgba(255, 255, 255, 0.86);
             backdrop-filter: blur(24px);
             border-radius: 0.5rem;
           }
-          body.winter-window-open [role="dialog"] .bg-slate-50\\/40,
-          body.winter-window-open [role="dialog"] .bg-slate-50,
-          body.winter-window-open [role="dialog"] .bg-slate-100 {
-            background-color: transparent;
-          }
-          body.winter-window-open [role="dialog"] .bg-white {
-            background-color: rgba(255, 255, 255, 0.72);
-          }
-          body.winter-window-open [role="dialog"] .rounded-3xl { border-radius: 0.625rem; }
-          body.winter-window-open [role="dialog"] .rounded-2xl { border-radius: 0.5rem; }
-          body.winter-window-open [role="dialog"] .rounded-xl { border-radius: 0.375rem; }
           `,
         }}
       />
@@ -320,152 +601,120 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         </div>
       </div>
 
-      {/* App window overlay */}
-      {openWindow === "plexus-iq" && (
-        <div
-          className={`absolute inset-0 z-50 flex items-center justify-center transition-all duration-200 ${
-            windowMaximized ? "p-0" : WINDOW_SIZE_PADDING[windowSizeLevel]
-          } ${windowMinimized ? "hidden" : ""}`}
-        >
-          <div
-            className="absolute inset-0 bg-slate-900/25 backdrop-blur-[2px]"
-            onClick={() => setOpenWindow(null)}
-            data-testid="window-scrim"
-          />
-          <div
-            className={`relative flex flex-col w-full h-full border border-white/40 bg-white/35 backdrop-blur-2xl shadow-[0_40px_120px_rgba(15,23,42,0.45)] overflow-hidden ${
-              windowMaximized ? "max-w-none rounded-none" : "max-w-[1500px] rounded-lg"
-            }`}
-            data-testid="window-plexus-iq"
-          >
-            <div className="flex items-center gap-2 h-10 px-4 bg-gradient-to-b from-sky-700/50 to-blue-900/50 backdrop-blur-xl border-b border-white/20 shrink-0">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-white/95">
-                <Brain className="w-4 h-4 text-sky-200" />
-                Plexus IQ
-              </div>
-              <div className="ml-auto flex items-center gap-2">
-                <div className="flex items-center gap-1 mr-2">
-                  <button
-                    type="button"
-                    onClick={() => setWindowSizeLevel((v) => Math.max(0, v - 1))}
-                    disabled={windowMaximized || windowSizeLevel === 0}
-                    className="w-5 h-5 rounded-[4px] flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 disabled:opacity-30 transition-colors text-[13px] font-bold leading-none"
-                    aria-label="Make window smaller"
-                    data-testid="button-window-smaller"
-                  >
-                    −
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setWindowSizeLevel((v) => Math.min(WINDOW_SIZE_PADDING.length - 1, v + 1))}
-                    disabled={windowMaximized || windowSizeLevel === WINDOW_SIZE_PADDING.length - 1}
-                    className="w-5 h-5 rounded-[4px] flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 disabled:opacity-30 transition-colors text-[13px] font-bold leading-none"
-                    aria-label="Make window bigger"
-                    data-testid="button-window-bigger"
-                  >
-                    +
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setWindowMinimized(true)}
-                  className="w-3.5 h-3.5 rounded-[4px] bg-yellow-400 hover:bg-yellow-500 flex items-center justify-center group transition-colors"
-                  aria-label="Minimize to dock"
-                  data-testid="button-restore-window"
-                >
-                  <Minus className="w-2.5 h-2.5 text-yellow-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setWindowMaximized((v) => !v)}
-                  className="w-3.5 h-3.5 rounded-[4px] bg-green-400 hover:bg-green-500 flex items-center justify-center group transition-colors"
-                  aria-label={windowMaximized ? "Restore window size" : "Expand window"}
-                  data-testid="button-maximize-window"
-                >
-                  <Maximize2 className="w-2 h-2 text-green-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOpenWindow(null)}
-                  className="w-3.5 h-3.5 rounded-[4px] bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
-                  aria-label="Close window"
-                  data-testid="button-close-window"
-                >
-                  <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 min-h-0 overflow-auto" data-winter-window>
-              <Suspense
-                fallback={
-                  <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-                    Opening Plexus IQ…
-                  </div>
-                }
-              >
-                <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                  <PlexusIQPage />
-                </SidebarProvider>
-              </Suspense>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Desktop windows layer — no scrim: the desktop stays interactive. */}
+      <div className="absolute inset-0 z-50 pointer-events-none">
+        {windows.map((win) => {
+          const app = apps[win.appId];
+          if (!app) return null;
+          return (
+            <WinterWindow
+              key={win.id}
+              win={win}
+              app={app}
+              title={titleFor(win)}
+              onFocus={() => bringToFront(win.id)}
+              onClose={() => closeWindow(win.id)}
+              onMinimize={() => patchWindow(win.id, { minimized: true })}
+              onToggleMax={() => patchWindow(win.id, { maximized: !win.maximized })}
+              onGeometry={(patch) => patchWindow(win.id, patch)}
+            />
+          );
+        })}
+      </div>
 
       {/* Dock */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[60] group/dock" data-testid="dock-container">
-        <div className="flex items-end gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl opacity-[0.12] scale-[0.88] origin-bottom group-hover/dock:opacity-100 group-hover/dock:scale-100 transition-all duration-300">
-          {primaryItems.map(renderDockItem)}
-
-          {/* Plexus IQ — opens as a window over the desktop */}
-          <button
-            type="button"
-            onClick={() => {
-              if (openWindow === "plexus-iq" && windowMinimized) {
-                setWindowMinimized(false);
-              } else {
-                setWindowMaximized(false);
-                setWindowMinimized(false);
-                setOpenWindow("plexus-iq");
-              }
-            }}
-            className="focus:outline-none"
-            data-testid="dock-item-plexus-iq-window"
+        {/* Minimized-windows panel (low-opacity glass box above the dock) */}
+        {panelApp && panelWindows.length > 0 && (
+          <div
+            className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 min-w-[240px] max-w-[340px] rounded-xl bg-white/30 backdrop-blur-xl border border-white/40 shadow-2xl p-2 space-y-1"
+            data-testid="dock-minimized-panel"
           >
-            {renderDockIcon(Brain, "Plexus IQ", openWindow === "plexus-iq", "dock-icon-plexus-iq")}
-          </button>
+            <div className="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-700/90">
+              {apps[panelApp]?.label} — minimized
+            </div>
+            {panelWindows.map((win) => (
+              <div
+                key={win.id}
+                className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/40 transition-colors"
+                data-testid={`dock-minimized-entry-${win.id}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    patchWindow(win.id, { minimized: false });
+                    bringToFront(win.id);
+                    setPanelApp(null);
+                  }}
+                  className="flex items-center gap-2 flex-1 min-w-0 text-left text-[13px] font-medium text-slate-800"
+                  data-testid={`dock-minimized-restore-${win.id}`}
+                >
+                  {(() => {
+                    const Icon = apps[win.appId]?.Icon ?? Brain;
+                    return <Icon className="w-4 h-4 text-sky-700 shrink-0" />;
+                  })()}
+                  <span className="truncate">{titleFor(win)}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => closeWindow(win.id)}
+                  className="w-5 h-5 rounded flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-white/60 transition-colors"
+                  aria-label="Close window"
+                  data-testid={`dock-minimized-close-${win.id}`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div
+          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 ${
+            dockPinned
+              ? "opacity-100 scale-100"
+              : "opacity-40 scale-[0.92] group-hover/dock:opacity-100 group-hover/dock:scale-100"
+          }`}
+        >
+          <div className="flex items-end gap-1.5">
+            {primaryItems.map((item) =>
+              renderDockApp(item.href, `dock-item-${item.href.replace(/\//g, "")}`),
+            )}
+
+            {/* Plexus IQ — opens as a window over the desktop */}
+            {renderDockApp("plexus-iq", "dock-item-plexus-iq-window")}
+          </div>
 
           {overflowItems.length > 0 && (
             <>
-              <div className="w-px h-10 bg-white/30 mx-0.5 self-start mt-2" />
+              <div className="w-px h-10 bg-white/30 mx-0.5" />
               <button
                 type="button"
                 onClick={() => setDockExpanded((v) => !v)}
-                className="focus:outline-none"
+                className="focus:outline-none self-center"
                 aria-label={dockExpanded ? "Show fewer apps" : "Show more apps"}
                 data-testid="button-dock-expand"
               >
                 <div
-                  className="relative group flex flex-col items-center cursor-pointer"
+                  className="relative group flex items-center justify-center cursor-pointer"
                   data-testid="dock-expand-icon"
                 >
-                  <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
-                    {dockExpanded ? "Less" : `More (${overflowItems.length})`}
+                  <div className="absolute -top-12 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
+                    {dockExpanded ? "Less" : `More apps (${overflowItems.length})`}
                   </div>
-                  <div className="w-7 h-10 flex items-center justify-center transform transition-all duration-200 origin-bottom group-hover:scale-[1.35] group-hover:-translate-y-2">
+                  <div className="w-8 h-10 flex items-center justify-center transform transition-all duration-200 group-hover:scale-125">
                     {dockExpanded ? (
                       <ChevronLeft
-                        className="w-6 h-6 text-white/50 group-hover:text-white drop-shadow transition-colors"
-                        strokeWidth={2}
+                        className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-white transition-colors animate-pulse group-hover:animate-none"
+                        strokeWidth={2.5}
                       />
                     ) : (
                       <ChevronRight
-                        className="w-6 h-6 text-white/50 group-hover:text-white drop-shadow transition-colors"
-                        strokeWidth={2}
+                        className="w-7 h-7 text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] group-hover:text-white transition-colors animate-pulse group-hover:animate-none"
+                        strokeWidth={2.5}
                       />
                     )}
                   </div>
-                  <div className="w-1 h-1 mt-1" />
                 </div>
               </button>
               <div
@@ -474,10 +723,28 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                 }`}
                 data-testid="dock-overflow-section"
               >
-                {overflowItems.map(renderDockItem)}
+                {overflowItems.map((item) =>
+                  renderDockApp(item.href, `dock-item-${item.href.replace(/\//g, "")}`),
+                )}
               </div>
             </>
           )}
+
+          <div className="w-px h-10 bg-white/30 mx-0.5" />
+          <button
+            type="button"
+            onClick={() => setDockPinned((v) => !v)}
+            className="self-center w-7 h-7 rounded-md flex items-center justify-center text-white/70 hover:text-white hover:bg-white/15 transition-colors focus:outline-none"
+            aria-label={dockPinned ? "Unpin dock (fade when not in use)" : "Pin dock (always visible)"}
+            title={dockPinned ? "Unpin dock" : "Pin dock"}
+            data-testid="button-dock-pin"
+          >
+            {dockPinned ? (
+              <Pin className="w-4 h-4 drop-shadow" strokeWidth={2.2} />
+            ) : (
+              <PinOff className="w-4 h-4 drop-shadow" strokeWidth={2.2} />
+            )}
+          </button>
         </div>
       </div>
     </div>
