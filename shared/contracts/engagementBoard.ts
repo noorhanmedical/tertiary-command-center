@@ -46,6 +46,13 @@ export type EngagementBoardRow = {
   lastCallOutcome: string | null;
   missingInfo: string[];
   selectedServices: string[];
+  /**
+   * Phase 2C — service-level eligibility. When
+   * FEATURE_ENGAGEMENT_ADMIN_REVIEW_SYNC is ON, this reflects the
+   * approved-and-membership-active services only. When OFF, this
+   * mirrors selectedServices (legacy).
+   */
+  eligibleServices?: string[];
   // ─── Server-derived display taxonomy (honest nulls) ───────────────
   // Derived from the fields above by deriveEngagementTaxonomy() so the
   // client + server agree on one mapping. Gaps are honest: Patient Support

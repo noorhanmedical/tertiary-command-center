@@ -377,9 +377,35 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             lastActivitySummary: latest?.summary ?? null,
             lastCallOutcome: c.lastCallOutcome ?? null,
             missingInfo: computeMissingInfo(screening),
-            selectedServices: Array.isArray(c.selectedServices)
-              ? (c.selectedServices as string[])
-              : [],
+            // Phase 2C — when the sync flag is ON, expose eligible
+            // services (approved + membership) instead of the raw
+            // stored `selectedServices`. This is the shape the
+            // Assignment Board consumes, so BrainWave approved +
+            // Ultrasound rejected surfaces ["BrainWave"]. The stored
+            // column is never mutated by this read projection.
+            selectedServices: (() => {
+              const eligibilityMap = (res.locals as { serviceEligibility?: Map<number, string[]> })
+                .serviceEligibility;
+              if (eligibilityMap && eligibilityMap.has(c.id)) {
+                return eligibilityMap.get(c.id) ?? [];
+              }
+              return Array.isArray(c.selectedServices)
+                ? (c.selectedServices as string[])
+                : [];
+            })(),
+            // Phase 2C — canonical eligibleServices field. Always
+            // present. When the flag is OFF this mirrors selectedServices;
+            // when ON it carries the service-level projection.
+            eligibleServices: (() => {
+              const eligibilityMap = (res.locals as { serviceEligibility?: Map<number, string[]> })
+                .serviceEligibility;
+              if (eligibilityMap && eligibilityMap.has(c.id)) {
+                return eligibilityMap.get(c.id) ?? [];
+              }
+              return Array.isArray(c.selectedServices)
+                ? (c.selectedServices as string[])
+                : [];
+            })(),
             category: taxonomy.category,
             callType: taxonomy.callType,
             source: taxonomy.source,

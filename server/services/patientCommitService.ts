@@ -15,6 +15,23 @@ import { createGlobalScheduleEventFromScreeningCommit } from "../repositories/gl
 import { createOrUpdateInsuranceEligibilityReviewFromScreening } from "../repositories/insuranceEligibility.repo";
 import { createOrUpdateCooldownRecordsFromScreening } from "../repositories/cooldown.repo";
 
+// Phase 2C — engagement send outcome propagated by commit.
+export type CommitEngagementSendStatus =
+  | "skipped_flag_off"
+  | "sent"
+  | "idempotent_existing"
+  | "deferred"
+  | "failed";
+
+export type CommitEngagementSend = {
+  status: CommitEngagementSendStatus;
+  engagementListId?: number;
+  sentToEngagementAt?: string;
+  activeMembershipCount?: number;
+  retryPending?: boolean;
+  errorCode?: string;
+};
+
 export type CommitOutcome = {
   patient: PatientScreening;
   // Name of the scheduler the patient was *actually* assigned to as part of
@@ -23,6 +40,8 @@ export type CommitOutcome = {
   schedulerName: string | null;
   // True only when this commit resulted in a genuine scheduler assignment.
   autoAssigned: boolean;
+  // Phase 2C send outcome. Present on every commit (skipped when flag OFF).
+  engagementSend: CommitEngagementSend;
 };
 
 export type CommitError =
@@ -83,7 +102,12 @@ export async function commitPatient(
     const schedulerName = await resolveSchedulerName(patient);
     return {
       ok: true,
-      data: { patient, schedulerName, autoAssigned: schedulerName != null },
+      data: {
+        patient,
+        schedulerName,
+        autoAssigned: schedulerName != null,
+        engagementSend: { status: "skipped_flag_off" },
+      },
     };
   }
 
@@ -110,11 +134,20 @@ export async function commitPatient(
   // the patient was genuinely assigned during this commit.
   let assignedSchedulerName: string | null = null;
   let autoAssigned = false;
+  // Phase 2C — outcome of the Send-to-Engagement writer for this
+  // commit. Declared at the outer scope so the final return can
+  // include it.
+  let engagementSend: CommitEngagementSend = { status: "skipped_flag_off" };
 
   try {
     const { executionCase, created } = await createOrUpdateExecutionCaseFromScreening(updated, userId);
 
     // Phase 2C — Send-to-Engagement writer integration.
+    //
+    // engagementSend (declared above) is populated with an explicit
+    // status the caller can use to return 200 (sent /
+    // idempotent_existing) or 202 (deferred) or 503 (failed) instead
+    // of the previous log-and-continue behavior.
     //
     // When FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY is ON, every real
     // commit that lands a screening into the engagement queue creates
@@ -143,13 +176,10 @@ export async function commitPatient(
           }));
         if (approvedItems.length > 0 && updated.clinicId != null && updated.batchId != null) {
           const committedAt = updated.committedAt ?? new Date();
-          await sendToEngagement({
+          const outcome = await sendToEngagement({
             clinicId: updated.clinicId,
             sourceType: "batch",
             sourceId: String(updated.batchId),
-            // Idempotency key ties this SEND to this commit moment.
-            // A fresh commit (post-reset re-analysis) has a distinct
-            // committedAt → produces an independent send row.
             sendIdempotencyKey: String(committedAt.getTime()),
             label: updated.facility
               ? `${updated.facility} — ${committedAt.toISOString().slice(0, 10)}`
@@ -160,19 +190,34 @@ export async function commitPatient(
             items: approvedItems,
             sentAt: committedAt,
           });
+          if (outcome.status === "sent") {
+            engagementSend = {
+              status: outcome.isNewList ? "sent" : "idempotent_existing",
+              engagementListId: outcome.engagementListId,
+              sentToEngagementAt: committedAt.toISOString(),
+              activeMembershipCount:
+                outcome.membershipsCreated + outcome.membershipsReused,
+            };
+          }
         }
       }
     } catch (sendErr) {
-      // Never break the commit on a send failure — the writer already
-      // records a durable retry row for the individual membership.
+      // The writer already records a durable retry row for the
+      // individual membership. Surface the failure via engagementSend
+      // so the HTTP caller can return 503.
       // eslint-disable-next-line no-console
       console.error(JSON.stringify({
-        level: "warn",
+        level: "error",
         source: "patient_commit_service",
         kind: "send_to_engagement_failed",
         code: (sendErr as { code?: string })?.code,
         message: (sendErr as Error)?.message ?? String(sendErr),
       }));
+      engagementSend = {
+        status: "failed",
+        retryPending: true,
+        errorCode: (sendErr as { code?: string })?.code ?? "unknown",
+      };
     }
 
     // Auto-pick a scheduler for the freshly committed case so it shows up in
@@ -289,7 +334,12 @@ export async function commitPatient(
 
   return {
     ok: true,
-    data: { patient: updated, schedulerName: assignedSchedulerName, autoAssigned },
+    data: {
+      patient: updated,
+      schedulerName: assignedSchedulerName,
+      autoAssigned,
+      engagementSend,
+    },
   };
 }
 

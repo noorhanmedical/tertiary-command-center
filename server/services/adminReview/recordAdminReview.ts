@@ -66,6 +66,16 @@ export type RecordAdminReviewInput = {
   source: AncillaryReviewSource;
 };
 
+export type EngagementOutcomeCode =
+  | "activated"
+  | "restored"
+  | "already_active"
+  | "deferred_no_list"
+  | "deactivated"
+  | "no_change"
+  | "skipped_flag_off"
+  | "failed";
+
 export type RecordAdminReviewResult =
   | { status: "skipped_flag_off" }
   | { status: "case_not_found"; ancillaryCaseId: number }
@@ -79,6 +89,16 @@ export type RecordAdminReviewResult =
       eventId: number;
       patientScreeningId: number | null;
       screeningProjection: AncillaryReviewStatus;
+      /**
+       * The Engagement reconciliation outcome for this review event.
+       * Distinguishes success, deferred, and failed states so callers
+       * can return 202 / 503 as appropriate.
+       */
+      engagementOutcome: EngagementOutcomeCode;
+      /** Non-PHI error code when engagementOutcome === "failed". */
+      engagementErrorCode?: string;
+      /** True when a durable retry row exists after this review. */
+      retryPending: boolean;
     };
 
 async function appendJourneyEvent(args: {
@@ -233,13 +253,16 @@ export async function recordAncillaryCaseAdminReview(
   });
 
   // Fire the Engagement eligibility reconciler (idempotent + failure-
-  // durable inside). Wrapped in try/catch so a reconciliation crash
-  // does not roll back the review event.
+  // durable inside). Capture the outcome so the caller can return an
+  // accurate HTTP status (200 / 202 / 503).
+  let engagementOutcome: EngagementOutcomeCode = "no_change";
+  let engagementErrorCode: string | undefined;
+  let retryPending = false;
   try {
     const { reconcileEngagementEligibility } = await import(
       "../engagementLists/reconciliation"
     );
-    await reconcileEngagementEligibility({
+    const rec = await reconcileEngagementEligibility({
       clinicId: acase.clinicId,
       patientScreeningId: acase.originatingScreeningId ?? null,
       ancillaryCaseId: acase.id,
@@ -249,6 +272,8 @@ export async function recordAncillaryCaseAdminReview(
       changedByUserId: input.actor.userId,
       source: "admin_review",
     });
+    engagementOutcome = rec.status as EngagementOutcomeCode;
+    retryPending = rec.status === "deferred_no_list";
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(JSON.stringify({
@@ -259,6 +284,8 @@ export async function recordAncillaryCaseAdminReview(
       code: (e as { code?: string })?.code,
       message: (e as Error)?.message ?? String(e),
     }));
+    engagementOutcome = "failed";
+    engagementErrorCode = (e as { code?: string })?.code ?? "unknown";
     // Best-effort durable-record.
     try {
       const { recordEngagementReconciliationFailure } = await import(
@@ -274,8 +301,9 @@ export async function recordAncillaryCaseAdminReview(
         previousAdminReviewStatus: previousStatus,
         newAdminReviewStatus: normalized,
         sourceSystem: "admin_review",
-        errorCode: (e as { code?: string })?.code ?? "unknown",
+        errorCode: engagementErrorCode,
       });
+      retryPending = true;
     } catch { /* migration/flag guards already handled */ }
   }
 
@@ -288,6 +316,9 @@ export async function recordAncillaryCaseAdminReview(
     eventId: written.id,
     patientScreeningId: screeningId,
     screeningProjection,
+    engagementOutcome,
+    engagementErrorCode,
+    retryPending,
   };
 }
 

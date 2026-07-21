@@ -728,7 +728,13 @@ export function registerPatientRoutes(
               code: "NO_ACTIVE_ANCILLARY_CASES",
             });
           }
-          let anyDeferred = false;
+          const perServiceResults: Array<{
+            ancillaryCaseId: number;
+            serviceType: string;
+            engagementStatus: string;
+            retryPending: boolean;
+            errorCode?: string;
+          }> = [];
           for (const ac of activeCases) {
             try {
               const outcome = await recordAncillaryCaseAdminReview({
@@ -746,14 +752,20 @@ export function registerPatientRoutes(
                   code: "CROSS_CLINIC_DENIED",
                 });
               }
-              // If the reconciler indicated a deferred_no_list state
-              // for the recorded Engagement reconciliation, mark the
-              // partial-deferred response.
-              // (The recorder swallows the reconciler exception into
-              // a durable retry — but the outcome payload does not
-              // expose the reconciler status. We inspect via a
-              // follow-up retry-ledger read if needed. For now we do
-              // not surface it here.)
+              if (outcome.status === "case_not_found") {
+                // Skip — an active case that vanished between the read
+                // and the review is a race, not a failure of intent.
+                continue;
+              }
+              if (outcome.status === "recorded") {
+                perServiceResults.push({
+                  ancillaryCaseId: outcome.ancillaryCaseId,
+                  serviceType: outcome.serviceType,
+                  engagementStatus: outcome.engagementOutcome,
+                  retryPending: outcome.retryPending,
+                  errorCode: outcome.engagementErrorCode,
+                });
+              }
             } catch (e) {
               const err = e as { code?: string; status?: number; message?: string };
               if (err.code === "ADMIN_REVIEW_ACCESS_DENIED") {
@@ -782,10 +794,32 @@ export function registerPatientRoutes(
             adminApprovedAt: isApproved ? new Date() : null,
             adminApprovedByUserId: isApproved ? userId : null,
           });
+          const anyDeferred = perServiceResults.some(
+            (r) => r.engagementStatus === "deferred_no_list" || r.retryPending,
+          );
+          const anyFailed = perServiceResults.some((r) => r.engagementStatus === "failed");
+          if (anyFailed) {
+            // A reconciler failure means the review event was recorded
+            // (we made it here) but Engagement synchronization threw
+            // and a durable retry exists. Surface as 503 so operators
+            // see the degradation. Persistent recorded-review + retry
+            // work stay in the DB.
+            return res.status(503).json({
+              error: "Engagement reconciliation failed for one or more services",
+              code: "ENGAGEMENT_RECONCILIATION_FAILED",
+              services: perServiceResults,
+            });
+          }
           if (anyDeferred) {
-            // Deferred queue visibility — record still made, event
-            // still emitted, retry queued.
-            res.status(202); // (do not return here; downstream still needs to run)
+            // Partial success — every review event recorded, but at
+            // least one service has deferred Engagement visibility
+            // pending a source list. Explicitly 202.
+            const updatedRefetched = await storage.getPatientScreening(id);
+            return res.status(202).json({
+              status: "deferred",
+              patient: updatedRefetched,
+              services: perServiceResults,
+            });
           }
         }
 
@@ -1086,7 +1120,30 @@ export function registerPatientRoutes(
         console.warn("[patients] manual commit live assignment hook failed:", assignErr);
       }
 
-      res.json({ ...result.data.patient, schedulerName: result.data.schedulerName });
+      // Phase 2C — surface the engagementSend status as an explicit
+      // HTTP status. 200 sent/idempotent, 202 deferred, 503 failed.
+      const sendStatus = result.data.engagementSend?.status;
+      if (sendStatus === "failed") {
+        return res.status(503).json({
+          patient: result.data.patient,
+          schedulerName: result.data.schedulerName,
+          engagementSend: result.data.engagementSend,
+          error: "Engagement send failed — durable retry queued",
+          code: "ENGAGEMENT_SEND_FAILED",
+        });
+      }
+      if (sendStatus === "deferred") {
+        return res.status(202).json({
+          patient: result.data.patient,
+          schedulerName: result.data.schedulerName,
+          engagementSend: result.data.engagementSend,
+        });
+      }
+      res.json({
+        ...result.data.patient,
+        schedulerName: result.data.schedulerName,
+        engagementSend: result.data.engagementSend,
+      });
     } catch (error: any) {
       console.error("Patient commit error:", error);
       res.status(500).json({ error: error.message || "Commit failed" });

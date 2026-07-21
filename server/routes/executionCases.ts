@@ -321,7 +321,26 @@ export function registerExecutionCaseRoutes(app: Express) {
           }
           if (filters.assignedRole) repoFilters.assignedRole = filters.assignedRole;
           if (filters.engagementStatus) repoFilters.engagementStatus = filters.engagementStatus;
-          const rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
+          let rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
+
+          // Phase 2C — apply service-specific eligibility for the PCS
+          // call list. When the sync flag is ON, only approved
+          // services (with active memberships when multi-list is ON)
+          // appear. Projection failure → throw so the outer route
+          // returns a controlled 503 rather than falling back to the
+          // unrestricted legacy list.
+          const { featureFlags: ff } = await import("../lib/featureFlags");
+          if (ff.engagementAdminReviewSync && rows.length > 0) {
+            const { projectServiceLevelEligibility } = await import(
+              "../services/engagementLists/queueProjection"
+            );
+            const filtered = await projectServiceLevelEligibility({
+              executionCases: rows,
+              requireActiveMembership: ff.engagementMultiListRepository,
+            });
+            rows = filtered.map((f) => f.executionCase);
+          }
+
           return rows.map<EngagementCallListItem>((row) => ({
             patientScreeningId:
               row.patientScreeningId != null ? String(row.patientScreeningId) : "",
@@ -357,6 +376,16 @@ export function registerExecutionCaseRoutes(app: Express) {
       );
       return res.json(result);
     } catch (error: any) {
+      // Phase 2C — if the projector threw (migration missing, etc.),
+      // return a controlled 503 rather than fall back to the
+      // unrestricted list.
+      const code = (error as { code?: string })?.code;
+      if (code === "ENGAGEMENT_MIGRATION_MISSING" || code === "ANCILLARY_CASE_MIGRATION_MISSING") {
+        return res.status(503).json({
+          error: "PCS call-list eligibility projection unavailable",
+          code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+        });
+      }
       return res.status(500).json({ error: error.message });
     }
   });
