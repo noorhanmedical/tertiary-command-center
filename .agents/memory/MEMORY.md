@@ -44,6 +44,7 @@
 - [Express middleware params typing](express-middleware-params-typing.md) — adding a middleware arg to app.post/patch flips TS overloads so req.params values become string|string[]; wrap with String() and re-run tsc.
 - [Dev DB migration lag](dev-db-migration-lag.md) — migrations are not auto-applied; older tables can be missing while try/catch event writers silently no-op, faking success.
 - [Winter desktop windows](winter-desktop-windows.md) — contained dialogs need portal container + transform containing block + modal=false + outside-dismiss prevention; watch JSX spread order.
+- [Winter tab drag + iframe reorder trap](winter-tab-drag.md) — panes hosting iframes must render in stable order; reordering the array moves iframe nodes and reloads apps mid-drag.
 - [Server tests are vitest suites](server-tests-vitest.md) — never exec server __tests__ files via tsx (crashes); qa guards use `npx vitest run <file>`; live-DB tests stay tsx scripts in the vitest exclude list.
 - [CommunicationTray dual-mount](communication-tray-dual-mount.md) — chat tray renders in >1 mount at once; lift selection to shell + pass to all mounts or views desync; focusNonce>0 gates composer focus; chat center branch must precede the centerSrc branch.
 - [Workspace-prefs restore gating](workspace-prefs-restore-gating.md) — persisting last-selected UI state via useWorkspacePrefs: gate persist behind the hydration initRef or a pre-hydration auto-select becomes a dirty key that clobbers the saved value; new pref fields MUST be added to server prefsSchema (z.object strips unknown keys).

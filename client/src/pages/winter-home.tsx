@@ -230,6 +230,48 @@ function BannerCalendarContent({
 }
 
 
+
+/**
+ * Empty full-height glass side panel. A small glass tab sits high up on each
+ * screen edge; clicking it slides the panel out over the desktop (same glass
+ * treatment as the dock). Content intentionally empty for now.
+ */
+function WinterEdgePanel({ side }: { side: "left" | "right" }) {
+  const [open, setOpen] = useState(false);
+  const isLeft = side === "left";
+  return (
+    <>
+      {!open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className={`absolute top-24 ${isLeft ? "left-0 rounded-r-lg border-l-0" : "right-0 rounded-l-lg border-r-0"} z-[45] flex h-16 w-5 items-center justify-center bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl text-white/80 hover:bg-white/20 hover:text-white transition-colors`}
+          aria-label={`Open ${side} panel`}
+          data-testid={`edge-panel-handle-${side}`}
+        >
+          {isLeft ? <ChevronRight className="w-4 h-4" strokeWidth={2.4} /> : <ChevronLeft className="w-4 h-4" strokeWidth={2.4} />}
+        </button>
+      )}
+      <div
+        className={`absolute inset-y-0 ${isLeft ? "left-0 border-r" : "right-0 border-l"} z-[45] w-[340px] max-w-[85vw] bg-white/10 backdrop-blur-xl border-white/20 shadow-2xl transition-transform duration-300 ease-out ${
+          open ? "translate-x-0" : isLeft ? "-translate-x-full pointer-events-none" : "translate-x-full pointer-events-none"
+        }`}
+        data-testid={`edge-panel-${side}`}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className={`absolute top-24 ${isLeft ? "right-2" : "left-2"} flex h-8 w-8 items-center justify-center rounded-md text-white/80 hover:bg-white/20 hover:text-white transition-colors`}
+          aria-label={`Close ${side} panel`}
+          data-testid={`edge-panel-collapse-${side}`}
+        >
+          {isLeft ? <ChevronLeft className="w-4 h-4" strokeWidth={2.4} /> : <ChevronRight className="w-4 h-4" strokeWidth={2.4} />}
+        </button>
+      </div>
+    </>
+  );
+}
+
 const slugOf = (appId: string) => (appId === "plexus-iq" ? "plexus-iq" : appId.replace(/\//g, ""));
 
 /**
@@ -241,22 +283,43 @@ function WinterTabPane({
   app,
   title,
   active,
+  region = "full",
+  onUnsplit,
 }: {
   win: WinterWin;
   app: AppDef;
   title: string;
   active: boolean;
+  region?: "full" | "left" | "right";
+  onUnsplit?: () => void;
 }) {
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
   const slug = slugOf(win.appId);
+  const regionCls =
+    region === "left"
+      ? "left-0 right-1/2 border-r border-white/25"
+      : region === "right"
+        ? "left-1/2 right-0 border-l border-white/25"
+        : "left-0 right-0";
   return (
     <div
-      className={`absolute left-0 right-0 top-12 bottom-0 z-30 bg-white/30 backdrop-blur-2xl pointer-events-auto ${
+      className={`absolute ${regionCls} top-12 bottom-0 z-30 bg-white/30 backdrop-blur-2xl pointer-events-auto ${
         active ? "" : "hidden"
       }`}
       data-testid={`tab-pane-${slug}-${win.id}`}
       data-winter-app={slug}
     >
+      {onUnsplit && (
+        <button
+          type="button"
+          onClick={onUnsplit}
+          className="absolute top-2 right-2 z-20 flex h-7 w-7 items-center justify-center rounded-md bg-white/50 backdrop-blur border border-white/60 text-slate-600 hover:text-slate-900 hover:bg-white/80 shadow transition-colors"
+          aria-label="Exit split screen"
+          data-testid={`button-unsplit-${win.id}`}
+        >
+          <Maximize2 className="w-3.5 h-3.5" strokeWidth={2.2} />
+        </button>
+      )}
       <div ref={setBodyEl} className="relative h-full w-full overflow-auto" data-winter-window>
         {win.appId === "plexus-iq" ? (
           <DialogPortalContainerContext.Provider value={bodyEl}>
@@ -526,12 +589,20 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const [windows, setWindows] = useState<WinterWin[]>([]);
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const [panelApp, setPanelApp] = useState<string | null>(null);
+  const [split, setSplit] = useState<{ id: number; side: "left" | "right" } | null>(null);
+  const [splitHint, setSplitHint] = useState<"left" | "right" | null>(null);
   const tabDragRef = useRef<{ id: number; sx: number; sy: number } | null>(null);
   const idRef = useRef(1);
   const zRef = useRef(100);
   const spawnCountRef = useRef(0);
 
   const userRole = user?.role ?? "clinician";
+
+  useEffect(() => {
+    if (split && !windows.some((w) => w.id === split.id && w.mode === "tab")) {
+      setSplit(null);
+    }
+  }, [windows, split]);
 
   useEffect(() => {
     const anyOpen = windows.some((w) => !w.minimized);
@@ -629,39 +700,6 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       return next;
     });
 
-  /** Detach a banner tab into a floating window near the pointer. */
-  const detachTab = (id: number, cx: number, cy: number) => {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const w = Math.min(1180, vw - 120);
-    const h = Math.min(680, vh - 180);
-    zRef.current += 1;
-    const z = zRef.current;
-    setWindows((prev) => {
-      const next = prev.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              mode: "window" as const,
-              x: Math.min(Math.max(cx - w / 2, 8), Math.max(8, vw - w - 8)),
-              y: Math.min(Math.max(cy - 16, 48), Math.max(48, vh - 90)),
-              w,
-              h,
-              maximized: false,
-              minimized: false,
-              z,
-            }
-          : t,
-      );
-      setActiveTabId((cur) => {
-        if (cur !== id) return cur;
-        const remaining = next.filter((t) => t.mode === "tab");
-        return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
-      });
-      return next;
-    });
-  };
-
   const windowsFor = (appId: string) => windows.filter((w) => w.appId === appId);
   const minimizedFor = (appId: string) => windowsFor(appId).filter((w) => w.minimized);
 
@@ -735,6 +773,35 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const tabs = windows.filter((w) => w.mode === "tab");
   const floatingWindows = windows.filter((w) => w.mode === "window");
 
+  /** Reorder the dragged tab within the strip based on the pointer's x. */
+  const reorderTabByPointer = (id: number, clientX: number) => {
+    const strip = document.querySelector('[data-testid="banner-tab-strip"]');
+    if (!strip) return;
+    const els = Array.from(strip.querySelectorAll<HTMLElement>("[data-tab-id]"));
+    const ids = els.map((el) => Number(el.dataset.tabId));
+    if (!ids.includes(id)) return;
+    const others = els.filter((el) => Number(el.dataset.tabId) !== id);
+    let targetIndex = others.length;
+    for (let i = 0; i < others.length; i++) {
+      const r = others[i].getBoundingClientRect();
+      if (clientX < r.left + r.width / 2) {
+        targetIndex = i;
+        break;
+      }
+    }
+    const nextOrder = ids.filter((x) => x !== id);
+    nextOrder.splice(targetIndex, 0, id);
+    if (nextOrder.join(",") === ids.join(",")) return;
+    setWindows((prev) => {
+      const byId = new Map(prev.filter((w) => w.mode === "tab").map((t) => [t.id, t]));
+      const ordered = nextOrder
+        .map((i) => byId.get(i))
+        .filter((t): t is WinterWin => Boolean(t));
+      let ti = 0;
+      return prev.map((w) => (w.mode === "tab" ? ordered[ti++] ?? w : w));
+    });
+  };
+
   const onTabPointerDown = (id: number) => (e: React.PointerEvent) => {
     tabDragRef.current = { id, sx: e.clientX, sy: e.clientY };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -742,14 +809,28 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
   const onTabPointerMove = (id: number) => (e: React.PointerEvent) => {
     const d = tabDragRef.current;
     if (!d || d.id !== id) return;
-    // Dragging the tab out of the banner turns it into a floating window.
-    if (e.clientY - d.sy > 44) {
-      tabDragRef.current = null;
-      detachTab(id, e.clientX, e.clientY);
+    const dy = e.clientY - d.sy;
+    if (dy > 48) {
+      // Dragging down: preview a split-screen drop on the pointer's half.
+      setSplitHint(e.clientX < window.innerWidth / 2 ? "left" : "right");
+    } else {
+      setSplitHint(null);
+      if (Math.abs(e.clientX - d.sx) > 8) reorderTabByPointer(id, e.clientX);
     }
   };
-  const onTabPointerEnd = () => {
+  const onTabPointerEnd = (id: number) => () => {
+    const d = tabDragRef.current;
     tabDragRef.current = null;
+    if (splitHint && d && d.id === id) {
+      setSplit({ id, side: splitHint });
+      // Keep another tab active on the opposite half so both show.
+      setActiveTabId((cur) => {
+        if (cur !== id) return cur;
+        const others = windows.filter((w) => w.mode === "tab" && w.id !== id);
+        return others.length > 0 ? others[others.length - 1].id : cur;
+      });
+    }
+    setSplitHint(null);
   };
 
   return (
@@ -835,7 +916,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
           )}
         </div>
 
-        {/* Banner tabs — dock apps open here; drag a tab down to float it. */}
+        {/* Banner tabs — drag horizontally to reorder; drag down-left/right to split screen. */}
         {tabs.length > 0 && (
           <div
             className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto px-3"
@@ -853,9 +934,10 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                   }`}
                   onPointerDown={onTabPointerDown(t.id)}
                   onPointerMove={onTabPointerMove(t.id)}
-                  onPointerUp={onTabPointerEnd}
-                  onPointerCancel={onTabPointerEnd}
+                  onPointerUp={onTabPointerEnd(t.id)}
+                  onPointerCancel={onTabPointerEnd(t.id)}
                   onClick={() => setActiveTabId(t.id)}
+                  data-tab-id={t.id}
                   data-testid={`banner-tab-${t.id}`}
                 >
                   <span className="truncate max-w-[160px]">{titleFor(t)}</span>
@@ -905,20 +987,56 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         </div>
       </div>
 
-      {/* Tab panes — full-screen frosted layers under the floating windows. */}
-      {tabs.map((t) => {
-        const app = apps[t.appId];
-        if (!app) return null;
-        return (
-          <WinterTabPane
-            key={t.id}
-            win={t}
-            app={app}
-            title={titleFor(t)}
-            active={t.id === activeTabId}
-          />
-        );
-      })}
+      {/* Tab panes — frosted layers under the floating windows. When a tab is
+          split, it pins to its half while the active tab fills the other. */}
+      {(() => {
+        const splitTab = split ? tabs.find((t) => t.id === split.id) : undefined;
+        const mainId =
+          splitTab && activeTabId === splitTab.id
+            ? tabs.filter((t) => t.id !== splitTab.id).slice(-1)[0]?.id ?? null
+            : activeTabId;
+        // Render panes in stable id order: reordering tabs in the strip must
+        // NOT move pane DOM nodes, or their iframes would reload.
+        const stableTabs = [...tabs].sort((a, b) => a.id - b.id);
+        return stableTabs.map((t) => {
+          const app = apps[t.appId];
+          if (!app) return null;
+          const isSplit = splitTab?.id === t.id;
+          const shown = isSplit || (splitTab ? t.id === mainId : t.id === activeTabId);
+          const region: "full" | "left" | "right" = !splitTab
+            ? "full"
+            : isSplit
+              ? split!.side
+              : split!.side === "left"
+                ? "right"
+                : "left";
+          return (
+            <WinterTabPane
+              key={t.id}
+              win={t}
+              app={app}
+              title={titleFor(t)}
+              active={shown}
+              region={region}
+              onUnsplit={isSplit ? () => setSplit(null) : undefined}
+            />
+          );
+        });
+      })()}
+
+      {/* Split-drop preview while dragging a tab down toward a half. */}
+      {splitHint && (
+        <div
+          className={`absolute top-12 bottom-0 ${
+            splitHint === "left" ? "left-0 right-1/2" : "left-1/2 right-0"
+          } z-[35] bg-sky-300/20 border-2 border-sky-300/60 pointer-events-none`}
+          data-testid="split-hint-overlay"
+        />
+      )}
+
+      {/* Full-height glass side panels (empty), toggled by small edge tabs. */}
+      <WinterEdgePanel side="left" />
+      <WinterEdgePanel side="right" />
 
       {/* Desktop windows layer — no scrim: the desktop stays interactive. */}
       <div className="absolute inset-0 z-50 pointer-events-none">
