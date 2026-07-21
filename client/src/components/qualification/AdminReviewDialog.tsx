@@ -3792,7 +3792,7 @@ export function AdminReviewDialog({
               surfaces (documents, note, scheduler) collapse into popovers so
               the column stays narrow. ─── */}
           <aside
-            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden md:border-l md:border-slate-200/60 md:pl-1"
+            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden bg-slate-200/60 backdrop-blur-md md:border-l md:border-slate-300/50 md:pl-1"
             data-testid="admin-review-action-panel"
           >
             {/* Scrollable middle zone — Reference + AI clues + Changes. Keeping
@@ -4327,29 +4327,6 @@ export function AdminReviewDialog({
 
             </div>
 
-            {/* AI-identified clinical clue bubbles (knowledge-layer prototype).
-                Attach actions delegate to assignToTarget so the assignment
-                state stays the single source of truth. */}
-            <AiEvidenceBubblesRow
-              items={aiBubbleItems}
-              context={aiLogicContext}
-              ultrasoundTests={ultrasoundTests}
-              onAttach={(item, target) => {
-                const btn = findButtonForBubble(item);
-                // skipEvidenceRecord: the bubble attach flow records its
-                // own evidence decision (with any label edits) inside
-                // AiEvidenceBubblesRow — avoid a duplicate write here.
-                if (btn) assignToTarget(target, btn, { skipEvidenceRecord: true });
-              }}
-              isAttached={(item, target) => {
-                const btn = findButtonForBubble(item);
-                return btn ? isAssignedToTarget(btn, target, assignments) : false;
-              }}
-              onEvidenceDecision={(item, decision) => {
-                if (decision === "approved") setAiPromptLabel(item.label);
-              }}
-            />
-
             {/* Changes — flex-1 tinted workbench card; fills remaining height */}
             <div
               className="mx-3 mb-2 flex min-h-[140px] flex-1 basis-0 flex-col overflow-hidden rounded-lg border border-slate-200/70 bg-slate-50/70"
@@ -4574,8 +4551,8 @@ export function AdminReviewDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className="flex flex-col w-[calc(100vw-0.75rem)] md:w-[calc(100vw-3rem)] max-w-[1040px] h-[min(96dvh,760px)] md:h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
-          overlayClassName="bg-slate-900/30 backdrop-blur-[2px]"
+          className="z-[70] flex flex-col w-[calc(100vw-0.75rem)] md:w-[calc(100vw-6rem)] max-w-[920px] h-[min(92dvh,660px)] md:h-[min(78vh,660px)] overflow-hidden p-0 gap-0 rounded-xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
+          overlayClassName="z-[65] bg-slate-900/30 backdrop-blur-[2px]"
           hideClose
           data-testid={`dialog-admin-review-${patient.id}`}
         >
