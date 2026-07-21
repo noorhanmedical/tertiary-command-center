@@ -66,6 +66,34 @@ export const featureFlags = {
   //   5. Set FEATURE_ANCILLARY_CASE_WRITE=true and restart.
   //   6. Run backfill 0050 in dry-run then apply.
   ancillaryCaseWrite: readBool("FEATURE_ANCILLARY_CASE_WRITE", false),
+
+  // ─── Phase 2C — Service-specific Admin Review + Engagement lists ─
+  // All four flags default OFF. Migration 0051 is NOT applied
+  // automatically. Enabling checklist:
+  //   1. Phase 2A + 2B applied and flags ON.
+  //   2. Apply migrations/0051.
+  //   3. Introduce Plexus-internal clinical reviewer role
+  //      (see server/services/adminReview/authorization.ts blocker).
+  //   4. Flip FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW to enable the
+  //      write path. Reads (compatibility projection) work without it.
+  //   5. Flip FEATURE_ENGAGEMENT_ADMIN_REVIEW_SYNC to have every
+  //      review status change reconcile Engagement eligibility.
+  //   6. Flip FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY to expose the
+  //      new Repository tab / multi-list model in the client.
+  //   7. Flip FEATURE_ENGAGEMENT_RECENT_LISTS to enable the Most
+  //      Recently Sent (top-10) section.
+
+  /** Service-specific Admin Review write path. */
+  serviceSpecificAdminReview: readBool("FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW", false),
+
+  /** Engagement eligibility reconciles on Admin Review status changes. */
+  engagementAdminReviewSync: readBool("FEATURE_ENGAGEMENT_ADMIN_REVIEW_SYNC", false),
+
+  /** Multi-list Engagement Repository — surfaces the new engagement_lists model. */
+  engagementMultiListRepository: readBool("FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY", false),
+
+  /** Most Recently Sent (top-10) section on the Repository tab. */
+  engagementRecentLists: readBool("FEATURE_ENGAGEMENT_RECENT_LISTS", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;

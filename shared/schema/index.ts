@@ -75,4 +75,9 @@ export * from "./plexusIdentity";
 // the SQL migration (migrations/0050_add_patient_ancillary_cases.sql)
 // is not applied automatically.
 export * from "./ancillaryCases";
+// Phase 2C — Service-specific Admin Review (append-only history) and
+// Engagement list identity. Every write path is guarded by four
+// flags (all default OFF); migration 0051 is not applied automatically.
+export * from "./adminReviewEvents";
+export * from "./engagementLists";
 export * from "../models/chat";
