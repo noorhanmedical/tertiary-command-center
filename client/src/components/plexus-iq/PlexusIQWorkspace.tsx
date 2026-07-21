@@ -1015,8 +1015,8 @@ export function PlexusIQWorkspace({
               data-legacy-testid={`plexus-iq-clinic-tile-${c.facility}`}
             >
               {/* Black header strip — clinic name only, no counts. */}
-              <div className="border-b border-slate-200 bg-slate-50 group-hover:bg-slate-100 transition-colors px-4 py-2.5">
-                <div className="text-[13px] font-semibold tracking-tight text-slate-900 truncate">
+              <div className="border-b border-white/10 bg-slate-900/85 backdrop-blur-md group-hover:bg-slate-900/75 transition-colors px-4 py-2.5">
+                <div className="text-[13px] font-semibold tracking-tight text-white truncate">
                   {c.facility}
                 </div>
               </div>
@@ -1260,9 +1260,9 @@ export function PlexusIQWorkspace({
                 className="rounded-md border border-slate-200 bg-white shadow-sm overflow-hidden"
                 data-testid={`plexus-iq-facility-${facility}`}
               >
-                <div className="relative border-b border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors">
-                  <AccordionTrigger className="w-full hover:no-underline px-5 py-3 pr-24 text-slate-900 text-left [&>svg]:text-slate-400 [&>svg]:hover:text-slate-600">
-                    <span className="text-sm font-semibold tracking-tight text-slate-900 truncate">
+                <div className="relative border-b border-white/10 bg-slate-900/85 backdrop-blur-md hover:bg-slate-900/75 transition-colors">
+                  <AccordionTrigger className="w-full hover:no-underline px-5 py-3 pr-24 text-white text-left [&>svg]:text-white/60 [&>svg]:hover:text-white">
+                    <span className="text-sm font-semibold tracking-tight text-white truncate">
                       {facility}
                     </span>
                   </AccordionTrigger>
@@ -1274,7 +1274,7 @@ export function PlexusIQWorkspace({
                     }}
                     aria-label={`Delete all patients in ${facility}`}
                     title={`Delete all patients in ${facility}`}
-                    className="absolute right-12 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors z-10"
+                    className="absolute right-12 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-8 w-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors z-10"
                     data-testid={`button-plexus-iq-delete-facility-${facility}`}
                   >
                     <Trash2 className="w-4 h-4" />

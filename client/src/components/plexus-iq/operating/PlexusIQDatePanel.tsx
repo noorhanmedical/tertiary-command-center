@@ -225,7 +225,7 @@ function ListView({
               type="button"
               onClick={() => onToggleDate(group.key)}
               className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-                selected ? "bg-plexus-navy-800 shadow-sm" : "hover:bg-slate-100"
+                selected ? "bg-slate-900/90 backdrop-blur-sm shadow-sm" : "hover:bg-slate-100"
               }`}
               data-testid={`button-date-group-${group.key}`}
             >
@@ -380,8 +380,8 @@ function CalendarView({
                 }}
                 className={`relative flex flex-col items-center justify-center rounded py-0.5 my-0.5 text-[11px] font-medium transition-colors
                   ${!hasBatches ? "text-slate-300 cursor-default" : isSelected ? "text-white cursor-pointer" : "text-slate-700 hover:bg-slate-100 cursor-pointer"}
-                  ${isSelected ? "bg-plexus-navy-800 shadow-sm" : ""}
-                  ${isToday && !isSelected ? "ring-1 ring-plexus-navy-800 rounded" : ""}
+                  ${isSelected ? "bg-slate-900/90 backdrop-blur-sm shadow-sm" : ""}
+                  ${isToday && !isSelected ? "ring-1 ring-slate-900 rounded" : ""}
                 `}
                 data-testid={`button-cal-day-${iso}`}
               >
@@ -389,7 +389,7 @@ function CalendarView({
                 {hasBatches && (
                   <span
                     className={`absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full ${
-                      isSelected ? "bg-white" : "bg-plexus-navy-800"
+                      isSelected ? "bg-white" : "bg-slate-700"
                     }`}
                   />
                 )}
@@ -474,7 +474,7 @@ function MostRecentView({
           type="button"
           onClick={() => onToggleDate(mostRecent.key)}
           className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-            selected ? "bg-plexus-navy-800 shadow-sm" : "hover:bg-slate-100"
+            selected ? "bg-slate-900/90 backdrop-blur-sm shadow-sm" : "hover:bg-slate-100"
           }`}
           data-testid={`button-date-group-${mostRecent.key}`}
         >
