@@ -29,6 +29,8 @@ import { ancillaryAppointments } from "@shared/schema/appointments";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { ancillaryCaseReconciliationFailures } from "@shared/schema/ancillaryCases";
 import { featureFlags } from "../server/lib/featureFlags";
+import { getExecutionCaseById } from "../server/repositories/executionCase.repo";
+import { finalizeQuickScheduleCanonicalLink } from "../server/services/canonicalAppointments/quickScheduleLink";
 
 type PlanOutcome =
   | "would_link_event_to_case"
@@ -50,6 +52,15 @@ type PlanRow = {
   outcome: PlanOutcome;
   errorCode?: string;
 };
+
+async function resolveExecutionCaseIdForFailure(failureId: number): Promise<number | null> {
+  const [row] = await db
+    .select({ executionCaseId: ancillaryCaseReconciliationFailures.executionCaseId })
+    .from(ancillaryCaseReconciliationFailures)
+    .where(eq(ancillaryCaseReconciliationFailures.id, failureId))
+    .limit(1);
+  return row?.executionCaseId ?? null;
+}
 
 async function main(): Promise<void> {
   const apply = process.env.BACKFILL_CANONICAL_APPOINTMENT_APPLY === "YES";
@@ -152,8 +163,78 @@ async function main(): Promise<void> {
     });
   }
 
+  // ── Apply-mode orchestration (dormant unless BOTH guards set) ──
+  // Calls canonical services rather than raw duplicate logic. Additive
+  // only: never modifies clinics, never fabricates identity, preserves
+  // actual timestamps, PHI-free, idempotent. NOT executed in dry-run.
+  const applyResult = {
+    adoptedExistingEvents: 0,
+    duplicatesSkipped: 0,
+    quickScheduleLinked: 0,
+    quickScheduleDeferred: 0,
+    legacyRowsDeferredTo2DC: 0,
+  };
+  if (apply) {
+    for (const p of plan) {
+      // 1. Existing global_schedule_events → adopt into the resolved
+      //    canonical case (idempotent; unique-index conflict = skip).
+      if (p.source === "global_schedule_event" && p.outcome === "would_link_event_to_case" && p.ancillaryCaseId != null) {
+        try {
+          const updated = await db
+            .update(globalScheduleEvents)
+            .set({ ancillaryCaseId: p.ancillaryCaseId })
+            .where(
+              and(
+                eq(globalScheduleEvents.id, p.sourceId),
+                isNull(globalScheduleEvents.ancillaryCaseId),
+                inArray(globalScheduleEvents.eventType, ["ancillary_appointment", "same_day_add"] as string[]),
+              ),
+            )
+            .returning({ id: globalScheduleEvents.id });
+          if (updated.length > 0) applyResult.adoptedExistingEvents += 1;
+        } catch (e) {
+          if ((e as { code?: string })?.code === "23505") applyResult.duplicatesSkipped += 1;
+          else throw e;
+        }
+        continue;
+      }
+      // 2. Phase 2B quick-schedule rows → deterministic canonical link
+      //    via the shared finalize service (creates case + same_day_add
+      //    + back-pointer + closes retry rows). Defers if identity/
+      //    screening is not yet available.
+      if (p.source === "reconciliation_failure" && p.outcome === "would_link_quick_schedule" && p.clinicId != null) {
+        const execCaseId = await resolveExecutionCaseIdForFailure(p.sourceId);
+        const execCase = execCaseId != null ? await getExecutionCaseById(execCaseId) : undefined;
+        const screeningId = execCase?.patientScreeningId ?? null;
+        if (execCase && screeningId != null) {
+          const linked = await finalizeQuickScheduleCanonicalLink({
+            clinicId: p.clinicId,
+            executionCaseId: execCase.id,
+            patientScreeningId: screeningId,
+            source: "backfill_apply",
+          });
+          if (linked.status === "linked" && linked.perService.every((s) => s.status === "linked" || s.status === "reused")) {
+            applyResult.quickScheduleLinked += 1;
+          } else {
+            applyResult.quickScheduleDeferred += 1;
+          }
+        } else {
+          applyResult.quickScheduleDeferred += 1;
+        }
+        continue;
+      }
+      // 3. Legacy ancillary_appointments rows require identity that this
+      //    table does not carry; linking is deferred to Phase 2D-C
+      //    readers. Reported, never raw-duplicated.
+      if (p.source === "ancillary_appointment" && p.outcome === "would_link_legacy_row") {
+        applyResult.legacyRowsDeferredTo2DC += 1;
+      }
+    }
+  }
+
   const summary = {
     mode: apply ? "APPLIED" : "DRY_RUN",
+    applyResult: apply ? applyResult : undefined,
     globalScheduleEventsScanned: gseCandidates.length,
     ancillaryAppointmentsScanned: legacyRows.length,
     quickScheduleFailuresScanned: quickSchedFailures.length,
