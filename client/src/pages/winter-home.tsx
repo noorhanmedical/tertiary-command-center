@@ -205,6 +205,20 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
             filter: blur(1px);
             animation: wh-snowfall linear infinite;
           }
+          /* Winter window: blend the embedded page into the glass window.
+             The page shell goes transparent so the wallpaper glow shows
+             through, while tiles stay more opaque than the page behind them. */
+          [data-winter-window] .bg-slate-50\\/40,
+          [data-winter-window] .bg-slate-50,
+          [data-winter-window] .bg-slate-100 {
+            background-color: transparent;
+          }
+          [data-winter-window] .bg-white {
+            background-color: rgba(255, 255, 255, 0.72);
+          }
+          [data-winter-window] .rounded-3xl { border-radius: 0.625rem; }
+          [data-winter-window] .rounded-2xl { border-radius: 0.5rem; }
+          [data-winter-window] .rounded-xl { border-radius: 0.375rem; }
           `,
         }}
       />
@@ -271,7 +285,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       {openWindow === "plexus-iq" && (
         <div
           className={`absolute inset-0 z-50 flex items-center justify-center transition-all duration-200 ${
-            windowMaximized ? "p-0 pt-12" : "p-4 pt-16 pb-24"
+            windowMaximized ? "p-0" : "p-4 pt-16 pb-24"
           }`}
         >
           <div
@@ -280,45 +294,47 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
             data-testid="window-scrim"
           />
           <div
-            className={`relative flex flex-col w-full h-full border border-white/40 bg-white/60 backdrop-blur-2xl shadow-[0_40px_120px_rgba(15,23,42,0.45)] overflow-hidden ${
+            className={`relative flex flex-col w-full h-full border border-white/40 bg-white/35 backdrop-blur-2xl shadow-[0_40px_120px_rgba(15,23,42,0.45)] overflow-hidden ${
               windowMaximized ? "max-w-none rounded-none" : "max-w-[1500px] rounded-lg"
             }`}
             data-testid="window-plexus-iq"
           >
-            <div className="flex items-center gap-2 h-10 px-4 bg-white/60 border-b border-slate-200/70 shrink-0">
-              <button
-                type="button"
-                onClick={() => setOpenWindow(null)}
-                className="w-3.5 h-3.5 rounded-full bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
-                aria-label="Close window"
-                data-testid="button-close-window"
-              >
-                <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setWindowMaximized(false)}
-                className="w-3.5 h-3.5 rounded-full bg-yellow-400 hover:bg-yellow-500 flex items-center justify-center group transition-colors"
-                aria-label="Restore window size"
-                data-testid="button-restore-window"
-              >
-                <Minus className="w-2.5 h-2.5 text-yellow-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setWindowMaximized(true)}
-                className="w-3.5 h-3.5 rounded-full bg-green-400 hover:bg-green-500 flex items-center justify-center group transition-colors"
-                aria-label="Expand window"
-                data-testid="button-maximize-window"
-              >
-                <Maximize2 className="w-2 h-2 text-green-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
-              </button>
-              <div className="flex items-center gap-2 pl-1 text-[13px] font-semibold text-slate-600">
-                <Brain className="w-4 h-4 text-indigo-500" />
+            <div className="flex items-center gap-2 h-10 px-4 bg-gradient-to-b from-sky-700/50 to-blue-900/50 backdrop-blur-xl border-b border-white/20 shrink-0">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-white/95">
+                <Brain className="w-4 h-4 text-sky-200" />
                 Plexus IQ
               </div>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setWindowMaximized(false)}
+                  className="w-3.5 h-3.5 rounded-full bg-yellow-400 hover:bg-yellow-500 flex items-center justify-center group transition-colors"
+                  aria-label="Restore window size"
+                  data-testid="button-restore-window"
+                >
+                  <Minus className="w-2.5 h-2.5 text-yellow-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWindowMaximized(true)}
+                  className="w-3.5 h-3.5 rounded-full bg-green-400 hover:bg-green-500 flex items-center justify-center group transition-colors"
+                  aria-label="Expand window"
+                  data-testid="button-maximize-window"
+                >
+                  <Maximize2 className="w-2 h-2 text-green-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpenWindow(null)}
+                  className="w-3.5 h-3.5 rounded-full bg-red-400 hover:bg-red-500 flex items-center justify-center group transition-colors"
+                  aria-label="Close window"
+                  data-testid="button-close-window"
+                >
+                  <X className="w-2.5 h-2.5 text-red-900 opacity-0 group-hover:opacity-100" strokeWidth={3} />
+                </button>
+              </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-auto bg-white/70">
+            <div className="flex-1 min-h-0 overflow-auto" data-winter-window>
               <Suspense
                 fallback={
                   <div className="flex items-center justify-center h-full text-slate-500 text-sm">
@@ -336,7 +352,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       )}
 
       {/* Dock */}
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 group/dock" data-testid="dock-container">
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[60] group/dock" data-testid="dock-container">
         <div className="flex items-end gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl opacity-[0.12] scale-[0.88] origin-bottom group-hover/dock:opacity-100 group-hover/dock:scale-100 transition-all duration-300">
           {primaryItems.map(renderDockItem)}
 
