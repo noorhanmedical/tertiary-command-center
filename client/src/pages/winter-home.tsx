@@ -28,7 +28,7 @@ const PRIMARY_HREFS = [
   "/home",
   "/mission-control",
   "/schedule",
-  "/scheduler-portal",
+  "/engagement-center",
   "/patient-directory",
   "/ancillary-documents",
   "/billing",
@@ -678,7 +678,13 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     [calendarSummary],
   );
 
-  const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
+  // The dock's phone icon opens the Engagement Center (not the Outreach
+  // Center the global nav maps to at /scheduler-portal).
+  const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole)).map((item) =>
+    item.href === "/scheduler-portal"
+      ? { ...item, href: "/engagement-center", label: "Engagement Center" }
+      : item,
+  );
   const primaryItems = visibleItems.filter((i) => PRIMARY_HREFS.includes(i.href));
   const overflowItems = visibleItems.filter((i) => !PRIMARY_HREFS.includes(i.href));
 
