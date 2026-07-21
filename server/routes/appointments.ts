@@ -4,6 +4,8 @@ import { storage } from "../storage";
 import { VALID_FACILITIES } from "./helpers";
 import { logAudit } from "../services/auditService";
 import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
+import { featureFlags } from "../lib/featureFlags";
+import { scheduleCanonicalAncillaryAppointment } from "../services/canonicalAppointments/scheduleAncillaryOrchestrator";
 
 export function registerAppointmentRoutes(app: Express) {
   app.get("/api/appointments", async (req, res) => {
@@ -36,6 +38,67 @@ export function registerAppointmentRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
 
       const { patientScreeningId, patientName, facility, scheduledDate, scheduledTime, testType } = parsed.data;
+
+      // ── Phase 2D-B2: canonical bridge / refusal ────────────────
+      // When FEATURE_CANONICAL_APPOINTMENT is ON, this route must not
+      // create an independent legacy ancillary appointment truth. If a
+      // screening is present we bridge to the canonical service (the
+      // ancillary_appointments row is only ever a compatibility
+      // projection). Without enough context to resolve a canonical
+      // case, we refuse (409) rather than insert a legacy-only row.
+      if (featureFlags.canonicalAppointment) {
+        const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        if (patientScreeningId == null || clinicId == null) {
+          return res.status(409).json({
+            error: "Canonical scheduling is enabled — use the canonical ancillary scheduling route; a patient screening and clinic scope are required.",
+            code: "CANONICAL_ANCILLARY_CASE_REQUIRED",
+          });
+        }
+        const startsAt = new Date(`${scheduledDate}T${scheduledTime}:00`);
+        if (isNaN(startsAt.getTime())) {
+          return res.status(400).json({ error: "Invalid scheduledDate/scheduledTime" });
+        }
+        try {
+          const canonical = await scheduleCanonicalAncillaryAppointment({
+            clinicId,
+            executionCaseId: null,
+            patientScreeningId,
+            serviceType: testType,
+            startsAt,
+            eventType: "ancillary_appointment",
+            facilityId: facility,
+            source: "appointments_route",
+            actorUserId: req.session?.userId ?? null,
+          });
+          if (canonical.status === "created" || canonical.status === "reused") {
+            void logAudit(req, "create", "appointment", canonical.globalScheduleEventId, {
+              canonical: true, ancillaryCaseId: canonical.ancillaryCaseId, testType, facility,
+            });
+            return res.json({
+              ok: true,
+              canonical: true,
+              globalScheduleEventId: canonical.globalScheduleEventId,
+              ancillaryCaseId: canonical.ancillaryCaseId,
+              status: canonical.status,
+              projectionDeferred: canonical.projectionDeferred,
+            });
+          }
+          // deferred (no identity / no case) or error → controlled refusal.
+          return res.status(409).json({
+            error: "Could not resolve a canonical ancillary case for this appointment — use the canonical scheduling route.",
+            code: "CANONICAL_ANCILLARY_CASE_REQUIRED",
+          });
+        } catch (e) {
+          const code = (e as { code?: string })?.code;
+          if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+            return res.status(503).json({
+              error: "canonical appointment schema unavailable — apply migration 0052",
+              code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+            });
+          }
+          throw e;
+        }
+      }
 
       if (patientScreeningId != null) {
         const patient = await storage.getPatientScreening(patientScreeningId);

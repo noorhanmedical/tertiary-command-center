@@ -129,9 +129,24 @@ export async function resolveAndLinkPlexusIdentityForScreening(
     };
   };
 
-  if (!useTx) return doWork();
-  // Drizzle's transaction wrapper propagates the returned value.
-  return db.transaction(async () => doWork());
+  const result = useTx ? await db.transaction(async () => doWork()) : await doWork();
+
+  // Phase 2A → 2B → 2D hook: once a screening is identity-linked, drain
+  // any pending quick-schedule canonical work for its execution case.
+  // Awaited (never fire-and-forget), flag-gated inside the hook, and it
+  // never throws — a downstream 2D issue must not break identity linking.
+  if (result.status === "linked" && featureFlags.canonicalAppointment && input.clinicId != null) {
+    const { finalizeQuickScheduleForLinkedScreening } = await import(
+      "../canonicalAppointments/identityCompletionHook"
+    );
+    await finalizeQuickScheduleForLinkedScreening({
+      screeningId: input.screeningId,
+      clinicId: input.clinicId,
+      source: input.sourceSystem ?? "identity_link",
+    });
+  }
+
+  return result;
 }
 
 /**

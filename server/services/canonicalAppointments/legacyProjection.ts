@@ -21,7 +21,7 @@
  */
 
 import { db } from "../../db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or, isNull } from "drizzle-orm";
 import { patientScreenings } from "@shared/schema/screening";
 import { patientExecutionCases } from "@shared/schema/executionCase";
 import { ancillaryAppointments } from "@shared/schema/appointments";
@@ -60,7 +60,28 @@ export async function refreshLegacyAppointmentProjection(
   try {
     // 1. Back-pointer on any legacy ancillary_appointments row for this
     //    screening + service. Never creates a row; only links existing.
+    //    A row already pointing at a DIFFERENT canonical event is a
+    //    conflict — do NOT overwrite; record a durable retry + defer.
     if (evt.patientScreeningId != null && evt.serviceType != null) {
+      const legacyRows = await db
+        .select({
+          id: ancillaryAppointments.id,
+          globalScheduleEventId: ancillaryAppointments.globalScheduleEventId,
+        })
+        .from(ancillaryAppointments)
+        .where(
+          and(
+            eq(ancillaryAppointments.patientScreeningId, evt.patientScreeningId),
+            eq(ancillaryAppointments.testType, evt.serviceType),
+          ),
+        );
+      const conflicting = legacyRows.find(
+        (r) => r.globalScheduleEventId != null && r.globalScheduleEventId !== evt.id,
+      );
+      if (conflicting) {
+        return await deferProjection(evt, input.source, "backpointer_conflict");
+      }
+      // Only set the back-pointer where it is unset or already ours.
       await db
         .update(ancillaryAppointments)
         .set({ globalScheduleEventId: evt.id })
@@ -68,6 +89,10 @@ export async function refreshLegacyAppointmentProjection(
           and(
             eq(ancillaryAppointments.patientScreeningId, evt.patientScreeningId),
             eq(ancillaryAppointments.testType, evt.serviceType),
+            or(
+              isNull(ancillaryAppointments.globalScheduleEventId),
+              eq(ancillaryAppointments.globalScheduleEventId, evt.id),
+            ),
           ),
         );
     }
@@ -99,24 +124,32 @@ export async function refreshLegacyAppointmentProjection(
     const errorCode = (e as { code?: string })?.code ?? "projection_failed";
     // Durable retry — the canonical event already committed; the
     // projection is what lagged. Truthfully report deferred.
-    try {
-      if (evt.clinicId != null) {
-        await recordCanonicalAppointmentFailure({
-          clinicId: evt.clinicId,
-          ancillaryCaseId: evt.ancillaryCaseId ?? null,
-          patientScreeningId: evt.patientScreeningId ?? null,
-          executionCaseId: evt.executionCaseId ?? null,
-          provisionalEventId: evt.id,
-          requestedAction: "refresh_projection",
-          sourceSystem: input.source,
-          errorCode: String(errorCode),
-        });
-      }
-    } catch {
-      /* migration/flag guard already handled downstream */
-    }
-    return { ok: false, deferred: true, errorCode: String(errorCode) };
+    return await deferProjection(evt, input.source, String(errorCode));
   }
+}
+
+async function deferProjection(
+  evt: GlobalScheduleEvent,
+  source: string,
+  errorCode: string,
+): Promise<{ ok: false; deferred: true; errorCode: string }> {
+  try {
+    if (evt.clinicId != null) {
+      await recordCanonicalAppointmentFailure({
+        clinicId: evt.clinicId,
+        ancillaryCaseId: evt.ancillaryCaseId ?? null,
+        patientScreeningId: evt.patientScreeningId ?? null,
+        executionCaseId: evt.executionCaseId ?? null,
+        provisionalEventId: evt.id,
+        requestedAction: "refresh_projection",
+        sourceSystem: source,
+        errorCode,
+      });
+    }
+  } catch {
+    /* migration/flag guard already handled downstream */
+  }
+  return { ok: false, deferred: true, errorCode };
 }
 
 function screeningPatchForStatus(status: string): Record<string, unknown> | null {

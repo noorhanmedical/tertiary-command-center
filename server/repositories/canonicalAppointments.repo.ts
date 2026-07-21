@@ -291,6 +291,31 @@ export async function transitionCanonicalEvent(
 }
 
 /**
+ * Adopt an existing schedule event into a canonical ancillary case by
+ * setting ancillary_case_id — ONLY when it is currently unset. Returns
+ * the updated row, or null when nothing was updated (already linked /
+ * not found). A unique-index conflict (23505) is surfaced to the
+ * caller so it can resolve the winner rather than silently overwriting.
+ */
+export async function setEventAncillaryCaseIfUnset(
+  eventId: number,
+  ancillaryCaseId: number,
+): Promise<GlobalScheduleEvent | null> {
+  guardWrite();
+  const [row] = await db
+    .update(globalScheduleEvents)
+    .set({ ancillaryCaseId, updatedAt: sql`CURRENT_TIMESTAMP` })
+    .where(
+      and(
+        eq(globalScheduleEvents.id, eventId),
+        isNull(globalScheduleEvents.ancillaryCaseId),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
  * Reschedule: mark prior 'rescheduled' + insert new scheduled event.
  * The prior event is preserved permanently. parent_event_id on the
  * new event points back for lineage.

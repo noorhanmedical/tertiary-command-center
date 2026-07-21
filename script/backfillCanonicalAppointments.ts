@@ -31,6 +31,7 @@ import { ancillaryCaseReconciliationFailures } from "@shared/schema/ancillaryCas
 import { featureFlags } from "../server/lib/featureFlags";
 import { getExecutionCaseById } from "../server/repositories/executionCase.repo";
 import { finalizeQuickScheduleCanonicalLink } from "../server/services/canonicalAppointments/quickScheduleLink";
+import { adoptExistingScheduleEventAsCanonical } from "../server/services/canonicalAppointments/adoptEvent";
 
 type PlanOutcome =
   | "would_link_event_to_case"
@@ -49,6 +50,7 @@ type PlanRow = {
   sourceId: number;
   clinicId: number | null;
   ancillaryCaseId?: number;
+  serviceType?: string;
   outcome: PlanOutcome;
   errorCode?: string;
 };
@@ -125,7 +127,7 @@ async function main(): Promise<void> {
       plan.push({ source: "global_schedule_event", sourceId: evt.id, clinicId: evt.clinicId, ancillaryCaseId: ac.id, outcome: "duplicate_active_appointment" });
       continue;
     }
-    plan.push({ source: "global_schedule_event", sourceId: evt.id, clinicId: evt.clinicId, ancillaryCaseId: ac.id, outcome: "would_link_event_to_case" });
+    plan.push({ source: "global_schedule_event", sourceId: evt.id, clinicId: evt.clinicId, ancillaryCaseId: ac.id, serviceType: ac.serviceType, outcome: "would_link_event_to_case" });
   }
 
   // Section 2: ancillary_appointments legacy rows without global_schedule_event_id.
@@ -177,24 +179,27 @@ async function main(): Promise<void> {
   if (apply) {
     for (const p of plan) {
       // 1. Existing global_schedule_events → adopt into the resolved
-      //    canonical case (idempotent; unique-index conflict = skip).
-      if (p.source === "global_schedule_event" && p.outcome === "would_link_event_to_case" && p.ancillaryCaseId != null) {
-        try {
-          const updated = await db
-            .update(globalScheduleEvents)
-            .set({ ancillaryCaseId: p.ancillaryCaseId })
-            .where(
-              and(
-                eq(globalScheduleEvents.id, p.sourceId),
-                isNull(globalScheduleEvents.ancillaryCaseId),
-                inArray(globalScheduleEvents.eventType, ["ancillary_appointment", "same_day_add"] as string[]),
-              ),
-            )
-            .returning({ id: globalScheduleEvents.id });
-          if (updated.length > 0) applyResult.adoptedExistingEvents += 1;
-        } catch (e) {
-          if ((e as { code?: string })?.code === "23505") applyResult.duplicatesSkipped += 1;
-          else throw e;
+      //    canonical case via the integrity-checked adoption service
+      //    (validates clinic/type/service, refuses doctor_visit,
+      //    preserves timestamps, refreshes projection, PHI-free audit).
+      if (
+        p.source === "global_schedule_event" &&
+        p.outcome === "would_link_event_to_case" &&
+        p.ancillaryCaseId != null &&
+        p.clinicId != null &&
+        p.serviceType != null
+      ) {
+        const adopt = await adoptExistingScheduleEventAsCanonical({
+          eventId: p.sourceId,
+          ancillaryCaseId: p.ancillaryCaseId,
+          clinicId: p.clinicId,
+          serviceType: p.serviceType,
+          source: "backfill_apply",
+        });
+        if (adopt.status === "adopted" || adopt.status === "already_linked") {
+          applyResult.adoptedExistingEvents += 1;
+        } else if (adopt.status === "conflict_active_event") {
+          applyResult.duplicatesSkipped += 1;
         }
         continue;
       }
