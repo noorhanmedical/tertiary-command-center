@@ -988,7 +988,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         )}
 
         <div
-          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 opacity-100`}
+          className={`flex items-center gap-1.5 px-3 pb-1.5 pt-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-2xl origin-bottom transition-all duration-300 opacity-20 group-hover/dock:opacity-100`}
         >
           <div className="flex items-end gap-1.5">
             {primaryItems.map((item) =>
