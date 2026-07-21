@@ -41,6 +41,7 @@ import { logAudit } from "../services/auditService";
 import {
   resolveAndLinkPlexusIdentityForScreening,
   resolveAndLinkPlexusIdentityForScreeningsBulk,
+  recordScreeningIdentityLinkFailure,
 } from "../services/plexusIdentity/screeningIntegration";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import {
@@ -274,7 +275,9 @@ export function registerBatchRoutes(app: Express) {
       // Phase 2A — shared identity orchestration. No-op when
       // FEATURE_PLEXUS_IDENTITY_WRITE is OFF (default). Awaited so any
       // schema-configuration failure surfaces here rather than being
-      // dropped by a fire-and-forget promise.
+      // dropped by a fire-and-forget promise. On failure we record a
+      // durable retry-ledger row so the failure survives process
+      // restarts and can be picked up by the reconciliation service.
       try {
         await resolveAndLinkPlexusIdentityForScreening({
           screeningId: patient.id,
@@ -288,16 +291,21 @@ export function registerBatchRoutes(app: Express) {
           },
         });
       } catch (e) {
-        // Never swallow silently. Log the structured code and continue —
-        // the clinic workflow is not blocked by identity plumbing.
+        const errorCode = (e as { code?: string })?.code;
         console.error(JSON.stringify({
           level: "error",
           source: "plexus_identity_integration",
           route: "POST /api/batches/:id/patients",
           screeningId: patient.id,
-          code: (e as { code?: string })?.code,
+          code: errorCode,
           message: (e as Error)?.message ?? String(e),
         }));
+        await recordScreeningIdentityLinkFailure({
+          screeningId: patient.id,
+          clinicId: patient.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_add_patient",
+          errorCode,
+        });
       }
 
       void logAudit(req, "create", "patient", patient.id, { name: patient.name, batchId });
@@ -399,6 +407,12 @@ export function registerBatchRoutes(app: Express) {
           code: err.code,
           message: err.message,
         }));
+        await recordScreeningIdentityLinkFailure({
+          screeningId: err.screeningId,
+          clinicId: (created.find((p) => p.id === err.screeningId)?.clinicId ?? null),
+          sourceSystem: "batch_import_file",
+          errorCode: err.code,
+        });
       }
 
       invalidatePatientDatabase();
@@ -473,6 +487,12 @@ export function registerBatchRoutes(app: Express) {
           code: err.code,
           message: err.message,
         }));
+        await recordScreeningIdentityLinkFailure({
+          screeningId: err.screeningId,
+          clinicId: (created2.find((p) => p.id === err.screeningId)?.clinicId ?? null),
+          sourceSystem: "batch_import_text",
+          errorCode: err.code,
+        });
       }
 
       invalidatePatientDatabase();

@@ -39,6 +39,7 @@ import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { patientScreenings } from "@shared/schema/screening";
 import { featureFlags } from "../../lib/featureFlags";
+import { recordLinkFailure } from "../../repositories/plexusIdentity.repo";
 import {
   commitResolution,
   resolveIdentity,
@@ -152,6 +153,52 @@ export type BulkOrchestrationResult = {
     message: string;
   }>;
 };
+
+/**
+ * Route-facing wrapper: records a durable retry ledger row when the
+ * primary orchestration fails on a screening that has already been
+ * persisted. The route handler catches the orchestration error, logs
+ * the structured code, and then calls this — so the failure is
+ * durable across process restarts and the retry service can pick it
+ * up on its next pass.
+ *
+ * Behavior:
+ *   • Flag OFF → no-op (there should be no orchestration failures in
+ *     the first place when the flag is off, but this guard prevents
+ *     writing to a possibly-missing table).
+ *   • Flag ON → routes through the repo. Structured non-PHI. Never
+ *     throws to the caller — recording MUST NOT itself cascade into
+ *     a 500 response.
+ */
+export async function recordScreeningIdentityLinkFailure(input: {
+  screeningId: number;
+  clinicId: number | null;
+  sourceSystem: string;
+  errorCode: string | undefined;
+}): Promise<void> {
+  if (!featureFlags.plexusIdentityWrite) return;
+  try {
+    await recordLinkFailure({
+      patientScreeningId: input.screeningId,
+      clinicId: input.clinicId,
+      sourceSystem: input.sourceSystem,
+      errorCode: input.errorCode ?? "unknown",
+    });
+  } catch (e) {
+    // If we can't even write the failure row (e.g. migration missing),
+    // structured-log it and continue. The primary orchestration error
+    // has already been logged by the caller.
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error",
+      source: "plexus_identity_integration",
+      kind: "failure_ledger_write_failed",
+      screeningId: input.screeningId,
+      code: (e as { code?: string })?.code,
+      message: (e as Error)?.message ?? String(e),
+    }));
+  }
+}
 
 export async function resolveAndLinkPlexusIdentityForScreeningsBulk(
   inputs: BulkOrchestrationEntry[],

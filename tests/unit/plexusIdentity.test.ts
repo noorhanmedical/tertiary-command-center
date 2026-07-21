@@ -611,6 +611,550 @@ async function testSensitiveWriteRefused() {
   }
 }
 
+// ═══ Phase 2A hardening — behavioral, discovery, and FK tests ══════
+
+/**
+ * Tiny fake-db builder. Simulates the drizzle chain shapes we use:
+ *   db.select().from(t).where(x).limit(n)
+ *   db.select().from(t).where(x).orderBy(y).limit(n)
+ *   db.insert(t).values(v).returning()
+ *   db.update(t).set(v).where(x)
+ *   db.transaction(fn)  — runs fn immediately (no real tx boundary).
+ *
+ * The `tables` map keys are the Drizzle table objects. Each value is
+ * an array acting as the "current rows". Insert appends; update
+ * mutates matching rows (best-effort). Select filters are ignored —
+ * the test-side handler determines what to return based on the table.
+ */
+type FakeTableSpec = {
+  select?: () => unknown[];
+  insert?: (values: Record<string, unknown> | Record<string, unknown>[]) => unknown[];
+  update?: (values: Record<string, unknown>) => void;
+};
+function buildFakeDb(spec: Map<unknown, FakeTableSpec>) {
+  const calls: Array<{ op: string; table: unknown; payload?: unknown }> = [];
+  const fake = {
+    select() {
+      let currentTable: unknown = null;
+      const chain = {
+        from(t: unknown) { currentTable = t; return chain; },
+        where(_: unknown) { return chain; },
+        orderBy(_: unknown) { return chain; },
+        async limit(_n: number) {
+          calls.push({ op: "select", table: currentTable });
+          const s = spec.get(currentTable);
+          if (!s?.select) return [];
+          return s.select();
+        },
+      };
+      return chain;
+    },
+    insert(t: unknown) {
+      return {
+        values(v: Record<string, unknown> | Record<string, unknown>[]) {
+          return {
+            async returning() {
+              calls.push({ op: "insert", table: t, payload: v });
+              const s = spec.get(t);
+              if (!s?.insert) return Array.isArray(v) ? v : [v];
+              return s.insert(v);
+            },
+          };
+        },
+      };
+    },
+    update(t: unknown) {
+      return {
+        set(v: Record<string, unknown>) {
+          return {
+            async where(_: unknown) {
+              calls.push({ op: "update", table: t, payload: v });
+              const s = spec.get(t);
+              s?.update?.(v);
+            },
+          };
+        },
+      };
+    },
+    async transaction<T>(fn: () => Promise<T>): Promise<T> {
+      calls.push({ op: "transaction", table: null });
+      return fn();
+    },
+    execute: async () => undefined,
+  };
+  return { db: fake, calls };
+}
+
+async function withFakeDb<T>(
+  spec: Map<unknown, FakeTableSpec>,
+  writeFlag: boolean,
+  fn: (calls: Array<{ op: string; table: unknown; payload?: unknown }>) => Promise<T>,
+): Promise<T> {
+  const dbMod = await import("../../server/db");
+  const flags = await import("../../server/lib/featureFlags");
+  // ESM exports are read-only bindings — we can't reassign `db` itself,
+  // but we CAN mutate its methods. Snapshot and restore each method.
+  const dbObj = dbMod.db as unknown as Record<string, unknown>;
+  const savedMethods: Record<string, unknown> = {};
+  for (const k of ["select", "insert", "update", "transaction", "execute"]) {
+    savedMethods[k] = dbObj[k];
+  }
+  const originalFlag = flags.featureFlags.plexusIdentityWrite;
+  const { db: fake, calls } = buildFakeDb(spec);
+  for (const k of Object.keys(savedMethods)) {
+    dbObj[k] = (fake as unknown as Record<string, unknown>)[k];
+  }
+  (flags.featureFlags as unknown as { plexusIdentityWrite: boolean }).plexusIdentityWrite = writeFlag;
+  try {
+    return await fn(calls);
+  } finally {
+    for (const [k, v] of Object.entries(savedMethods)) {
+      dbObj[k] = v;
+    }
+    (flags.featureFlags as unknown as { plexusIdentityWrite: boolean }).plexusIdentityWrite = originalFlag;
+  }
+}
+
+// (H1) Behavioral — successful orchestration commits GP + membership + both FKs.
+async function testBehavioralSuccessfulOrchestration() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const screening = await import("../../shared/schema/screening");
+
+  // Simulate a fresh empty registry. resolveIdentity → no_match →
+  // commitResolution creates GP + membership + updates screening.
+  const spec = new Map<unknown, FakeTableSpec>();
+  const insertedGlobals: Record<string, unknown>[] = [];
+  const insertedMemberships: Record<string, unknown>[] = [];
+  const updatedScreenings: Record<string, unknown>[] = [];
+
+  spec.set(schema.globalPlexusPatients, {
+    select: () => [],
+    insert: (v) => {
+      const row = Array.isArray(v) ? v[0] : v;
+      const withId = { ...row, id: 111 } as Record<string, unknown>;
+      insertedGlobals.push(withId);
+      return [withId];
+    },
+  });
+  spec.set(schema.patientClinicMemberships, {
+    select: () => [],
+    insert: (v) => {
+      const row = Array.isArray(v) ? v[0] : v;
+      const withId = { ...row, id: 222 } as Record<string, unknown>;
+      insertedMemberships.push(withId);
+      return [withId];
+    },
+  });
+  spec.set(schema.patientExternalIdentifiers, { select: () => [] });
+  spec.set(schema.plexusIdAliases, { select: () => [] });
+  spec.set(screening.patientScreenings, {
+    update: (v) => { updatedScreenings.push(v); },
+  });
+
+  const orchestration = await import("../../server/services/plexusIdentity/screeningIntegration");
+  const r = await withFakeDb(spec, true, async () => {
+    return orchestration.resolveAndLinkPlexusIdentityForScreening({
+      screeningId: 999,
+      clinicId: 42,
+      sourceSystem: "test",
+      demographics: { displayName: "Grace Hopper", dob: "1906-12-09" },
+    });
+  });
+
+  assert.equal(r.status, "linked", "status must be linked");
+  if (r.status !== "linked") throw new Error("unreachable");
+  assert.equal(r.globalPlexusPatientId, 111);
+  assert.equal(r.patientClinicMembershipId, 222);
+  assert.equal(r.isNewGlobal, true);
+  assert.equal(r.isNewMembership, true);
+  assert.equal(insertedGlobals.length, 1, "one global patient inserted");
+  assert.equal(insertedMemberships.length, 1, "one membership inserted");
+  assert.equal(updatedScreenings.length, 1, "screening updated exactly once");
+  const upd = updatedScreenings[0];
+  assert.equal(upd.patientClinicMembershipId, 222, "FK 1 set");
+  assert.equal(upd.globalPlexusPatientId, 111, "FK 2 set");
+}
+
+// (H2) Behavioral — existing GP + membership are reused via clinic-MRN match.
+async function testBehavioralReusesExistingGpAndMembership() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const screening = await import("../../shared/schema/screening");
+
+  const spec = new Map<unknown, FakeTableSpec>();
+  const insertedGlobals: unknown[] = [];
+  const insertedMemberships: unknown[] = [];
+  const updatedScreenings: Record<string, unknown>[] = [];
+
+  spec.set(schema.globalPlexusPatients, {
+    // findGlobalPatientById(500) → return the existing GP.
+    // This select is called both from the resolver AND from ensureMembership.
+    select: () => [{ id: 500, plexusId: "PLX-EXISTING-XXXXXXXXXXXXXXXXXXXXXXXXXXXX" }],
+    insert: (v) => { insertedGlobals.push(v); return [v as Record<string, unknown>]; },
+  });
+  spec.set(schema.patientClinicMemberships, {
+    // findMembershipByClinicMrn → existing membership (definitive_match).
+    // Then ensureMembership.findActiveMembership → same membership.
+    select: () => [{ id: 777, globalPlexusPatientId: 500, clinicId: 42, membershipStatus: "active" }],
+    insert: (v) => { insertedMemberships.push(v); return [v as Record<string, unknown>]; },
+  });
+  spec.set(schema.patientExternalIdentifiers, { select: () => [] });
+  spec.set(schema.plexusIdAliases, { select: () => [] });
+  spec.set(screening.patientScreenings, {
+    update: (v) => { updatedScreenings.push(v); },
+  });
+
+  const orchestration = await import("../../server/services/plexusIdentity/screeningIntegration");
+  const r = await withFakeDb(spec, true, async () => {
+    return orchestration.resolveAndLinkPlexusIdentityForScreening({
+      screeningId: 999,
+      clinicId: 42,
+      sourceSystem: "test",
+      // Provide a clinic MRN so the resolver hits the definitive_match
+      // branch (clinic_mrn) and reuses the existing GP + membership
+      // instead of creating a new pair.
+      clinicMrn: "MRN-EXISTING-001",
+      demographics: { displayName: "X", dob: "1990-01-01" },
+    });
+  });
+
+  assert.equal(r.status, "linked", `expected linked, got ${r.status}`);
+  if (r.status !== "linked") throw new Error("unreachable");
+  assert.equal(insertedGlobals.length, 0, "must NOT insert a new global patient");
+  assert.equal(insertedMemberships.length, 0, "must NOT insert a duplicate membership");
+  assert.equal(r.globalPlexusPatientId, 500, "must reuse existing GP");
+  assert.equal(r.patientClinicMembershipId, 777, "must reuse existing membership");
+  assert.equal(r.isNewGlobal, false);
+  assert.equal(r.isNewMembership, false);
+  assert.equal(updatedScreenings.length, 1, "screening FKs still updated");
+}
+
+// (H3) Behavioral — ambiguous match: provisional identity + candidate + safe link.
+async function testBehavioralAmbiguousCreatesCandidateAndLinks() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const screening = await import("../../shared/schema/screening");
+
+  // Setup: findExternalIdentifiersByMatchValue returns hits pointing
+  // at existing global id=888 → possible_match. commitResolution then
+  // creates a new global + membership + candidate row.
+  const spec = new Map<unknown, FakeTableSpec>();
+  let selectCount = 0;
+  spec.set(schema.globalPlexusPatients, {
+    select: () => {
+      selectCount++;
+      // 1st call: findGlobalPatientByPlexusId(priorPlexusId=null) → skipped by caller
+      // 2nd+: findGlobalPatientById(888) for the possible-match candidate lookup
+      // Final: also serves the new-global INSERT path
+      if (selectCount === 1) return [{ id: 888, plexusId: "PLX-EXISTING-YYYYYYYYYYYYYYYYYYYYYYYYYYYY" }];
+      return [];
+    },
+    insert: (v) => { const row = Array.isArray(v) ? v[0] : v; return [{ ...row, id: 999 }]; },
+  });
+  spec.set(schema.patientClinicMemberships, {
+    select: () => [],
+    insert: (v) => { const row = Array.isArray(v) ? v[0] : v; return [{ ...row, id: 1001 }]; },
+  });
+  spec.set(schema.patientExternalIdentifiers, {
+    select: () => [{ globalPlexusPatientId: 888 }],
+  });
+  spec.set(schema.plexusIdAliases, { select: () => [] });
+  const candidateInserts: unknown[] = [];
+  spec.set(schema.patientIdentityMatchCandidates, {
+    insert: (v) => {
+      const row = Array.isArray(v) ? v[0] : v;
+      const withId = { ...row, id: 2002 };
+      candidateInserts.push(withId);
+      return [withId];
+    },
+  });
+  const updated: Record<string, unknown>[] = [];
+  spec.set(screening.patientScreenings, { update: (v) => { updated.push(v); } });
+
+  const orchestration = await import("../../server/services/plexusIdentity/screeningIntegration");
+  const r = await withFakeDb(spec, true, async () => {
+    return orchestration.resolveAndLinkPlexusIdentityForScreening({
+      screeningId: 4242,
+      clinicId: 7,
+      sourceSystem: "test",
+      demographics: {
+        displayName: "Ada",
+        dob: "1815-12-10",
+        phone: "555-1234567890",
+      },
+    });
+  });
+
+  assert.equal(r.status, "linked");
+  if (r.status !== "linked") throw new Error("unreachable");
+  // Ambiguous match must NOT auto-merge — the new global is 999.
+  assert.equal(r.globalPlexusPatientId, 999, "must create a NEW global patient for the incoming screening");
+  assert.equal(r.patientClinicMembershipId, 1001, "must create a NEW membership");
+  assert.ok(candidateInserts.length >= 1, "must enqueue at least one match candidate for Plexus review");
+  assert.ok(r.queuedCandidateIds.includes(2002), "candidate id must be reported to the caller");
+  assert.equal(updated.length, 1, "screening still gets both FKs — clinic workflow unblocked");
+}
+
+// (H4) Behavioral — orchestrator commit failure does NOT falsely report success.
+async function testBehavioralCommitFailureNoFalseSuccess() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(schema.globalPlexusPatients, {
+    select: () => [],
+    insert: () => { const e = new Error("simulated postgres failure"); (e as { code?: string }).code = "40001"; throw e; },
+  });
+  spec.set(schema.patientClinicMemberships, { select: () => [] });
+  spec.set(schema.patientExternalIdentifiers, { select: () => [] });
+  spec.set(schema.plexusIdAliases, { select: () => [] });
+
+  const orchestration = await import("../../server/services/plexusIdentity/screeningIntegration");
+  await withFakeDb(spec, true, async () => {
+    await assert.rejects(
+      () => orchestration.resolveAndLinkPlexusIdentityForScreening({
+        screeningId: 1,
+        clinicId: 1,
+        sourceSystem: "test",
+        demographics: { displayName: "X" },
+      }),
+      /simulated postgres failure/,
+      "orchestrator MUST propagate the failure — never return { status: 'linked' } on error",
+    );
+  });
+}
+
+// (H5) Behavioral — a route-level failure produces a durable retry record.
+async function testBehavioralRouteFailureCreatesLedgerRow() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const spec = new Map<unknown, FakeTableSpec>();
+  const ledgerInserts: Record<string, unknown>[] = [];
+  spec.set(schema.plexusIdentityLinkFailures, {
+    select: () => [],
+    insert: (v) => {
+      const row = Array.isArray(v) ? v[0] : v;
+      const withId = { ...row, id: 42 };
+      ledgerInserts.push(withId);
+      return [withId];
+    },
+  });
+
+  const orchestration = await import("../../server/services/plexusIdentity/screeningIntegration");
+  await withFakeDb(spec, true, async () => {
+    await orchestration.recordScreeningIdentityLinkFailure({
+      screeningId: 500,
+      clinicId: 10,
+      sourceSystem: "batch_add_patient",
+      errorCode: "PLEXUS_IDENTITY_MIGRATION_MISSING",
+    });
+  });
+
+  assert.equal(ledgerInserts.length, 1, "must insert exactly one ledger row");
+  const row = ledgerInserts[0];
+  assert.equal(row.patientScreeningId, 500);
+  assert.equal(row.clinicId, 10);
+  assert.equal(row.sourceSystem, "batch_add_patient");
+  assert.equal(row.errorCode, "PLEXUS_IDENTITY_MIGRATION_MISSING");
+  // No PHI fields.
+  for (const k of ["name", "dob", "phone", "email", "mrn", "insurance"]) {
+    assert.equal(k in row, false, `ledger row must not contain ${k}`);
+  }
+}
+
+// (H6) Behavioral — reconciliation repairs an unlinked screening idempotently.
+async function testBehavioralReconciliationRepairsUnlinked() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const screening = await import("../../shared/schema/screening");
+
+  const spec = new Map<unknown, FakeTableSpec>();
+  let scrCall = 0;
+  spec.set(screening.patientScreenings, {
+    // First select from reconciliation: read the screening row.
+    // Both FK columns null → Case C (full resolve + link).
+    select: () => {
+      scrCall++;
+      if (scrCall === 1) return [{
+        id: 777, clinicId: 8, name: "X", dob: "1970-01-01",
+        phone: null, email: null,
+        patientClinicMembershipId: null, globalPlexusPatientId: null,
+      }];
+      return [];
+    },
+    update: () => undefined,
+  });
+  spec.set(schema.globalPlexusPatients, {
+    select: () => [],
+    insert: (v) => { const row = Array.isArray(v) ? v[0] : v; return [{ ...row, id: 3001 }]; },
+  });
+  spec.set(schema.patientClinicMemberships, {
+    select: () => [],
+    insert: (v) => { const row = Array.isArray(v) ? v[0] : v; return [{ ...row, id: 4001 }]; },
+  });
+  spec.set(schema.patientExternalIdentifiers, { select: () => [] });
+  spec.set(schema.plexusIdAliases, { select: () => [] });
+  spec.set(schema.plexusIdentityLinkFailures, {
+    select: () => [],
+    insert: (v) => [v as Record<string, unknown>],
+    update: () => undefined,
+  });
+
+  const reco = await import("../../server/services/plexusIdentity/reconciliation");
+  const r = await withFakeDb(spec, true, async () => {
+    return reco.reconcilePlexusIdentityForScreening(777, 8);
+  });
+  assert.equal(r.status, "linked", `expected linked, got ${r.status}`);
+  if (r.status !== "linked") throw new Error("unreachable");
+  assert.equal(r.patientClinicMembershipId, 4001);
+  assert.equal(r.globalPlexusPatientId, 3001);
+}
+
+// (H7) Behavioral — reconciliation refuses conflicting partial linkage.
+async function testBehavioralReconciliationRefusesConflict() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const screening = await import("../../shared/schema/screening");
+
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(screening.patientScreenings, {
+    // Screening has membership FK set (999) but global FK is null →
+    // one-only partial state → conflict.
+    select: () => [{
+      id: 55, clinicId: 8, name: "X", dob: null,
+      phone: null, email: null,
+      patientClinicMembershipId: 999, globalPlexusPatientId: null,
+    }],
+  });
+  // findActiveMembership called with globalPlexusPatientId=0 (hasGlobal=false).
+  spec.set(schema.patientClinicMemberships, { select: () => [] });
+
+  const reco = await import("../../server/services/plexusIdentity/reconciliation");
+  const r = await withFakeDb(spec, true, async () => {
+    return reco.reconcilePlexusIdentityForScreening(55, 8);
+  });
+  assert.equal(r.status, "conflict", `expected conflict, got ${r.status}`);
+  if (r.status !== "conflict") throw new Error("unreachable");
+  assert.ok(
+    r.reason === "membership_belongs_to_different_clinic" ||
+      r.reason === "global_patient_missing_from_registry",
+    `unexpected conflict reason: ${r.reason}`,
+  );
+}
+
+// (H8) Reconciliation returns the idempotent already_linked status when both FKs are consistent.
+async function testBehavioralReconciliationIdempotent() {
+  const schema = await import("../../shared/schema/plexusIdentity");
+  const screening = await import("../../shared/schema/screening");
+
+  const spec = new Map<unknown, FakeTableSpec>();
+  spec.set(screening.patientScreenings, {
+    select: () => [{
+      id: 100, clinicId: 3, name: "X", dob: null,
+      phone: null, email: null,
+      patientClinicMembershipId: 5, globalPlexusPatientId: 6,
+    }],
+  });
+  spec.set(schema.patientClinicMemberships, {
+    // findActiveMembership must return the same id (5) so the
+    // consistency check passes.
+    select: () => [{ id: 5, globalPlexusPatientId: 6, clinicId: 3, membershipStatus: "active" }],
+  });
+  spec.set(schema.globalPlexusPatients, {
+    // findGlobalPatientById(6) → return a row so the check succeeds.
+    select: () => [{ id: 6, plexusId: "PLX-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" }],
+  });
+  spec.set(schema.plexusIdentityLinkFailures, {
+    select: () => [],
+    update: () => undefined,
+  });
+
+  const reco = await import("../../server/services/plexusIdentity/reconciliation");
+  const r = await withFakeDb(spec, true, async () => {
+    return reco.reconcilePlexusIdentityForScreening(100, 3);
+  });
+  assert.equal(r.status, "already_linked_consistent", `expected already_linked_consistent, got ${r.status}`);
+}
+
+// (H9) Migration contains real FK constraints with ON DELETE SET NULL.
+async function testMigrationHasRealFkConstraints() {
+  const sqlText = readFileSync(join(REPO_ROOT, "migrations/0049_add_plexus_identity.sql"), "utf8");
+  // fk_ps_pcm: patient_clinic_membership_id → patient_clinic_memberships(id) ON DELETE SET NULL NOT VALID
+  const pcmRe = /CONSTRAINT\s+fk_ps_pcm[\s\S]*?FOREIGN KEY\s*\(\s*patient_clinic_membership_id\s*\)[\s\S]*?REFERENCES\s+patient_clinic_memberships\s*\(\s*id\s*\)[\s\S]*?ON DELETE SET NULL[\s\S]*?NOT VALID/i;
+  const gppRe = /CONSTRAINT\s+fk_ps_gpp[\s\S]*?FOREIGN KEY\s*\(\s*global_plexus_patient_id\s*\)[\s\S]*?REFERENCES\s+global_plexus_patients\s*\(\s*id\s*\)[\s\S]*?ON DELETE SET NULL[\s\S]*?NOT VALID/i;
+  assert.ok(pcmRe.test(sqlText), "fk_ps_pcm constraint with ON DELETE SET NULL NOT VALID must be present");
+  assert.ok(gppRe.test(sqlText), "fk_ps_gpp constraint with ON DELETE SET NULL NOT VALID must be present");
+  // And no VALIDATE CONSTRAINT executed in this migration.
+  assert.equal(
+    /^[^-]*VALIDATE\s+CONSTRAINT/im.test(sqlText.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n")),
+    false,
+    "migration must NOT VALIDATE CONSTRAINT — that is a deployment-time follow-up",
+  );
+}
+
+// (H10) Migration adds the durable retry ledger table.
+async function testMigrationHasRetryLedgerTable() {
+  const sqlText = readFileSync(join(REPO_ROOT, "migrations/0049_add_plexus_identity.sql"), "utf8");
+  assert.ok(/CREATE TABLE IF NOT EXISTS plexus_identity_link_failures/.test(sqlText));
+  assert.ok(/uq_pilf_unresolved_per_screening/.test(sqlText), "partial-unique index on unresolved failures must exist");
+}
+
+// (H11) Architecture discovery — every file that inserts patient_screenings
+// (except allow-listed) must import the shared orchestrator.
+async function testDiscoveryEveryInserterUsesOrchestrator() {
+  // Walk server/routes and server/services + server/repositories for any
+  // file containing `db.insert(patientScreenings` or `storage.createPatientScreening`.
+  const { readdirSync, statSync } = await import("node:fs");
+  const roots = ["server/routes", "server/services", "server/repositories"].map((r) => join(REPO_ROOT, r));
+  const files: string[] = [];
+  const walk = (p: string) => {
+    for (const entry of readdirSync(p)) {
+      const abs = join(p, entry);
+      const st = statSync(abs);
+      if (st.isDirectory()) walk(abs);
+      else if (abs.endsWith(".ts")) files.push(abs);
+    }
+  };
+  for (const r of roots) walk(r);
+
+  const INSERTS = /db\.insert\s*\(\s*patientScreenings\b|storage\.createPatientScreening\b|screeningRepository\.createScreening\b/;
+  const ORCHESTRATOR = /resolveAndLinkPlexusIdentityForScreening(?:sBulk)?\b/;
+
+  // Allow-list of files that MAY insert without calling the orchestrator.
+  const ALLOW = new Set<string>([
+    // Canonical repo insert — the orchestrator is called by the route layer,
+    // not the repo. Also the service-layer helper called only from the
+    // patient-directory route (which itself calls the orchestrator).
+    join(REPO_ROOT, "server/repositories/screening.repo.ts"),
+    join(REPO_ROOT, "server/storage.ts"),
+    join(REPO_ROOT, "server/services/patientDirectory/patientDirectoryWriter.ts"),
+    // Admin test fixture — synthetic isTest=true patients. Explicitly excluded.
+    join(REPO_ROOT, "server/routes/testFixture.ts"),
+  ]);
+
+  const offenders: string[] = [];
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    if (INSERTS.test(src) && !ORCHESTRATOR.test(src) && !ALLOW.has(f)) {
+      offenders.push(f.slice(REPO_ROOT.length + 1));
+    }
+  }
+  if (offenders.length > 0) {
+    throw new Error(
+      "The following files insert patient_screenings without calling the shared orchestrator:\n  - " +
+        offenders.join("\n  - ") +
+        "\nEither wire resolveAndLinkPlexusIdentityForScreening[Bulk] or add the file to the ALLOW list with justification.",
+    );
+  }
+}
+
+// (H12) The failure-ledger row shape excludes every PHI field name.
+async function testLedgerSchemaNoPhi() {
+  const { plexusIdentityLinkFailures } = await import("../../shared/schema/plexusIdentity");
+  const cols = Object.keys(plexusIdentityLinkFailures);
+  const forbidden = ["name", "displayName", "dob", "phone", "email", "mrn", "insurance", "diagnosis", "medication"];
+  for (const p of forbidden) {
+    assert.equal(cols.includes(p), false, `ledger MUST NOT include column: ${p}`);
+  }
+  // Required non-PHI operational fields.
+  for (const need of ["patientScreeningId", "clinicId", "sourceSystem", "errorCode", "attemptCount", "firstFailedAt", "lastAttemptedAt", "resolvedAt"]) {
+    assert.ok(cols.includes(need), `ledger MUST include: ${need}`);
+  }
+}
+
 // ─── Runner ───────────────────────────────────────────────────────
 const tests = [
   ["generator shape", testGeneratorShape],
@@ -652,6 +1196,19 @@ const tests = [
   ["(14) missing table with write flag ON fails clearly", testMissingTableFlagOnFailsClearly],
   ["(15) clinic-scoped membership lookup / no cross-clinic exposure", testClinicScopedMembershipLookup],
   ["(16) sensitive payer/Medicare raw writes remain disabled", testSensitiveWriteRefused],
+  // ── Hardening — behavioral, discovery, FK ───────────────────────
+  ["(H1) behavioral: successful orchestration commits GP+membership+both FKs", testBehavioralSuccessfulOrchestration],
+  ["(H2) behavioral: existing GP + membership reused", testBehavioralReusesExistingGpAndMembership],
+  ["(H3) behavioral: ambiguous match → provisional + candidate + linked", testBehavioralAmbiguousCreatesCandidateAndLinks],
+  ["(H4) behavioral: commit failure does NOT produce false success", testBehavioralCommitFailureNoFalseSuccess],
+  ["(H5) behavioral: route failure creates durable ledger row (no PHI)", testBehavioralRouteFailureCreatesLedgerRow],
+  ["(H6) behavioral: reconciliation repairs unlinked screening", testBehavioralReconciliationRepairsUnlinked],
+  ["(H7) behavioral: reconciliation refuses conflicting partial linkage", testBehavioralReconciliationRefusesConflict],
+  ["(H8) behavioral: reconciliation idempotent when already-linked", testBehavioralReconciliationIdempotent],
+  ["(H9) migration has real FK constraints (NOT VALID + ON DELETE SET NULL)", testMigrationHasRealFkConstraints],
+  ["(H10) migration adds durable retry ledger table", testMigrationHasRetryLedgerTable],
+  ["(H11) discovery: every screening-inserter uses the shared orchestrator", testDiscoveryEveryInserterUsesOrchestrator],
+  ["(H12) ledger schema excludes PHI fields", testLedgerSchemaNoPhi],
 ] as const;
 
 async function run() {

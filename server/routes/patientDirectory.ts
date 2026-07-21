@@ -39,7 +39,10 @@ import {
 } from "../../client/src/lib/patientDirectoryImport";
 import { findFuzzyNameMatches } from "../../shared/patientIdentity";
 import { storage } from "../storage";
-import { resolveAndLinkPlexusIdentityForScreening } from "../services/plexusIdentity/screeningIntegration";
+import {
+  resolveAndLinkPlexusIdentityForScreening,
+  recordScreeningIdentityLinkFailure,
+} from "../services/plexusIdentity/screeningIntegration";
 import {
   createImportBatch,
   deleteImportBatch,
@@ -170,6 +173,44 @@ export function registerPatientDirectoryRoutes(app: Express): void {
         return res.status(400).json({ error: "name, dob, batchId required" });
       }
       const result = await createPatientDirectoryProfile({ ...body, actorUserId: actor });
+
+      // Phase 2A — shared identity orchestration. No-op with
+      // FEATURE_PLEXUS_IDENTITY_WRITE=OFF. Awaited so schema-
+      // configuration failures surface here instead of being lost to
+      // a fire-and-forget promise. On failure a durable retry-ledger
+      // row is written so the reconciliation service can pick it up.
+      try {
+        const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        await resolveAndLinkPlexusIdentityForScreening({
+          screeningId: result.patientScreeningId,
+          clinicId: reqClinicId,
+          sourceSystem: "patient_directory_manual_create",
+          clinicMrn: (body.mrn as string | null | undefined) ?? null,
+          demographics: {
+            displayName: body.name as string,
+            dob: body.dob as string,
+            phone: (body.phoneNumber as string | null | undefined) ?? null,
+            email: (body.email as string | null | undefined) ?? null,
+          },
+        });
+      } catch (e) {
+        const errorCode = (e as { code?: string })?.code;
+        console.error(JSON.stringify({
+          level: "error",
+          source: "plexus_identity_integration",
+          route: "POST /api/patient-directory",
+          screeningId: result.patientScreeningId,
+          code: errorCode,
+          message: (e as Error)?.message ?? String(e),
+        }));
+        await recordScreeningIdentityLinkFailure({
+          screeningId: result.patientScreeningId,
+          clinicId: (req as { clinicId?: number | null }).clinicId ?? null,
+          sourceSystem: "patient_directory_manual_create",
+          errorCode,
+        });
+      }
+
       res.status(201).json(result);
     } catch (e: unknown) {
       res.status(500).json({ error: (e as Error)?.message ?? "create failed" });
@@ -408,14 +449,21 @@ export function registerPatientDirectoryRoutes(app: Express): void {
             },
           });
         } catch (e) {
+          const errorCode = (e as { code?: string })?.code;
           console.error(JSON.stringify({
             level: "error",
             source: "plexus_identity_integration",
             route: "POST /api/patient-directory/import-confirm",
             screeningId: patientScreeningId,
-            code: (e as { code?: string })?.code,
+            code: errorCode,
             message: (e as Error)?.message ?? String(e),
           }));
+          await recordScreeningIdentityLinkFailure({
+            screeningId: patientScreeningId,
+            clinicId: (req as { clinicId?: number | null }).clinicId ?? null,
+            sourceSystem: "patient_directory_import_confirm",
+            errorCode,
+          });
         }
 
         await writePatientDirectoryEvent({

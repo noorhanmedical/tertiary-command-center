@@ -370,3 +370,55 @@ export const plexusIdAliases = pgTable(
 export const insertPlexusIdAliasSchema = createInsertSchema(plexusIdAliases);
 export type PlexusIdAlias = typeof plexusIdAliases.$inferSelect;
 export type InsertPlexusIdAlias = z.infer<typeof insertPlexusIdAliasSchema>;
+
+// ─── plexus_identity_link_failures ────────────────────────────────
+// Durable retry ledger for identity-link failures. Populated when a
+// screening was persisted OK but the follow-on Plexus identity commit
+// failed. The reconciliation service reads this table and retries
+// idempotently.
+//
+// NEVER stores PHI. Only ids, timestamps, source path, error code,
+// and attempt count.
+//
+// The partial-unique index on (patient_screening_id) WHERE
+// resolved_at IS NULL is declared in the migration so a retry can
+// UPDATE the existing unresolved row instead of accumulating dupes.
+// The FK to patient_screenings is declared in the migration only —
+// declaring it here would introduce a circular import (screening.ts
+// already imports from this file).
+export const plexusIdentityLinkFailures = pgTable(
+  "plexus_identity_link_failures",
+  {
+    id: serial("id").primaryKey(),
+    patientScreeningId: integer("patient_screening_id").notNull(),
+    clinicId: integer("clinic_id").references(() => clinics.id, {
+      onDelete: "cascade",
+    }),
+    sourceSystem: text("source_system"),
+    errorCode: text("error_code"),
+    attemptCount: integer("attempt_count").notNull().default(1),
+    firstFailedAt: timestamp("first_failed_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    lastAttemptedAt: timestamp("last_attempted_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    resolvedAt: timestamp("resolved_at"),
+  },
+  (table) => [
+    index("idx_pilf_screening").on(table.patientScreeningId),
+  ],
+);
+
+export const insertPlexusIdentityLinkFailureSchema = createInsertSchema(
+  plexusIdentityLinkFailures,
+).omit({
+  id: true,
+  firstFailedAt: true,
+  lastAttemptedAt: true,
+});
+export type PlexusIdentityLinkFailure =
+  typeof plexusIdentityLinkFailures.$inferSelect;
+export type InsertPlexusIdentityLinkFailure = z.infer<
+  typeof insertPlexusIdentityLinkFailureSchema
+>;

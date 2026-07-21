@@ -19,6 +19,7 @@ import {
   patientIdentityMatchCandidates,
   patientIdentityMergeEvents,
   plexusIdAliases,
+  plexusIdentityLinkFailures,
   SENSITIVE_IDENTIFIER_TYPES,
   type ExternalIdentifierType,
   type GlobalPlexusPatient,
@@ -27,6 +28,7 @@ import {
   type PatientIdentityMatchCandidate,
   type PatientIdentityMergeEvent,
   type PlexusIdAlias,
+  type PlexusIdentityLinkFailure,
 } from "@shared/schema/plexusIdentity";
 import { featureFlags } from "../lib/featureFlags";
 import { generateUniquePlexusId } from "../services/plexusIdentity/plexusIdGenerator";
@@ -429,4 +431,108 @@ export async function createAlias(input: {
     })
     .returning();
   return row;
+}
+
+// ─── plexus_identity_link_failures ────────────────────────────────
+//
+// Recording a failure is NOT gated by featureFlags.plexusIdentityWrite:
+// the orchestrator only calls into this repo AFTER the write flag has
+// been confirmed ON, and if the write flag is ON but a failure occurs
+// we still need durable retry state. Also — a failure means the write
+// path is in trouble, and refusing to record the failure because of
+// the same flag would be self-defeating. That said, if the migration
+// hasn't been applied, safeRead's own guard will re-throw
+// PLEXUS_IDENTITY_MIGRATION_MISSING when the retry service reads the
+// table, which is the correct behavior.
+
+export type RecordLinkFailureInput = {
+  patientScreeningId: number;
+  clinicId?: number | null;
+  sourceSystem?: string | null;
+  errorCode?: string | null;
+};
+
+/**
+ * Record a failure OR bump the attempt counter on an existing
+ * unresolved row. Uses ON CONFLICT DO UPDATE against the
+ * uq_pilf_unresolved_per_screening partial-unique index. Idempotent
+ * enough that the caller can invoke it repeatedly from a retry loop
+ * without accumulating dupes.
+ */
+export async function recordLinkFailure(
+  input: RecordLinkFailureInput,
+): Promise<PlexusIdentityLinkFailure> {
+  // We use a plain SELECT-then-INSERT-or-UPDATE flow rather than
+  // ON CONFLICT because the unique index is partial (WHERE
+  // resolved_at IS NULL) and Drizzle's onConflictDoUpdate can't
+  // target partial indexes cleanly.
+  const existing = await db
+    .select()
+    .from(plexusIdentityLinkFailures)
+    .where(
+      and(
+        eq(plexusIdentityLinkFailures.patientScreeningId, input.patientScreeningId),
+        isNull(plexusIdentityLinkFailures.resolvedAt),
+      ),
+    )
+    .limit(1);
+
+  if (existing[0]) {
+    const [updated] = await db
+      .update(plexusIdentityLinkFailures)
+      .set({
+        attemptCount: (existing[0].attemptCount ?? 0) + 1,
+        lastAttemptedAt: sql`CURRENT_TIMESTAMP`,
+        errorCode: input.errorCode ?? existing[0].errorCode,
+        sourceSystem: input.sourceSystem ?? existing[0].sourceSystem,
+      })
+      .where(eq(plexusIdentityLinkFailures.id, existing[0].id))
+      .returning();
+    return updated;
+  }
+
+  const [inserted] = await db
+    .insert(plexusIdentityLinkFailures)
+    .values({
+      patientScreeningId: input.patientScreeningId,
+      clinicId: input.clinicId ?? null,
+      sourceSystem: input.sourceSystem ?? null,
+      errorCode: input.errorCode ?? null,
+      attemptCount: 1,
+    })
+    .returning();
+  return inserted;
+}
+
+/** Mark the (single) unresolved failure row for this screening as resolved. */
+export async function resolveLinkFailure(
+  patientScreeningId: number,
+): Promise<void> {
+  await db
+    .update(plexusIdentityLinkFailures)
+    .set({ resolvedAt: sql`CURRENT_TIMESTAMP` })
+    .where(
+      and(
+        eq(plexusIdentityLinkFailures.patientScreeningId, patientScreeningId),
+        isNull(plexusIdentityLinkFailures.resolvedAt),
+      ),
+    );
+}
+
+/** Read unresolved failures, oldest-first, for the retry service. */
+export async function listUnresolvedLinkFailures(
+  limit = 100,
+): Promise<PlexusIdentityLinkFailure[]> {
+  return safeRead(
+    async () => {
+      return db
+        .select()
+        .from(plexusIdentityLinkFailures)
+        .where(isNull(plexusIdentityLinkFailures.resolvedAt))
+        .orderBy(plexusIdentityLinkFailures.firstFailedAt)
+        .limit(Math.min(Math.max(1, limit), 500));
+    },
+    [] as PlexusIdentityLinkFailure[],
+    "listUnresolvedLinkFailures",
+  );
 }

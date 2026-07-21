@@ -17,7 +17,10 @@ import {
   EmptyBatchError,
 } from "../services/batchAnalysisRunner";
 import { extractDateFromPrevTests } from "./helpers";
-import { resolveAndLinkPlexusIdentityForScreeningsBulk } from "../services/plexusIdentity/screeningIntegration";
+import {
+  resolveAndLinkPlexusIdentityForScreeningsBulk,
+  recordScreeningIdentityLinkFailure,
+} from "../services/plexusIdentity/screeningIntegration";
 
 // Clinical-paste bulk import + durable qualification job routes for
 // Plexus IQ. Re-uses the existing analysis_jobs infra so the client can
@@ -500,6 +503,12 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
             code: err.code,
             message: err.message,
           }));
+          await recordScreeningIdentityLinkFailure({
+            screeningId: err.screeningId,
+            clinicId: (insertedRows.find((r) => r.id === err.screeningId)?.clinicId ?? null),
+            sourceSystem: "plexus_iq_clinical_import",
+            errorCode: err.code,
+          });
         }
 
         await storage.updateScreeningBatch(batchId, {

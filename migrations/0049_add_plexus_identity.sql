@@ -22,8 +22,11 @@
 --   • Does not enable any feature flag
 --
 -- Rollback plan (safe while flags are OFF):
+--   ALTER TABLE patient_screenings DROP CONSTRAINT IF EXISTS fk_ps_gpp;
+--   ALTER TABLE patient_screenings DROP CONSTRAINT IF EXISTS fk_ps_pcm;
 --   ALTER TABLE patient_screenings DROP COLUMN IF EXISTS global_plexus_patient_id;
 --   ALTER TABLE patient_screenings DROP COLUMN IF EXISTS patient_clinic_membership_id;
+--   DROP TABLE IF EXISTS plexus_identity_link_failures;
 --   DROP TABLE IF EXISTS plexus_id_aliases;
 --   DROP TABLE IF EXISTS patient_identity_merge_events;
 --   DROP TABLE IF EXISTS patient_identity_match_candidates;
@@ -168,13 +171,96 @@ CREATE TABLE IF NOT EXISTS plexus_id_aliases (
 CREATE INDEX IF NOT EXISTS idx_pia_surviving  ON plexus_id_aliases(surviving_global_patient_id);
 
 -- ─── transitional linkage on patient_screenings ────────────────────
--- Added as NULLABLE with no default so the ALTER is metadata-only and
--- does not rewrite the table. The Drizzle schema declaration in
--- shared/schema/screening.ts is intentionally NOT updated in Phase 2A
--- so no existing repository/type inference is affected. The columns
--- are populated by the backfill script + Phase 2B write-path integration.
+-- Columns are added as NULLABLE with no default so the ALTER is
+-- metadata-only and does not rewrite the table. Both columns AND the
+-- FK constraints below are declared identically in the Drizzle schema
+-- (shared/schema/screening.ts). The relationship is now enforced at
+-- BOTH layers — application types AND real Postgres FK constraints.
 ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS patient_clinic_membership_id INTEGER;
 ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS global_plexus_patient_id     INTEGER;
 
 CREATE INDEX IF NOT EXISTS idx_ps_pcm  ON patient_screenings(patient_clinic_membership_id);
 CREATE INDEX IF NOT EXISTS idx_ps_gpp  ON patient_screenings(global_plexus_patient_id);
+
+-- Real Postgres foreign-key constraints for the transitional linkage.
+--
+-- NOT VALID: existing rows are NOT re-scanned; only NEW writes are
+-- checked. This makes the ALTER an instant, non-locking, additive
+-- operation safe to apply to a live table with existing data. Both
+-- columns are nullable, so pre-existing NULL rows continue to satisfy
+-- the constraint trivially.
+--
+-- ON DELETE SET NULL matches the Drizzle declarations exactly. A
+-- membership or global patient row cannot be deleted without first
+-- clearing every downstream screening link, and after cascade-delete
+-- of the parent the screening row is preserved with its FK columns
+-- reset to NULL — no orphan risk, no data loss.
+--
+-- Deployment follow-up (NOT part of this migration; run manually
+-- AFTER the Phase 2A backfill has completed and integrity has been
+-- checked):
+--
+--   ALTER TABLE patient_screenings VALIDATE CONSTRAINT fk_ps_pcm;
+--   ALTER TABLE patient_screenings VALIDATE CONSTRAINT fk_ps_gpp;
+--
+-- VALIDATE takes an ACCESS EXCLUSIVE briefly; expected outage: seconds.
+-- Do NOT VALIDATE while unlinked screenings still exist.
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_ps_pcm' AND table_name = 'patient_screenings'
+  ) THEN
+    ALTER TABLE patient_screenings
+      ADD CONSTRAINT fk_ps_pcm
+      FOREIGN KEY (patient_clinic_membership_id)
+      REFERENCES patient_clinic_memberships(id)
+      ON DELETE SET NULL
+      NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_ps_gpp' AND table_name = 'patient_screenings'
+  ) THEN
+    ALTER TABLE patient_screenings
+      ADD CONSTRAINT fk_ps_gpp
+      FOREIGN KEY (global_plexus_patient_id)
+      REFERENCES global_plexus_patients(id)
+      ON DELETE SET NULL
+      NOT VALID;
+  END IF;
+END $$;
+
+-- ─── plexus_identity_link_failures ─────────────────────────────────
+-- Durable retry ledger for identity-link failures. Populated ONLY
+-- when a screening was persisted successfully but the follow-on
+-- identity-orchestration commit failed. The reconciliation service
+-- (server/services/plexusIdentity/reconciliation.ts) is idempotent
+-- and can retry each row until resolvedAt is set.
+--
+-- NEVER stores name / DOB / phone / email / MRN / insurance /
+-- diagnosis. Only ids, timestamps, source path, and structured
+-- error code.
+CREATE TABLE IF NOT EXISTS plexus_identity_link_failures (
+  id                  SERIAL PRIMARY KEY,
+  patient_screening_id INTEGER NOT NULL REFERENCES patient_screenings(id) ON DELETE CASCADE,
+  clinic_id           INTEGER REFERENCES clinics(id) ON DELETE CASCADE,
+  source_system       TEXT,
+  error_code          TEXT,
+  attempt_count       INTEGER NOT NULL DEFAULT 1,
+  first_failed_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_attempted_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at         TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pilf_screening
+  ON plexus_identity_link_failures(patient_screening_id);
+CREATE INDEX IF NOT EXISTS idx_pilf_unresolved
+  ON plexus_identity_link_failures(last_attempted_at)
+  WHERE resolved_at IS NULL;
+-- Only one unresolved failure row per screening. A retry updates the
+-- existing row (attempt_count += 1) rather than piling up duplicates.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pilf_unresolved_per_screening
+  ON plexus_identity_link_failures(patient_screening_id)
+  WHERE resolved_at IS NULL;
