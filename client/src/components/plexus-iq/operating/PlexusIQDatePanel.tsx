@@ -559,14 +559,14 @@ export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
       data-testid="plexus-iq-date-panel"
     >
       {/* Black header */}
-      <div className="flex min-h-[3.5rem] items-center justify-center px-3 border-b border-white/10 bg-black">
-        <div className="text-sm font-semibold uppercase tracking-wider text-white text-center">
+      <div className="flex min-h-[3.5rem] items-center justify-center px-3 border-b border-white/10 bg-slate-900/85 backdrop-blur-md">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/90 text-center">
           Date
         </div>
       </div>
 
       {/* View-mode toggle strip */}
-      <div className="flex items-center justify-center gap-1 px-2 py-1.5 border-b border-sky-100 bg-white">
+      <div className="flex items-center justify-center gap-1 px-2 py-1.5 border-b border-slate-200 bg-white">
         {toggleButtons.map(({ mode, icon, label, testId }) => (
           <button
             key={mode}

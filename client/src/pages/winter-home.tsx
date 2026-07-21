@@ -731,7 +731,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
             <PopoverContent
               align="end"
               sideOffset={8}
-              className="w-[380px] p-3 bg-white/90 backdrop-blur-xl border-white/50 shadow-2xl"
+              className="w-[420px] p-4 bg-white/95 backdrop-blur-xl border-slate-200/70 shadow-2xl rounded-lg"
               data-testid="popover-banner-calendar"
             >
               <CanonicalMonthCalendar cells={bannerCalendarCells} />

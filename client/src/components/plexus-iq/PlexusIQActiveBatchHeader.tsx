@@ -55,31 +55,31 @@ export function PlexusIQActiveBatchHeader({
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2.5"
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/10 bg-slate-900/85 backdrop-blur-md px-4 py-2.5"
       data-testid="plexus-iq-active-batch-header"
     >
-      <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-700">
+      <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
         <Layers className="h-3.5 w-3.5" />
         Active batch
       </span>
       <button
         type="button"
-        className="truncate text-sm font-semibold text-slate-900 hover:underline"
+        className="truncate text-sm font-semibold tracking-tight text-white hover:underline"
         onClick={() => onViewBatch(batch.id, batch.facility ?? "")}
         data-testid="button-active-batch-view"
       >
         {batch.facility ?? "Unassigned clinic"}
         {batch.scheduleDate ? ` • ${formatDateHeader(batch.scheduleDate)}` : ""}
       </button>
-      <span className="inline-flex items-center gap-1 text-xs text-slate-600">
+      <span className="inline-flex items-center gap-1 text-xs text-white/70">
         <Clock className="h-3 w-3" />
         {formatTime12(batch.createdAt)}
       </span>
-      <span className="inline-flex items-center gap-1 text-xs text-slate-600">
+      <span className="inline-flex items-center gap-1 text-xs text-white/70">
         <Users className="h-3 w-3" />
         {patientCount} patient{patientCount === 1 ? "" : "s"}
       </span>
-      <span className="text-xs text-slate-600">{batchSourceLabel(source)}</span>
+      <span className="text-xs text-white/70">{batchSourceLabel(source)}</span>
       <Badge
         variant="outline"
         className={`text-[10px] font-semibold ${status.pillClass}`}
@@ -91,7 +91,7 @@ export function PlexusIQActiveBatchHeader({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 text-xs text-indigo-700 hover:bg-indigo-100"
+          className="h-7 text-xs text-white/80 hover:text-white hover:bg-white/10"
           onClick={onChangeBatch}
           data-testid="button-active-batch-change"
         >
@@ -100,7 +100,7 @@ export function PlexusIQActiveBatchHeader({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-slate-500 hover:bg-indigo-100"
+          className="h-7 w-7 text-white/60 hover:text-white hover:bg-white/10"
           onClick={() => clearActive()}
           data-testid="button-active-batch-clear"
           title="Clear active batch"
