@@ -6,6 +6,7 @@ import { cva, VariantProps } from "class-variance-authority"
 import { PanelLeftIcon } from "lucide-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useHoverCapable, EDGE_HOVER_LEAVE_DELAY_MS } from "@/hooks/use-edge-hover"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -163,7 +164,51 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset"
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const { isMobile, state, openMobile, setOpenMobile, setOpen } = useSidebar()
+
+  // Edge-hover open (task #781): while an offcanvas sidebar is hidden, a thin
+  // invisible strip along its screen edge opens it on hover; moving the
+  // pointer off the sidebar closes it again after a short debounce. Only
+  // hover-driven opens auto-close — a sidebar opened via its trigger stays
+  // open until toggled. Hover-only (skipped on touch devices). On the left
+  // edge the GlobalNav takes priority when present on the page: the nav
+  // expands on edge hover and the sidebar keeps opening via its trigger.
+  const hoverCapable = useHoverCapable()
+  const hoverOpenedRef = React.useRef(false)
+  const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  React.useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+    }
+  }, [])
+  const handleEdgeHover = React.useCallback(() => {
+    if (side === "left" && document.querySelector('[data-testid="global-nav"]')) {
+      return
+    }
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+    hoverOpenedRef.current = true
+    setOpen(true)
+  }, [side, setOpen])
+  const handleHoverEnter = React.useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+  }, [])
+  const handleHoverLeave = React.useCallback(() => {
+    if (!hoverOpenedRef.current) return
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+    hoverTimerRef.current = setTimeout(() => {
+      hoverTimerRef.current = null
+      if (hoverOpenedRef.current) {
+        hoverOpenedRef.current = false
+        setOpen(false)
+      }
+    }, EDGE_HOVER_LEAVE_DELAY_MS)
+  }, [setOpen])
 
   if (collapsible === "none") {
     return (
@@ -213,7 +258,20 @@ function Sidebar({
       data-variant={variant}
       data-side={side}
       data-slot="sidebar"
+      onMouseEnter={hoverCapable ? handleHoverEnter : undefined}
+      onMouseLeave={hoverCapable ? handleHoverLeave : undefined}
     >
+      {hoverCapable && collapsible === "offcanvas" && state === "collapsed" && (
+        <div
+          aria-hidden
+          data-slot="sidebar-edge-hover-zone"
+          className={cn(
+            "fixed inset-y-0 z-20 w-2",
+            side === "left" ? "left-0" : "right-0"
+          )}
+          onMouseEnter={handleEdgeHover}
+        />
+      )}
       {/* This is what handles the sidebar gap on desktop */}
       <div
         data-slot="sidebar-gap"

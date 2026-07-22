@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { EDGE_HOVER_LEAVE_DELAY_MS, useHoverCapable } from "@/hooks/use-edge-hover";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
@@ -743,6 +744,65 @@ export function PortalShell({
   const [activePortalTabId, setActivePortalTabId] = useState<string | null>(null);
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
+  // Task #781 — edge-hover open. While a rail is collapsed, hovering the
+  // matching screen edge expands it; moving the pointer off the rail
+  // collapses it again after a short debounce — but ONLY when the expansion
+  // came from hover. Manual toggles keep working and take precedence (a
+  // manually expanded rail never auto-collapses). Hover-only; touch devices
+  // keep the tap toggles.
+  const railHoverCapable = useHoverCapable();
+  const leftRailHoverOpenedRef = useRef(false);
+  const rightRailHoverOpenedRef = useRef(false);
+  const leftRailHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rightRailHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (leftRailHoverTimer.current) clearTimeout(leftRailHoverTimer.current);
+      if (rightRailHoverTimer.current) clearTimeout(rightRailHoverTimer.current);
+    };
+  }, []);
+  const makeRailEdgeHoverHandler =
+    (
+      openedRef: React.MutableRefObject<boolean>,
+      timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+      collapsed: boolean,
+      setCollapsed: (v: boolean) => void,
+    ) =>
+    () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      if (collapsed) {
+        openedRef.current = true;
+        setCollapsed(false);
+      }
+    };
+  const makeRailHoverLeaveHandler =
+    (
+      openedRef: React.MutableRefObject<boolean>,
+      timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+      setCollapsed: (v: boolean) => void,
+    ) =>
+    () => {
+      if (!openedRef.current) return;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        if (openedRef.current) {
+          openedRef.current = false;
+          setCollapsed(true);
+        }
+      }, EDGE_HOVER_LEAVE_DELAY_MS);
+    };
+  const makeRailHoverEnterHandler =
+    (timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>) =>
+    () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
@@ -1382,6 +1442,20 @@ export function PortalShell({
           </div>
         </div>
 
+        {railHoverCapable && leftRailCollapsed && (
+          <div
+            className="absolute inset-y-0 left-0 z-10 w-5"
+            data-testid="portal-left-edge-hover-zone"
+            onMouseEnter={makeRailEdgeHoverHandler(leftRailHoverOpenedRef, leftRailHoverTimer, leftRailCollapsed, setLeftRailCollapsed)}
+          />
+        )}
+        {railHoverCapable && rightRailCollapsed && (
+          <div
+            className="absolute inset-y-0 right-0 z-10 w-5"
+            data-testid="portal-right-edge-hover-zone"
+            onMouseEnter={makeRailEdgeHoverHandler(rightRailHoverOpenedRef, rightRailHoverTimer, rightRailCollapsed, setRightRailCollapsed)}
+          />
+        )}
         <div
           className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] text-white shadow-[0_24px_70px_rgba(15,23,42,0.34)] backdrop-blur-2xl transition-all duration-300 ${
             leftRailCollapsed
@@ -1389,13 +1463,15 @@ export function PortalShell({
               : "w-[320px] bg-[rgba(72,99,160,0.80)]"
           }`}
           data-testid="portal-left-rail"
-        >
+          onMouseEnter={makeRailHoverEnterHandler(leftRailHoverTimer)}
+          onMouseLeave={makeRailHoverLeaveHandler(leftRailHoverOpenedRef, leftRailHoverTimer, setLeftRailCollapsed)}
+>
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
               {!leftRailCollapsed && <div className="text-sm font-semibold text-white">Tools</div>}
               <button
                 type="button"
-                onClick={() => setLeftRailCollapsed((v) => !v)}
+                onClick={() => { leftRailHoverOpenedRef.current = false; setLeftRailCollapsed((v) => !v); }}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-[#4863A0] hover:bg-white"
                 data-testid="button-toggle-left-rail"
               >
@@ -1539,7 +1615,9 @@ export function PortalShell({
               : "w-[340px] bg-[rgba(72,99,160,0.80)]"
           }`}
           data-testid="portal-right-rail"
-        >
+          onMouseEnter={makeRailHoverEnterHandler(rightRailHoverTimer)}
+          onMouseLeave={makeRailHoverLeaveHandler(rightRailHoverOpenedRef, rightRailHoverTimer, setRightRailCollapsed)}
+>
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
               {!rightRailCollapsed && (
@@ -1550,7 +1628,7 @@ export function PortalShell({
               )}
               <button
                 type="button"
-                onClick={() => setRightRailCollapsed((v) => !v)}
+                onClick={() => { rightRailHoverOpenedRef.current = false; setRightRailCollapsed((v) => !v); }}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-[#4863A0] hover:bg-white"
                 data-testid="button-toggle-right-rail"
               >

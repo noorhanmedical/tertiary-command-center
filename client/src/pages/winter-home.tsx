@@ -255,20 +255,18 @@ function WinterEdgePanel({
   return (
     <>
       {!open && (
-        <button
-          type="button"
-          onClick={() => setHoverOpen(true)}
+        <div
+          aria-hidden
           onMouseEnter={() => setHoverOpen(true)}
-          className={`absolute top-24 ${isLeft ? "left-0 rounded-r-lg border-l-0" : "right-0 rounded-l-lg border-r-0"} z-[45] h-16 w-5 bg-white/45 backdrop-blur-xl border border-white/60 shadow-2xl hover:bg-white/65 transition-colors`}
-          aria-label={`Open ${side} panel`}
-          data-testid={`edge-panel-handle-${side}`}
+          className={`absolute inset-y-0 ${isLeft ? "left-0" : "right-0"} z-[44] w-5`}
+          data-testid={`edge-panel-hover-zone-${side}`}
         />
       )}
       <div
         onMouseLeave={() => {
           if (!pinned) setHoverOpen(false);
         }}
-        className={`absolute top-12 bottom-0 ${isLeft ? "left-0 border-r" : "right-0 border-l"} z-[45] w-[280px] max-w-[85vw] bg-white/10 backdrop-blur-xl border-white/20 shadow-2xl transition-transform duration-300 ease-out ${
+        className={`absolute top-12 bottom-0 ${isLeft ? "left-0 border-r" : "right-0 border-l"} z-[45] w-[280px] max-w-[85vw] bg-white/15 backdrop-blur-xl border-white/20 shadow-2xl transition-transform duration-300 ease-out ${
           open ? "translate-x-0" : isLeft ? "-translate-x-full pointer-events-none" : "translate-x-full pointer-events-none"
         }`}
         data-testid={`edge-panel-${side}`}
@@ -280,7 +278,7 @@ function WinterEdgePanel({
               onPinnedChange(false);
               setHoverOpen(false);
             }}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-white/80 hover:bg-white/20 hover:text-white transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-[#1e3a5f] hover:bg-white/20 hover:text-[#152c49] transition-colors"
             aria-label={`Close ${side} panel`}
             data-testid={`edge-panel-collapse-${side}`}
           >
@@ -290,7 +288,7 @@ function WinterEdgePanel({
             type="button"
             onClick={() => onPinnedChange(!pinned)}
             className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-              pinned ? "bg-white/30 text-white" : "text-white/80 hover:bg-white/20 hover:text-white"
+              pinned ? "bg-white/30 text-[#1e3a5f]" : "text-[#1e3a5f] hover:bg-white/20 hover:text-[#152c49]"
             }`}
             aria-label={pinned ? `Unpin ${side} panel` : `Pin ${side} panel open`}
             data-testid={`edge-panel-pin-${side}`}

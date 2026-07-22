@@ -2853,6 +2853,32 @@ export function TeamPortalShell({
           </div>
         </div>
 
+        {/* Task #781 — full-height screen-edge hover triggers. The rails sit
+            at left-4/right-4 top-4/bottom-4, so the 16px gutters and the
+            top/bottom margins never used to trigger the peek. These thin
+            zones cover the entire screen edge (z-10, UNDER the z-20 rails so
+            they never intercept clicks on the rail itself) and reuse the same
+            enter/leave debounce handlers. Hover-only — touch keeps the
+            existing tap-to-reveal + click-away behavior. */}
+        {!isTouchDevice && (
+          <>
+            <div
+              aria-hidden
+              data-testid="portal-left-edge-hover-zone"
+              className="absolute inset-y-0 left-0 z-10 w-5"
+              onMouseEnter={makeRailPeekEnterHandler(leftRailPeekTimer, setLeftRailPeek)}
+              onMouseLeave={makeRailPeekLeaveHandler(leftRailRef, leftRailPeekTimer, setLeftRailPeek)}
+            />
+            <div
+              aria-hidden
+              data-testid="portal-right-edge-hover-zone"
+              className="absolute inset-y-0 right-0 z-10 w-5"
+              onMouseEnter={makeRailPeekEnterHandler(rightRailPeekTimer, setRightRailPeek)}
+              onMouseLeave={makeRailPeekLeaveHandler(rightRailRef, rightRailPeekTimer, setRightRailPeek)}
+            />
+          </>
+        )}
+
         <div
           ref={leftRailRef}
           className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]}`}

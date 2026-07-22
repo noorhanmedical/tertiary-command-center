@@ -23,7 +23,8 @@ import {
   ClipboardCheck,
   Landmark,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useHoverCapable, EDGE_HOVER_LEAVE_DELAY_MS } from "@/hooks/use-edge-hover";
 import type { AuthUser } from "@/App";
 
 export type NavItemDef = {
@@ -93,6 +94,19 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
   const [manualOverride, setManualOverride] = useState(false);
+  // Edge-hover expand (task #781): the collapsed rail sits flush against the
+  // left screen edge, so hovering it temporarily expands the nav; moving the
+  // pointer away collapses it again after a short debounce. A manual toggle
+  // always takes precedence (manually expanded nav never auto-collapses).
+  // Hover-only — touch devices keep the tap toggle.
+  const hoverCapable = useHoverCapable();
+  const [hoverExpanded, setHoverExpanded] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    };
+  }, []);
   const userRole = user?.role ?? "clinician";
 
   useEffect(() => {
@@ -148,24 +162,50 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
 
   const visibleNavItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
 
+  // Hover expansion only applies while the nav is collapsed; a manually
+  // expanded nav ignores hover entirely.
+  const effectiveCollapsed = collapsed && !hoverExpanded;
+
   return (
     <nav
-      className={`flex flex-col h-full bg-finance-dark border-r border-finance-dark-3 transition-all duration-200 shrink-0 ${collapsed ? "w-14" : "w-52"}`}
+      className={`flex flex-col h-full bg-finance-dark border-r border-finance-dark-3 transition-all duration-200 shrink-0 ${effectiveCollapsed ? "w-14" : "w-52"}`}
       data-testid="global-nav"
       aria-label="Global navigation"
+      onMouseEnter={
+        hoverCapable
+          ? () => {
+              if (hoverTimer.current) {
+                clearTimeout(hoverTimer.current);
+                hoverTimer.current = null;
+              }
+              if (collapsed) setHoverExpanded(true);
+            }
+          : undefined
+      }
+      onMouseLeave={
+        hoverCapable
+          ? () => {
+              if (hoverTimer.current) clearTimeout(hoverTimer.current);
+              hoverTimer.current = setTimeout(() => {
+                hoverTimer.current = null;
+                setHoverExpanded(false);
+              }, EDGE_HOVER_LEAVE_DELAY_MS);
+            }
+          : undefined
+      }
     >
-      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-end px-3 py-3"} border-b border-finance-dark-3`}>
+      <div className={`flex items-center ${effectiveCollapsed ? "justify-center px-2 py-3" : "justify-end px-3 py-3"} border-b border-finance-dark-3`}>
         <button
-          onClick={() => { setManualOverride(true); setCollapsed((c) => !c); }}
+          onClick={() => { setManualOverride(true); setHoverExpanded(false); setCollapsed((c) => !c); }}
           className="text-slate-400 hover:text-white transition-colors rounded-lg p-1 hover:bg-finance-dark-3"
           data-testid="button-nav-collapse"
-          aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+          aria-label={effectiveCollapsed ? "Expand navigation" : "Collapse navigation"}
         >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          {effectiveCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
       </div>
 
-      {!collapsed && (
+      {!effectiveCollapsed && (
         <div className="px-4 pt-3 pb-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Workspace</span>
         </div>
@@ -183,22 +223,22 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
                   active
                     ? "bg-white text-finance-text shadow-sm"
                     : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
-                } ${collapsed ? "justify-center" : ""}`}
+                } ${effectiveCollapsed ? "justify-center" : ""}`}
                 data-testid={`nav-item-${label.toLowerCase().replace(/\s+/g, "-")}`}
-                title={collapsed ? label : undefined}
+                title={effectiveCollapsed ? label : undefined}
               >
                 <Icon className={`w-4 h-4 shrink-0 ${active ? "text-finance-text" : "text-slate-400 group-hover:text-white"}`} strokeWidth={1.75} />
-                {!collapsed && (
+                {!effectiveCollapsed && (
                   <>
                     <span className="text-[14px] font-medium truncate flex-1">{label}</span>
                     {isSchedule && <TodayBadge count={todayCount} />}
                     {isPlexusTasks && <UnreadBadge count={unreadCount} overdue={overdueCount > 0} />}
                   </>
                 )}
-                {collapsed && isSchedule && todayCount > 0 && (
+                {effectiveCollapsed && isSchedule && todayCount > 0 && (
                   <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-finance-periwinkle" />
                 )}
-                {collapsed && isPlexusTasks && (unreadCount > 0 || overdueCount > 0) && (
+                {effectiveCollapsed && isPlexusTasks && (unreadCount > 0 || overdueCount > 0) && (
                   <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${overdueCount > 0 ? "bg-red-500" : "bg-finance-periwinkle"}`} />
                 )}
               </div>
