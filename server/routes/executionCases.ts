@@ -22,6 +22,7 @@ import {
   runCallResultScheduling,
   engagementActionForOutcome,
 } from "../services/canonicalAppointments/callResultSchedulingBridge";
+import { getCanonicalAppointmentsByService } from "../services/canonicalAppointments/appointmentProjection";
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires /api/scheduler-
 // portal/cases through the same role + facility access checks the
 // other portal endpoints already use. See the matching block in
@@ -280,6 +281,36 @@ export function registerExecutionCaseRoutes(app: Express) {
             error: "Engagement eligibility projection unavailable",
             code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
           });
+        }
+      }
+
+      // Phase 2D-C1 — attach the canonical per-service appointment
+      // projection when the flag is ON and the caller opts in
+      // (?withAppointments=true). Each eligible service gets its OWN
+      // canonical appointment (matched by ancillary case); one
+      // execution-case appointment is never fanned out across services.
+      // Phase 2C eligibleServices filtering is preserved untouched.
+      if (featureFlags.canonicalAppointment && q.withAppointments === "true" && rows.length > 0) {
+        const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        if (clinicId != null) {
+          try {
+            for (const row of rows) {
+              // eslint-disable-next-line no-await-in-loop
+              const byService = await getCanonicalAppointmentsByService({
+                clinicId, executionCaseId: row.id, includeHistory: false,
+              });
+              Object.assign(row, { appointmentByService: byService });
+            }
+          } catch (e) {
+            const code = (e as { code?: string })?.code;
+            if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+              return res.status(503).json({
+                error: "canonical appointment schema unavailable — apply migration 0052",
+                code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+              });
+            }
+            throw e;
+          }
         }
       }
       res.json(rows);

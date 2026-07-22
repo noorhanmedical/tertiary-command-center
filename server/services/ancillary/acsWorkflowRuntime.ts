@@ -19,6 +19,11 @@ import { globalScheduleEvents } from "@shared/schema/globalSchedule";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import { billingReadinessChecks } from "@shared/schema/billingReadiness";
 import { procedureEvents } from "@shared/schema/procedureEvents";
+import { featureFlags } from "../../lib/featureFlags";
+import {
+  getCanonicalAppointmentsByService,
+  type CanonicalAppointmentProjection,
+} from "../canonicalAppointments/appointmentProjection";
 
 export type AcsWorkflowStatus =
   | "assigned"
@@ -67,6 +72,11 @@ export type AcsWorkflowSnapshot = {
     startsAt: string;
     serviceType: string | null;
   } | null;
+  /** Phase 2D-C1 — canonical per-service appointment projection (flag ON).
+   *  Undefined when FEATURE_CANONICAL_APPOINTMENT is OFF (legacy read). */
+  appointmentByService?: Record<string, CanonicalAppointmentProjection>;
+  /** Phase 2D-C1 — appointment-only Order Note eligibility (flag ON). */
+  appointmentEligibleForOrderNote?: boolean;
 };
 
 const PRESENT_DOC_STATUSES = new Set([
@@ -93,7 +103,7 @@ export async function getAcsWorkflowSnapshot(
     .limit(1);
   if (!execCase) return null;
 
-  const [nextEvent] = await db
+  const [legacyNextEvent] = await db
     .select()
     .from(globalScheduleEvents)
     .where(and(
@@ -102,6 +112,35 @@ export async function getAcsWorkflowSnapshot(
     ))
     .orderBy(globalScheduleEvents.startsAt)
     .limit(1);
+
+  // Phase 2D-C1 — under the canonical flag, ACS reads the SAME canonical
+  // ancillary appointment truth everyone else does: the active
+  // (scheduled) event per service, never a cancelled/no_show/rescheduled
+  // prior event. doctor_visit is excluded by the projection.
+  let appointmentByService: Record<string, CanonicalAppointmentProjection> | undefined;
+  let appointmentEligibleForOrderNote: boolean | undefined;
+  let canonicalNext: { id: number; status: string; startsAt: string; serviceType: string | null } | null | undefined;
+  if (featureFlags.canonicalAppointment && execCase.clinicId != null) {
+    appointmentByService = await getCanonicalAppointmentsByService({
+      clinicId: execCase.clinicId,
+      executionCaseId,
+      includeHistory: true,
+    });
+    appointmentEligibleForOrderNote = Object.values(appointmentByService).some(
+      (p) => p.appointmentEligibleForOrderNote,
+    );
+    const actives = Object.values(appointmentByService)
+      .map((p) => p.activeAppointment)
+      .filter((v): v is NonNullable<typeof v> => v != null)
+      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+    const a = actives[0];
+    canonicalNext = a
+      ? { id: a.globalScheduleEventId, status: a.status, startsAt: a.startsAt.toISOString(), serviceType: a.serviceType }
+      : null;
+  }
+  // Under the flag, the canonical active event is authoritative; OFF
+  // keeps the legacy first-by-start read.
+  const nextEvent = featureFlags.canonicalAppointment ? null : legacyNextEvent;
 
   const docRows = await db
     .select()
@@ -125,10 +164,13 @@ export async function getAcsWorkflowSnapshot(
 
   const statuses = new Set<AcsWorkflowStatus>();
   if (execCase.assignedTeamMemberId != null) statuses.add("assigned");
-  if (nextEvent) {
-    if (nextEvent.status === "scheduled" || nextEvent.status === "rescheduled") {
+  const effectiveNextStatus = featureFlags.canonicalAppointment
+    ? (canonicalNext?.status ?? null)
+    : (nextEvent?.status ?? null);
+  if (effectiveNextStatus) {
+    if (effectiveNextStatus === "scheduled" || effectiveNextStatus === "rescheduled") {
       statuses.add("scheduled");
-    } else if (nextEvent.status === "confirmed") {
+    } else if (effectiveNextStatus === "confirmed") {
       statuses.add("scheduled");
       statuses.add("confirmed");
     }
@@ -184,13 +226,17 @@ export async function getAcsWorkflowSnapshot(
       blocksBilling: d.blocksBilling,
     })),
     billingChecks: allChecks,
-    nextScheduleEvent: nextEvent
-      ? {
-        id: nextEvent.id,
-        status: nextEvent.status,
-        startsAt: nextEvent.startsAt instanceof Date ? nextEvent.startsAt.toISOString() : (nextEvent.startsAt as string),
-        serviceType: nextEvent.serviceType,
-      }
-      : null,
+    nextScheduleEvent: featureFlags.canonicalAppointment
+      ? (canonicalNext ?? null)
+      : nextEvent
+        ? {
+          id: nextEvent.id,
+          status: nextEvent.status,
+          startsAt: nextEvent.startsAt instanceof Date ? nextEvent.startsAt.toISOString() : (nextEvent.startsAt as string),
+          serviceType: nextEvent.serviceType,
+        }
+        : null,
+    ...(appointmentByService !== undefined ? { appointmentByService } : {}),
+    ...(appointmentEligibleForOrderNote !== undefined ? { appointmentEligibleForOrderNote } : {}),
   };
 }

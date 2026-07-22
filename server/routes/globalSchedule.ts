@@ -26,6 +26,25 @@ import {
 import { featureFlags } from "../lib/featureFlags";
 import { scheduleCanonicalAncillaryAppointment } from "../services/canonicalAppointments/scheduleAncillaryOrchestrator";
 import { applyCanonicalAncillaryTransition } from "../services/canonicalAppointments/transitionOrchestrator";
+import {
+  getCanonicalAppointmentProjection,
+  getCanonicalAppointmentsByService,
+} from "../services/canonicalAppointments/appointmentProjection";
+
+const CANONICAL_ANCILLARY_CALENDAR_TYPES = new Set(["ancillary_appointment", "same_day_add"]);
+
+// Maps a controlled canonical read error to a 503; returns true if handled.
+function handleCanonicalReadError(res: Response, e: unknown): boolean {
+  const code = (e as { code?: string })?.code;
+  if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+    res.status(503).json({
+      error: "canonical appointment schema unavailable — apply migration 0052",
+      code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+    });
+    return true;
+  }
+  return false;
+}
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires the team-portal
 // feeds through the same role + facility access checks the rest of
 // the portal endpoints already use. Without this, an authenticated
@@ -136,8 +155,60 @@ export function registerGlobalScheduleRoutes(app: Express) {
       }
 
       const rows = await listGlobalScheduleEvents(filters, limit);
+
+      // Phase 2D-C1 — under the canonical flag, canonical ancillary
+      // events (ancillary_appointment / same_day_add) expose a stable
+      // globalScheduleEventId + ancillaryCaseId/serviceType so calendar
+      // surfaces read the same canonical identity everyone else does.
+      // doctor_visit and every general event pass through unchanged.
+      if (featureFlags.canonicalAppointment) {
+        return res.json(
+          rows.map((r) =>
+            CANONICAL_ANCILLARY_CALENDAR_TYPES.has(r.eventType)
+              ? { ...r, globalScheduleEventId: r.id, canonicalAncillary: true }
+              : r,
+          ),
+        );
+      }
       res.json(rows);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/canonical-appointments — Phase 2D-C1 shared reader.
+  // The single canonical appointment projection every clinic-facing
+  // surface (Patient EHR, Engagement, PCS, ACS, scheduler) consumes.
+  // Query by ancillaryCaseId | patientScreeningId | executionCaseId,
+  // ?includeHistory=true, ?byService=true. Tenant-scoped from session.
+  app.get("/api/canonical-appointments", async (req, res) => {
+    try {
+      const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+      if (!featureFlags.canonicalAppointment) {
+        return res.json({ enabled: false, activeAppointment: null, appointmentHistory: [] });
+      }
+      if (clinicId == null) {
+        return res.status(400).json({ error: "clinic scope is required" });
+      }
+      const q = req.query as Record<string, string | undefined>;
+      const num = (v: string | undefined) => (v != null && /^\d+$/.test(v) ? parseInt(v, 10) : undefined);
+      const ancillaryCaseId = num(q.ancillaryCaseId);
+      const patientScreeningId = num(q.patientScreeningId);
+      const executionCaseId = num(q.executionCaseId);
+      const includeHistory = q.includeHistory === "true";
+      if (ancillaryCaseId == null && patientScreeningId == null && executionCaseId == null) {
+        return res.status(400).json({ error: "one of ancillaryCaseId, patientScreeningId, executionCaseId is required" });
+      }
+      if (q.byService === "true" && (patientScreeningId != null || executionCaseId != null)) {
+        const byService = await getCanonicalAppointmentsByService({ clinicId, patientScreeningId, executionCaseId, includeHistory });
+        return res.json({ enabled: true, appointmentByService: byService });
+      }
+      const projection = await getCanonicalAppointmentProjection({
+        clinicId, ancillaryCaseId, patientScreeningId, executionCaseId, includeHistory,
+      });
+      return res.json({ enabled: true, ...projection });
+    } catch (error: any) {
+      if (handleCanonicalReadError(res, error)) return;
       res.status(500).json({ error: error.message });
     }
   });
