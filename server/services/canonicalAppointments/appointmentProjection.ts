@@ -35,6 +35,10 @@ import { isOrderNoteAppointmentEligible } from "./canonicalAppointmentService";
 import { db } from "../../db";
 import { and, eq, inArray } from "drizzle-orm";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
+import type {
+  CanonicalAppointmentView as SerializedAppointmentView,
+  AncillaryAppointmentProjection as SerializedProjection,
+} from "@shared/types/canonicalAppointment";
 
 const HISTORY_STATUSES = new Set<CanonicalAppointmentStatus>([
   "completed",
@@ -136,7 +140,9 @@ function buildProjection(
   const history = includeHistory
     ? events
         .filter((e) => HISTORY_STATUSES.has(e.status as CanonicalAppointmentStatus))
-        .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime())
+        // Ordered by actual event time, then immutable id for a stable
+        // deterministic sequence.
+        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime() || a.id - b.id)
         .map(toView)
     : [];
   return {
@@ -232,5 +238,61 @@ export async function getCanonicalAppointmentsByService(query: {
       reason: r.eligible ? "qualifying_appointment" : r.reason,
     });
   }
+  return out;
+}
+
+// ─── Serialization to the shared cross-boundary contract ─────────
+// Express already stringifies Date → ISO on res.json, but explicit
+// serialization guarantees the JSON-safe shape portal clients import
+// from @shared/types/canonicalAppointment.
+
+function serializeView(v: CanonicalAppointmentView): SerializedAppointmentView {
+  return {
+    globalScheduleEventId: v.globalScheduleEventId,
+    ancillaryCaseId: v.ancillaryCaseId,
+    patientScreeningId: v.patientScreeningId,
+    executionCaseId: v.executionCaseId,
+    serviceType: v.serviceType,
+    eventType: v.eventType,
+    status: v.status,
+    startsAt: v.startsAt.toISOString(),
+    endsAt: v.endsAt ? v.endsAt.toISOString() : null,
+    timezone: v.timezone,
+    facilityId: v.facilityId,
+    location: v.facilityId,
+    assignedUserId: v.assignedUserId,
+    parentEventId: v.parentEventId,
+    cancellationReason: v.cancellationReason,
+    noShowReason: v.noShowReason,
+  };
+}
+
+export function serializeProjection(p: CanonicalAppointmentProjection): SerializedProjection {
+  return {
+    activeAppointment: p.activeAppointment ? serializeView(p.activeAppointment) : null,
+    appointmentHistory: p.appointmentHistory.map(serializeView),
+    appointmentEligibleForOrderNote: p.appointmentEligibleForOrderNote,
+    appointmentEligibilityReason: p.appointmentEligibilityReason,
+  };
+}
+
+/** Serialized per-case projection for portal API responses. */
+export async function getSerializedAppointmentProjection(
+  query: ProjectionQuery,
+): Promise<SerializedProjection & { flagOff: boolean }> {
+  const p = await getCanonicalAppointmentProjection(query);
+  return { flagOff: p.flagOff, ...serializeProjection(p) };
+}
+
+/** Serialized per-service map for portal API responses. */
+export async function getSerializedAppointmentsByService(query: {
+  clinicId: number;
+  patientScreeningId?: number;
+  executionCaseId?: number;
+  includeHistory?: boolean;
+}): Promise<Record<string, SerializedProjection>> {
+  const m = await getCanonicalAppointmentsByService(query);
+  const out: Record<string, SerializedProjection> = {};
+  for (const [service, proj] of Object.entries(m)) out[service] = serializeProjection(proj);
   return out;
 }
