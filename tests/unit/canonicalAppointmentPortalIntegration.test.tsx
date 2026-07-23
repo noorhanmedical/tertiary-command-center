@@ -8,6 +8,8 @@
 // Run standalone with:
 //   npx tsx tests/unit/canonicalAppointmentPortalIntegration.test.tsx
 
+process.env.DATABASE_URL ??= "postgres://placeholder@localhost:5432/placeholder";
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,6 +23,9 @@ import type { AncillaryAppointmentProjection, CanonicalAppointmentView } from ".
 const { CanonicalAppointmentSummary } = await import("@/components/canonical/CanonicalAppointmentSummary");
 const { isCanonicalAppointmentUiEnabled } = await import("@/lib/canonicalAppointmentUiFlag");
 const { mapGlobalScheduleEventToCalendarEvent } = await import("@/calendar/calendarEventMapper");
+// The REAL server-side shared eligibility filter — exercised so the
+// response→parent→render flow uses production filtering, not a test copy.
+const { filterAppointmentsToEligibleServices } = await import("../../server/services/canonicalAppointments/appointmentProjection");
 
 const ROOT = process.cwd();
 const START = "2027-03-01T10:00:00.000Z";
@@ -145,7 +150,38 @@ async function testComponentNoFetch() {
   }
 }
 
+// ─── (P1) response→parent→render: eligible renders, rejected does not ─
+async function testEligibleRendersRejectedDoesNot() {
+  // Real server filter drops the rejected service; parents iterate the
+  // filtered keys and render each via the real component.
+  const byService: Record<string, AncillaryAppointmentProjection> = {
+    BrainWave: projection({ activeAppointment: view({ globalScheduleEventId: 700, serviceType: "BrainWave" }) }),
+    Ultrasound: projection({ activeAppointment: view({ globalScheduleEventId: 800, serviceType: "Ultrasound" }) }),
+  };
+  const eligible = filterAppointmentsToEligibleServices(byService, ["BrainWave"]);
+  const rendered = Object.entries(eligible)
+    .map(([serviceType, p]) => render({ projection: p, serviceType }))
+    .join("");
+  assert.ok(rendered.includes("BrainWave") && rendered.includes('data-global-schedule-event-id="700"'), "approved BrainWave renders");
+  assert.ok(!rendered.includes("Ultrasound") && !rendered.includes('data-global-schedule-event-id="800"'), "rejected Ultrasound is not rendered");
+}
+
+// ─── (P2) parents consume parent-provided data — no extra fetch ───
+async function testParentsNoExtraFetch() {
+  // The Engagement panel now reads row.appointmentByService (parent
+  // board data) — it must NOT fetch /api/canonical-appointments itself.
+  const panel = readFileSync(join(ROOT, "client/src/components/engagement/EngagementCasePanel.tsx"), "utf8");
+  assert.ok(panel.includes("row?.appointmentByService"), "panel consumes the parent board projection");
+  assert.ok(!/canonical-appointments/.test(panel), "panel makes no independent canonical request");
+  // The EHR scheduling section renders from the chart projection.
+  const ehr = readFileSync(join(ROOT, "client/src/components/patient-directory/PatientChartSections.tsx"), "utf8");
+  assert.ok(/chart\.canonicalAppointmentByService/.test(ehr), "EHR renders from the chart's canonical projection");
+  assert.ok(/CanonicalAppointmentSummary/.test(ehr) && /isCanonicalAppointmentUiEnabled\(\)/.test(ehr), "EHR canonical render is flag-gated");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["(P1) approved service renders, rejected does not (real filter→render)", testEligibleRendersRejectedDoesNot],
+  ["(P2) parents consume parent data — no extra canonical fetch", testParentsNoExtraFetch],
   ["(1) Patient EHR ancillary case renders the correct event", testEhrRenders],
   ["(2/8) different services render their own event only", testDifferentServices],
   ["(3/4) PCS/scheduler render appointmentByService inline", testPcsSchedulerRender],

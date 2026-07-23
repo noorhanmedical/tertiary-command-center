@@ -488,6 +488,29 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
           if (r.missingInfo.length > 0) needsInfo += 1;
         }
 
+        // Phase 2D-D2 — attach the canonical per-service appointment
+        // projection so the case panel consumes parent data (no extra
+        // per-panel canonical request). Keys are constrained to the
+        // row's Phase 2C eligibleServices via the shared filter, so a
+        // rejected / pending / needs_info service never receives a
+        // summary. Flag OFF: unchanged. Missing migration → 503.
+        const { featureFlags: ffCanon } = await import("../lib/featureFlags");
+        if (ffCanon.canonicalAppointment) {
+          const boardClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+          if (boardClinicId != null) {
+            const { getSerializedAppointmentsByService, filterAppointmentsToEligibleServices } =
+              await import("../services/canonicalAppointments/appointmentProjection");
+            for (const r of filtered) {
+              // eslint-disable-next-line no-await-in-loop
+              const byService = await getSerializedAppointmentsByService({
+                clinicId: boardClinicId, executionCaseId: r.executionCaseId, includeHistory: false,
+              });
+              (r as { appointmentByService?: unknown }).appointmentByService =
+                filterAppointmentsToEligibleServices(byService, r.eligibleServices);
+            }
+          }
+        }
+
         res.json({
           rows: filtered,
           summary: {
@@ -510,6 +533,13 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
           },
         });
       } catch (error: unknown) {
+        const code = (error as { code?: string })?.code;
+        if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+          return res.status(503).json({
+            error: "canonical appointment schema unavailable — apply migration 0052",
+            code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+          });
+        }
         console.error(
           "[engagement/assignment-board:get] error:",
           error instanceof Error ? error.message : error,

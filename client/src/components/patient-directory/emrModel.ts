@@ -11,6 +11,7 @@ import {
   type EmrContactability, type EmrOverview, type EmrReports, type CooldownState,
 } from "@/types/emr";
 import { testBucket, uniqueQualifyingTests, type DirectoryProfile } from "./profileTypes";
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
 
 export type RawExecutionCase = {
   id?: number;
@@ -106,6 +107,8 @@ export interface EmrModelInputs {
   screeningDetail?: RawScreeningDetail;
   provider?: string | null;
   reportBatchId?: number | null;
+  /** Phase 2D — canonical per-service appointment projection (flag ON). */
+  canonicalAppointmentByService?: Record<string, AncillaryAppointmentProjection> | null;
 }
 
 function splitList(raw: string | null | undefined): string[] {
@@ -365,6 +368,7 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
 
   return {
     patientScreeningId: input.patientScreeningId,
+    canonicalAppointmentByService: input.canonicalAppointmentByService ?? null,
     demographics,
     insurance,
     providers: [],

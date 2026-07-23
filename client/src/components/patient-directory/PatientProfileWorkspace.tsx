@@ -7,6 +7,8 @@ import {
   type RawInsuranceReview, type RawAppointment, type RawCall,
   type RawDocument, type RawBillingRow, type RawScreeningDetail,
 } from "./emrModel";
+import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
 
 // Patient-tab cache: keep a profile's data fresh for a minute and resident for
 // five so re-opening the same patient (tab switch / call-list re-click) paints
@@ -170,6 +172,23 @@ export function PatientProfileWorkspace({
     ...CACHE,
   });
 
+  // Phase 2D — canonical per-service appointment projection for the
+  // patient chart. Only fetched when the client flag is ON (enabled:false
+  // otherwise → no request; the legacy scheduling section renders). This
+  // is the full patient record, so all of the patient's ancillary-case
+  // appointments are shown (not eligibility-gated like the queue).
+  const canonicalApptQuery = useQuery<Record<string, AncillaryAppointmentProjection>>({
+    queryKey: ["/api/canonical-appointments", "byService", psid],
+    queryFn: () =>
+      fetchJsonOrEmpty<Record<string, AncillaryAppointmentProjection>>(
+        `/api/canonical-appointments?patientScreeningId=${psid}&byService=true&includeHistory=true`,
+        (d) => (d && typeof d === "object" && (d as { appointmentByService?: Record<string, AncillaryAppointmentProjection> }).appointmentByService) || {},
+        {},
+      ),
+    enabled: isCanonicalAppointmentUiEnabled() && !!psid,
+    ...CACHE,
+  });
+
   const screeningDetailQuery = useQuery<RawScreeningDetail>({
     queryKey: ["/api/patients", psid],
     queryFn: () =>
@@ -197,12 +216,13 @@ export function PatientProfileWorkspace({
       screeningDetail: screeningDetailQuery.data ?? null,
       provider: batchQuery.data?.provider ?? null,
       reportBatchId: batchQuery.data?.batchId ?? repBatchId,
+      canonicalAppointmentByService: canonicalApptQuery.data ?? null,
     });
   }, [
     profile, psid, executionCasesQuery.data, cooldownRecordsQuery.data,
     insuranceQuery.data, appointmentsQuery.data, callsQuery.data,
     documentsQuery.data, billingQuery.data, screeningDetailQuery.data,
-    batchQuery.data, repBatchId,
+    batchQuery.data, repBatchId, canonicalApptQuery.data,
   ]);
 
   // Per-section skeletons: a section shows a placeholder until its own backing

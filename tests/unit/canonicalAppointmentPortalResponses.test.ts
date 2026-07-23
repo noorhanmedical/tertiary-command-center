@@ -226,6 +226,38 @@ async function testMissingMigration() {
   });
 }
 
+// ─── Service-eligibility filtering (Phase 2D-D2) ──────────────────
+async function testEligibilityFilterInvariant() {
+  const p = await proj();
+  const byService = {
+    BrainWave: { activeAppointment: { globalScheduleEventId: 700 }, appointmentHistory: [], appointmentEligibleForOrderNote: true, appointmentEligibilityReason: "q" },
+    Ultrasound: { activeAppointment: { globalScheduleEventId: 800 }, appointmentHistory: [], appointmentEligibleForOrderNote: true, appointmentEligibilityReason: "q" },
+    VitalWave: { activeAppointment: { globalScheduleEventId: 900 }, appointmentHistory: [], appointmentEligibleForOrderNote: false, appointmentEligibilityReason: "x" },
+  } as Record<string, unknown>;
+  // BrainWave approved; Ultrasound rejected; VitalWave pending.
+  const filtered = p.filterAppointmentsToEligibleServices(byService, ["BrainWave"]);
+  assert.deepEqual(Object.keys(filtered), ["BrainWave"], "keys ⊆ eligibleServices");
+  assert.ok(!("Ultrasound" in filtered), "rejected service with an event is excluded");
+  assert.ok(!("VitalWave" in filtered), "pending service with an event is excluded");
+  // Reapproved → returns once (no duplication).
+  const reapproved = p.filterAppointmentsToEligibleServices(byService, ["BrainWave", "Ultrasound"]);
+  assert.deepEqual(Object.keys(reapproved).sort(), ["BrainWave", "Ultrasound"]);
+  // Sync OFF (undefined) → legacy passthrough.
+  assert.deepEqual(Object.keys(p.filterAppointmentsToEligibleServices(byService, undefined)).sort(), ["BrainWave", "Ultrasound", "VitalWave"]);
+  // Empty eligible → nothing.
+  assert.deepEqual(Object.keys(p.filterAppointmentsToEligibleServices(byService, [])), []);
+}
+
+async function testRoutesUseSharedFilter() {
+  const src = readFileSync(join(REPO_ROOT, "server/routes/executionCases.ts"), "utf8");
+  // Engagement cases + PCS call-list + scheduler-portal all filter via
+  // the shared helper (no divergent per-route logic).
+  const uses = (src.match(/filterAppointmentsToEligibleServices/g) ?? []).length;
+  assert.ok(uses >= 3, "Engagement, PCS, and scheduler must all use the shared eligibility filter");
+  const board = readFileSync(join(REPO_ROOT, "server/routes/engagementAssignmentBoard.ts"), "utf8");
+  assert.ok(/filterAppointmentsToEligibleServices/.test(board), "assignment board must use the shared filter");
+}
+
 // ─── PCS call-list inline appointmentByService (Phase 2D-D1) ──────
 function callListSpec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, gse?: TableSpec, cases?: unknown[]): Map<unknown, TableSpec> {
   return new Map<unknown, TableSpec>([
@@ -341,6 +373,8 @@ async function testClientDiscoveryGuard() {
 
 const tests: Array<[string, () => Promise<void>]> = [
   ["(discovery) client consumers use the shared canonical contract", testClientDiscoveryGuard],
+  ["(elig-1..6) appointmentByService keys ⊆ eligibleServices; rejected/pending excluded; reapproved once", testEligibilityFilterInvariant],
+  ["(elig) Engagement/PCS/scheduler/board use one shared filter", testRoutesUseSharedFilter],
   ["(PCS-1) call-list returns appointmentByService inline", testCallListInline],
   ["(PCS-2) feature OFF call-list performs zero canonical reads", testCallListFlagOffNoReads],
   ["(PCS-3) BrainWave and Ultrasound return different event IDs", testCallListDifferentServices],

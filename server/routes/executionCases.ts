@@ -23,8 +23,8 @@ import {
   engagementActionForOutcome,
 } from "../services/canonicalAppointments/callResultSchedulingBridge";
 import {
-  getCanonicalAppointmentsByService,
   getSerializedAppointmentsByService,
+  filterAppointmentsToEligibleServices,
 } from "../services/canonicalAppointments/appointmentProjection";
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires /api/scheduler-
 // portal/cases through the same role + facility access checks the
@@ -299,10 +299,16 @@ export function registerExecutionCaseRoutes(app: Express) {
           try {
             for (const row of rows) {
               // eslint-disable-next-line no-await-in-loop
-              const byService = await getCanonicalAppointmentsByService({
+              const byService = await getSerializedAppointmentsByService({
                 clinicId, executionCaseId: row.id, includeHistory: false,
               });
-              Object.assign(row, { appointmentByService: byService });
+              // Constrain to Phase 2C eligible services (admin-approved).
+              // When the sync flag is OFF, eligibleServices is undefined
+              // and the legacy selected-service contract is preserved.
+              const eligible = (row as { eligibleServices?: string[] }).eligibleServices;
+              Object.assign(row, {
+                appointmentByService: filterAppointmentsToEligibleServices(byService, eligible),
+              });
             }
           } catch (e) {
             const code = (e as { code?: string })?.code;
@@ -428,9 +434,13 @@ export function registerExecutionCaseRoutes(app: Express) {
                 const execId = rows[i]?.id;
                 if (execId == null) continue;
                 // eslint-disable-next-line no-await-in-loop
-                items[i].appointmentByService = await getSerializedAppointmentsByService({
+                const byService = await getSerializedAppointmentsByService({
                   clinicId, executionCaseId: execId, includeHistory: false,
                 });
+                // keys ⊆ eligibleServices (undefined → legacy passthrough).
+                items[i].appointmentByService = filterAppointmentsToEligibleServices(
+                  byService, items[i].eligibleServices,
+                );
               }
             }
           }
@@ -1202,12 +1212,33 @@ export function registerExecutionCaseRoutes(app: Express) {
         const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
         if (clinicId != null) {
           try {
+            // Compute Phase 2C eligible services so appointmentByService
+            // keys stay a subset of eligibleServices — same rule as
+            // Engagement/PCS via the shared filter. Sync flag OFF →
+            // eligibleServices undefined → legacy passthrough.
+            const eligibilityByCase = new Map<number, string[]>();
+            if (featureFlags.engagementAdminReviewSync) {
+              const { projectServiceLevelEligibility } = await import(
+                "../services/engagementLists/queueProjection"
+              );
+              const filtered = await projectServiceLevelEligibility({
+                executionCases: rows,
+                requireActiveMembership: featureFlags.engagementMultiListRepository,
+              });
+              for (const f of filtered) eligibilityByCase.set(f.executionCase.id, f.eligibleServices);
+            }
             for (const row of rows) {
               // eslint-disable-next-line no-await-in-loop
               const byService = await getSerializedAppointmentsByService({
                 clinicId, executionCaseId: row.id, includeHistory: false,
               });
-              Object.assign(row, { appointmentByService: byService });
+              const eligible = featureFlags.engagementAdminReviewSync
+                ? (eligibilityByCase.get(row.id) ?? [])
+                : undefined;
+              Object.assign(row, {
+                eligibleServices: eligible,
+                appointmentByService: filterAppointmentsToEligibleServices(byService, eligible),
+              });
             }
           } catch (e) {
             const code = (e as { code?: string })?.code;

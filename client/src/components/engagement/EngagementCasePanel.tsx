@@ -20,7 +20,6 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CanonicalAppointmentSummary } from "@/components/canonical/CanonicalAppointmentSummary";
 import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
-import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -134,21 +133,11 @@ export function EngagementCasePanel({
   });
   const patient = patientQuery.data;
 
-  // Phase 2D-D1 — canonical per-service appointment projection for this
-  // case's ancillary services. Only requested when the client flag is ON
-  // (enabled:false otherwise → no extra request, no legacy inference).
-  const canonicalApptQuery = useQuery<{ enabled?: boolean; appointmentByService?: Record<string, AncillaryAppointmentProjection> }>({
-    queryKey: ["/api/canonical-appointments", "byService", psid],
-    enabled: isCanonicalAppointmentUiEnabled() && psid != null,
-    queryFn: async () => {
-      const res = await apiRequest(
-        "GET",
-        `/api/canonical-appointments?patientScreeningId=${psid}&byService=true&includeHistory=true`,
-      );
-      return res.json();
-    },
-  });
-  const appointmentByService = canonicalApptQuery.data?.appointmentByService ?? {};
+  // Phase 2D-D2 — canonical per-service appointment projection comes from
+  // the PARENT board row (already clinic-scoped AND constrained to the
+  // row's Phase 2C eligibleServices server-side). No extra per-panel
+  // canonical request; a rejected/pending/needs_info service is absent.
+  const appointmentByService = row?.appointmentByService ?? {};
 
   const executionCaseId = row?.executionCaseId ?? null;
   const journeyQuery = useQuery<{ events: JourneyEvent[] }>({

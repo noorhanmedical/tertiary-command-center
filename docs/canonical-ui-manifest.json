@@ -364,7 +364,7 @@
     },
     {
       "path": "client/src/components/engagement/EngagementCasePanel.tsx",
-      "blob": "6cd11ed9deff21a0a999494bc3bf20df54b415eb",
+      "blob": "2f93a6a18018568e8051a9b6971c1bc80da0d47b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -623,7 +623,7 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientChartSections.tsx",
-      "blob": "5913c8d600ce09cffffcc12bf885d8c0086125d6",
+      "blob": "f8fa26e8c2cb445de099225e683700e0325c8000",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -672,7 +672,7 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientProfileWorkspace.tsx",
-      "blob": "0032b25ff48266011d2a06c3b81bb4cfdb4f72d7",
+      "blob": "de4199d9df30628c76606a01ae39110418c3f18b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -686,7 +686,7 @@
     },
     {
       "path": "client/src/components/patient-directory/emrModel.ts",
-      "blob": "c0dd0eadff75a8074d390e64d5bb17e93e819880",
+      "blob": "156d378a78cc5f2c7dc66b6817e6a312d1687e52",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -3094,7 +3094,7 @@
     },
     {
       "path": "client/src/types/emr.ts",
-      "blob": "93bc2e989a78de891d33abdcae164d7b836566f3",
+      "blob": "22c6bd5e2cca68a75eab3cb6cfe5ad500ef786f4",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

@@ -287,6 +287,28 @@ export async function getSerializedAppointmentProjection(
   return { flagOff: p.flagOff, ...serializeProjection(p) };
 }
 
+/**
+ * The ONE shared filter every portal API uses so Engagement, PCS, and
+ * scheduler apply identical service-eligibility rules. Reduces an
+ * appointmentByService map to the currently-eligible services (Phase 2C
+ * admin-review-approved). When `eligibleServices` is null/undefined
+ * (Admin Review sync OFF) the map is returned unchanged — the legacy
+ * selected-service contract. A rejected / pending / needs_info service
+ * is dropped even if a historical canonical event exists.
+ */
+export function filterAppointmentsToEligibleServices<T>(
+  byService: Record<string, T>,
+  eligibleServices: readonly string[] | null | undefined,
+): Record<string, T> {
+  if (eligibleServices == null) return byService;
+  const allow = new Set(eligibleServices);
+  const out: Record<string, T> = {};
+  for (const [service, projection] of Object.entries(byService)) {
+    if (allow.has(service)) out[service] = projection;
+  }
+  return out;
+}
+
 /** Serialized per-service map for portal API responses. */
 export async function getSerializedAppointmentsByService(query: {
   clinicId: number;

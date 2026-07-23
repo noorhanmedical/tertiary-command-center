@@ -1,5 +1,7 @@
 // Engagement Center assignment-board row contract.
 //
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
+//
 // SOURCE (canonical): server/routes/engagementAssignmentBoard.ts:106-127
 // (inline `type BoardRow = { … }` used by the GET /api/engagement/assignment-board
 // handler).
@@ -53,6 +55,12 @@ export type EngagementBoardRow = {
    * mirrors selectedServices (legacy).
    */
   eligibleServices?: string[];
+  /**
+   * Phase 2D — canonical per-service appointment projection. Present
+   * only when FEATURE_CANONICAL_APPOINTMENT is ON; keys are constrained
+   * to eligibleServices (a rejected/pending service is absent).
+   */
+  appointmentByService?: Record<string, AncillaryAppointmentProjection>;
   // ─── Server-derived display taxonomy (honest nulls) ───────────────
   // Derived from the fields above by deriveEngagementTaxonomy() so the
   // client + server agree on one mapping. Gaps are honest: Patient Support

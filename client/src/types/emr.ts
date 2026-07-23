@@ -1,5 +1,7 @@
 // EMR type layer for the premium Patient EHR chart.
 //
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
+//
 // These interfaces describe the 15 API-ready data categories the EMR
 // chart renders. Every field is optional/nullable so the chart never
 // crashes on missing data — sections that have no live source render a
@@ -307,6 +309,13 @@ export interface EmrChart {
   documents?: EmrDocument[] | null;
   communication: EmrCommunicationSummary;
   scheduling?: EmrAppointment[] | null;
+  /**
+   * Phase 2D — canonical per-service appointment projection for this
+   * patient's ancillary cases. Present only when
+   * FEATURE_CANONICAL_APPOINTMENT is ON; the scheduling section renders
+   * from this (canonical truth) instead of the legacy `scheduling` list.
+   */
+  canonicalAppointmentByService?: Record<string, AncillaryAppointmentProjection> | null;
   cooldown: EmrCooldown;
   adAutomation: EmrAdAutomation;
   billing: EmrBillingReadiness;

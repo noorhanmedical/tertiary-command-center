@@ -244,7 +244,7 @@ async function testReaderDiscoveryGuard() {
   const gs = readFileSync(join(REPO_ROOT, "server/routes/globalSchedule.ts"), "utf8");
   assert.ok(gs.includes("getCanonicalAppointmentProjection") && gs.includes("/api/canonical-appointments"), "calendar routes must expose the canonical projection endpoint");
   const exec = readFileSync(join(REPO_ROOT, "server/routes/executionCases.ts"), "utf8");
-  assert.ok(exec.includes("getCanonicalAppointmentsByService"), "engagement cases must attach canonical per-service projection");
+  assert.ok(exec.includes("getSerializedAppointmentsByService"), "engagement cases must attach the serialized canonical per-service projection");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [
