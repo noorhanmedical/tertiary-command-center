@@ -391,7 +391,7 @@ export function registerExecutionCaseRoutes(app: Express) {
             eligibilityByCase = new Map(filtered.map((f) => [f.executionCase.id, f.eligibleServices]));
           }
 
-          return rows.map<EngagementCallListItem>((row) => ({
+          const items: EngagementCallListItem[] = rows.map((row) => ({
             patientScreeningId:
               row.patientScreeningId != null ? String(row.patientScreeningId) : "",
             patientExecutionCaseId: String(row.id),
@@ -415,6 +415,26 @@ export function registerExecutionCaseRoutes(app: Express) {
             // (legacy contract preserved).
             eligibleServices: eligibilityByCase?.get(row.id),
           }));
+
+          // Phase 2D-D1 — attach the canonical per-service appointment
+          // projection inline when FEATURE_CANONICAL_APPOINTMENT is ON.
+          // One active event per ancillary case; historical events are
+          // history-only; doctor_visit excluded. Missing migration
+          // propagates so the outer route returns a controlled 503.
+          if (ff.canonicalAppointment) {
+            const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+            if (clinicId != null) {
+              for (let i = 0; i < items.length; i++) {
+                const execId = rows[i]?.id;
+                if (execId == null) continue;
+                // eslint-disable-next-line no-await-in-loop
+                items[i].appointmentByService = await getSerializedAppointmentsByService({
+                  clinicId, executionCaseId: execId, includeHistory: false,
+                });
+              }
+            }
+          }
+          return items;
         },
       };
       const result = await getEngagementCallList(
@@ -439,6 +459,14 @@ export function registerExecutionCaseRoutes(app: Express) {
         return res.status(503).json({
           error: "PCS call-list eligibility projection unavailable",
           code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+        });
+      }
+      // Phase 2D-D1 — canonical appointment schema missing → controlled
+      // 503, never a fall back to the unrestricted legacy list.
+      if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+        return res.status(503).json({
+          error: "canonical appointment schema unavailable — apply migration 0052",
+          code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
         });
       }
       return res.status(500).json({ error: error.message });

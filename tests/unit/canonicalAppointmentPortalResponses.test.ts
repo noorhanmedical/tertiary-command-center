@@ -226,6 +226,71 @@ async function testMissingMigration() {
   });
 }
 
+// ─── PCS call-list inline appointmentByService (Phase 2D-D1) ──────
+function callListSpec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, gse?: TableSpec, cases?: unknown[]): Map<unknown, TableSpec> {
+  return new Map<unknown, TableSpec>([
+    [t.executionCases, { select: () => [{ id: 900, clinicId: 1, patientScreeningId: 77, engagementStatus: "new", lifecycleStatus: "active", selectedServices: ["EchoWave"], nextActionAt: null, priorityScore: 0, createdAt: START, facilityId: "F", assignedTeamMemberId: null, assignedRole: null }] }],
+    [t.gse, gse ?? { select: () => [evt()] }],
+    [t.ancillaryCases, { select: () => cases ?? [caseRow()] }],
+  ]);
+}
+async function withCallListRead<T>(fn: () => Promise<T>): Promise<T> {
+  const saved = process.env.USE_ENGAGEMENT_CANONICAL_CALL_LIST_READ;
+  process.env.USE_ENGAGEMENT_CANONICAL_CALL_LIST_READ = "true";
+  try { return await fn(); } finally {
+    if (saved === undefined) delete process.env.USE_ENGAGEMENT_CANONICAL_CALL_LIST_READ;
+    else process.env.USE_ENGAGEMENT_CANONICAL_CALL_LIST_READ = saved;
+  }
+}
+
+// (PCS-1) call-list returns appointmentByService inline.
+async function testCallListInline() {
+  const t = await loadCanonicalTables();
+  const routes = await import("../../server/routes/executionCases");
+  await withCallListRead(() => withRoutesHttp(routes.registerExecutionCaseRoutes, callListSpec(t), true, { clinicId: 1 }, async (baseUrl) => {
+    const r = await getJson(baseUrl, "/api/engagement-center/call-list");
+    const items = (r.json as { items: Array<{ appointmentByService?: Record<string, { activeAppointment: { globalScheduleEventId: number } }> }> }).items;
+    assert.equal(items[0].appointmentByService?.["EchoWave"].activeAppointment.globalScheduleEventId, 700);
+  }));
+}
+
+// (PCS-2) Feature OFF call-list performs zero canonical reads.
+async function testCallListFlagOffNoReads() {
+  const t = await loadCanonicalTables();
+  const routes = await import("../../server/routes/executionCases");
+  await withCallListRead(() => withRoutesHttp(routes.registerExecutionCaseRoutes, callListSpec(t), false, { clinicId: 1 }, async (baseUrl, calls) => {
+    const r = await getJson(baseUrl, "/api/engagement-center/call-list");
+    const items = (r.json as { items: Array<{ appointmentByService?: unknown }> }).items;
+    assert.equal(items[0].appointmentByService, undefined, "no canonical projection under flag OFF");
+    assert.equal(countOps(calls, "select", t.gse), 0, "zero canonical reads");
+  }));
+}
+
+// (PCS-3) BrainWave and Ultrasound return different event IDs inline.
+async function testCallListDifferentServices() {
+  const t = await loadCanonicalTables();
+  const routes = await import("../../server/routes/executionCases");
+  const gse = { select: () => [evt({ id: 700, ancillaryCaseId: 300, serviceType: "BrainWave" }), evt({ id: 800, ancillaryCaseId: 301, serviceType: "Ultrasound" })] } as TableSpec;
+  await withCallListRead(() => withRoutesHttp(routes.registerExecutionCaseRoutes, callListSpec(t, gse, [caseRow(300, "BrainWave"), caseRow(301, "Ultrasound")]), true, { clinicId: 1 }, async (baseUrl) => {
+    const r = await getJson(baseUrl, "/api/engagement-center/call-list");
+    const abs = (r.json as { items: Array<{ appointmentByService?: Record<string, { activeAppointment: { globalScheduleEventId: number } }> }> }).items[0].appointmentByService!;
+    assert.equal(abs["BrainWave"].activeAppointment.globalScheduleEventId, 700);
+    assert.equal(abs["Ultrasound"].activeAppointment.globalScheduleEventId, 800);
+  }));
+}
+
+// (PCS-10) Missing migration → controlled 503, no legacy fallback.
+async function testCallListMissingMigration() {
+  const t = await loadCanonicalTables();
+  const routes = await import("../../server/routes/executionCases");
+  const gse = { select: () => { const e = new Error("no col") as Error & { code?: string }; e.code = "42703"; throw e; } } as TableSpec;
+  await withCallListRead(() => withRoutesHttp(routes.registerExecutionCaseRoutes, callListSpec(t, gse), true, { clinicId: 1 }, async (baseUrl) => {
+    const r = await getJson(baseUrl, "/api/engagement-center/call-list");
+    assert.equal(r.status, 503);
+    assert.equal((r.json as { code: string }).code, "CANONICAL_APPOINTMENT_MIGRATION_MISSING");
+  }));
+}
+
 // ─── Client discovery guard: canonical consumers use the shared
 // contract, not legacy inference. ────────────────────────────────
 const REPO_ROOT = process.cwd();
@@ -251,10 +316,35 @@ async function testClientDiscoveryGuard() {
       assert.ok(!src.includes(legacy), `${f} must not infer scheduling from legacy signal: ${legacy}`);
     }
   }
+  // Every newly-wired portal consumer renders CanonicalAppointmentSummary
+  // from the shared projection, flag-gated — never inferring active
+  // scheduling from appointmentStatus/doctor_visit/facility-date grouping.
+  for (const f of [
+    "client/src/components/engagement/EngagementCasePanel.tsx",
+    "client/src/pages/outreach-scheduler-portal.tsx",
+    "client/src/components/portal/AcsWorkflowPanel.tsx",
+  ]) {
+    const src = readFileSync(join(REPO_ROOT, f), "utf8");
+    assert.ok(src.includes("CanonicalAppointmentSummary"), `${f} must render CanonicalAppointmentSummary`);
+    assert.ok(/isCanonicalAppointmentUiEnabled\(\)/.test(src), `${f} canonical render must be flag-gated`);
+    // The consumer must key/consume appointmentByService (the shared
+    // projection), not a legacy appointmentStatus string.
+    assert.ok(/appointmentByService/.test(src), `${f} must consume the shared projection (appointmentByService)`);
+    assert.ok(/projection=\{/.test(src), `${f} must pass the projection to the shared component`);
+  }
+  // The calendar mapper keys canonical events by the event id, not
+  // date/facility.
+  const mapper = readFileSync(join(REPO_ROOT, "client/src/calendar/calendarEventMapper.ts"), "utf8");
+  assert.ok(/global_schedule_events:\$\{sourceId\}/.test(mapper), "calendar events keyed by event id");
+  assert.ok(/canonicalAncillary/.test(mapper), "calendar mapper distinguishes canonical ancillary events");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [
   ["(discovery) client consumers use the shared canonical contract", testClientDiscoveryGuard],
+  ["(PCS-1) call-list returns appointmentByService inline", testCallListInline],
+  ["(PCS-2) feature OFF call-list performs zero canonical reads", testCallListFlagOffNoReads],
+  ["(PCS-3) BrainWave and Ultrasound return different event IDs", testCallListDifferentServices],
+  ["(PCS-10) call-list missing migration → 503", testCallListMissingMigration],
   ["(1) Patient EHR endpoint returns canonical event ID + ISO", testEhr],
   ["(2) Engagement cases returns same event ID", testEngagement],
   ["(3/6) PCS + scheduler byService returns same event ID", testPcsScheduler],

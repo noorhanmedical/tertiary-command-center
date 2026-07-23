@@ -21,6 +21,9 @@ export type CanonicalAppointmentSummaryProps = {
   serviceType?: string | null;
   /** Show the cancelled/no_show/rescheduled history indicator. */
   showHistory?: boolean;
+  /** Show the appointment-only Order Note readiness (from the server
+   *  projection field — never recalculated in the client). */
+  showReadiness?: boolean;
   "data-testid"?: string;
 };
 
@@ -47,12 +50,21 @@ export function CanonicalAppointmentSummary(props: CanonicalAppointmentSummaryPr
       {vm.whenLabel ? (
         <div className="text-muted-foreground" data-testid="canonical-appointment-when">
           {vm.whenLabel}
-          {vm.location ? ` · ${vm.location}` : ""}
+          {vm.location ? ` · ${vm.location}` : vm.facilityId ? ` · ${vm.facilityId}` : ""}
         </div>
       ) : null}
       {props.showHistory && vm.historyCount > 0 ? (
         <div className="text-xs text-muted-foreground" data-testid="canonical-appointment-history">
           {vm.historyCount} prior event{vm.historyCount === 1 ? "" : "s"}
+        </div>
+      ) : null}
+      {props.showReadiness ? (
+        <div
+          className="text-xs text-muted-foreground"
+          data-testid="canonical-appointment-order-note-ready"
+          data-order-note-ready={vm.eligibleForOrderNote ? "true" : "false"}
+        >
+          {vm.eligibleForOrderNote ? "Order Note: appointment ready" : "Order Note: appointment not ready"}
         </div>
       ) : null}
     </div>

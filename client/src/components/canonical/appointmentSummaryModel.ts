@@ -28,7 +28,11 @@ export type CanonicalAppointmentSummaryViewModel = {
   statusLabel: string | null;
   statusVariant: "default" | "secondary" | "destructive" | "outline";
   whenLabel: string | null;
+  /** Real location from the contract's optional `location`; never
+   *  fabricated from facilityId. */
   location: string | null;
+  /** Facility identifier, shown as its own field (not as `location`). */
+  facilityId: string | null;
   globalScheduleEventId: number | null;
   historyCount: number;
   rescheduledFromEventId: number | null;
@@ -58,7 +62,9 @@ export function deriveAppointmentSummary(
     statusLabel: active ? APPOINTMENT_STATUS_LABELS[active.status] ?? active.status : null,
     statusVariant: active ? APPOINTMENT_STATUS_VARIANT[active.status] ?? "outline" : "outline",
     whenLabel: active ? formatAppointmentWhen(active) : null,
-    location: active?.location ?? active?.facilityId ?? null,
+    // Real location only — never fabricated from facilityId.
+    location: active?.location ?? null,
+    facilityId: active?.facilityId ?? null,
     globalScheduleEventId: active?.globalScheduleEventId ?? null,
     historyCount: projection.appointmentHistory.length,
     rescheduledFromEventId: active?.parentEventId ?? null,

@@ -259,7 +259,10 @@ function serializeView(v: CanonicalAppointmentView): SerializedAppointmentView {
     endsAt: v.endsAt ? v.endsAt.toISOString() : null,
     timezone: v.timezone,
     facilityId: v.facilityId,
-    location: v.facilityId,
+    // `location` is a distinct optional contract field — no location
+    // source exists on global_schedule_events, so it is NOT fabricated
+    // from facilityId. facilityId is carried on its own field above.
+    location: null,
     assignedUserId: v.assignedUserId,
     parentEventId: v.parentEventId,
     cancellationReason: v.cancellationReason,
