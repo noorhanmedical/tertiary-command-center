@@ -104,6 +104,8 @@ export type FlagOverrides = {
   canonicalAppointment?: boolean;
   ancillaryCaseWrite?: boolean;
   plexusIdentityWrite?: boolean;
+  unifiedAncillaryDocuments?: boolean;
+  canonicalOrderNote?: boolean;
 };
 
 export async function runWithDb<T>(
@@ -123,12 +125,16 @@ export async function runWithDb<T>(
     canonicalAppointment: ff.canonicalAppointment,
     ancillaryCaseWrite: ff.ancillaryCaseWrite,
     plexusIdentityWrite: ff.plexusIdentityWrite,
+    unifiedAncillaryDocuments: ff.unifiedAncillaryDocuments,
+    canonicalOrderNote: ff.canonicalOrderNote,
   };
   const { db: fake, calls } = buildFakeDb(spec);
   for (const k of Object.keys(savedDb)) dbObj[k] = (fake as unknown as Record<string, unknown>)[k];
   if (flags.canonicalAppointment !== undefined) ff.canonicalAppointment = flags.canonicalAppointment;
   if (flags.ancillaryCaseWrite !== undefined) ff.ancillaryCaseWrite = flags.ancillaryCaseWrite;
   if (flags.plexusIdentityWrite !== undefined) ff.plexusIdentityWrite = flags.plexusIdentityWrite;
+  if (flags.unifiedAncillaryDocuments !== undefined) ff.unifiedAncillaryDocuments = flags.unifiedAncillaryDocuments;
+  if (flags.canonicalOrderNote !== undefined) ff.canonicalOrderNote = flags.canonicalOrderNote;
   try {
     return await fn(calls);
   } finally {
@@ -136,6 +142,8 @@ export async function runWithDb<T>(
     ff.canonicalAppointment = savedFlags.canonicalAppointment!;
     ff.ancillaryCaseWrite = savedFlags.ancillaryCaseWrite!;
     ff.plexusIdentityWrite = savedFlags.plexusIdentityWrite!;
+    ff.unifiedAncillaryDocuments = savedFlags.unifiedAncillaryDocuments!;
+    ff.canonicalOrderNote = savedFlags.canonicalOrderNote!;
   }
 }
 
@@ -148,6 +156,9 @@ export async function loadCanonicalTables() {
   const appts = await import("../../shared/schema/appointments");
   const plex = await import("../../shared/schema/plexusIdentity");
   const clc = await import("../../shared/schema/clinics");
+  const docs = await import("../../shared/schema/ancillaryDocuments");
+  const genNotes = await import("../../shared/schema/generatedNotes");
+  const docReadiness = await import("../../shared/schema/documentReadiness");
   return {
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
@@ -160,6 +171,11 @@ export async function loadCanonicalTables() {
     globalPatients: plex.globalPlexusPatients,
     memberships: plex.patientClinicMemberships,
     clinics: clc.clinics,
+    // Phase 2E
+    documentReferences: docs.ancillaryDocumentReferences,
+    documentFailures: docs.ancillaryDocumentReconciliationFailures,
+    procedureNotes: genNotes.procedureNotes,
+    caseDocumentReadiness: docReadiness.caseDocumentReadiness,
   };
 }
 
