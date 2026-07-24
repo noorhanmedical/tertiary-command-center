@@ -11,6 +11,7 @@ import {
   listUnresolvedAncillaryDocumentFailures,
   recordAncillaryDocumentFailure,
   resolveAncillaryDocumentFailure,
+  resolveAncillaryDocumentFailureById,
 } from "../../repositories/ancillaryDocuments.repo";
 import type { AncillaryDocumentReconciliationFailure } from "@shared/schema/ancillaryDocuments";
 import { createOrReuseOrderNote, linkOrderNoteAdminReviewEvidence } from "./orderNoteService";
@@ -47,21 +48,24 @@ export async function retryAncillaryDocumentFailure(
     }
     if (failure.requestedAction === "link_order_note_evidence" && failure.ancillaryCaseId != null) {
       // Order Note already exists; only the immutable Admin Review evidence
-      // link was deferred. LINK-ONLY retry — never touches note body,
-      // signature, signedAt, or signer.
+      // link was deferred. Fully tenant-validated, atomic, LINK-ONLY retry —
+      // never touches note body, signature, signedAt, or signer.
       const r = await linkOrderNoteAdminReviewEvidence({
         clinicId: failure.clinicId,
         ancillaryCaseId: failure.ancillaryCaseId,
         sourceId: failure.sourceId,
       });
+      if (r.status === "skipped_flag_off") {
+        return { failureId: failure.id, requestedAction: failure.requestedAction, status: "skipped", message: r.status };
+      }
       if (r.status === "linked") {
-        await resolveAncillaryDocumentFailure({
-          ancillaryCaseId: failure.ancillaryCaseId,
-          documentKind: "order_note",
-          requestedAction: "link_order_note_evidence",
-        });
+        // Resolve ONLY this exact failure row (idempotent), never every row
+        // sharing case + kind + action — a sibling retry may still be open.
+        await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
         return { failureId: failure.id, requestedAction: failure.requestedAction, status: "resolved" };
       }
+      // still_deferred / cross_clinic_denied / note_case_mismatch /
+      // note_not_found / reference_update_failed → keep the failure UNRESOLVED.
       return { failureId: failure.id, requestedAction: failure.requestedAction, status: "still_deferred", message: r.status };
     }
     // create_reference / refresh_projection / link_report / link_consent /

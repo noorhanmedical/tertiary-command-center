@@ -95,9 +95,13 @@ export const procedureNotes = pgTable("procedure_notes", {
 // Order Note identity/evidence/supersession fields AND the signature
 // fields (signatureStatus / signedAt / signedByUserId). Signature is NOT
 // part of note creation or a general update: it flows exclusively through
-// the dedicated, session-authenticated signing contract below
-// (ProcedureNoteSignatureUpdate) so a client body can never seed a
-// signer, a signed-at instant, or a signature status on create/update.
+// dedicated, server-owned, clinic-scoped signing commands in the
+// repository layer (signProcedureNoteRow / returnProcedureNoteRow) so a
+// client body can NEVER seed a signer, a signed-at instant, or a
+// signature status. There is deliberately NO exported shared schema that
+// carries signedAt or signedByUserId — those two fields are stamped
+// exclusively at the repository boundary (server time + authenticated
+// session user), never accepted from any request payload.
 export const insertProcedureNoteSchema = createInsertSchema(procedureNotes).omit({
   id: true,
   createdAt: true,
@@ -117,27 +121,3 @@ export const insertProcedureNoteSchema = createInsertSchema(procedureNotes).omit
 
 export type ProcedureNote = typeof procedureNotes.$inferSelect;
 export type InsertProcedureNote = z.infer<typeof insertProcedureNoteSchema>;
-
-// ─── Dedicated, server-only signing update contract ──────────────────
-// The ONLY authorized path to write signature state. Not derived from the
-// insert schema — it carries just the fields the signing / return-for-
-// correction services own. The signer identity ALWAYS comes from the
-// authenticated session and signedAt ALWAYS comes from server time at the
-// repository boundary; a client body can never supply either. Reuses the
-// existing signature statuses (needs_signature is the create-time default
-// and is never a signing *transition* target here).
-export const PROCEDURE_NOTE_SIGNATURE_UPDATE_STATUSES = [
-  "ready_to_sign",
-  "signed",
-  "returned_for_correction",
-] as const;
-export type ProcedureNoteSignatureUpdateStatus =
-  typeof PROCEDURE_NOTE_SIGNATURE_UPDATE_STATUSES[number];
-
-export const procedureNoteSignatureUpdateSchema = z.object({
-  signatureStatus: z.enum(PROCEDURE_NOTE_SIGNATURE_UPDATE_STATUSES),
-  signedAt: z.date().nullable().optional(),
-  signedByUserId: z.string().nullable().optional(),
-  returnReason: z.string().nullable().optional(),
-});
-export type ProcedureNoteSignatureUpdate = z.infer<typeof procedureNoteSignatureUpdateSchema>;

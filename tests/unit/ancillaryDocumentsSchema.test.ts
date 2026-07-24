@@ -182,8 +182,9 @@ async function testNoAlwaysEnforcedOrderNoteCaseConstraint() {
 
 async function testServerOwnedFieldsNotClientInput() {
   const shapeKeys = Object.keys(insertProcedureNoteSchema.shape);
-  // Signature fields are now also omitted — signing flows only through the
-  // dedicated server-only ProcedureNoteSignatureUpdate contract.
+  // Signature fields are omitted — signing flows only through the dedicated,
+  // server-owned, clinic-scoped signing commands in the repository layer
+  // (signProcedureNoteRow / returnProcedureNoteRow), never a client payload.
   for (const k of ["signatureStatus", "signedAt", "signedByUserId", "ancillaryCaseId", "globalPlexusPatientId", "patientClinicMembershipId", "qualifyingGlobalScheduleEventId", "adminReviewEventId", "effectiveClinicalDate", "supersedesNoteId", "supersededAt"]) {
     assert.ok(!shapeKeys.includes(k), `server-owned field must not be client-insertable: ${k}`);
   }

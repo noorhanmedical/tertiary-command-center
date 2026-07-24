@@ -24,9 +24,9 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { logAudit } from "../services/auditService";
 import {
   listSignatureItems,
-  signNote,
+  signProcedureNote,
   bulkSignNotes,
-  returnNoteForCorrection,
+  returnProcedureNoteForCorrection,
 } from "../services/physicianPortal/signatureWorkflow";
 import {
   getPhysicianPortalSummary,
@@ -57,6 +57,21 @@ function parseIntSafe(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Derive the authenticated clinic scope from request context (populated by
+ * the clinicContext middleware from the session — never from body, params,
+ * or query). Fails closed with 403 when absent so no signature read/write
+ * can run unscoped.
+ */
+function requireClinicScope(req: Request, res: Response): number | null {
+  const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+  if (clinicId == null) {
+    res.status(403).json({ error: "Clinic scope required" });
+    return null;
+  }
+  return clinicId;
+}
+
 export function registerPhysicianPortalRoutes(app: Express) {
   // ─── GET /api/physician-portal/signature-items ────────────────────────────
   // Worklist for the SignaturesTab. Optional filters: serviceType,
@@ -67,8 +82,11 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const q = req.query as Record<string, string | undefined>;
         const items = await listSignatureItems({
+          clinicId,
           limit: q.limit ? parseInt(q.limit, 10) || undefined : undefined,
           serviceType: q.serviceType,
           signatureStatus: q.signatureStatus,
@@ -88,9 +106,15 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const id = parseIntSafe(req.params.id);
         if (id == null) return res.status(400).json({ error: "Invalid id" });
-        const outcome = await signNote(id, req.session.userId ?? null);
+        const outcome = await signProcedureNote({
+          id,
+          clinicId,
+          authenticatedSignerUserId: req.session.userId ?? null,
+        });
         if (!outcome.ok) return res.status(outcome.code).json({ error: outcome.error });
         void logAudit(req, "sign", "procedure_note", id, {
           serviceType: outcome.note.serviceType,
@@ -110,6 +134,8 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const raw: unknown = req.body?.ids;
         if (!Array.isArray(raw) || raw.length === 0) {
           return res.status(400).json({ error: "ids[] is required" });
@@ -120,7 +146,7 @@ export function registerPhysicianPortalRoutes(app: Express) {
         if (ids.length === 0) {
           return res.status(400).json({ error: "No valid ids supplied" });
         }
-        const results = await bulkSignNotes(ids, req.session.userId ?? null);
+        const results = await bulkSignNotes(ids, clinicId, req.session.userId ?? null);
         if (results.signed.length > 0) {
           void logAudit(req, "bulk_sign", "procedure_note", 0, {
             signed: results.signed,
@@ -141,10 +167,12 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const id = parseIntSafe(req.params.id);
         if (id == null) return res.status(400).json({ error: "Invalid id" });
         const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
-        const outcome = await returnNoteForCorrection(id, reason);
+        const outcome = await returnProcedureNoteForCorrection({ id, clinicId, reason });
         if (!outcome.ok) return res.status(outcome.code).json({ error: outcome.error });
         void logAudit(req, "return_for_correction", "procedure_note", id, {
           reason: reason.trim(),

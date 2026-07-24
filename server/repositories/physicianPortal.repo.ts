@@ -17,6 +17,9 @@ import { SIGNABLE_GEN_STATUSES } from "../services/physicianPortal/signatureRule
 // eligibility rule.
 
 export type PhysicianSignatureListFilters = {
+  // Authenticated clinic scope — REQUIRED. Every signature read is filtered
+  // to this clinic; it is derived from req.clinicId, never a request payload.
+  clinicId: number;
   limit?: number;
   serviceType?: string;
   signatureStatus?: string;
@@ -48,6 +51,8 @@ export async function listSignatureCandidateRows(
     : 200;
 
   const conditions = [
+    // Tenant isolation: only this clinic's notes are ever listed.
+    eq(procedureNotes.clinicId, filters.clinicId),
     inArray(procedureNotes.generationStatus, [...SIGNABLE_GEN_STATUSES]),
     sql`COALESCE(${procedureNotes.signatureStatus}, 'needs_signature') <> 'signed'`,
   ];
@@ -120,9 +125,13 @@ export async function listSignatureCandidateRows(
  */
 export async function listReportUploadedKeys(
   patientScreeningIds: number[],
+  clinicId: number,
 ): Promise<Set<string>> {
   const keys = new Set<string>();
   if (patientScreeningIds.length === 0) return keys;
+  // Screening ids already come from clinic-scoped notes; the clinic guard
+  // (tolerating legacy NULL clinic_id for those screenings) keeps a
+  // mislabeled cross-clinic readiness row from leaking a flag.
   const rows = await db.execute<{
     patient_screening_id: number;
     service_type: string;
@@ -131,6 +140,7 @@ export async function listReportUploadedKeys(
       FROM case_document_readiness
      WHERE document_type = 'report'
        AND document_status IN ('uploaded', 'approved', 'completed')
+       AND (clinic_id = ${clinicId} OR clinic_id IS NULL)
        AND patient_screening_id IN (${sql.join(patientScreeningIds, sql`, `)})
   `);
   for (const r of rows.rows) {
@@ -147,6 +157,7 @@ export async function listReportUploadedKeys(
  */
 export async function listLatestBillingReadinessStatuses(
   patientScreeningIds: number[],
+  clinicId: number,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (patientScreeningIds.length === 0) return out;
@@ -159,6 +170,7 @@ export async function listLatestBillingReadinessStatuses(
            patient_screening_id, service_type, readiness_status
       FROM billing_readiness_checks
      WHERE patient_screening_id IN (${sql.join(patientScreeningIds, sql`, `)})
+       AND (clinic_id = ${clinicId} OR clinic_id IS NULL)
      ORDER BY patient_screening_id, service_type, updated_at DESC
   `);
   for (const r of rows.rows) {
@@ -167,14 +179,20 @@ export async function listLatestBillingReadinessStatuses(
   return out;
 }
 
-/** Load a single procedure_notes row by id. Returns undefined when absent. */
-export async function getProcedureNoteById(
-  id: number,
-): Promise<ProcedureNote | undefined> {
+/**
+ * Load a single procedure_notes row scoped to the authenticated clinic.
+ * Requires BOTH id and clinicId. Returns undefined for both an absent id
+ * and an other-clinic id — the caller maps both to the same not-found
+ * response, so tenant existence is never disclosed.
+ */
+export async function getProcedureNoteByIdForClinic(args: {
+  id: number;
+  clinicId: number;
+}): Promise<ProcedureNote | undefined> {
   const [note] = await db
     .select()
     .from(procedureNotes)
-    .where(eq(procedureNotes.id, id))
+    .where(and(eq(procedureNotes.id, args.id), eq(procedureNotes.clinicId, args.clinicId)))
     .limit(1);
   return note;
 }

@@ -153,80 +153,94 @@ async function testInsertSchemaRejectsSignatureFields() {
 async function testSignUsesSessionAndServerTime() {
   const t = await loadCanonicalTables();
   const wf = await signWf();
-  let up: Record<string, unknown> | null = null;
-  const spec = baseSpec(t, {
-    procedureNotes: { select: () => [signableNote()], onUpdate: (v) => { up = v; return [{ ...signableNote(), ...v }]; } },
-  });
-  const before = Date.now();
-  const r = await runWithDb(spec, {}, async () => wf.signNote(42, "session-user-1"));
-  assert.equal(r.ok, true);
-  const p = up as Record<string, unknown>;
-  assert.equal(p.signatureStatus, "signed");
-  assert.equal(p.signedByUserId, "session-user-1", "(14) signer is the session user id");
-  assert.ok(p.signedAt instanceof Date, "(15) signedAt is a server Date");
-  assert.ok((p.signedAt as Date).getTime() >= before, "(15) signedAt is server 'now', not backdated");
-  assert.equal(p.generationStatus, "approved", "signing promotes to approved");
+  wf.setBillingReevalScheduler(() => { /* drop side-effect: no async DB leak */ });
+  try {
+    let up: Record<string, unknown> | null = null;
+    const spec = baseSpec(t, {
+      procedureNotes: { select: () => [signableNote()], onUpdate: (v) => { up = v; return [{ ...signableNote(), ...v }]; } },
+    });
+    const before = Date.now();
+    const r = await runWithDb(spec, {}, async () =>
+      wf.signProcedureNote({ id: 42, clinicId: 1, authenticatedSignerUserId: "session-user-1" }));
+    assert.equal(r.ok, true);
+    const p = up as Record<string, unknown>;
+    assert.equal(p.signatureStatus, "signed");
+    assert.equal(p.signedByUserId, "session-user-1", "(14) signer is the session user id");
+    assert.ok(p.signedAt instanceof Date, "(15) signedAt is a server Date");
+    assert.ok((p.signedAt as Date).getTime() >= before, "(15) signedAt is server 'now', not backdated");
+    assert.equal(p.generationStatus, "approved", "signing promotes to approved");
+  } finally {
+    wf.setBillingReevalScheduler(null);
+  }
 }
 
 // ─── (16) client signer identity cannot be injected ───────────────
 async function testClientSignerCannotBeUsed() {
   const { insertProcedureNoteSchema } = await genSchema();
-  const { applyProcedureNoteSignatureUpdate } = await notesRepo();
+  const { signProcedureNoteRow } = await notesRepo();
   // No client-body path carries a signer id into a note...
   const parsed = insertProcedureNoteSchema.parse({ serviceType: "EchoWave", noteType: "order_note", signedByUserId: "attacker" } as Record<string, unknown>) as Record<string, unknown>;
   assert.ok(!("signedByUserId" in parsed));
-  // ...and the dedicated contract writes exactly the signer it is given,
-  // never fabricating one when absent.
+  // ...and the server-owned command writes exactly the session signer it is
+  // given (here null), never fabricating one.
   const t = await loadCanonicalTables();
   let up: Record<string, unknown> | null = null;
   const spec = baseSpec(t, { procedureNotes: { select: () => [signableNote()], onUpdate: (v) => { up = v; return [{ ...signableNote(), ...v }]; } } });
-  await runWithDb(spec, {}, async () => applyProcedureNoteSignatureUpdate(42, { signatureStatus: "signed", signedByUserId: null }));
+  await runWithDb(spec, {}, async () => signProcedureNoteRow({ id: 42, clinicId: 1, signedByUserId: null }));
   assert.equal((up as Record<string, unknown>).signedByUserId, null, "absent signer is null, never fabricated");
 }
 
 // ─── (17) client signedAt cannot be used ──────────────────────────
 async function testClientSignedAtCannotBeUsed() {
   const { insertProcedureNoteSchema } = await genSchema();
-  const { applyProcedureNoteSignatureUpdate } = await notesRepo();
+  const { signProcedureNoteRow } = await notesRepo();
   const parsed = insertProcedureNoteSchema.parse({ serviceType: "EchoWave", noteType: "order_note", signedAt: new Date("2000-01-01T00:00:00Z") } as Record<string, unknown>) as Record<string, unknown>;
   assert.ok(!("signedAt" in parsed), "client signedAt stripped on create");
-  // When signing without an explicit signedAt, the repo stamps server time.
+  // The signing command stamps server time; it has no signedAt input at all.
   const t = await loadCanonicalTables();
   let up: Record<string, unknown> | null = null;
   const spec = baseSpec(t, { procedureNotes: { select: () => [signableNote()], onUpdate: (v) => { up = v; return [{ ...signableNote(), ...v }]; } } });
   const before = Date.now();
-  await runWithDb(spec, {}, async () => applyProcedureNoteSignatureUpdate(42, { signatureStatus: "signed" }));
+  await runWithDb(spec, {}, async () => signProcedureNoteRow({ id: 42, clinicId: 1, signedByUserId: "u1" }));
   const at = (up as Record<string, unknown>).signedAt as Date;
   assert.ok(at instanceof Date && at.getTime() >= before, "server-stamped signedAt");
 }
 
-// ─── (18) general update cannot overwrite signed note content ─────
+// ─── (18) general update cannot overwrite a signed note (any field) ─
 async function testGeneralUpdateCannotOverwriteSigned() {
   const t = await loadCanonicalTables();
   const { updateGeneratedNote } = await notesRepo();
   const spec = baseSpec(t, { procedureNotes: { select: () => [signableNote({ signatureStatus: "signed", signedAt: START })], onUpdate: (v) => [{ ...v }] } });
   await runWithDb(spec, {}, async (calls: Call[]) => {
+    // Content field rejected...
     await assert.rejects(
       () => updateGeneratedNote(42, { generatedText: "tampered" } as never),
-      /signed_note_content_immutable/,
+      /signed_note_immutable/i,
       "signed content is immutable via general update",
+    );
+    // ...and so is a non-content field (full immutability, not silent ignore).
+    await assert.rejects(
+      () => updateGeneratedNote(42, { generationStatus: "pending" } as never),
+      /signed_note_immutable/i,
+      "even generationStatus cannot change on a signed note",
     );
     assert.equal(countOps(calls, "update", t.procedureNotes), 0, "no write occurs on rejection");
   });
 }
 
-// ─── (19) return-for-correction uses the dedicated contract ───────
+// ─── (19) return-for-correction uses the dedicated clinic-scoped path ─
 async function testReturnUsesDedicatedContract() {
   const t = await loadCanonicalTables();
   const wf = await signWf();
   let up: Record<string, unknown> | null = null;
   const spec = baseSpec(t, { procedureNotes: { select: () => [signableNote()], onUpdate: (v) => { up = v; return [{ ...signableNote(), ...v }]; } } });
-  const r = await runWithDb(spec, {}, async () => wf.returnNoteForCorrection(42, "  please fix section 2  "));
+  const r = await runWithDb(spec, {}, async () =>
+    wf.returnProcedureNoteForCorrection({ id: 42, clinicId: 1, reason: "  please fix section 2  " }));
   assert.equal(r.ok, true);
   const p = up as Record<string, unknown>;
   assert.equal(p.signatureStatus, "returned_for_correction");
   assert.equal(p.returnReason, "please fix section 2", "reason trimmed");
-  // The dedicated contract never sets signing/approval fields on a return.
+  // The dedicated command never fabricates signing/approval fields on a return.
   for (const forbidden of ["signedAt", "signedByUserId", "generationStatus"]) {
     assert.ok(!(forbidden in p), `return must not write ${forbidden}`);
   }
@@ -270,13 +284,15 @@ async function testRetryLinksEventOnly() {
   const s = await orderNoteSvc();
   let up: Record<string, unknown> | null = null;
   const spec = baseSpec(t, {
+    // Valid, same-clinic, same-case current order note (found by raw read).
+    procedureNotes: { select: () => [noteRow({ id: 900 })], onUpdate: (v) => { up = v; return [{ ...noteRow(), ...v }]; } },
     adminReviewEvents: { select: () => [{ id: 555 }] }, // now resolvable
-    procedureNotes: { select: () => [], onUpdate: (v) => { up = v; return [{ ...noteRow(), ...v }]; } },
-    documentReferences: { select: () => [], onInsert: (v) => [{ ...v, id: 42 }] },
+    documentReferences: { select: () => [] }, // no reference yet — link note only, never fabricate
   });
-  const r = await runWithDb(spec, { unifiedAncillaryDocuments: true }, async (calls: Call[]) => {
+  const r = await runWithDb(spec, FLAGS, async (calls: Call[]) => {
     const res = await s.linkOrderNoteAdminReviewEvidence({ clinicId: 1, ancillaryCaseId: 5, sourceId: 900 });
     assert.equal(countOps(calls, "update", t.procedureNotes), 1, "single link-only update");
+    assert.equal(countOps(calls, "insert", t.documentReferences), 0, "missing reference is never fabricated");
     return res;
   });
   assert.equal(r.status, "linked");
@@ -289,11 +305,11 @@ async function testRetryLinksEventOnly() {
   }
 }
 
-// ─── (24) feature OFF performs zero evidence-retry reads/writes ───
+// ─── (24) both feature flags OFF → zero evidence-retry reads/writes ─
 async function testFeatureOffNoEvidenceRetry() {
   const t = await loadCanonicalTables();
   const s = await orderNoteSvc();
-  const r = await runWithDb(baseSpec(t), { unifiedAncillaryDocuments: false }, async (calls: Call[]) => {
+  const r = await runWithDb(baseSpec(t), { unifiedAncillaryDocuments: false, canonicalOrderNote: false }, async (calls: Call[]) => {
     const res = await s.linkOrderNoteAdminReviewEvidence({ clinicId: 1, ancillaryCaseId: 5, sourceId: 900 });
     assert.equal(calls.length, 0, "feature OFF issues zero reads/writes");
     return res;

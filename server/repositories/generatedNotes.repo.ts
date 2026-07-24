@@ -4,7 +4,6 @@ import {
   procedureNotes,
   type ProcedureNote,
   type InsertProcedureNote,
-  type ProcedureNoteSignatureUpdate,
 } from "@shared/schema/generatedNotes";
 
 export type ListProcedureNotesFilters = {
@@ -23,42 +22,42 @@ export async function createGeneratedNote(
   return result;
 }
 
-// Content fields that a signed note must never have overwritten through
-// the GENERAL update path. Signature transitions are NOT in this set — they
-// have their own dedicated, session-authenticated path below.
-const SIGNED_NOTE_IMMUTABLE_CONTENT_FIELDS: Array<keyof InsertProcedureNote> = [
-  "generatedText",
-  "generatedByAi",
-  "sourceData",
-  "serviceType",
-  "noteType",
-  "errorMessage",
-];
+/** Structured error thrown when a general update targets a SIGNED note. */
+export class SignedNoteImmutableError extends Error {
+  code = "SIGNED_NOTE_IMMUTABLE" as const;
+  constructor() {
+    super("signed_note_immutable: a signed note cannot be altered through the general update path");
+    this.name = "SignedNoteImmutableError";
+  }
+}
 
 /**
  * General note update. The `updates` type (Partial<InsertProcedureNote>)
  * structurally CANNOT carry signatureStatus/signedAt/signedByUserId — those
- * are omitted from the insert schema and only writable via
- * applyProcedureNoteSignatureUpdate. Additionally, once a note is signed its
- * clinical content is immutable through this path.
+ * are omitted from the insert schema and only writable via the dedicated
+ * clinic-scoped signing commands below.
+ *
+ * A SIGNED note is FULLY immutable through this path: any non-empty update
+ * to a row with signatureStatus = 'signed' is rejected with a structured
+ * SIGNED_NOTE_IMMUTABLE error (never silently ignored). Only the dedicated,
+ * audited signing/return transitions may change a note after signing.
  */
 export async function updateGeneratedNote(
   id: number,
   updates: Partial<InsertProcedureNote>,
 ): Promise<ProcedureNote | undefined> {
-  const touchesContent = SIGNED_NOTE_IMMUTABLE_CONTENT_FIELDS.some((f) => f in updates);
-  if (touchesContent) {
+  const hasUpdate = Object.keys(updates).length > 0;
+  if (hasUpdate) {
     const [existing] = await db
       .select()
       .from(procedureNotes)
       .where(eq(procedureNotes.id, id))
       .limit(1);
     if (existing?.signatureStatus === "signed") {
-      const err = new Error(
-        "signed_note_content_immutable: a signed note's content cannot be overwritten through a general update",
-      ) as Error & { code?: string };
-      err.code = "SIGNED_NOTE_CONTENT_IMMUTABLE";
-      throw err;
+      // Reject EVERY field: content, linkage, serviceType/noteType,
+      // generationStatus, clinicId, identity/evidence/supersession,
+      // returnReason — the general path may not touch a signed note at all.
+      throw new SignedNoteImmutableError();
     }
   }
   const [result] = await db
@@ -69,39 +68,66 @@ export async function updateGeneratedNote(
   return result;
 }
 
+// ─── Dedicated, server-owned, clinic-scoped signing commands ─────────
+// These are the ONLY paths that write signatureStatus/signedAt/
+// signedByUserId/returnReason. They carry NO client-supplied signer or
+// timestamp: signedAt is stamped from server time here, and signedByUserId
+// is the authenticated session user id passed by the route/service layer.
+// Every write is scoped by BOTH the note id AND the caller's clinicId, so a
+// clinician can never sign or return a note belonging to another clinic —
+// and an absent/other-clinic id returns `undefined` (the same not-found
+// signal), disclosing no cross-tenant existence.
+
+export type SignProcedureNoteCommand = {
+  id: number;
+  clinicId: number;
+  /** Authenticated session user id — never a request-body value. */
+  signedByUserId: string | null;
+};
+
+export type ReturnProcedureNoteCommand = {
+  id: number;
+  clinicId: number;
+  reason: string;
+};
+
 /**
- * Dedicated, server-only signature transition. This is the ONLY path that
- * writes signatureStatus/signedAt/signedByUserId/returnReason.
- *
- * - The signer id is taken from `update.signedByUserId`, which callers
- *   MUST source from the authenticated session — never a client body.
- * - When transitioning to `signed`, signedAt is stamped from SERVER time
- *   (any caller-supplied value is a server-computed `new Date()`), and the
- *   note is promoted to `approved` so downstream billing readiness rules
- *   treat it as a passing document.
- * - Non-signing transitions never touch signedAt/signedByUserId.
+ * Sign a note. Server-owned: signedAt = server time, signer = authenticated
+ * session user, generationStatus promoted to 'approved' (existing billing
+ * readiness behavior). Scoped by (id, clinicId).
  */
-export async function applyProcedureNoteSignatureUpdate(
-  id: number,
-  update: ProcedureNoteSignatureUpdate,
+export async function signProcedureNoteRow(
+  cmd: SignProcedureNoteCommand,
 ): Promise<ProcedureNote | undefined> {
-  const set: Record<string, unknown> = {
-    signatureStatus: update.signatureStatus,
-    updatedAt: new Date(),
-  };
-  if (update.signatureStatus === "signed") {
-    // Server-owned: signer identity + signing instant are authoritative.
-    set.signedAt = update.signedAt ?? new Date();
-    set.signedByUserId = update.signedByUserId ?? null;
-    set.generationStatus = "approved";
-  }
-  if (update.signatureStatus === "returned_for_correction") {
-    set.returnReason = update.returnReason ?? null;
-  }
   const [result] = await db
     .update(procedureNotes)
-    .set(set)
-    .where(eq(procedureNotes.id, id))
+    .set({
+      signatureStatus: "signed",
+      signedAt: new Date(),
+      signedByUserId: cmd.signedByUserId,
+      generationStatus: "approved",
+      updatedAt: new Date(),
+    })
+    .where(and(eq(procedureNotes.id, cmd.id), eq(procedureNotes.clinicId, cmd.clinicId)))
+    .returning();
+  return result;
+}
+
+/**
+ * Return a note for correction. Never fabricates signing data (no signedAt,
+ * no signer). Scoped by (id, clinicId).
+ */
+export async function returnProcedureNoteRow(
+  cmd: ReturnProcedureNoteCommand,
+): Promise<ProcedureNote | undefined> {
+  const [result] = await db
+    .update(procedureNotes)
+    .set({
+      signatureStatus: "returned_for_correction",
+      returnReason: cmd.reason,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(procedureNotes.id, cmd.id), eq(procedureNotes.clinicId, cmd.clinicId)))
     .returning();
   return result;
 }

@@ -179,6 +179,9 @@ export const ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES = {
   orderNotePendingSignature: "order_note_pending_signature",
   projectionFailed: "ancillary_document_projection_failed",
   reconciliationResolved: "ancillary_document_reconciliation_resolved",
+  // Admin Review evidence was deferred AND the durable retry row could not
+  // be persisted — surfaced so reconciliation durability is never overstated.
+  evidenceRetryNotRecorded: "ancillary_document_evidence_retry_not_recorded",
 } as const;
 export type AncillaryDocumentJourneyEventType =
   (typeof ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES)[keyof typeof ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES];

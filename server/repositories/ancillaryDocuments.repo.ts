@@ -315,6 +315,34 @@ export async function resolveAncillaryDocumentFailure(args: {
     .where(and(...conds));
 }
 
+/**
+ * Resolve EXACTLY ONE reconciliation failure by its primary key, scoped to
+ * the owning clinic. Unlike resolveAncillaryDocumentFailure (which resolves
+ * every row matching case + kind + action), this closes only the specific
+ * failure that was successfully processed — so a still-pending sibling retry
+ * (e.g. a separate link_order_note) is never silently swept closed.
+ *
+ * Idempotent: the `resolvedAt IS NULL` guard means a second call resolves
+ * nothing and returns false, without error.
+ */
+export async function resolveAncillaryDocumentFailureById(args: {
+  id: number;
+  clinicId: number;
+}): Promise<boolean> {
+  const rows = await db
+    .update(ancillaryDocumentReconciliationFailures)
+    .set({ resolvedAt: sql`CURRENT_TIMESTAMP` })
+    .where(
+      and(
+        eq(ancillaryDocumentReconciliationFailures.id, args.id),
+        eq(ancillaryDocumentReconciliationFailures.clinicId, args.clinicId),
+        isNull(ancillaryDocumentReconciliationFailures.resolvedAt),
+      ),
+    )
+    .returning();
+  return rows.length > 0;
+}
+
 export async function listUnresolvedAncillaryDocumentFailures(args?: {
   clinicId?: number;
   limit?: number;
