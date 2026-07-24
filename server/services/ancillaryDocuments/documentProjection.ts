@@ -21,23 +21,14 @@ import {
   searchClinicReferences,
   type ClinicDocumentSearchFilters,
 } from "../../repositories/ancillaryDocuments.repo";
-import type { AncillaryDocumentReference } from "@shared/schema/ancillaryDocuments";
+import type {
+  AncillaryDocumentReference,
+  AncillaryDocumentContractItem,
+} from "@shared/schema/ancillaryDocuments";
 
-export type AncillaryDocumentView = {
-  ancillaryDocumentReferenceId: number;
-  documentKind: string;
-  sourceSystem: string | null;
-  sourceTable: string;
-  sourceId: number;
-  documentStatus: string;
-  effectiveClinicalDate: string | null;
-  actualCreatedAt: string;
-  signedAt: string | null;
-  supersededAt: string | null;
-  downloadReference: string | null;
-  readiness: "ready" | "pending" | "history";
-  warnings: string[];
-};
+// The per-case view reuses the shared contract item shape verbatim so every
+// surface renders identical fields + ids.
+export type AncillaryDocumentView = AncillaryDocumentContractItem;
 
 export type AncillaryCaseDocuments = {
   ancillaryCaseId: number;
@@ -69,9 +60,15 @@ function readinessFor(ref: AncillaryDocumentReference): "ready" | "pending" | "h
   return "pending";
 }
 
+function isCurrentRef(ref: AncillaryDocumentReference): boolean {
+  return ref.supersededAt == null && ref.documentStatus !== "voided" && ref.documentStatus !== "superseded";
+}
+
 function toView(ref: AncillaryDocumentReference): AncillaryDocumentView {
   return {
     ancillaryDocumentReferenceId: ref.id,
+    ancillaryCaseId: ref.ancillaryCaseId,
+    serviceType: ref.serviceType,
     documentKind: ref.documentKind,
     sourceSystem: ref.sourceSystem,
     sourceTable: ref.sourceTable,
@@ -81,7 +78,8 @@ function toView(ref: AncillaryDocumentReference): AncillaryDocumentView {
     actualCreatedAt: ref.actualCreatedAt.toISOString(),
     signedAt: ref.signedAt ? ref.signedAt.toISOString() : null,
     supersededAt: ref.supersededAt ? ref.supersededAt.toISOString() : null,
-    // A stable source pointer — never document bytes.
+    isCurrent: isCurrentRef(ref),
+    // A stable source pointer — never document bytes, never a raw bucket key.
     downloadReference: `${ref.sourceTable}:${ref.sourceId}`,
     readiness: readinessFor(ref),
     warnings: [],
@@ -133,4 +131,58 @@ export async function getAncillaryDocumentsProjection(
     });
   }
   return { flagOff: false, cases };
+}
+
+// ─── Flat operational list (GET /api/ancillary-documents) ───────────
+export type DocumentsListQuery = DocumentsProjectionQuery & {
+  serviceType?: string;
+  documentKind?: string;
+  documentStatus?: string;
+  limit?: number;
+  // Keyset cursor: return rows with reference id strictly less than this
+  // (paired with the deterministic actualCreatedAt DESC, id DESC ordering).
+  cursor?: number;
+};
+
+export type DocumentsListResult = {
+  flagOff: boolean;
+  items: AncillaryDocumentView[];
+  nextCursor: number | null;
+};
+
+const LIST_DEFAULT_LIMIT = 200;
+const LIST_MAX_LIMIT = 500;
+
+/**
+ * Flat, deterministically-ordered, bounded list for the global operational
+ * view. Ordering: actualCreatedAt DESC, then reference id DESC. Feature OFF →
+ * zero reads. Another clinic's rows are never surfaced (repo + guard here).
+ */
+export async function getAncillaryDocumentsList(
+  query: DocumentsListQuery,
+): Promise<DocumentsListResult> {
+  if (!featureFlags.unifiedAncillaryDocuments) return { flagOff: true, items: [], nextCursor: null };
+
+  const limit = Math.min(Math.max(1, query.limit ?? LIST_DEFAULT_LIMIT), LIST_MAX_LIMIT);
+  const filters: ClinicDocumentSearchFilters = { clinicId: query.clinicId, limit: LIST_MAX_LIMIT };
+  if (query.ancillaryCaseId != null) filters.ancillaryCaseId = query.ancillaryCaseId;
+  if (query.patientScreeningId != null) filters.patientScreeningId = query.patientScreeningId;
+  if (query.executionCaseId != null) filters.executionCaseId = query.executionCaseId;
+  if (query.globalPlexusPatientId != null) filters.globalPlexusPatientId = query.globalPlexusPatientId;
+  if (query.serviceType != null) filters.serviceType = query.serviceType;
+  if (query.documentKind != null) filters.documentKind = query.documentKind as never;
+  if (query.documentStatus != null) filters.documentStatus = query.documentStatus;
+
+  const refs = await searchClinicReferences(filters);
+  const includeHistory = query.includeHistory ?? true;
+  let scoped = refs.filter((r) => r.clinicId === query.clinicId);
+  if (!includeHistory) scoped = scoped.filter(isCurrentRef);
+
+  // Deterministic ordering: actualCreatedAt DESC, then reference id DESC.
+  scoped.sort((a, b) => b.actualCreatedAt.getTime() - a.actualCreatedAt.getTime() || b.id - a.id);
+  if (query.cursor != null) scoped = scoped.filter((r) => r.id < query.cursor!);
+
+  const page = scoped.slice(0, limit);
+  const nextCursor = scoped.length > limit ? page[page.length - 1].id : null;
+  return { flagOff: false, items: page.map(toView), nextCursor };
 }

@@ -30,6 +30,8 @@ import {
   type CallCaseContext,
   type CaseProofDoc,
 } from "@/components/portal/caseWorkspace";
+import { AncillaryDocumentsSummary } from "@/components/ancillary-documents/CanonicalAncillaryDocuments";
+import { isUnifiedAncillaryDocumentsEnabled } from "@/lib/unifiedAncillaryDocumentsFlag";
 
 export type CaseOverviewProps = {
   ctx: CallCaseContext;
@@ -331,6 +333,14 @@ export function CaseOverview({
                 <StatusPill label={lifecycleStatus} tone="slate" />
               ) : null}
             </div>
+            {/* Phase 2E-B — read-only canonical Ancillary Documents status.
+                Same server projection/ids as /ancillary-documents; flag OFF
+                renders nothing and issues zero canonical requests. */}
+            {isUnifiedAncillaryDocumentsEnabled() && hasScreening ? (
+              <div className="mt-1.5">
+                <AncillaryDocumentsSummary params={{ patientScreeningId: screeningId as number }} enabled />
+              </div>
+            ) : null}
           </div>
           <Button
             size="icon"

@@ -191,3 +191,44 @@ export type AncillaryDocumentJourneyEventType =
 // store. This constant documents the reference's source_table for Order
 // Notes so readers/backfill agree.
 export const ORDER_NOTE_SOURCE_TABLE = "procedure_notes";
+
+// Canonical source tables for the non-Order-Note reference kinds. The
+// reference row NEVER stores bytes — only (source_table, source_id) + a
+// download pointer to an already-authorized route.
+export const REPORT_SOURCE_TABLE = "case_document_readiness";
+export const CONSENT_SOURCE_TABLE = "case_document_readiness";
+export const SCREENING_FORM_SOURCE_TABLE = "case_document_readiness";
+
+// ─── Shared, serializable Ancillary Documents API contract ──────────
+// The single item shape every portal surface renders (/ancillary-documents,
+// Patient EHR, ACS/PCS). Timestamps are ISO strings. NEVER carries document
+// bytes, note body, storage secrets, raw bucket keys, global-identity match
+// data, or retry-ledger internals.
+export type AncillaryDocumentContractItem = {
+  ancillaryDocumentReferenceId: number;
+  ancillaryCaseId: number;
+  serviceType: string | null;
+  documentKind: string;
+  sourceSystem: string | null;
+  sourceTable: string;
+  sourceId: number;
+  documentStatus: string;
+  effectiveClinicalDate: string | null;
+  actualCreatedAt: string;
+  signedAt: string | null;
+  supersededAt: string | null;
+  isCurrent: boolean;
+  // A stable pointer to an existing authorized download/view route, never
+  // bytes and never a raw bucket key. `null` when the source has no file.
+  downloadReference: string | null;
+  readiness: "ready" | "pending" | "history";
+  warnings: string[];
+};
+
+// The global operational list response (GET /api/ancillary-documents).
+export type AncillaryDocumentsListResponse = {
+  // `disabled: true` is the explicit flag-OFF contract (no 0053 reads).
+  disabled?: boolean;
+  items: AncillaryDocumentContractItem[];
+  nextCursor: number | null;
+};

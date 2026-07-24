@@ -40,8 +40,51 @@ import {
   resolveCanonicalAppointmentFailure,
   transitionCanonicalEvent,
 } from "../../repositories/canonicalAppointments.repo";
+import { ensureCanonicalOrderNoteForAncillaryCase } from "../ancillaryDocuments/orderNoteOrchestration";
 
 const AUDIT_SENTINEL_NAME = "[canonical_appointment_audit]";
+
+/**
+ * Phase 2E-B — after a qualifying ancillary appointment becomes available
+ * (scheduled or completed), attempt canonical Order Note create/reuse. This
+ * is ONE side of the two-condition eligibility boundary (the other is Admin
+ * Review approval). Eligibility is decided inside the Order Note service; a
+ * pending review simply yields not_yet_eligible here. NEVER throws — a hook
+ * failure records durable retry and must not reverse the committed
+ * appointment transaction. Reschedule/cancel/no_show do NOT call this.
+ */
+async function fireOrderNoteAppointmentHook(args: {
+  clinicId: number;
+  ancillaryCaseId: number;
+  actorUserId?: string | null;
+  source: string;
+}): Promise<void> {
+  if (!featureFlags.canonicalOrderNote) return;
+  try {
+    const r = await ensureCanonicalOrderNoteForAncillaryCase({
+      clinicId: args.clinicId,
+      ancillaryCaseId: args.ancillaryCaseId,
+      actorUserId: args.actorUserId ?? null,
+      source: `${args.source}:appointment`,
+    });
+    if (r.status === "failed" || r.status === "reconciliation_not_recorded" || r.status === "migration_missing") {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        level: "warn", source: "canonical_appointment", kind: "order_note_hook",
+        status: r.status, clinic_id: args.clinicId, ancillary_case_id: args.ancillaryCaseId,
+      }));
+    }
+  } catch (e) {
+    // Defence in depth — ensure...() already catches, but the parent
+    // transaction must never be reversed by this hook under any circumstance.
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error", source: "canonical_appointment", kind: "order_note_hook_threw",
+      clinic_id: args.clinicId, ancillary_case_id: args.ancillaryCaseId,
+      code: (e as { code?: string })?.code ?? "unknown",
+    }));
+  }
+}
 
 export type CreateAppointmentInput = {
   clinicId: number;
@@ -194,6 +237,7 @@ export async function createCanonicalAncillaryAppointment(
       summary: `Canonical ancillary appointment reused (${serviceType})`,
       source: input.source,
     });
+    await fireOrderNoteAppointmentHook({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, actorUserId: input.actorUserId ?? null, source: input.source });
     return { status: "reused", event: existing };
   }
 
@@ -238,6 +282,7 @@ export async function createCanonicalAncillaryAppointment(
         ancillaryCaseId: input.ancillaryCaseId,
         requestedAction: "create",
       });
+      await fireOrderNoteAppointmentHook({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, actorUserId: input.actorUserId ?? null, source: input.source });
       return { status: "created", event: outcome.row };
     }
     await appendJourneyEvent({
@@ -254,6 +299,7 @@ export async function createCanonicalAncillaryAppointment(
       summary: `Canonical ancillary appointment reused (race conflict, ${serviceType})`,
       source: input.source,
     });
+    await fireOrderNoteAppointmentHook({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, actorUserId: input.actorUserId ?? null, source: input.source });
     return { status: "reused", event: outcome.conflict };
   } catch (e) {
     // Durable retry — do NOT silently swallow.
@@ -338,6 +384,10 @@ export async function completeCanonicalAppointment(input: TransitionInput): Prom
     summary: `Canonical appointment completed`,
     source: input.source,
   });
+  // Completed ancillary_appointment / same_day_add is a qualifying event too.
+  if (evt.ancillaryCaseId != null && evt.clinicId != null) {
+    await fireOrderNoteAppointmentHook({ clinicId: evt.clinicId, ancillaryCaseId: evt.ancillaryCaseId, actorUserId: input.actorUserId ?? null, source: input.source });
+  }
   return { status: "completed", event: updated };
 }
 

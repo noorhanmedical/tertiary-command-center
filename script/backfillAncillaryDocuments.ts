@@ -22,11 +22,41 @@
  */
 
 import { db } from "../server/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { procedureNotes } from "@shared/schema/generatedNotes";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { featureFlags } from "../server/lib/featureFlags";
+import {
+  createReference,
+  recordAncillaryDocumentFailure,
+} from "../server/repositories/ancillaryDocuments.repo";
+import {
+  ORDER_NOTE_SOURCE_TABLE,
+  type AncillaryDocumentKind,
+  type AncillaryDocumentFailureAction,
+} from "@shared/schema/ancillaryDocuments";
+
+// Retry actions per kind — deterministic-only backfill queues ambiguity.
+const RETRY_ACTION_BY_KIND: Record<string, AncillaryDocumentFailureAction> = {
+  order_note: "link_order_note",
+  report: "link_report",
+  consent: "link_consent",
+  screening_form: "link_screening_form",
+};
+const RETRYABLE_OUTCOMES = new Set<PlanOutcome>([
+  "missing_ancillary_case", "ambiguous_case", "unresolved_identity",
+  "multiple_candidate_cases", "no_candidate_case", "service_mismatch",
+]);
+
+type ApplyCounts = {
+  referencesCreated: number;
+  referencesReused: number;
+  orderNoteCaseLinksWritten: number;
+  retriesRecorded: number;
+  orderNoteSkippedFlagOff: number;
+  applyErrors: number;
+};
 
 type PlanOutcome =
   | "would_create_reference"
@@ -130,6 +160,101 @@ async function resolveLegacyOrderNoteCase(n: {
   return { outcome: "service_mismatch" };
 }
 
+/** Idempotent: index a reference for a resolved readiness row. */
+async function applyReadinessReference(
+  r: typeof caseDocumentReadiness.$inferSelect,
+  kind: "report" | "consent" | "screening_form",
+  ancillaryCaseId: number,
+  applied: ApplyCounts,
+): Promise<void> {
+  try {
+    const ref = await createReference({
+      clinicId: r.clinicId as number,
+      patientScreeningId: r.patientScreeningId ?? null,
+      executionCaseId: r.executionCaseId ?? null,
+      ancillaryCaseId,
+      documentKind: kind as AncillaryDocumentKind,
+      sourceSystem: "backfill_2e",
+      sourceTable: "case_document_readiness",
+      sourceId: r.id,
+      serviceType: r.serviceType,
+      documentStatus: r.documentStatus,
+      effectiveClinicalDate: null,
+      signedAt: null,
+      createdByUserId: null,
+      metadata: { document_kind: kind, download_reference: r.documentId != null ? `documents:${r.documentId}` : null },
+    });
+    if (ref.created) applied.referencesCreated++; else applied.referencesReused++;
+  } catch { applied.applyErrors++; }
+}
+
+/**
+ * Idempotent: link a legacy order_note to its single owning case (only when
+ * ancillary_case_id is NULL — preserving already-linked rows), then index the
+ * order_note reference. Order Note work additionally requires
+ * FEATURE_CANONICAL_ORDER_NOTE; otherwise it is skipped (never guessed).
+ * Never mutates the note body, signature, signedAt, or signer.
+ */
+async function applyOrderNoteBackfill(
+  n: typeof procedureNotes.$inferSelect,
+  ancillaryCaseId: number,
+  linkCaseFk: boolean,
+  applied: ApplyCounts,
+): Promise<void> {
+  if (!featureFlags.canonicalOrderNote) { applied.orderNoteSkippedFlagOff++; return; }
+  try {
+    if (linkCaseFk) {
+      const linked = await db
+        .update(procedureNotes)
+        .set({ ancillaryCaseId, updatedAt: new Date() })
+        .where(and(eq(procedureNotes.id, n.id), isNull(procedureNotes.ancillaryCaseId)))
+        .returning();
+      if (linked.length > 0) applied.orderNoteCaseLinksWritten++;
+    }
+    const ref = await createReference({
+      clinicId: n.clinicId as number,
+      patientScreeningId: n.patientScreeningId ?? null,
+      executionCaseId: n.executionCaseId ?? null,
+      ancillaryCaseId,
+      documentKind: "order_note",
+      sourceSystem: "backfill_2e",
+      sourceTable: ORDER_NOTE_SOURCE_TABLE,
+      sourceId: n.id,
+      serviceType: n.serviceType,
+      documentStatus: n.signatureStatus === "signed" ? "signed" : "pending_signature",
+      effectiveClinicalDate: n.effectiveClinicalDate ?? null,
+      signedAt: n.signedAt ?? null,
+      createdByUserId: null,
+      metadata: { document_kind: "order_note" },
+    });
+    if (ref.created) applied.referencesCreated++; else applied.referencesReused++;
+  } catch { applied.applyErrors++; }
+}
+
+/** Idempotent-ish: queue a durable retry for an ambiguous/unresolved link. */
+async function applyRetry(
+  args: { clinicId: number | null; ancillaryCaseId?: number; kind: string; sourceTable: string; sourceId: number; patientScreeningId?: number | null; executionCaseId?: number | null; },
+  applied: ApplyCounts,
+): Promise<void> {
+  const action = RETRY_ACTION_BY_KIND[args.kind];
+  if (args.clinicId == null || !action) return;
+  try {
+    await recordAncillaryDocumentFailure({
+      clinicId: args.clinicId,
+      ancillaryCaseId: args.ancillaryCaseId ?? null,
+      patientScreeningId: args.patientScreeningId ?? null,
+      executionCaseId: args.executionCaseId ?? null,
+      documentKind: args.kind,
+      sourceTable: args.sourceTable,
+      sourceId: args.sourceId,
+      requestedAction: action,
+      sourceSystem: "backfill_2e",
+      errorCode: "backfill_deferred",
+    });
+    applied.retriesRecorded++;
+  } catch { applied.applyErrors++; }
+}
+
 async function main(): Promise<void> {
   const apply = process.env.BACKFILL_ANCILLARY_DOCUMENTS_APPLY === "YES";
   if (apply && !featureFlags.unifiedAncillaryDocuments) {
@@ -137,6 +262,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  const applied: ApplyCounts = { referencesCreated: 0, referencesReused: 0, orderNoteCaseLinksWritten: 0, retriesRecorded: 0, orderNoteSkippedFlagOff: 0, applyErrors: 0 };
   const plan: PlanRow[] = [];
 
   // Section 1 — Order Notes (procedure_notes, note_type='order_note').
@@ -154,6 +280,13 @@ async function main(): Promise<void> {
       serviceType: n.serviceType, ancillaryCaseId: n.ancillaryCaseId, supersededAt: n.supersededAt,
     });
     plan.push({ source: "procedure_notes", sourceId: n.id, documentKind: "order_note", clinicId: n.clinicId, ancillaryCaseId: res.id, outcome: res.outcome });
+    if (apply) {
+      if ((res.outcome === "deterministic_case_link" || res.outcome === "already_case_linked") && res.id != null) {
+        await applyOrderNoteBackfill(n, res.id, res.outcome === "deterministic_case_link", applied);
+      } else if (RETRYABLE_OUTCOMES.has(res.outcome)) {
+        await applyRetry({ clinicId: n.clinicId, kind: "order_note", sourceTable: ORDER_NOTE_SOURCE_TABLE, sourceId: n.id, patientScreeningId: n.patientScreeningId, executionCaseId: n.executionCaseId }, applied);
+      }
+    }
   }
   // post_procedure_note rows are deferred to Phase 2F.
   const procNotes = await db.select({ id: procedureNotes.id, clinicId: procedureNotes.clinicId }).from(procedureNotes).where(eq(procedureNotes.noteType, "post_procedure_note")).limit(1000);
@@ -172,7 +305,15 @@ async function main(): Promise<void> {
     const res = await resolveAncillaryCaseId({
       clinicId: r.clinicId, patientScreeningId: r.patientScreeningId, executionCaseId: r.executionCaseId, serviceType: r.serviceType,
     });
-    plan.push({ source: "case_document_readiness", sourceId: r.id, documentKind: kind, clinicId: r.clinicId, ancillaryCaseId: res.id, outcome: res.outcome ?? "would_create_reference" });
+    const outcome = res.outcome ?? "would_create_reference";
+    plan.push({ source: "case_document_readiness", sourceId: r.id, documentKind: kind, clinicId: r.clinicId, ancillaryCaseId: res.id, outcome });
+    if (apply) {
+      if (outcome === "would_create_reference" && res.id != null) {
+        await applyReadinessReference(r, kind, res.id, applied);
+      } else if (RETRYABLE_OUTCOMES.has(outcome)) {
+        await applyRetry({ clinicId: r.clinicId, kind, sourceTable: "case_document_readiness", sourceId: r.id, patientScreeningId: r.patientScreeningId, executionCaseId: r.executionCaseId }, applied);
+      }
+    }
   }
 
   const count = (o: PlanOutcome) => plan.filter((p) => p.outcome === o).length;
@@ -203,10 +344,14 @@ async function main(): Promise<void> {
     billingDocumentRowsDeferredTo2G: count("deferred_billing_document_2g"),
     errors: count("error"),
   };
-  // Apply-mode orchestration is intentionally NOT implemented for
-  // execution in Phase 2E-A. Dry-run is the only supported mode here;
-  // the live reference writer + retry service land in Phase 2E-B.
-  console.log(JSON.stringify({ summary, plan }, null, 2));
+  // Phase 2E-B — apply-mode orchestration. Deterministic links only; ambiguous
+  // rows become durable retries; createReference is idempotent by source and
+  // the order_note case-FK link only writes when currently NULL, so reruns are
+  // safe. No file bytes copied, no clinic modified, no note generation. This
+  // block runs ONLY under the BACKFILL_ANCILLARY_DOCUMENTS_APPLY=YES +
+  // FEATURE_UNIFIED_ANCILLARY_DOCUMENTS gate (order_note also needs
+  // FEATURE_CANONICAL_ORDER_NOTE). It is NOT executed in this phase.
+  console.log(JSON.stringify({ summary, applied: apply ? applied : null, plan }, null, 2));
 }
 
 main().then(

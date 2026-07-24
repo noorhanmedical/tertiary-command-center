@@ -1,0 +1,183 @@
+/**
+ * Phase 2E-B — canonical reference writer for report / consent /
+ * screening_form.
+ *
+ * Called AFTER the canonical readiness source (case_document_readiness) has
+ * committed. It indexes that immutable (source_table, source_id) into
+ * ancillary_document_references — it NEVER copies file bytes, never creates a
+ * second uploaded-file record, and never attaches by patient name.
+ *
+ * Ancillary-case resolution is DETERMINISTIC only: exactly one active case
+ * matching (executionCase | screening) + serviceType + clinic. Zero or
+ * multiple candidates → durable, PHI-free retry (never first/newest guess).
+ * Cross-clinic attachment is denied. createReference is idempotent by
+ * (source_table, source_id, kind), so repeat invocations reuse the row. The
+ * function NEVER throws: the parent readiness write must remain truthful even
+ * when indexing is deferred.
+ */
+
+import { featureFlags } from "../../lib/featureFlags";
+import {
+  createReference,
+  recordAncillaryDocumentFailure,
+} from "../../repositories/ancillaryDocuments.repo";
+import {
+  listAncillaryCasesForScreening,
+  listAncillaryCasesForExecutionCase,
+} from "../../repositories/ancillaryCases.repo";
+import type { PatientAncillaryCase } from "@shared/schema/ancillaryCases";
+import type { AncillaryDocumentKind } from "@shared/schema/ancillaryDocuments";
+
+export type DocumentReferenceKind = "report" | "consent" | "screening_form";
+
+const RETRY_ACTION: Record<DocumentReferenceKind, "link_report" | "link_consent" | "link_screening_form"> = {
+  report: "link_report",
+  consent: "link_consent",
+  screening_form: "link_screening_form",
+};
+
+const ACTIVE_LIFECYCLE = new Set(["new", "active", "on_hold"]);
+
+export type EnsureDocumentReferenceInput = {
+  documentKind: DocumentReferenceKind;
+  sourceTable: string;
+  sourceId: number;
+  serviceType: string;
+  patientScreeningId?: number | null;
+  executionCaseId?: number | null;
+  // The clinic asserted by the caller (from the source context). When set it
+  // MUST match the resolved case's clinic; a mismatch is denied.
+  expectedClinicId?: number | null;
+  documentStatus: string;
+  effectiveClinicalDate?: Date | null;
+  signedAt?: Date | null;
+  // A pointer to an already-authorized download/view route — never bytes.
+  downloadReference?: string | null;
+  actorUserId?: string | null;
+  source: string;
+};
+
+export type EnsureDocumentReferenceResult =
+  | { status: "skipped_flag_off" }
+  | { status: "created" | "reused"; referenceId: number; ancillaryCaseId: number }
+  | { status: "deferred_ambiguous_case"; reason: "no_case" | "multiple_cases"; warnings: string[] }
+  | { status: "cross_clinic_denied" }
+  | { status: "deferred_reference" }
+  | { status: "migration_missing" }
+  | { status: "failed" };
+
+/** Deterministically resolve the single owning ancillary case, or null. */
+async function resolveOwningCase(
+  input: EnsureDocumentReferenceInput,
+): Promise<{ kind: "one"; case: PatientAncillaryCase } | { kind: "no_case" | "multiple_cases" }> {
+  let candidates: PatientAncillaryCase[] = [];
+  if (input.executionCaseId != null) {
+    candidates = await listAncillaryCasesForExecutionCase(input.executionCaseId);
+  } else if (input.patientScreeningId != null) {
+    candidates = await listAncillaryCasesForScreening(input.patientScreeningId);
+  } else {
+    return { kind: "no_case" };
+  }
+  const matches = candidates.filter(
+    (c) => c.serviceType === input.serviceType && ACTIVE_LIFECYCLE.has(c.lifecycleStatus),
+  );
+  if (matches.length === 0) return { kind: "no_case" };
+  if (matches.length > 1) return { kind: "multiple_cases" };
+  return { kind: "one", case: matches[0] };
+}
+
+async function recordReferenceRetry(
+  input: EnsureDocumentReferenceInput,
+  ancillaryCaseId: number | null,
+  clinicId: number | null,
+  errorCode: string,
+): Promise<boolean> {
+  if (clinicId == null) return false;
+  try {
+    await recordAncillaryDocumentFailure({
+      clinicId,
+      ancillaryCaseId,
+      patientScreeningId: input.patientScreeningId ?? null,
+      executionCaseId: input.executionCaseId ?? null,
+      documentKind: input.documentKind,
+      sourceTable: input.sourceTable,
+      sourceId: input.sourceId,
+      requestedAction: RETRY_ACTION[input.documentKind],
+      sourceSystem: input.source,
+      errorCode,
+    });
+    return true;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error", source: "ancillary_document", kind: "reference_retry_record_failed",
+      document_kind: input.documentKind, source_id: input.sourceId,
+      code: (e as { code?: string })?.code ?? "ledger_write_failed",
+    }));
+    return false;
+  }
+}
+
+export async function ensureAncillaryDocumentReference(
+  input: EnsureDocumentReferenceInput,
+): Promise<EnsureDocumentReferenceResult> {
+  if (!featureFlags.unifiedAncillaryDocuments) return { status: "skipped_flag_off" };
+  try {
+    const resolved = await resolveOwningCase(input);
+    if (resolved.kind !== "one") {
+      // Ambiguous or absent — NEVER attach arbitrarily. Durable retry keyed
+      // to the clinic we can infer only when a candidate exists; when no
+      // clinic is resolvable we still surface a deferred result.
+      const clinicForRetry = input.expectedClinicId ?? null;
+      await recordReferenceRetry(input, null, clinicForRetry, `ambiguous_${resolved.kind}`);
+      return { status: "deferred_ambiguous_case", reason: resolved.kind, warnings: [`${input.documentKind}_case_${resolved.kind}`] };
+    }
+    const acase = resolved.case;
+    // Cross-clinic guard — never attach across clinics.
+    if (input.expectedClinicId != null && input.expectedClinicId !== acase.clinicId) {
+      return { status: "cross_clinic_denied" };
+    }
+    try {
+      const ref = await createReference({
+        clinicId: acase.clinicId,
+        globalPlexusPatientId: acase.globalPlexusPatientId ?? null,
+        patientClinicMembershipId: acase.patientClinicMembershipId ?? null,
+        patientScreeningId: acase.originatingScreeningId ?? input.patientScreeningId ?? null,
+        executionCaseId: acase.executionCaseId ?? input.executionCaseId ?? null,
+        ancillaryCaseId: acase.id,
+        documentKind: input.documentKind as AncillaryDocumentKind,
+        sourceSystem: input.source,
+        sourceTable: input.sourceTable,
+        sourceId: input.sourceId,
+        serviceType: input.serviceType,
+        documentStatus: input.documentStatus,
+        effectiveClinicalDate: input.effectiveClinicalDate ?? null,
+        signedAt: input.signedAt ?? null,
+        createdByUserId: input.actorUserId ?? null,
+        metadata: {
+          download_reference: input.downloadReference ?? null,
+          document_kind: input.documentKind,
+        },
+      });
+      return {
+        status: ref.created ? "created" : "reused",
+        referenceId: ref.created ? ref.row.id : ref.existing.id,
+        ancillaryCaseId: acase.id,
+      };
+    } catch (e) {
+      const code = (e as { code?: string })?.code;
+      if (code === "ANCILLARY_DOCUMENT_MIGRATION_MISSING") return { status: "migration_missing" };
+      const recorded = await recordReferenceRetry(input, acase.id, acase.clinicId, code ?? "reference_failed");
+      return recorded ? { status: "deferred_reference" } : { status: "failed" };
+    }
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === "ANCILLARY_DOCUMENT_MIGRATION_MISSING") return { status: "migration_missing" };
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error", source: "ancillary_document", kind: "reference_writer_threw",
+      document_kind: input.documentKind, source_id: input.sourceId, code: code ?? "unknown",
+    }));
+    return { status: "failed" };
+  }
+}

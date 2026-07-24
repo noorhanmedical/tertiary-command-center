@@ -406,6 +406,44 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
 
 **Feature flags:** `FEATURE_ORDER_NOTE_ELIGIBILITY_STRICT`, `FEATURE_NOTE_GENERATOR`, `FEATURE_ANCILLARY_DOCS_CANONICAL_READ`.
 
+### Phase 2E-B enablement operations (implemented)
+
+Server flags (default OFF): `FEATURE_UNIFIED_ANCILLARY_DOCUMENTS`, `FEATURE_CANONICAL_ORDER_NOTE`.
+Client flags (default OFF): `VITE_FEATURE_UNIFIED_ANCILLARY_DOCUMENTS`, `VITE_FEATURE_CANONICAL_ORDER_NOTE`.
+
+**Reconciliation retry worker (maintenance CLI, NOT clinic-facing):**
+
+```bash
+# LIST (dry-run) — PHI-free backlog summary, ZERO writes:
+npm run retry:ancillary-documents
+
+# APPLY — bounded single pass (both gates required; order-note linking also
+# needs FEATURE_CANONICAL_ORDER_NOTE):
+RETRY_ANCILLARY_DOCUMENTS_APPLY=YES \
+  FEATURE_UNIFIED_ANCILLARY_DOCUMENTS=true \
+  FEATURE_CANONICAL_ORDER_NOTE=true \
+  RETRY_ANCILLARY_DOCUMENTS_LIMIT=100 \
+  RETRY_ANCILLARY_DOCUMENTS_CLINIC_ID=<optional> \
+  npm run retry:ancillary-documents
+```
+
+Resolves ONLY the exact failure ids it processes; bounded (default 100, cap
+500); graceful on missing migration; never runs a migration.
+
+**Backfill (dry-run default; apply implemented but NOT yet executed):**
+
+```bash
+# DRY-RUN — prints the deterministic plan; zero writes:
+npx tsx script/backfillAncillaryDocuments.ts
+
+# APPLY — deterministic links only; ambiguous rows queue durable retries;
+# idempotent rerun; no bytes copied, no clinic modified, no note generation:
+BACKFILL_ANCILLARY_DOCUMENTS_APPLY=YES \
+  FEATURE_UNIFIED_ANCILLARY_DOCUMENTS=true \
+  FEATURE_CANONICAL_ORDER_NOTE=true \
+  npx tsx script/backfillAncillaryDocuments.ts
+```
+
 ## Phase 2F — Procedure event, report, and Procedure Note lifecycle
 
 **Goal:** Real procedure state machine. `reconcileProcedureNoteEligibility(ancillary_case_id)` gates the Procedure Note. Report linkage anchored to ancillary_case.

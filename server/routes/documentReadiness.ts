@@ -243,6 +243,41 @@ export function registerDocumentReadinessRoutes(app: Express) {
         });
       }
 
+      // Phase 2E-B — index the canonical document reference (report /
+      // consent / screening_form) from this readiness completion. Never
+      // copies bytes; deterministic case resolution only; best-effort with
+      // durable retry inside. Order/post-procedure notes are NOT indexed here
+      // (order_note has its own orchestration; post_procedure_note is 2F).
+      const REFERENCE_KIND_BY_DOC_TYPE: Record<string, "report" | "consent" | "screening_form"> = {
+        report: "report",
+        informed_consent: "consent",
+        screening_form: "screening_form",
+      };
+      const referenceKind = REFERENCE_KIND_BY_DOC_TYPE[data.documentType];
+      if (referenceKind && row?.id != null) {
+        try {
+          const { ensureAncillaryDocumentReference } = await import(
+            "../services/ancillaryDocuments/documentReferenceWriter"
+          );
+          await ensureAncillaryDocumentReference({
+            documentKind: referenceKind,
+            sourceTable: "case_document_readiness",
+            sourceId: row.id,
+            serviceType: data.serviceType,
+            patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+            executionCaseId: executionCase.id,
+            expectedClinicId: (executionCase as { clinicId?: number | null }).clinicId ?? null,
+            documentStatus: finalStatus,
+            signedAt: referenceKind === "consent" && finalStatus === "completed" ? completedAt : null,
+            downloadReference: data.documentId != null ? `documents:${data.documentId}` : null,
+            actorUserId,
+            source: "document_complete_action",
+          });
+        } catch (err: any) {
+          console.error("[case-document-readiness/complete] reference index failed:", err?.message ?? err);
+        }
+      }
+
       // Append journey event (best-effort)
       let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {
