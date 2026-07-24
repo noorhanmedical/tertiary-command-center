@@ -20,6 +20,7 @@ import { featureFlags } from "../../lib/featureFlags";
 import {
   ORDER_NOTE_SOURCE_TABLE,
   ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES,
+  ancillaryDocumentReferences,
   type OrderNoteSignatureRequirement,
 } from "@shared/schema/ancillaryDocuments";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
@@ -194,6 +195,17 @@ export async function createOrReuseOrderNote(
       note = await insertOrderNote(input, acase, qId, adminReviewEventId);
       reused = false;
     }
+  }
+
+  // Admin Review evidence retry: the case is approved and a qualifying
+  // appointment exists (eligible), but the immutable
+  // ancillary_case_admin_review_events row is not yet resolvable. The Order
+  // Note remains eligible and is created/reused, but we do NOT fabricate an
+  // adminReviewEventId — we record a durable, PHI-free reconciliation
+  // failure so a later retry links the evidence once it surfaces. The note
+  // id is known now, so the retry can target exactly this note.
+  if (adminReviewEvidenceDeferred) {
+    await recordAdminReviewEvidenceRetry(input, acase, note.id);
   }
 
   // Signature is UNRESOLVED in Phase 2E-A. Never auto-sign.
@@ -420,6 +432,89 @@ async function adoptLegacyOrderNote(
     .where(eq(procedureNotes.id, id))
     .returning();
   return row;
+}
+
+/** Durable error code for a deferred Admin Review evidence link. */
+export const ADMIN_REVIEW_EVENT_LINK_MISSING = "ADMIN_REVIEW_EVENT_LINK_MISSING";
+
+/** Record a PHI-free durable retry to link the immutable Admin Review event
+ *  once it becomes resolvable. Never blocks Order Note creation. */
+async function recordAdminReviewEvidenceRetry(
+  input: CreateOrReuseOrderNoteInput,
+  acase: AncillaryCaseShape,
+  orderNoteId: number,
+): Promise<void> {
+  try {
+    await recordAncillaryDocumentFailure({
+      clinicId: input.clinicId,
+      ancillaryCaseId: input.ancillaryCaseId,
+      patientScreeningId: acase.originatingScreeningId ?? null,
+      executionCaseId: acase.executionCaseId ?? null,
+      documentKind: "order_note",
+      sourceTable: ORDER_NOTE_SOURCE_TABLE,
+      sourceId: orderNoteId,
+      requestedAction: "link_order_note_evidence",
+      sourceSystem: input.source,
+      errorCode: ADMIN_REVIEW_EVENT_LINK_MISSING,
+    });
+  } catch { /* ledger guard downstream */ }
+}
+
+export type OrderNoteEvidenceRetryResult =
+  | { status: "skipped_flag_off" }
+  | { status: "still_deferred" }
+  | { status: "linked"; adminReviewEventId: number; orderNoteId: number };
+
+/**
+ * Retry worker entry point: link the approved immutable Admin Review event
+ * to an Order Note whose evidence link was deferred. LINK-ONLY — it updates
+ * ONLY procedure_notes.admin_review_event_id (+ updatedAt) and refreshes the
+ * reference metadata. It NEVER modifies the note body, signature status,
+ * signedAt, or signer. Feature OFF performs zero reads/writes.
+ */
+export async function linkOrderNoteAdminReviewEvidence(failure: {
+  clinicId: number;
+  ancillaryCaseId: number | null;
+  sourceId: number | null;
+}): Promise<OrderNoteEvidenceRetryResult> {
+  if (!featureFlags.unifiedAncillaryDocuments) return { status: "skipped_flag_off" };
+  if (failure.ancillaryCaseId == null || failure.sourceId == null) return { status: "still_deferred" };
+  const adminReviewEventId = await findApprovedAdminReviewEventId(failure.ancillaryCaseId);
+  if (adminReviewEventId == null) return { status: "still_deferred" };
+  // LINK-ONLY: only the evidence pointer + updatedAt. Never body/signature.
+  await db
+    .update(procedureNotes)
+    .set({ adminReviewEventId, updatedAt: new Date() })
+    .where(eq(procedureNotes.id, failure.sourceId));
+  await refreshReferenceAdminReviewEvidence(failure.sourceId, adminReviewEventId);
+  return { status: "linked", adminReviewEventId, orderNoteId: failure.sourceId };
+}
+
+/** Best-effort: mirror the resolved evidence id into the reference metadata. */
+async function refreshReferenceAdminReviewEvidence(
+  orderNoteId: number,
+  adminReviewEventId: number,
+): Promise<void> {
+  try {
+    const [ref] = await db
+      .select()
+      .from(ancillaryDocumentReferences)
+      .where(and(
+        eq(ancillaryDocumentReferences.sourceTable, ORDER_NOTE_SOURCE_TABLE),
+        eq(ancillaryDocumentReferences.sourceId, orderNoteId),
+        eq(ancillaryDocumentReferences.documentKind, "order_note"),
+      ))
+      .limit(1);
+    if (!ref) return;
+    const metadata = {
+      ...((ref.metadata as Record<string, unknown>) ?? {}),
+      admin_review_event_id: adminReviewEventId,
+    };
+    await db
+      .update(ancillaryDocumentReferences)
+      .set({ metadata: metadata as never, updatedAt: new Date() })
+      .where(eq(ancillaryDocumentReferences.id, ref.id));
+  } catch { /* reference metadata refresh is best-effort */ }
 }
 
 async function insertOrderNote(

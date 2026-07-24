@@ -17,7 +17,7 @@ import {
   getProcedureNoteById,
   type PhysicianSignatureListFilters,
 } from "../../repositories/physicianPortal.repo";
-import { updateGeneratedNote } from "../../repositories/generatedNotes.repo";
+import { applyProcedureNoteSignatureUpdate } from "../../repositories/generatedNotes.repo";
 import { evaluateBillingReadinessForProcedure } from "../../repositories/billingReadiness.repo";
 import type { ProcedureNote } from "@shared/schema/generatedNotes";
 import {
@@ -90,13 +90,14 @@ export async function signNote(
   const guard = eligibleForSign(note);
   if (!guard.ok) return guard;
 
-  const updated = await updateGeneratedNote(id, {
+  // Signature transition via the dedicated, server-owned contract. The
+  // signer id is the session user captured at the route boundary; signedAt
+  // is stamped from server time inside the repository. Promotion to
+  // 'approved' (for billing readiness) is a server-owned side effect there.
+  const updated = await applyProcedureNoteSignatureUpdate(id, {
     signatureStatus: "signed",
     signedAt: new Date(),
-    signedByUserId: signedByUserId,
-    // Promote to approved so existing billing readiness rules treat the
-    // note as a passing document (passingStatuses include 'approved').
-    generationStatus: "approved",
+    signedByUserId,
   });
   if (!updated) return { ok: false, code: 404, error: "Note not found" };
 
@@ -153,7 +154,7 @@ export async function returnNoteForCorrection(
 ): Promise<ReturnOutcome> {
   const trimmed = reason.trim();
   if (!trimmed) return { ok: false, code: 400, error: "A return reason is required" };
-  const updated = await updateGeneratedNote(id, {
+  const updated = await applyProcedureNoteSignatureUpdate(id, {
     signatureStatus: "returned_for_correction",
     returnReason: trimmed,
   });

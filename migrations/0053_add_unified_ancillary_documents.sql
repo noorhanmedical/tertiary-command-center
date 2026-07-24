@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS ancillary_document_reconciliation_failures (
   CONSTRAINT chk_adrf_requested_action
     CHECK (requested_action IN (
       'create_reference','refresh_projection','link_order_note','link_report',
-      'link_consent','link_screening_form','supersede_reference'
+      'link_consent','link_screening_form','supersede_reference',
+      'link_order_note_evidence'
     ))
 );
 
@@ -123,13 +124,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_adrf_unresolved_by_case_kind_action
 --
 -- This section is ADDITIVE and LEGACY-SAFE:
 --   • adds nullable case-scoped identity / evidence / supersession columns
---   • requires ancillary_case_id for NEW order_note rows (NOT VALID so
---     pre-existing legacy rows are not scanned and may stay unlinked until
---     the dry-run-first backfill deterministically links them)
 --   • replaces the single global unique index with per-scope partial
 --     unique indexes (canonical current / legacy unlinked / post-procedure)
 -- No row is deleted. No clinic is modified. post_procedure_note behavior
 -- (Phase 2F) is preserved unchanged — no new versioning/generation.
+--
+-- DELIBERATELY NO case-required DB CHECK on order_note rows. A PostgreSQL
+-- NOT VALID constraint skips scanning pre-existing rows but STILL enforces
+-- on every new INSERT/UPDATE — which would break legacy Order Note writers
+-- that still insert rows without an ancillary_case_id while
+-- FEATURE_CANONICAL_ORDER_NOTE is OFF. Migration 0053 must stay deployable
+-- alongside those writers. The canonical createOrReuseOrderNote path always
+-- writes ancillary_case_id itself, so the invariant is enforced in the
+-- service layer for canonical rows without a DB constraint blocking legacy
+-- unlinked rows. A case-required DB constraint may only be added LATER,
+-- after ALL of the following hold:
+--   • legacy Order Note writers are retired or bridged to the canonical path
+--   • pre-existing unlinked order_note rows are backfilled with a case id
+--   • ambiguous notes (no deterministic single owning case) are resolved
 
 ALTER TABLE procedure_notes
   ADD COLUMN IF NOT EXISTS ancillary_case_id                    INTEGER REFERENCES patient_ancillary_cases(id) ON DELETE SET NULL,
@@ -147,19 +159,11 @@ CREATE INDEX IF NOT EXISTS idx_pn_ancillary_case  ON procedure_notes(ancillary_c
 CREATE INDEX IF NOT EXISTS idx_pn_supersedes_note ON procedure_notes(supersedes_note_id);
 CREATE INDEX IF NOT EXISTS idx_pn_superseded_at   ON procedure_notes(superseded_at);
 
--- New canonical order_note rows MUST carry an ancillary_case_id. NOT VALID:
--- enforced for every INSERT/UPDATE going forward, but pre-existing legacy
--- rows are NOT scanned — so the migration cannot fail merely because legacy
--- rows still await backfill. A later VALIDATE CONSTRAINT (post-backfill) can
--- promote it to fully validated.
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_pn_order_note_requires_case') THEN
-    ALTER TABLE procedure_notes
-      ADD CONSTRAINT chk_pn_order_note_requires_case
-      CHECK (note_type <> 'order_note' OR ancillary_case_id IS NOT NULL) NOT VALID;
-  END IF;
-END $$;
+-- NO case-required CHECK is added here (see the section header): a NOT VALID
+-- constraint would still block every legacy order_note INSERT/UPDATE that
+-- omits ancillary_case_id, breaking deployability while the legacy writers
+-- are live. Canonical rows get their ancillary_case_id from the service
+-- layer; legacy unlinked rows remain valid until backfilled.
 
 -- Replace the legacy global uniqueness with scope-specific partial unique
 -- indexes. DROP INDEX removes only an index definition — never data — and

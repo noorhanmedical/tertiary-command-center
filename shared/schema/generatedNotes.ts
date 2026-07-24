@@ -90,16 +90,21 @@ export const procedureNotes = pgTable("procedure_notes", {
   //   uq_pn_post_procedure_note     (screening, service, note_type) — Phase 2F preserved
 ]);
 
-// Client-input insert validation. Server-owned canonical Order Note
-// identity/evidence/supersession fields are NOT accepted from unrestricted
-// client input — the canonical Order Note service (and the authorized
-// signing workflow) own them via direct writes. signedAt/signedByUserId
-// remain settable here only for the session-authenticated signing update
-// path (updateGeneratedNote), never from a raw client body.
+// General client-input insert/create validation. This is the CREATE
+// contract only — it deliberately omits BOTH the server-owned canonical
+// Order Note identity/evidence/supersession fields AND the signature
+// fields (signatureStatus / signedAt / signedByUserId). Signature is NOT
+// part of note creation or a general update: it flows exclusively through
+// the dedicated, session-authenticated signing contract below
+// (ProcedureNoteSignatureUpdate) so a client body can never seed a
+// signer, a signed-at instant, or a signature status on create/update.
 export const insertProcedureNoteSchema = createInsertSchema(procedureNotes).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  signatureStatus: true,
+  signedAt: true,
+  signedByUserId: true,
   ancillaryCaseId: true,
   globalPlexusPatientId: true,
   patientClinicMembershipId: true,
@@ -112,3 +117,27 @@ export const insertProcedureNoteSchema = createInsertSchema(procedureNotes).omit
 
 export type ProcedureNote = typeof procedureNotes.$inferSelect;
 export type InsertProcedureNote = z.infer<typeof insertProcedureNoteSchema>;
+
+// ─── Dedicated, server-only signing update contract ──────────────────
+// The ONLY authorized path to write signature state. Not derived from the
+// insert schema — it carries just the fields the signing / return-for-
+// correction services own. The signer identity ALWAYS comes from the
+// authenticated session and signedAt ALWAYS comes from server time at the
+// repository boundary; a client body can never supply either. Reuses the
+// existing signature statuses (needs_signature is the create-time default
+// and is never a signing *transition* target here).
+export const PROCEDURE_NOTE_SIGNATURE_UPDATE_STATUSES = [
+  "ready_to_sign",
+  "signed",
+  "returned_for_correction",
+] as const;
+export type ProcedureNoteSignatureUpdateStatus =
+  typeof PROCEDURE_NOTE_SIGNATURE_UPDATE_STATUSES[number];
+
+export const procedureNoteSignatureUpdateSchema = z.object({
+  signatureStatus: z.enum(PROCEDURE_NOTE_SIGNATURE_UPDATE_STATUSES),
+  signedAt: z.date().nullable().optional(),
+  signedByUserId: z.string().nullable().optional(),
+  returnReason: z.string().nullable().optional(),
+});
+export type ProcedureNoteSignatureUpdate = z.infer<typeof procedureNoteSignatureUpdateSchema>;

@@ -119,6 +119,11 @@ export const ANCILLARY_DOCUMENT_FAILURE_ACTIONS = [
   "link_consent",
   "link_screening_form",
   "supersede_reference",
+  // Order Note exists + case is approved, but the immutable
+  // ancillary_case_admin_review_events evidence row is not yet resolvable
+  // (migration/backfill state). Durable retry links admin_review_event_id
+  // once the approved event surfaces — never fabricated up front.
+  "link_order_note_evidence",
 ] as const;
 export type AncillaryDocumentFailureAction =
   (typeof ANCILLARY_DOCUMENT_FAILURE_ACTIONS)[number];

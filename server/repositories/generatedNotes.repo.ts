@@ -4,6 +4,7 @@ import {
   procedureNotes,
   type ProcedureNote,
   type InsertProcedureNote,
+  type ProcedureNoteSignatureUpdate,
 } from "@shared/schema/generatedNotes";
 
 export type ListProcedureNotesFilters = {
@@ -22,13 +23,84 @@ export async function createGeneratedNote(
   return result;
 }
 
+// Content fields that a signed note must never have overwritten through
+// the GENERAL update path. Signature transitions are NOT in this set — they
+// have their own dedicated, session-authenticated path below.
+const SIGNED_NOTE_IMMUTABLE_CONTENT_FIELDS: Array<keyof InsertProcedureNote> = [
+  "generatedText",
+  "generatedByAi",
+  "sourceData",
+  "serviceType",
+  "noteType",
+  "errorMessage",
+];
+
+/**
+ * General note update. The `updates` type (Partial<InsertProcedureNote>)
+ * structurally CANNOT carry signatureStatus/signedAt/signedByUserId — those
+ * are omitted from the insert schema and only writable via
+ * applyProcedureNoteSignatureUpdate. Additionally, once a note is signed its
+ * clinical content is immutable through this path.
+ */
 export async function updateGeneratedNote(
   id: number,
   updates: Partial<InsertProcedureNote>,
 ): Promise<ProcedureNote | undefined> {
+  const touchesContent = SIGNED_NOTE_IMMUTABLE_CONTENT_FIELDS.some((f) => f in updates);
+  if (touchesContent) {
+    const [existing] = await db
+      .select()
+      .from(procedureNotes)
+      .where(eq(procedureNotes.id, id))
+      .limit(1);
+    if (existing?.signatureStatus === "signed") {
+      const err = new Error(
+        "signed_note_content_immutable: a signed note's content cannot be overwritten through a general update",
+      ) as Error & { code?: string };
+      err.code = "SIGNED_NOTE_CONTENT_IMMUTABLE";
+      throw err;
+    }
+  }
   const [result] = await db
     .update(procedureNotes)
     .set({ ...updates, updatedAt: new Date() })
+    .where(eq(procedureNotes.id, id))
+    .returning();
+  return result;
+}
+
+/**
+ * Dedicated, server-only signature transition. This is the ONLY path that
+ * writes signatureStatus/signedAt/signedByUserId/returnReason.
+ *
+ * - The signer id is taken from `update.signedByUserId`, which callers
+ *   MUST source from the authenticated session — never a client body.
+ * - When transitioning to `signed`, signedAt is stamped from SERVER time
+ *   (any caller-supplied value is a server-computed `new Date()`), and the
+ *   note is promoted to `approved` so downstream billing readiness rules
+ *   treat it as a passing document.
+ * - Non-signing transitions never touch signedAt/signedByUserId.
+ */
+export async function applyProcedureNoteSignatureUpdate(
+  id: number,
+  update: ProcedureNoteSignatureUpdate,
+): Promise<ProcedureNote | undefined> {
+  const set: Record<string, unknown> = {
+    signatureStatus: update.signatureStatus,
+    updatedAt: new Date(),
+  };
+  if (update.signatureStatus === "signed") {
+    // Server-owned: signer identity + signing instant are authoritative.
+    set.signedAt = update.signedAt ?? new Date();
+    set.signedByUserId = update.signedByUserId ?? null;
+    set.generationStatus = "approved";
+  }
+  if (update.signatureStatus === "returned_for_correction") {
+    set.returnReason = update.returnReason ?? null;
+  }
+  const [result] = await db
+    .update(procedureNotes)
+    .set(set)
     .where(eq(procedureNotes.id, id))
     .returning();
   return result;

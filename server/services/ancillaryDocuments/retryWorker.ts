@@ -13,7 +13,7 @@ import {
   resolveAncillaryDocumentFailure,
 } from "../../repositories/ancillaryDocuments.repo";
 import type { AncillaryDocumentReconciliationFailure } from "@shared/schema/ancillaryDocuments";
-import { createOrReuseOrderNote } from "./orderNoteService";
+import { createOrReuseOrderNote, linkOrderNoteAdminReviewEvidence } from "./orderNoteService";
 
 export type DocumentRetryOutcome = {
   failureId: number;
@@ -40,6 +40,25 @@ export async function retryAncillaryDocumentFailure(
           ancillaryCaseId: failure.ancillaryCaseId,
           documentKind: "order_note",
           requestedAction: "link_order_note",
+        });
+        return { failureId: failure.id, requestedAction: failure.requestedAction, status: "resolved" };
+      }
+      return { failureId: failure.id, requestedAction: failure.requestedAction, status: "still_deferred", message: r.status };
+    }
+    if (failure.requestedAction === "link_order_note_evidence" && failure.ancillaryCaseId != null) {
+      // Order Note already exists; only the immutable Admin Review evidence
+      // link was deferred. LINK-ONLY retry — never touches note body,
+      // signature, signedAt, or signer.
+      const r = await linkOrderNoteAdminReviewEvidence({
+        clinicId: failure.clinicId,
+        ancillaryCaseId: failure.ancillaryCaseId,
+        sourceId: failure.sourceId,
+      });
+      if (r.status === "linked") {
+        await resolveAncillaryDocumentFailure({
+          ancillaryCaseId: failure.ancillaryCaseId,
+          documentKind: "order_note",
+          requestedAction: "link_order_note_evidence",
         });
         return { failureId: failure.id, requestedAction: failure.requestedAction, status: "resolved" };
       }

@@ -100,6 +100,7 @@ async function testRetryLedgerNoPhi() {
   assert.deepEqual([...ANCILLARY_DOCUMENT_FAILURE_ACTIONS], [
     "create_reference", "refresh_projection", "link_order_note", "link_report",
     "link_consent", "link_screening_form", "supersede_reference",
+    "link_order_note_evidence",
   ]);
   for (const a of ANCILLARY_DOCUMENT_FAILURE_ACTIONS) {
     assert.ok(MIGRATION.includes(`'${a}'`), `retry action CHECK missing '${a}'`);
@@ -160,16 +161,30 @@ async function testOrderNoteIdentityIndexes() {
   assert.ok(/uq_pn_post_procedure_note[\s\S]*?note_type = 'post_procedure_note'/i.test(MIGRATION), "post_procedure_note uniqueness must be preserved");
 }
 
-async function testOrderNoteRequiresCaseConstraint() {
+async function testNoAlwaysEnforcedOrderNoteCaseConstraint() {
+  // The always-enforced (even NOT VALID) case-required CHECK is REMOVED: it
+  // would still block legacy order_note writers that omit ancillary_case_id
+  // while FEATURE_CANONICAL_ORDER_NOTE is OFF, making 0053 undeployable.
   assert.ok(
-    /chk_pn_order_note_requires_case[\s\S]*?CHECK \(note_type <> 'order_note' OR ancillary_case_id IS NOT NULL\)[\s\S]*?NOT VALID/i.test(MIGRATION),
-    "new order_note rows must require ancillary_case_id (NOT VALID for legacy backfill)",
+    !/chk_pn_order_note_requires_case/i.test(MIGRATION),
+    "no always-enforced Order Note case CHECK may exist in 0053",
+  );
+  assert.ok(
+    !/note_type <> 'order_note'\s*\n?\s*OR ancillary_case_id IS NOT NULL/i.test(MIGRATION),
+    "the legacy-breaking CHECK expression must be gone",
+  );
+  // Deferral is documented: the constraint may only follow retirement/backfill.
+  assert.ok(
+    /case-required DB CHECK[\s\S]*?legacy Order Note writers are retired or bridged/i.test(MIGRATION),
+    "migration must document when a case-required constraint may be added",
   );
 }
 
 async function testServerOwnedFieldsNotClientInput() {
   const shapeKeys = Object.keys(insertProcedureNoteSchema.shape);
-  for (const k of ["ancillaryCaseId", "globalPlexusPatientId", "patientClinicMembershipId", "qualifyingGlobalScheduleEventId", "adminReviewEventId", "effectiveClinicalDate", "supersedesNoteId", "supersededAt"]) {
+  // Signature fields are now also omitted — signing flows only through the
+  // dedicated server-only ProcedureNoteSignatureUpdate contract.
+  for (const k of ["signatureStatus", "signedAt", "signedByUserId", "ancillaryCaseId", "globalPlexusPatientId", "patientClinicMembershipId", "qualifyingGlobalScheduleEventId", "adminReviewEventId", "effectiveClinicalDate", "supersedesNoteId", "supersededAt"]) {
     assert.ok(!shapeKeys.includes(k), `server-owned field must not be client-insertable: ${k}`);
   }
 }
@@ -178,7 +193,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(13) procedure_notes case-scoped identity columns", testProcedureNotesCaseColumns],
   ["(14) procedure_notes case-scoped FKs", testProcedureNotesCaseFks],
   ["(15) Order Note identity index replacement", testOrderNoteIdentityIndexes],
-  ["(16) new order_note rows require ancillary_case_id", testOrderNoteRequiresCaseConstraint],
+  ["(16) no always-enforced Order Note case CHECK (legacy-safe)", testNoAlwaysEnforcedOrderNoteCaseConstraint],
   ["(17) server-owned Order Note fields are not client input", testServerOwnedFieldsNotClientInput],
   ["(1) migration ↔ Drizzle alignment", testMigrationDrizzleAlign],
   ["(2) real FKs", testRealFks],
