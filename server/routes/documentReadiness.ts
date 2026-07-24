@@ -254,12 +254,15 @@ export function registerDocumentReadinessRoutes(app: Express) {
         screening_form: "screening_form",
       };
       const referenceKind = REFERENCE_KIND_BY_DOC_TYPE[data.documentType];
+      // Truthful indexing result surfaced in the response — the parent
+      // readiness write itself remains successful after its own commit.
+      let ancillaryDocumentIndex: { status: string; retryRecorded?: boolean; warnings?: string[] } | null = null;
       if (referenceKind && row?.id != null) {
         try {
           const { ensureAncillaryDocumentReference } = await import(
             "../services/ancillaryDocuments/documentReferenceWriter"
           );
-          await ensureAncillaryDocumentReference({
+          const indexResult = await ensureAncillaryDocumentReference({
             documentKind: referenceKind,
             sourceTable: "case_document_readiness",
             sourceId: row.id,
@@ -273,8 +276,14 @@ export function registerDocumentReadinessRoutes(app: Express) {
             actorUserId,
             source: "document_complete_action",
           });
+          ancillaryDocumentIndex = {
+            status: indexResult.status,
+            retryRecorded: "retryRecorded" in indexResult ? indexResult.retryRecorded : undefined,
+            warnings: "warnings" in indexResult ? indexResult.warnings : undefined,
+          };
         } catch (err: any) {
           console.error("[case-document-readiness/complete] reference index failed:", err?.message ?? err);
+          ancillaryDocumentIndex = { status: "failed" };
         }
       }
 
@@ -328,6 +337,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
         caseDocumentReadiness: row,
         journeyEvent,
         billingReadinessCheck,
+        ancillaryDocumentIndex,
       });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

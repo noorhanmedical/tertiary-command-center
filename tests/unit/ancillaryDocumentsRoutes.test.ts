@@ -89,31 +89,30 @@ async function testCaseRouteNoClinic() {
   assert.equal(res.statusCode, 403);
 }
 
-// ─── (4) global route: filters, bounded limit, deterministic order ─
-async function testGlobalRouteOrdering() {
+// ─── (4) global route: items + authorized downloads + no internals ─
+// (Deterministic SQL ordering + true keyset traversal are proven behaviorally
+//  in ancillaryDocumentsPaginationAndSourceSafety.test.ts with a store fake.)
+async function testGlobalRouteShape() {
   const t = await loadCanonicalTables();
   const routes = await loadRoutes();
-  // Out-of-order rows; expect actualCreatedAt DESC then id DESC.
-  const rows = [
-    ref({ id: 1, actualCreatedAt: D1 }),
-    ref({ id: 2, actualCreatedAt: D2 }),
-    ref({ id: 3, actualCreatedAt: D2 }),
-  ];
+  const rows = [ref({ id: 1 }), ref({ id: 2 }), ref({ id: 3 })];
   const spec = new Map<unknown, TableSpec>([[t.documentReferences, { select: () => rows }]]);
   const res = fakeRes();
   await runWithDb(spec, FLAGS, async () =>
     routes["/api/ancillary-documents"]({ clinicId: 1, query: { limit: "50" } }, res));
   assert.equal(res.statusCode, 200);
-  const ids = res.body.items.map((i: any) => i.ancillaryDocumentReferenceId);
-  assert.deepEqual(ids, [3, 2, 1], "actualCreatedAt DESC then id DESC");
-  // Download references are stable pointers, never bytes; no retry internals.
+  assert.equal(res.body.items.length, 3);
   for (const it of res.body.items) {
-    assert.match(it.downloadReference, /^case_document_readiness:\d+$/);
+    // No fabricated sourceTable:sourceId download (metadata carries no pointer).
+    assert.equal(it.downloadReference, null, "no fabricated download pointer");
+    // sourceTable + sourceId remain as identifiers.
+    assert.equal(it.sourceTable, "case_document_readiness");
+    assert.ok(Number.isInteger(it.sourceId));
     assert.ok(!("resolvedAt" in it) && !("attemptCount" in it) && !("errorCode" in it), "no retry-ledger internals");
   }
 }
 
-// ─── (5) global route bounded limit is clamped ────────────────────
+// ─── (5) global route: bounded limit + STRING cursor ──────────────
 async function testGlobalRouteBounded() {
   const t = await loadCanonicalTables();
   const routes = await loadRoutes();
@@ -123,7 +122,20 @@ async function testGlobalRouteBounded() {
   await runWithDb(spec, FLAGS, async () =>
     routes["/api/ancillary-documents"]({ clinicId: 1, query: { limit: "2" } }, res));
   assert.equal(res.body.items.length, 2, "limit honored");
-  assert.equal(res.body.nextCursor, res.body.items[1].ancillaryDocumentReferenceId, "cursor points at last returned id");
+  assert.equal(typeof res.body.nextCursor, "string", "opaque STRING cursor, not a numeric id");
+  assert.ok(res.body.nextCursor.length > 0);
+}
+
+// ─── (5b) malformed cursor → 400 ──────────────────────────────────
+async function testMalformedCursor400() {
+  const t = await loadCanonicalTables();
+  const routes = await loadRoutes();
+  const spec = new Map<unknown, TableSpec>([[t.documentReferences, { select: () => [] }]]);
+  const res = fakeRes();
+  await runWithDb(spec, FLAGS, async () =>
+    routes["/api/ancillary-documents"]({ clinicId: 1, query: { cursor: "!!!not-a-cursor!!!" } }, res));
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, "INVALID_CURSOR");
 }
 
 // ─── (6) missing migration + flag ON → controlled 503 ─────────────
@@ -189,8 +201,9 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(1) clinic-scoped case route", testCaseRoute],
   ["(2) cross-clinic case → 404", testCaseRouteCrossClinic],
   ["(3) missing clinic scope → 403", testCaseRouteNoClinic],
-  ["(4) global route deterministic ordering + no internals", testGlobalRouteOrdering],
-  ["(5) global route bounded limit + cursor", testGlobalRouteBounded],
+  ["(4) global route shape: items, authorized downloads, no internals", testGlobalRouteShape],
+  ["(5) global route bounded limit + string cursor", testGlobalRouteBounded],
+  ["(5b) malformed cursor → 400", testMalformedCursor400],
   ["(6) missing migration + flag ON → 503", testMigrationMissing503],
   ["(7) feature OFF → disabled contract, zero reads", testFlagOffDisabled],
   ["(8) case route flag OFF → disabled, zero reads", testCaseRouteFlagOff],

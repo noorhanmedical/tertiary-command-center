@@ -267,7 +267,30 @@ export async function createOrReuseOrderNote(
         admin_review_event_id: adminReviewEventId ?? null,
       },
     });
-    referenceId = ref.created ? ref.row.id : ref.existing.id;
+    if (ref.outcome === "created") {
+      referenceId = ref.row.id;
+    } else if (ref.outcome === "reused_exact_source") {
+      referenceId = ref.existing.id;
+    } else {
+      // active_kind_conflict: a DIFFERENT source holds this case's order_note
+      // slot. NEVER attach the new note to the old reference id. Defer to a
+      // reviewed supersession via a source-specific retry.
+      referenceDeferred = true;
+      try {
+        await recordAncillaryDocumentFailure({
+          clinicId: input.clinicId,
+          ancillaryCaseId: input.ancillaryCaseId,
+          patientScreeningId: acase.originatingScreeningId ?? null,
+          executionCaseId: acase.executionCaseId ?? null,
+          documentKind: "order_note",
+          sourceTable: ORDER_NOTE_SOURCE_TABLE,
+          sourceId: note.id,
+          requestedAction: "link_order_note",
+          sourceSystem: input.source,
+          errorCode: "active_document_kind_conflict",
+        });
+      } catch { /* ledger guard downstream */ }
+    }
   } catch (e) {
     referenceDeferred = true;
     try {

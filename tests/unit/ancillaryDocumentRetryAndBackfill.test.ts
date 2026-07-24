@@ -118,7 +118,7 @@ async function testBackfillDeterministicIdempotent() {
       return res;
     },
   );
-  assert.equal(reused.status, "reused");
+  assert.equal(reused.status, "reused_exact_source");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [

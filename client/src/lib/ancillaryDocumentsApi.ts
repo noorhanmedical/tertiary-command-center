@@ -20,7 +20,8 @@ export type AncillaryDocumentsListParams = {
   documentStatus?: string;
   includeHistory?: boolean;
   limit?: number;
-  cursor?: number;
+  // Opaque compound keyset cursor (string), returned as nextCursor.
+  cursor?: string;
 };
 
 /** Build the query string for GET /api/ancillary-documents (stable keys). */

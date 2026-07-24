@@ -230,5 +230,7 @@ export type AncillaryDocumentsListResponse = {
   // `disabled: true` is the explicit flag-OFF contract (no 0053 reads).
   disabled?: boolean;
   items: AncillaryDocumentContractItem[];
-  nextCursor: number | null;
+  // Opaque compound keyset cursor (base64url of {timestamp,id}) — a string,
+  // NOT a numeric id. `null` when there is no further page.
+  nextCursor: string | null;
 };

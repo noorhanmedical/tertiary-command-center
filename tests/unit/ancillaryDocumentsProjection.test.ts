@@ -62,17 +62,27 @@ async function testDifferentServicesSeparate() {
   assert.equal(res.cases.find((c) => c.ancillaryCaseId === 9)!.serviceType, "SleepWave");
 }
 
-// ─── (4/5) stable source IDs, no copied body/file ─────────────────
+// ─── (4/5) stable source IDs; authorized download only, no bytes ──
 async function testStablePointerNoBytes() {
   const t = await loadCanonicalTables();
-  const { res } = await project(t, [ref({ sourceTable: "procedure_notes", sourceId: 900 })]);
+  // A procedure_notes source with NO stored authorized pointer → download is
+  // null (NEVER fabricated as procedure_notes:900). sourceTable/sourceId
+  // remain as identifiers.
+  const { res } = await project(t, [ref({ sourceTable: "procedure_notes", sourceId: 900, metadata: {} })]);
   const doc = res.cases[0].documents[0];
   assert.equal(doc.sourceTable, "procedure_notes");
   assert.equal(doc.sourceId, 900);
-  assert.equal(doc.downloadReference, "procedure_notes:900", "download pointer, not bytes");
+  assert.equal(doc.downloadReference, null, "no fabricated sourceTable:sourceId download");
   for (const forbidden of ["content", "bytes", "body", "generatedText", "noteText", "fileData", "blob"]) {
     assert.ok(!(forbidden in doc), `projection must not expose document bytes/body: ${forbidden}`);
   }
+  // A documents-library pointer resolves to the authorized blob route.
+  const { res: res2 } = await project(t, [ref({ id: 7, ancillaryCaseId: 5, documentKind: "consent", sourceTable: "case_document_readiness", sourceId: 42, metadata: { download_reference: "documents:123" } })]);
+  const doc2 = res2.cases[0].documents.find((d) => d.ancillaryDocumentReferenceId === 7)!;
+  assert.equal(doc2.downloadReference, "/api/documents-library/123/file", "authorized route from stored pointer");
+  // A raw bucket key / URL is rejected outright.
+  const { res: res3 } = await project(t, [ref({ id: 8, ancillaryCaseId: 5, sourceTable: "case_document_readiness", sourceId: 43, metadata: { download_reference: "s3://bucket/secret/key.pdf" } })]);
+  assert.equal(res3.cases[0].documents.find((d) => d.ancillaryDocumentReferenceId === 8)!.downloadReference, null, "raw bucket key rejected");
 }
 
 // ─── (6) cross-clinic reads are denied ────────────────────────────

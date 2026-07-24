@@ -107,6 +107,19 @@ async function testRetryLedgerNoPhi() {
   }
 }
 
+async function testSourceSpecificDedupeIndexes() {
+  // Two DISJOINT partial unique indexes so separate report/form failures for
+  // the same case never collapse — clinic-scoped, source-bearing vs source-less.
+  assert.ok(
+    /CREATE UNIQUE INDEX[\s\S]*?uq_adrf_unresolved_by_source[\s\S]*?\(\s*clinic_id, requested_action, source_table, source_id, document_kind\s*\)[\s\S]*?WHERE resolved_at IS NULL AND source_id IS NOT NULL/i.test(MIGRATION),
+    "source-bearing unresolved unique (clinic, action, source_table, source_id, kind) missing",
+  );
+  assert.ok(
+    /CREATE UNIQUE INDEX[\s\S]*?uq_adrf_unresolved_by_case_kind_action[\s\S]*?\(\s*clinic_id, ancillary_case_id, requested_action, document_kind\s*\)[\s\S]*?WHERE resolved_at IS NULL AND source_id IS NULL AND ancillary_case_id IS NOT NULL/i.test(MIGRATION),
+    "source-less case-level unresolved unique missing",
+  );
+}
+
 async function testAdditiveMigration() {
   for (const re of [/\bDROP\s+TABLE\b/i, /\bDROP\s+COLUMN\b/i, /\bDELETE\s+FROM\b/i, /\bTRUNCATE\b/i, /\bUPDATE\s+\w+\s+SET\b/i]) {
     assert.ok(!re.test(noComments), `migration forward path must be additive; found ${re}`);
@@ -204,6 +217,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(6) billing_document kind not introduced", testNoBillingDocumentKind],
   ["(7) no document bytes/full note body in registry", testNoDocumentBytesOrBody],
   ["(8) retry ledger contains no PHI fields", testRetryLedgerNoPhi],
+  ["(8b) source-specific reconciliation dedupe indexes", testSourceSpecificDedupeIndexes],
   ["(9) additive migration", testAdditiveMigration],
   ["(10) no clinic truncation", testNoClinicTruncation],
   ["(11) feature flags default OFF", testFlagsDefaultOff],

@@ -210,8 +210,8 @@ async function testReportReferenceReuse() {
     assert.equal(countOps(calls, "insert", t.documentReferences), 0, "reuse must not insert a new reference");
     return res;
   });
-  assert.equal(r.status, "reused");
-  if (r.status === "reused") assert.equal(r.referenceId, 42);
+  assert.equal(r.status, "reused_exact_source");
+  if (r.status === "reused_exact_source") assert.equal(r.referenceId, 42);
 }
 
 // ─── (13) consent → correct case reference ────────────────────────

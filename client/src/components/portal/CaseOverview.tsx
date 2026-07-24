@@ -32,6 +32,7 @@ import {
 } from "@/components/portal/caseWorkspace";
 import { AncillaryDocumentsSummary } from "@/components/ancillary-documents/CanonicalAncillaryDocuments";
 import { isUnifiedAncillaryDocumentsEnabled } from "@/lib/unifiedAncillaryDocumentsFlag";
+import type { AncillaryDocumentContractItem } from "@/lib/ancillaryDocumentsApi";
 
 export type CaseOverviewProps = {
   ctx: CallCaseContext;
@@ -39,6 +40,10 @@ export type CaseOverviewProps = {
   onSchedule: () => void;
   onOpenPatient: () => void;
   onClose: () => void;
+  // Phase 2E-B2 — canonical document summary supplied by the parent detail
+  // panel (SelectedCaseOverview) from ONE batched/selected-case query.
+  // CaseOverview is presentation-only: it never fetches these itself.
+  ancillaryDocuments?: AncillaryDocumentContractItem[];
 };
 
 // ── Small presentational helpers ──────────────────────────────────────
@@ -249,6 +254,7 @@ export function CaseOverview({
   onSchedule,
   onOpenPatient,
   onClose,
+  ancillaryDocuments,
 }: CaseOverviewProps) {
   const screeningId = ctx.patientScreeningId;
   const hasScreening = typeof screeningId === "number" && screeningId > 0;
@@ -333,12 +339,14 @@ export function CaseOverview({
                 <StatusPill label={lifecycleStatus} tone="slate" />
               ) : null}
             </div>
-            {/* Phase 2E-B — read-only canonical Ancillary Documents status.
-                Same server projection/ids as /ancillary-documents; flag OFF
+            {/* Phase 2E-B2 — read-only canonical Ancillary Documents status.
+                PRESENTATION ONLY: data comes from the parent (one batched /
+                selected-case query), never fetched here. Same server
+                projection/ids as /ancillary-documents. Flag OFF or no data →
                 renders nothing and issues zero canonical requests. */}
-            {isUnifiedAncillaryDocumentsEnabled() && hasScreening ? (
+            {isUnifiedAncillaryDocumentsEnabled() && hasScreening && (ancillaryDocuments?.length ?? 0) > 0 ? (
               <div className="mt-1.5">
-                <AncillaryDocumentsSummary params={{ patientScreeningId: screeningId as number }} enabled />
+                <AncillaryDocumentsSummary items={ancillaryDocuments ?? []} />
               </div>
             ) : null}
           </div>

@@ -91,10 +91,14 @@ export function registerAncillaryDocumentsRoutes(app: Express): void {
         documentStatus: q.documentStatus || undefined,
         includeHistory: q.includeHistory !== "false",
         limit: parseIntOrNull(q.limit) ?? undefined,
-        cursor: parseIntOrNull(q.cursor) ?? undefined,
+        // Opaque compound cursor (string), decoded/validated in the service.
+        cursor: typeof q.cursor === "string" && q.cursor.length > 0 ? q.cursor : undefined,
       });
       return res.json({ items: result.items, nextCursor: result.nextCursor });
     } catch (e) {
+      if ((e as { code?: string })?.code === "INVALID_CURSOR") {
+        return res.status(400).json({ error: "Invalid cursor", code: "INVALID_CURSOR" });
+      }
       if (is503(e)) return res.status(503).json({ error: "Ancillary Documents unavailable", code: "ANCILLARY_DOCUMENT_MIGRATION_MISSING" });
       console.error("[ancillary-documents] error:", (e as Error)?.message ?? e);
       return res.status(500).json({ error: "Failed to load ancillary documents" });

@@ -59,10 +59,18 @@ export type EnsureDocumentReferenceInput = {
 
 export type EnsureDocumentReferenceResult =
   | { status: "skipped_flag_off" }
-  | { status: "created" | "reused"; referenceId: number; ancillaryCaseId: number }
-  | { status: "deferred_ambiguous_case"; reason: "no_case" | "multiple_cases"; warnings: string[] }
+  | { status: "created"; referenceId: number; ancillaryCaseId: number }
+  | { status: "reused_exact_source"; referenceId: number; ancillaryCaseId: number }
+  // A DIFFERENT current source already holds this (case, kind) slot. NEVER
+  // reused; the new source is never attached to the old reference id. A
+  // source-specific retry is recorded (retryRecorded reflects persistence).
+  | { status: "active_kind_conflict"; ancillaryCaseId: number; existingReferenceId: number; retryRecorded: boolean; warnings: string[] }
+  | { status: "deferred_ambiguous_case"; reason: "no_case" | "multiple_cases"; retryRecorded: boolean; warnings: string[] }
   | { status: "cross_clinic_denied" }
-  | { status: "deferred_reference" }
+  | { status: "deferred_reference"; retryRecorded: boolean }
+  // The reference could not be indexed AND its durable retry could not be
+  // persisted — reconciliation is NOT durable; caller must not claim it is.
+  | { status: "retry_not_recorded"; warnings: string[] }
   | { status: "migration_missing" }
   | { status: "failed" };
 
@@ -125,12 +133,13 @@ export async function ensureAncillaryDocumentReference(
   try {
     const resolved = await resolveOwningCase(input);
     if (resolved.kind !== "one") {
-      // Ambiguous or absent — NEVER attach arbitrarily. Durable retry keyed
-      // to the clinic we can infer only when a candidate exists; when no
-      // clinic is resolvable we still surface a deferred result.
+      // Ambiguous or absent — NEVER attach arbitrarily. Source-specific retry
+      // keyed to the clinic we can infer only when a candidate exists.
       const clinicForRetry = input.expectedClinicId ?? null;
-      await recordReferenceRetry(input, null, clinicForRetry, `ambiguous_${resolved.kind}`);
-      return { status: "deferred_ambiguous_case", reason: resolved.kind, warnings: [`${input.documentKind}_case_${resolved.kind}`] };
+      const recorded = await recordReferenceRetry(input, null, clinicForRetry, `ambiguous_${resolved.kind}`);
+      const warnings = [`${input.documentKind}_case_${resolved.kind}`];
+      if (!recorded) warnings.push("retry_not_recorded");
+      return { status: "deferred_ambiguous_case", reason: resolved.kind, retryRecorded: recorded, warnings };
     }
     const acase = resolved.case;
     // Cross-clinic guard — never attach across clinics.
@@ -159,16 +168,24 @@ export async function ensureAncillaryDocumentReference(
           document_kind: input.documentKind,
         },
       });
-      return {
-        status: ref.created ? "created" : "reused",
-        referenceId: ref.created ? ref.row.id : ref.existing.id,
-        ancillaryCaseId: acase.id,
-      };
+      if (ref.outcome === "created") {
+        return { status: "created", referenceId: ref.row.id, ancillaryCaseId: acase.id };
+      }
+      if (ref.outcome === "reused_exact_source") {
+        return { status: "reused_exact_source", referenceId: ref.existing.id, ancillaryCaseId: acase.id };
+      }
+      // active_kind_conflict — a DIFFERENT source owns the current (case,kind)
+      // slot. Never reused; never overwrite. Record a source-specific retry so
+      // a reviewed supersession can resolve it later.
+      const recorded = await recordReferenceRetry(input, acase.id, acase.clinicId, "active_document_kind_conflict");
+      const warnings = ["active_document_kind_conflict"];
+      if (!recorded) warnings.push("retry_not_recorded");
+      return { status: "active_kind_conflict", ancillaryCaseId: acase.id, existingReferenceId: ref.existing.id, retryRecorded: recorded, warnings };
     } catch (e) {
       const code = (e as { code?: string })?.code;
       if (code === "ANCILLARY_DOCUMENT_MIGRATION_MISSING") return { status: "migration_missing" };
       const recorded = await recordReferenceRetry(input, acase.id, acase.clinicId, code ?? "reference_failed");
-      return recorded ? { status: "deferred_reference" } : { status: "failed" };
+      return recorded ? { status: "deferred_reference", retryRecorded: true } : { status: "retry_not_recorded", warnings: ["reference_failed", "retry_not_recorded"] };
     }
   } catch (e) {
     const code = (e as { code?: string })?.code;

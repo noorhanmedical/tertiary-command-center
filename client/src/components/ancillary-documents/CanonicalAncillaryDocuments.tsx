@@ -65,14 +65,26 @@ function DocRow({ item }: { item: AncillaryDocumentContractItem }) {
           <div className="text-xs text-amber-600">{item.warnings.join(", ")}</div>
         )}
       </div>
-      {item.downloadReference && (
-        // Points at an already-authorized source route; never a raw bucket key.
-        <span className="text-xs text-blue-600 shrink-0" data-testid={`doc-download-${item.ancillaryDocumentReferenceId}`}>
-          {item.downloadReference}
-        </span>
+      {isAuthorizedDownloadRoute(item.downloadReference) && (
+        // A real View action to an authorized internal route — never the raw
+        // reference string, never a bucket key. Only rendered when valid.
+        <a
+          href={item.downloadReference as string}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-blue-600 hover:underline shrink-0"
+          data-testid={`doc-download-${item.ancillaryDocumentReferenceId}`}
+        >
+          View
+        </a>
       )}
     </div>
   );
+}
+
+/** Only allow same-origin authorized API routes as the download action. */
+function isAuthorizedDownloadRoute(ref: string | null): boolean {
+  return typeof ref === "string" && ref.startsWith("/api/");
 }
 
 export function useAncillaryDocuments(params: AncillaryDocumentsListParams, enabled: boolean) {
@@ -122,16 +134,19 @@ export function AncillaryDocumentsCard(props: {
   );
 }
 
-// ─── Tiny read-only status summary (ACS/PCS) ────────────────────────
+// ─── Tiny read-only status summary (ACS/PCS) — PRESENTATION ONLY ────
+// No useQuery, no per-card fetch. The parent supplies `items` from ONE
+// batched query (getAncillaryDocumentsSummaryForScreenings) so mounting many
+// cards issues zero canonical requests. `items` should already be current-only.
 export function AncillaryDocumentsSummary(props: {
-  params: AncillaryDocumentsListParams;
-  enabled: boolean;
+  items: AncillaryDocumentContractItem[];
+  enabled?: boolean;
 }) {
-  const { data } = useAncillaryDocuments({ ...props.params, includeHistory: false }, props.enabled);
-  const items = data?.items ?? [];
-  if (!props.enabled || items.length === 0) return null;
+  if (props.enabled === false) return null;
+  const current = props.items.filter((it) => it.isCurrent);
+  if (current.length === 0) return null;
   const byKind = new Map<string, AncillaryDocumentContractItem>();
-  for (const it of items) if (!byKind.has(it.documentKind)) byKind.set(it.documentKind, it);
+  for (const it of current) if (!byKind.has(it.documentKind)) byKind.set(it.documentKind, it);
   return (
     <div className="flex flex-wrap gap-1" data-testid="ancillary-documents-summary">
       {Array.from(byKind.values()).map((it) => (

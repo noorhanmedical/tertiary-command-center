@@ -12,7 +12,7 @@
  */
 
 import { db } from "../db";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   ancillaryDocumentReferences,
   ancillaryDocumentReconciliationFailures,
@@ -147,6 +147,66 @@ export async function searchClinicReferences(
   }, [] as AncillaryDocumentReference[], "searchClinicReferences");
 }
 
+// ─── Keyset-paginated operational search ──────────────────────────
+export type ReferencePageCursor = { actualCreatedAt: Date; id: number };
+
+export type ReferencePageQuery = {
+  filters: Omit<ClinicDocumentSearchFilters, "limit">;
+  currentOnly: boolean;
+  cursor?: ReferencePageCursor | null;
+  // Page size the caller wants back. The repo fetches limit+1 to detect a
+  // next page WITHOUT a fixed 500-row prefetch.
+  limit: number;
+};
+
+/**
+ * True server-side keyset page. All filters, includeHistory (currentOnly),
+ * clinic scope, the compound cursor, ordering (actual_created_at DESC, id
+ * DESC), and limit+1 live in the SQL — no in-memory 500-row prefetch. The
+ * cursor predicate is:
+ *   actual_created_at < c.ts OR (actual_created_at = c.ts AND id < c.id)
+ * which is stable when timestamps tie and yields no duplicate/missing rows.
+ */
+export async function searchClinicReferencesPage(
+  q: ReferencePageQuery,
+): Promise<AncillaryDocumentReference[]> {
+  const pageLimit = Math.min(Math.max(1, q.limit), 500);
+  const f = q.filters;
+  return safeRead(async () => {
+    const conds = [eq(ancillaryDocumentReferences.clinicId, f.clinicId)];
+    if (f.patientScreeningId != null) conds.push(eq(ancillaryDocumentReferences.patientScreeningId, f.patientScreeningId));
+    if (f.executionCaseId != null) conds.push(eq(ancillaryDocumentReferences.executionCaseId, f.executionCaseId));
+    if (f.ancillaryCaseId != null) conds.push(eq(ancillaryDocumentReferences.ancillaryCaseId, f.ancillaryCaseId));
+    if (f.globalPlexusPatientId != null) conds.push(eq(ancillaryDocumentReferences.globalPlexusPatientId, f.globalPlexusPatientId));
+    if (f.serviceType) conds.push(eq(ancillaryDocumentReferences.serviceType, f.serviceType));
+    if (f.documentKind) conds.push(eq(ancillaryDocumentReferences.documentKind, f.documentKind));
+    if (f.documentStatus) conds.push(eq(ancillaryDocumentReferences.documentStatus, f.documentStatus));
+    if (q.currentOnly) {
+      conds.push(isNull(ancillaryDocumentReferences.supersededAt));
+      conds.push(ne(ancillaryDocumentReferences.documentStatus, "voided"));
+      conds.push(ne(ancillaryDocumentReferences.documentStatus, "superseded"));
+    }
+    if (q.cursor) {
+      // Compound keyset: strictly "after" the cursor in (createdAt DESC, id DESC).
+      conds.push(
+        or(
+          lt(ancillaryDocumentReferences.actualCreatedAt, q.cursor.actualCreatedAt),
+          and(
+            eq(ancillaryDocumentReferences.actualCreatedAt, q.cursor.actualCreatedAt),
+            lt(ancillaryDocumentReferences.id, q.cursor.id),
+          ),
+        )!,
+      );
+    }
+    return db
+      .select()
+      .from(ancillaryDocumentReferences)
+      .where(and(...conds))
+      .orderBy(desc(ancillaryDocumentReferences.actualCreatedAt), desc(ancillaryDocumentReferences.id))
+      .limit(pageLimit + 1);
+  }, [] as AncillaryDocumentReference[], "searchClinicReferencesPage");
+}
+
 // ─── Reference writes ─────────────────────────────────────────────
 export type CreateReferenceInput = {
   clinicId: number;
@@ -168,20 +228,35 @@ export type CreateReferenceInput = {
 };
 
 export type CreateReferenceResult =
-  | { created: true; row: AncillaryDocumentReference }
-  | { created: false; existing: AncillaryDocumentReference };
+  | { outcome: "created"; created: true; row: AncillaryDocumentReference }
+  // Idempotent: the EXACT same canonical source (table, id, kind) already
+  // indexed — returned unchanged.
+  | { outcome: "reused_exact_source"; created: false; existing: AncillaryDocumentReference }
+  // A DIFFERENT current source already holds this (case, kind) slot. NEVER
+  // reused — the caller must supersede via a reviewed workflow or defer. The
+  // new source is never silently attached to the existing reference id.
+  | { outcome: "active_kind_conflict"; created: false; existing: AncillaryDocumentReference };
 
 /**
- * Insert a new canonical reference. If one already exists for the same
- * (source_table, source_id, kind) it is returned unchanged (idempotent).
+ * Insert a new canonical reference. Returns `reused_exact_source` ONLY when
+ * the exact (source_table, source_id, kind) already exists. If a DIFFERENT
+ * source already occupies the active (case, kind) slot, returns
+ * `active_kind_conflict` — it is NEVER reported as reused and the existing
+ * reference is never mutated.
  */
 export async function createReference(input: CreateReferenceInput): Promise<CreateReferenceResult> {
   guardWrite();
   if (!(ANCILLARY_DOCUMENT_KINDS as readonly string[]).includes(input.documentKind)) {
     throw new Error(`invalid documentKind: ${input.documentKind}`);
   }
-  const existing = await getReferenceBySource(input.sourceTable, input.sourceId, input.documentKind);
-  if (existing) return { created: false, existing };
+  const existingSource = await getReferenceBySource(input.sourceTable, input.sourceId, input.documentKind);
+  if (existingSource) return { outcome: "reused_exact_source", created: false, existing: existingSource };
+  // A current reference of the same (case, kind) but a DIFFERENT source blocks
+  // a silent reuse — surface the conflict, never overwrite the slot.
+  const activeOther = await getActiveReference(input.ancillaryCaseId, input.documentKind);
+  if (activeOther && !(activeOther.sourceTable === input.sourceTable && activeOther.sourceId === input.sourceId)) {
+    return { outcome: "active_kind_conflict", created: false, existing: activeOther };
+  }
   try {
     const [row] = await db
       .insert(ancillaryDocumentReferences)
@@ -204,12 +279,16 @@ export async function createReference(input: CreateReferenceInput): Promise<Crea
         metadata: (input.metadata ?? {}) as unknown as never,
       })
       .returning();
-    return { created: true, row };
+    return { outcome: "created", created: true, row };
   } catch (e) {
     if ((e as { code?: string }).code === PG_UNIQUE_VIOLATION) {
-      const winner = await getReferenceBySource(input.sourceTable, input.sourceId, input.documentKind)
-        ?? await getActiveReference(input.ancillaryCaseId, input.documentKind);
-      if (winner) return { created: false, existing: winner };
+      // Concurrent insert. Reread by EXACT source only — never fall back to an
+      // unrelated active reference of the same case/kind.
+      const winner = await getReferenceBySource(input.sourceTable, input.sourceId, input.documentKind);
+      if (winner) return { outcome: "reused_exact_source", created: false, existing: winner };
+      // The active-per-case-kind partial unique fired for a DIFFERENT source.
+      const other = await getActiveReference(input.ancillaryCaseId, input.documentKind);
+      if (other) return { outcome: "active_kind_conflict", created: false, existing: other };
     }
     throw e;
   }
@@ -253,15 +332,32 @@ export async function recordAncillaryDocumentFailure(
   if (!(ANCILLARY_DOCUMENT_FAILURE_ACTIONS as readonly string[]).includes(input.requestedAction)) {
     throw new Error(`invalid requestedAction: ${input.requestedAction}`);
   }
+  // SOURCE-SPECIFIC dedupe (mirrors the two partial unique indexes in 0053).
+  // Always clinic-scoped so clinic A and clinic B never dedupe together.
+  //   • source-bearing → key on the exact canonical source (two different
+  //     source_ids ⇒ two rows, each with its own attempt count);
+  //   • source-less    → key on (clinic, case, action, kind).
   const dedupeConds = [
+    eq(ancillaryDocumentReconciliationFailures.clinicId, input.clinicId),
     eq(ancillaryDocumentReconciliationFailures.requestedAction, input.requestedAction),
     isNull(ancillaryDocumentReconciliationFailures.resolvedAt),
   ];
-  if (input.ancillaryCaseId != null) {
-    dedupeConds.push(eq(ancillaryDocumentReconciliationFailures.ancillaryCaseId, input.ancillaryCaseId));
-  }
   if (input.documentKind != null) {
     dedupeConds.push(eq(ancillaryDocumentReconciliationFailures.documentKind, input.documentKind));
+  }
+  if (input.sourceId != null) {
+    // Source-bearing: exact (source_table, source_id).
+    dedupeConds.push(isNotNull(ancillaryDocumentReconciliationFailures.sourceId));
+    dedupeConds.push(eq(ancillaryDocumentReconciliationFailures.sourceId, input.sourceId));
+    if (input.sourceTable != null) {
+      dedupeConds.push(eq(ancillaryDocumentReconciliationFailures.sourceTable, input.sourceTable));
+    }
+  } else {
+    // Source-less: case-level. Never dedupe against a source-bearing row.
+    dedupeConds.push(isNull(ancillaryDocumentReconciliationFailures.sourceId));
+    if (input.ancillaryCaseId != null) {
+      dedupeConds.push(eq(ancillaryDocumentReconciliationFailures.ancillaryCaseId, input.ancillaryCaseId));
+    }
   }
   const existing = await db
     .select()
@@ -371,4 +467,29 @@ export async function listReferencesForCaseIds(
       .from(ancillaryDocumentReferences)
       .where(inArray(ancillaryDocumentReferences.ancillaryCaseId, caseIds));
   }, [] as AncillaryDocumentReference[], "listReferencesForCaseIds");
+}
+
+/**
+ * ONE batched, clinic-scoped, CURRENT-only read across many screening ids —
+ * the primitive that lets a portal parent build per-case document summaries
+ * without an N+1 per card. Superseded/voided rows are excluded in SQL.
+ */
+export async function listCurrentReferencesForScreenings(
+  clinicId: number,
+  screeningIds: number[],
+): Promise<AncillaryDocumentReference[]> {
+  if (screeningIds.length === 0) return [];
+  return safeRead(async () => {
+    return db
+      .select()
+      .from(ancillaryDocumentReferences)
+      .where(and(
+        eq(ancillaryDocumentReferences.clinicId, clinicId),
+        inArray(ancillaryDocumentReferences.patientScreeningId, screeningIds),
+        isNull(ancillaryDocumentReferences.supersededAt),
+        ne(ancillaryDocumentReferences.documentStatus, "voided"),
+        ne(ancillaryDocumentReferences.documentStatus, "superseded"),
+      ))
+      .orderBy(desc(ancillaryDocumentReferences.actualCreatedAt), desc(ancillaryDocumentReferences.id));
+  }, [] as AncillaryDocumentReference[], "listCurrentReferencesForScreenings");
 }

@@ -88,21 +88,47 @@ async function testServicesAndHistory() {
   assert.ok(html.includes("(superseded)") || html.includes("History"), "history is distinct");
 }
 
-// ─── (3) ACS/PCS summary renders current status per kind ──────────
+// ─── (3/22) ACS/PCS summary is PURE: renders each case status from items ─
 async function testAcsPcsSummary() {
-  const params = { patientScreeningId: 77, includeHistory: false };
   const items = [
     item({ documentKind: "order_note", documentStatus: "signed", isCurrent: true }),
     item({ ancillaryDocumentReferenceId: 43, documentKind: "report", documentStatus: "uploaded", isCurrent: true }),
+    item({ ancillaryDocumentReferenceId: 44, documentKind: "consent", documentStatus: "superseded", isCurrent: false }), // excluded
   ];
-  const html = renderWithData(
-    React.createElement(comp.AncillaryDocumentsSummary, { params, enabled: true }),
-    params, items,
-  );
-  assert.ok(html.includes("Order Note") && html.includes("Report"), "summary lists both kinds");
+  // Pure component: no QueryClientProvider needed, no fetch — items only.
+  const html = renderToStaticMarkup(React.createElement(comp.AncillaryDocumentsSummary, { items }));
+  assert.ok(html.includes("Order Note") && html.includes("Report"), "renders current kinds from batched items");
+  assert.ok(!html.includes("Consent"), "non-current (superseded) item excluded from summary");
   assert.ok(html.includes("signed") || html.includes("Signed"));
-  // Same source contract — no fetch/derivation divergence, no controls.
   assert.ok(!html.toLowerCase().includes("<button"), "summary is read-only");
+}
+
+// ─── (21/23) summary + CaseOverview are presentation-only (no fetch) ─
+async function testPresentationOnlyNoPerCardFetch() {
+  const src = readFileSync(join(ROOT, "client/src/components/ancillary-documents/CanonicalAncillaryDocuments.tsx"), "utf8");
+  // AncillaryDocumentsSummary must be pure: extract its body and prove it does
+  // NOT call useQuery/useAncillaryDocuments/fetch.
+  const summaryBody = src.slice(src.indexOf("export function AncillaryDocumentsSummary"));
+  const summaryOnly = summaryBody.slice(0, summaryBody.indexOf("export function", 1) >>> 0 || summaryBody.length);
+  assert.ok(!/useQuery|useAncillaryDocuments|fetch\(/.test(summaryOnly), "AncillaryDocumentsSummary must not fetch");
+  const caseOverview = readFileSync(join(ROOT, "client/src/components/portal/CaseOverview.tsx"), "utf8");
+  assert.ok(!/useAncillaryDocuments|fetchAncillaryDocuments/.test(caseOverview), "(23) CaseOverview must not fetch canonical documents");
+  assert.ok(/ancillaryDocuments\?:/.test(caseOverview), "CaseOverview receives documents as a prop");
+  // The single fetch is centralized in the selected-case detail wrapper.
+  const wrapper = readFileSync(join(ROOT, "client/src/components/portal/SelectedCaseOverview.tsx"), "utf8");
+  assert.equal((wrapper.match(/useAncillaryDocuments\(/g) ?? []).length, 1, "(21) exactly one canonical query in the selected-case panel");
+  // Behavioral: rendering MANY summaries needs no query client and no fetch.
+  let fetchCalls = 0;
+  const realFetch = globalThis.fetch;
+  (globalThis as unknown as { fetch: unknown }).fetch = () => { fetchCalls++; return Promise.resolve(new Response("[]")); };
+  try {
+    for (let i = 0; i < 5; i++) {
+      renderToStaticMarkup(React.createElement(comp.AncillaryDocumentsSummary, { items: [item({ ancillaryDocumentReferenceId: i })] }));
+    }
+    assert.equal(fetchCalls, 0, "(21) many summary cards issue zero canonical requests");
+  } finally {
+    (globalThis as unknown as { fetch: unknown }).fetch = realFetch;
+  }
 }
 
 // ─── (4) feature OFF → renders nothing, ZERO canonical requests ───
@@ -115,16 +141,32 @@ async function testFeatureOffZeroRequests() {
       React.createElement(QueryClientProvider, { client: new QueryClient() },
         React.createElement(comp.AncillaryDocumentsCard, { params: { patientScreeningId: 77 }, enabled: false })),
     );
-    const summaryHtml = renderToStaticMarkup(
-      React.createElement(QueryClientProvider, { client: new QueryClient() },
-        React.createElement(comp.AncillaryDocumentsSummary, { params: { patientScreeningId: 77 }, enabled: false })),
-    );
+    // Pure summary with no items → renders nothing.
+    const summaryHtml = renderToStaticMarkup(React.createElement(comp.AncillaryDocumentsSummary, { items: [] }));
     assert.equal(cardHtml, "", "disabled card renders nothing");
-    assert.equal(summaryHtml, "", "disabled summary renders nothing");
-    assert.equal(fetchCalls, 0, "zero canonical requests when disabled");
+    assert.equal(summaryHtml, "", "empty summary renders nothing");
+    assert.equal(fetchCalls, 0, "zero canonical requests");
   } finally {
     (globalThis as unknown as { fetch: unknown }).fetch = realFetch;
   }
+}
+
+// ─── (24/25) download action renders only for valid pointers ──────
+async function testDownloadActionRendering() {
+  const params = { patientScreeningId: 77 };
+  // (24) a valid authorized internal route → a real "View" link (href), not raw text.
+  const withDl = [item({ ancillaryDocumentReferenceId: 70, downloadReference: "/api/documents-library/123/file" })];
+  const html = renderWithData(React.createElement(comp.AncillaryDocumentsCard, { params, enabled: true }), params, withDl);
+  assert.ok(/href="\/api\/documents-library\/123\/file"/.test(html), "renders an actionable authorized link");
+  assert.ok(html.includes(">View<"), "labelled View");
+  // (25) null pointer → NO action.
+  const noDl = [item({ ancillaryDocumentReferenceId: 71, downloadReference: null })];
+  const html2 = renderWithData(React.createElement(comp.AncillaryDocumentsCard, { params, enabled: true }), params, noDl);
+  assert.ok(!/doc-download-71/.test(html2), "no download action when pointer is null");
+  // A non-/api pointer (should never reach the client, but defend) → no action.
+  const badDl = [item({ ancillaryDocumentReferenceId: 72, downloadReference: "s3://bucket/key" as any })];
+  const html3 = renderWithData(React.createElement(comp.AncillaryDocumentsCard, { params, enabled: true }), params, badDl);
+  assert.ok(!/doc-download-72/.test(html3), "unsafe pointer renders no action");
 }
 
 // ─── (5) pure contract helpers: status buckets are distinct ───────
@@ -175,8 +217,10 @@ async function testSurfaceWiring() {
 const tests: Array<[string, () => Promise<void>]> = [
   ["(1) EHR card renders canonical records + same ids", testEhrCardRenders],
   ["(2) different services separate; history distinct", testServicesAndHistory],
-  ["(3) ACS/PCS summary renders current status", testAcsPcsSummary],
+  ["(3/22) ACS/PCS summary is pure; renders case status from items", testAcsPcsSummary],
+  ["(21/23) summary + CaseOverview presentation-only; no per-card fetch", testPresentationOnlyNoPerCardFetch],
   ["(4) feature OFF → nothing rendered, zero requests", testFeatureOffZeroRequests],
+  ["(24/25) download action renders only for valid pointers", testDownloadActionRendering],
   ["(5) status buckets distinct", testStatusBuckets],
   ["(6) query builder: no identity search", testQueryBuilder],
   ["(7) flag default OFF", testFlagDefaults],

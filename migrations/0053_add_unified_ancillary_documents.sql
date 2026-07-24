@@ -105,10 +105,29 @@ CREATE INDEX IF NOT EXISTS idx_adrf_unresolved
   ON ancillary_document_reconciliation_failures(last_attempted_at)
   WHERE resolved_at IS NULL;
 
--- One unresolved row per document work request.
+-- Unresolved uniqueness is SOURCE-SPECIFIC so separate report/form failures
+-- for the same ancillary case never collapse into one another. Two disjoint
+-- partial unique models (source-bearing vs case-level source-less) — a row
+-- belongs to exactly one:
+--
+--   A. Source-bearing failures — keyed by the exact canonical source so two
+--      different source_ids create two rows and each increments its OWN
+--      attempt count. clinic_id is included so clinic A and clinic B never
+--      dedupe together.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_adrf_unresolved_by_source
+  ON ancillary_document_reconciliation_failures(
+    clinic_id, requested_action, source_table, source_id, document_kind
+  )
+  WHERE resolved_at IS NULL AND source_id IS NOT NULL;
+
+--   B. Case-level source-less failures (e.g. backfill ambiguity with no
+--      resolvable source) — one unresolved row per (clinic, case, action,
+--      kind). Kept idempotent for reruns; never mixes with source-bearing rows.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_adrf_unresolved_by_case_kind_action
-  ON ancillary_document_reconciliation_failures(ancillary_case_id, document_kind, requested_action)
-  WHERE resolved_at IS NULL AND ancillary_case_id IS NOT NULL;
+  ON ancillary_document_reconciliation_failures(
+    clinic_id, ancillary_case_id, requested_action, document_kind
+  )
+  WHERE resolved_at IS NULL AND source_id IS NULL AND ancillary_case_id IS NOT NULL;
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Phase 2E-A2 — ANCILLARY-CASE-SCOPED CANONICAL ORDER NOTE IDENTITY

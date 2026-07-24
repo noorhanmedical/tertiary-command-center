@@ -19,12 +19,18 @@
 import { featureFlags } from "../../lib/featureFlags";
 import {
   searchClinicReferences,
+  searchClinicReferencesPage,
+  listCurrentReferencesForScreenings,
   type ClinicDocumentSearchFilters,
+  type ReferencePageCursor,
 } from "../../repositories/ancillaryDocuments.repo";
 import type {
   AncillaryDocumentReference,
   AncillaryDocumentContractItem,
 } from "@shared/schema/ancillaryDocuments";
+import {
+  resolveAuthorizedDownloadReference,
+} from "./downloadReference";
 
 // The per-case view reuses the shared contract item shape verbatim so every
 // surface renders identical fields + ids.
@@ -79,8 +85,10 @@ function toView(ref: AncillaryDocumentReference): AncillaryDocumentView {
     signedAt: ref.signedAt ? ref.signedAt.toISOString() : null,
     supersededAt: ref.supersededAt ? ref.supersededAt.toISOString() : null,
     isCurrent: isCurrentRef(ref),
-    // A stable source pointer — never document bytes, never a raw bucket key.
-    downloadReference: `${ref.sourceTable}:${ref.sourceId}`,
+    // The AUTHORIZED download/view route resolved from the stored metadata
+    // pointer (allowlisted), or null. NEVER a fabricated sourceTable:sourceId,
+    // a raw bucket key, a filesystem path, or an external URL.
+    downloadReference: resolveAuthorizedDownloadReference(ref),
     readiness: readinessFor(ref),
     warnings: [],
   };
@@ -139,24 +147,50 @@ export type DocumentsListQuery = DocumentsProjectionQuery & {
   documentKind?: string;
   documentStatus?: string;
   limit?: number;
-  // Keyset cursor: return rows with reference id strictly less than this
-  // (paired with the deterministic actualCreatedAt DESC, id DESC ordering).
-  cursor?: number;
+  // Opaque compound keyset cursor (base64url of {t: iso, i: id}). A string,
+  // not a numeric id — decoded/validated in the service.
+  cursor?: string;
 };
 
 export type DocumentsListResult = {
   flagOff: boolean;
   items: AncillaryDocumentView[];
-  nextCursor: number | null;
+  nextCursor: string | null;
 };
+
+/** Thrown when a client supplies a malformed cursor → route maps to 400. */
+export class InvalidCursorError extends Error {
+  code = "INVALID_CURSOR" as const;
+  constructor() { super("invalid_cursor"); this.name = "InvalidCursorError"; }
+}
 
 const LIST_DEFAULT_LIMIT = 200;
 const LIST_MAX_LIMIT = 500;
 
+// Compound cursor is opaque to clients: base64url({ t: ISO ts, i: id }).
+export function encodeDocumentsCursor(c: ReferencePageCursor): string {
+  const json = JSON.stringify({ t: c.actualCreatedAt.toISOString(), i: c.id });
+  return Buffer.from(json, "utf8").toString("base64url");
+}
+export function decodeDocumentsCursor(raw: string): ReferencePageCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    const ts = new Date(parsed?.t);
+    const id = Number(parsed?.i);
+    if (Number.isNaN(ts.getTime()) || !Number.isInteger(id)) throw new Error("bad");
+    return { actualCreatedAt: ts, id };
+  } catch {
+    throw new InvalidCursorError();
+  }
+}
+
 /**
- * Flat, deterministically-ordered, bounded list for the global operational
- * view. Ordering: actualCreatedAt DESC, then reference id DESC. Feature OFF →
- * zero reads. Another clinic's rows are never surfaced (repo + guard here).
+ * Flat, deterministically-ordered, keyset-paginated list for the global
+ * operational view. All filtering/ordering/cursor/limit live in SQL (no fixed
+ * 500-row prefetch). Ordering: actualCreatedAt DESC, id DESC. Feature OFF →
+ * zero reads. A cursor only ever pages WITHIN the same clinic + filter set
+ * (the filters + clinic are re-applied every call), so a cursor cannot leak
+ * another clinic's rows.
  */
 export async function getAncillaryDocumentsList(
   query: DocumentsListQuery,
@@ -164,7 +198,9 @@ export async function getAncillaryDocumentsList(
   if (!featureFlags.unifiedAncillaryDocuments) return { flagOff: true, items: [], nextCursor: null };
 
   const limit = Math.min(Math.max(1, query.limit ?? LIST_DEFAULT_LIMIT), LIST_MAX_LIMIT);
-  const filters: ClinicDocumentSearchFilters = { clinicId: query.clinicId, limit: LIST_MAX_LIMIT };
+  const cursor = query.cursor ? decodeDocumentsCursor(query.cursor) : null;
+
+  const filters: Omit<ClinicDocumentSearchFilters, "limit"> = { clinicId: query.clinicId };
   if (query.ancillaryCaseId != null) filters.ancillaryCaseId = query.ancillaryCaseId;
   if (query.patientScreeningId != null) filters.patientScreeningId = query.patientScreeningId;
   if (query.executionCaseId != null) filters.executionCaseId = query.executionCaseId;
@@ -173,16 +209,43 @@ export async function getAncillaryDocumentsList(
   if (query.documentKind != null) filters.documentKind = query.documentKind as never;
   if (query.documentStatus != null) filters.documentStatus = query.documentStatus;
 
-  const refs = await searchClinicReferences(filters);
-  const includeHistory = query.includeHistory ?? true;
-  let scoped = refs.filter((r) => r.clinicId === query.clinicId);
-  if (!includeHistory) scoped = scoped.filter(isCurrentRef);
+  // includeHistory applied in SQL (currentOnly = !includeHistory).
+  const currentOnly = (query.includeHistory ?? true) === false;
+  const rows = await searchClinicReferencesPage({ filters, currentOnly, cursor, limit });
 
-  // Deterministic ordering: actualCreatedAt DESC, then reference id DESC.
-  scoped.sort((a, b) => b.actualCreatedAt.getTime() - a.actualCreatedAt.getTime() || b.id - a.id);
-  if (query.cursor != null) scoped = scoped.filter((r) => r.id < query.cursor!);
-
-  const page = scoped.slice(0, limit);
-  const nextCursor = scoped.length > limit ? page[page.length - 1].id : null;
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+  const nextCursor = hasMore && last
+    ? encodeDocumentsCursor({ actualCreatedAt: last.actualCreatedAt, id: last.id })
+    : null;
   return { flagOff: false, items: page.map(toView), nextCursor };
+}
+
+// ─── Batched per-screening summary (ACS/PCS parent-fed, no per-card fetch) ──
+export type ScreeningDocumentsSummary = {
+  flagOff: boolean;
+  // Keyed by patient_screening_id → current-only contract items (same
+  // reference/source ids as the global list).
+  byScreeningId: Record<number, AncillaryDocumentView[]>;
+};
+
+/**
+ * ONE batched query for many screenings — the primitive an ACS/PCS parent
+ * uses to feed CaseOverview cards as data (no useQuery per card). Current-only
+ * (superseded/voided excluded). Feature OFF → zero reads. Clinic-scoped.
+ */
+export async function getAncillaryDocumentsSummaryForScreenings(
+  clinicId: number,
+  screeningIds: number[],
+): Promise<ScreeningDocumentsSummary> {
+  if (!featureFlags.unifiedAncillaryDocuments) return { flagOff: true, byScreeningId: {} };
+  const unique = Array.from(new Set(screeningIds.filter((n) => Number.isInteger(n))));
+  const refs = await listCurrentReferencesForScreenings(clinicId, unique);
+  const byScreeningId: Record<number, AncillaryDocumentView[]> = {};
+  for (const r of refs) {
+    if (r.clinicId !== clinicId || r.patientScreeningId == null) continue;
+    (byScreeningId[r.patientScreeningId] ??= []).push(toView(r));
+  }
+  return { flagOff: false, byScreeningId };
 }
