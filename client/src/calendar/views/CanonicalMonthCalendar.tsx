@@ -117,7 +117,7 @@ export function CanonicalMonthCalendar({
     >
       <div className="flex items-center justify-between gap-2 px-0.5">
         <div
-          className="text-sm font-semibold tracking-tight text-slate-900"
+          className={`${compact ? "text-sm" : "text-base"} font-bold tracking-tight text-slate-900`}
           data-testid="canonical-month-label"
         >
           {monthLabel}
@@ -148,16 +148,20 @@ export function CanonicalMonthCalendar({
         </div>
       </div>
 
-      <div className="border border-slate-200 rounded-md overflow-hidden">
-        <div className="grid grid-cols-7 border-b border-slate-200 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400">
+      <div
+        className={`rounded-2xl border border-white/40 bg-white/20 backdrop-blur-xl shadow-[0_1px_2px_rgba(15,23,42,0.06),0_8px_28px_rgba(15,23,42,0.10)] ${compact ? "p-1.5" : "p-2"}`}
+      >
+        <div
+          className={`grid grid-cols-7 border-b border-slate-900/10 ${compact ? "text-[10px]" : "text-[11px]"} font-semibold uppercase tracking-[0.14em] text-slate-500`}
+        >
           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-            <div key={d} className="text-center py-2">
+            <div key={d} className={`text-center ${compact ? "py-1.5" : "py-2"}`}>
               {d}
             </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-7 gap-px bg-slate-200/60">
+        <div className={`grid grid-cols-7 ${compact ? "gap-0.5 pt-1" : "gap-1 pt-1.5"}`}>
         {grid.map((d) => {
           const key = ymd(d);
           const inMonth = d.getMonth() === cursorMonth;
@@ -171,21 +175,21 @@ export function CanonicalMonthCalendar({
             <button
               type="button"
               onClick={() => onSelectDate?.(key)}
-              className={`aspect-square text-left p-1.5 transition-colors flex flex-col cursor-pointer ${
+              className={`aspect-square text-left ${compact ? "p-1 rounded-lg" : "p-1.5 rounded-xl"} transition-colors flex flex-col cursor-pointer ${
                 inMonth
-                  ? "bg-white hover:bg-slate-50"
-                  : "bg-white text-slate-300 hover:bg-slate-50"
-              } ${isToday ? "ring-1 ring-inset ring-plexus-navy-800" : ""}`}
+                  ? "hover:bg-white/45"
+                  : "text-slate-400/80 hover:bg-white/30"
+              } ${isToday ? "bg-white/40" : ""}`}
               data-testid={`canonical-month-day-${key}`}
             >
               <div className="flex items-center justify-between gap-1">
                 <span
-                  className={`text-[12px] font-semibold tabular-nums leading-5 ${
+                  className={`${
                     isToday
-                      ? "text-plexus-navy-800"
-                      : inMonth
-                        ? "text-slate-700"
-                        : "text-slate-300"
+                      ? `inline-flex items-center justify-center ${compact ? "h-5 w-5 text-[11px]" : "h-6 w-6 text-[12px]"} rounded-full bg-plexus-navy-800 text-white font-bold tabular-nums shadow-sm`
+                      : `${compact ? "text-[12px]" : "text-[13px]"} font-semibold tabular-nums leading-5 ${
+                          inMonth ? "text-slate-900" : "text-slate-400/80"
+                        }`
                   }`}
                 >
                   {d.getDate()}
@@ -204,7 +208,7 @@ export function CanonicalMonthCalendar({
                 <div className={compact ? "mt-auto flex items-end justify-between gap-1" : "mt-auto space-y-1"}>
                   {cell?.count != null && cell.count > 0 && (
                     compact ? (
-                      <span className="text-[10px] font-semibold tabular-nums text-slate-500 leading-none">
+                      <span className="text-[10px] font-semibold tabular-nums text-slate-600 leading-none">
                         {cell.count}
                       </span>
                     ) : (
@@ -219,7 +223,7 @@ export function CanonicalMonthCalendar({
                       {cell.dots.map((dot, i) => (
                         <span
                           key={i}
-                          className={`inline-block ${compact ? "h-1 w-1" : "h-1.5 w-1.5"} rounded-full ${dot.className}`}
+                          className={`inline-block ${compact ? "h-1.5 w-1.5" : "h-[7px] w-[7px]"} rounded-full ${dot.className}`}
                           title={dot.title}
                         />
                       ))}
@@ -261,14 +265,14 @@ export function CanonicalMonthCalendar({
 
       {unscheduledItems && unscheduledItems.length > 0 && (
         <section
-          className="rounded-md border border-slate-200 bg-white p-3 space-y-2"
+          className="rounded-2xl border border-white/40 bg-white/20 backdrop-blur-xl p-3 space-y-2 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_8px_28px_rgba(15,23,42,0.10)]"
           data-testid="canonical-month-unscheduled-panel"
         >
           <div className="flex items-baseline justify-between gap-2">
-            <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+            <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600">
               Unscheduled
             </h3>
-            <span className="text-[10px] text-slate-400">
+            <span className="text-[10px] text-slate-500">
               {unscheduledItems.length}{" "}
               {unscheduledItems.length === 1 ? "item" : "items"}
             </span>
@@ -277,7 +281,7 @@ export function CanonicalMonthCalendar({
             {unscheduledItems.map((item) => (
               <li
                 key={`${item.id}`}
-                className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 py-2"
+                className="flex items-center justify-between gap-2 rounded-xl border border-white/50 bg-white/35 px-3 py-2"
                 data-testid={`canonical-month-unscheduled-item-${item.id}`}
               >
                 <div className="min-w-0">
@@ -285,7 +289,7 @@ export function CanonicalMonthCalendar({
                     {item.label}
                   </div>
                   {(item.detail || item.count != null) && (
-                    <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                    <div className="text-[10px] text-slate-600 flex items-center gap-1">
                       {item.count != null && (
                         <span>
                           {item.count}{" "}

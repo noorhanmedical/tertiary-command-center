@@ -196,7 +196,7 @@ function MonthCalendarPopover({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="z-[95] w-[340px] p-3"
+        className="z-[95] w-[340px] p-3 bg-white/20 backdrop-blur-2xl border-white/40 shadow-2xl rounded-2xl"
         data-testid={`${testId}-popover`}
       >
         <CanonicalMonthCalendar

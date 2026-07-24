@@ -1048,7 +1048,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
             <PopoverContent
               align="end"
               sideOffset={8}
-              className="w-[380px] p-4 bg-white/95 backdrop-blur-xl border-slate-200/70 shadow-2xl rounded-lg"
+              className="w-[380px] p-4 bg-white/20 backdrop-blur-2xl border-white/40 shadow-2xl rounded-2xl"
               data-testid="popover-banner-calendar"
             >
               <BannerCalendarContent
