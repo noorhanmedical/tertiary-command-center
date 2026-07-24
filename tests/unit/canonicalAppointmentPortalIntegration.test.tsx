@@ -166,13 +166,19 @@ async function testEligibleRendersRejectedDoesNot() {
   assert.ok(!rendered.includes("Ultrasound") && !rendered.includes('data-global-schedule-event-id="800"'), "rejected Ultrasound is not rendered");
 }
 
-// ─── (P2) parents consume parent-provided data — no extra fetch ───
+// ─── (P2) bounded, eligibility-scoped panel fetch — no unbounded N+1 ─
 async function testParentsNoExtraFetch() {
-  // The Engagement panel now reads row.appointmentByService (parent
-  // board data) — it must NOT fetch /api/canonical-appointments itself.
   const panel = readFileSync(join(ROOT, "client/src/components/engagement/EngagementCasePanel.tsx"), "utf8");
-  assert.ok(panel.includes("row?.appointmentByService"), "panel consumes the parent board projection");
-  assert.ok(!/canonical-appointments/.test(panel), "panel makes no independent canonical request");
+  // The panel fetches the projection for its ONE selected execution case
+  // (bounded, per user-open) — never the unrestricted screening-level
+  // request, and it renders only the row's eligible services.
+  assert.ok(/executionCaseId=\$\{executionCaseId\}&byService=true/.test(panel), "panel fetches by the single execution case");
+  assert.ok(!/patientScreeningId=\$\{psid\}&byService/.test(panel), "no unrestricted screening-level fetch");
+  assert.ok(/row\?\.eligibleServices/.test(panel), "panel renders only eligible services");
+  // The assignment board must NOT attach a per-row canonical projection
+  // (it is an unbounded worklist → unbounded sequential N+1).
+  const board = readFileSync(join(ROOT, "server/routes/engagementAssignmentBoard.ts"), "utf8");
+  assert.ok(!/getSerializedAppointmentsByService/.test(board), "board must not do a per-row canonical projection");
   // The EHR scheduling section renders from the chart projection.
   const ehr = readFileSync(join(ROOT, "client/src/components/patient-directory/PatientChartSections.tsx"), "utf8");
   assert.ok(/chart\.canonicalAppointmentByService/.test(ehr), "EHR renders from the chart's canonical projection");

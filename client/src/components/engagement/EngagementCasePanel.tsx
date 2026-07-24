@@ -20,6 +20,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CanonicalAppointmentSummary } from "@/components/canonical/CanonicalAppointmentSummary";
 import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -133,13 +134,35 @@ export function EngagementCasePanel({
   });
   const patient = patientQuery.data;
 
-  // Phase 2D-D2 — canonical per-service appointment projection comes from
-  // the PARENT board row (already clinic-scoped AND constrained to the
-  // row's Phase 2C eligibleServices server-side). No extra per-panel
-  // canonical request; a rejected/pending/needs_info service is absent.
-  const appointmentByService = row?.appointmentByService ?? {};
-
   const executionCaseId = row?.executionCaseId ?? null;
+
+  // Phase 2D — canonical per-service appointment projection for the ONE
+  // selected case. Fetched per panel-open (a user action), not per board
+  // row: the assignment board is an unbounded worklist, so a per-row
+  // projection would be an unbounded N+1. Clinic-scoped by session; only
+  // requested when the client flag is ON (enabled:false → no request).
+  const canonicalApptQuery = useQuery<{ appointmentByService?: Record<string, AncillaryAppointmentProjection> }>({
+    queryKey: ["/api/canonical-appointments", "byExecutionCase", executionCaseId],
+    enabled: isCanonicalAppointmentUiEnabled() && executionCaseId != null,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/canonical-appointments?executionCaseId=${executionCaseId}&byService=true&includeHistory=true`,
+      );
+      return res.json();
+    },
+  });
+  // Render only Phase 2C eligible services (a rejected/pending/needs_info
+  // service is never shown). When eligibleServices is undefined (sync
+  // OFF) the legacy contract shows all returned services.
+  const appointmentByService = (() => {
+    const all = canonicalApptQuery.data?.appointmentByService ?? {};
+    const eligible = row?.eligibleServices;
+    if (!eligible) return all;
+    const allow = new Set(eligible);
+    return Object.fromEntries(Object.entries(all).filter(([svc]) => allow.has(svc)));
+  })();
+
   const journeyQuery = useQuery<{ events: JourneyEvent[] }>({
     queryKey: [
       "/api/engagement/assignment-board/cases",

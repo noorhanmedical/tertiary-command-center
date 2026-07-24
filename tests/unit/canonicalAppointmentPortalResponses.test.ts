@@ -250,12 +250,12 @@ async function testEligibilityFilterInvariant() {
 
 async function testRoutesUseSharedFilter() {
   const src = readFileSync(join(REPO_ROOT, "server/routes/executionCases.ts"), "utf8");
-  // Engagement cases + PCS call-list + scheduler-portal all filter via
-  // the shared helper (no divergent per-route logic).
+  // The three list responses (Engagement cases + PCS call-list +
+  // scheduler-portal) filter via the ONE shared helper — no divergent
+  // per-route logic. (The unbounded assignment board deliberately does
+  // NOT attach a per-row projection; its panel fetches per selected case.)
   const uses = (src.match(/filterAppointmentsToEligibleServices/g) ?? []).length;
   assert.ok(uses >= 3, "Engagement, PCS, and scheduler must all use the shared eligibility filter");
-  const board = readFileSync(join(REPO_ROOT, "server/routes/engagementAssignmentBoard.ts"), "utf8");
-  assert.ok(/filterAppointmentsToEligibleServices/.test(board), "assignment board must use the shared filter");
 }
 
 // ─── PCS call-list inline appointmentByService (Phase 2D-D1) ──────
