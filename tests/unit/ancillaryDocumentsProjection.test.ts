@@ -160,7 +160,25 @@ async function testReadOnlyNoGeneration() {
   }
 }
 
+// ─── (13) case-scoped Order Notes never merge across cases ────────
+async function testOrderNotesCaseScoped() {
+  const t = await loadCanonicalTables();
+  // Two ancillary cases (same clinic) each with their OWN order_note
+  // reference pointing at a distinct procedure_notes id.
+  const { res } = await project(t, [
+    ref({ id: 1, ancillaryCaseId: 5, documentKind: "order_note", sourceTable: "procedure_notes", sourceId: 905 }),
+    ref({ id: 2, ancillaryCaseId: 6, documentKind: "order_note", sourceTable: "procedure_notes", sourceId: 906 }),
+  ]);
+  assert.equal(res.cases.length, 2, "each ancillary case keeps its own Order Note");
+  const c5 = res.cases.find((c) => c.ancillaryCaseId === 5)!;
+  const c6 = res.cases.find((c) => c.ancillaryCaseId === 6)!;
+  assert.equal(c5.documents[0].sourceId, 905);
+  assert.equal(c6.documents[0].sourceId, 906);
+  assert.notEqual(c5.documents[0].sourceId, c6.documents[0].sourceId, "no cross-case note sharing");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["(13) case-scoped Order Notes never merge across cases", testOrderNotesCaseScoped],
   ["(1) Order Note + report share the same case collection", testSharedCaseCollection],
   ["(2) consent / screening_form link to the correct case", testLinkToCorrectCase],
   ["(3) different services stay in separate collections", testDifferentServicesSeparate],

@@ -22,7 +22,7 @@ function evt(over: Record<string, unknown> = {}) {
   return { id: 700, clinicId: 1, ancillaryCaseId: 5, eventType: "ancillary_appointment", serviceType: "EchoWave", status: "scheduled", patientScreeningId: 77, executionCaseId: 900, startsAt: START, endsAt: null, parentEventId: null, cancellationReason: null, noShowReason: null, source: "x", metadata: {}, createdAt: START, updatedAt: START, ...over };
 }
 function noteRow(over: Record<string, unknown> = {}) {
-  return { id: 900, clinicId: 1, executionCaseId: 900, patientScreeningId: 77, serviceType: "EchoWave", noteType: "order_note", generationStatus: "pending", signatureStatus: "needs_signature", signedAt: null, createdAt: START, updatedAt: START, ...over };
+  return { id: 900, clinicId: 1, ancillaryCaseId: 5, executionCaseId: 900, patientScreeningId: 77, serviceType: "EchoWave", noteType: "order_note", generationStatus: "pending", signatureStatus: "needs_signature", signedAt: null, supersededAt: null, supersedesNoteId: null, createdAt: START, updatedAt: START, ...over };
 }
 
 function baseSpec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, over: Partial<Record<string, TableSpec>> = {}) {
@@ -33,6 +33,7 @@ function baseSpec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, over: Part
     [t.documentReferences, { select: () => [], onInsert: (v) => [{ ...v, id: 42 }] }],
     [t.journeyEvents, { onInsert: () => [] }],
     [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
+    [t.adminReviewEvents, { select: () => [{ id: 555 }] }],
   ]);
   for (const [k, v] of Object.entries(over)) spec.set((t as Record<string, unknown>)[k], v);
   return spec;
@@ -103,6 +104,12 @@ async function testEligibleCreates() {
   assert.ok(!("signedAt" in np) || np.signedAt == null, "must not fabricate signedAt");
   // (7/9) actualCreatedAt server-owned — the note payload never sets a created timestamp
   assert.ok(!("createdAt" in np) && !("actualCreatedAt" in np), "createdAt is server-owned, never client-set");
+  // Phase 2E-A2 — the note is anchored to the ancillary case + evidence links.
+  assert.equal(np.ancillaryCaseId, 5, "note is stamped to its ancillary case");
+  assert.equal(np.globalPlexusPatientId, 10);
+  assert.equal(np.patientClinicMembershipId, 20);
+  assert.equal(np.qualifyingGlobalScheduleEventId, 700, "qualifying appointment linked");
+  assert.equal(np.adminReviewEventId, 555, "approved admin review event linked");
   const rp = refPayload as Record<string, unknown>;
   // (6) links to case, appointment, admin review
   assert.equal(rp.ancillaryCaseId, 5);

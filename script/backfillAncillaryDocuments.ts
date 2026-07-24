@@ -40,7 +40,14 @@ type PlanOutcome =
   | "deferred_procedure_note_2f"
   | "deferred_billing_document_2g"
   | "unsupported_kind"
-  | "error";
+  | "error"
+  // Phase 2E-A2 — canonical order_note case-association outcomes.
+  | "deterministic_case_link"
+  | "already_case_linked"
+  | "multiple_candidate_cases"
+  | "no_candidate_case"
+  | "legacy_note_superseded"
+  | "retry_planned";
 
 type PlanRow = {
   source: "procedure_notes" | "case_document_readiness";
@@ -84,6 +91,45 @@ async function resolveAncillaryCaseId(args: {
   return { id: rows[0].id };
 }
 
+/**
+ * Phase 2E-A2 — deterministically associate a LEGACY order_note row with
+ * exactly one ancillary case. Never picks the first/newest when multiple
+ * candidates exist; ambiguity becomes a PHI-free retry plan.
+ */
+async function resolveLegacyOrderNoteCase(n: {
+  clinicId: number | null;
+  patientScreeningId: number | null;
+  executionCaseId: number | null;
+  serviceType: string;
+  ancillaryCaseId: number | null;
+  supersededAt: Date | null;
+}): Promise<{ id?: number; outcome: PlanOutcome }> {
+  if (n.supersededAt != null) return { outcome: "legacy_note_superseded" };
+  if (n.ancillaryCaseId != null) return { id: n.ancillaryCaseId, outcome: "already_case_linked" };
+  if (n.clinicId == null) return { outcome: "tenant_mismatch" };
+  if (n.patientScreeningId == null && n.executionCaseId == null) return { outcome: "no_candidate_case" };
+
+  // All ancillary cases for this clinic + patient identity, ANY service.
+  const idConds = [eq(patientAncillaryCases.clinicId, n.clinicId)];
+  if (n.patientScreeningId != null) {
+    idConds.push(eq(patientAncillaryCases.originatingScreeningId, n.patientScreeningId));
+  } else if (n.executionCaseId != null) {
+    idConds.push(eq(patientAncillaryCases.executionCaseId, n.executionCaseId));
+  }
+  const candidates = await db
+    .select({ id: patientAncillaryCases.id, serviceType: patientAncillaryCases.serviceType })
+    .from(patientAncillaryCases)
+    .where(and(...idConds))
+    .limit(10);
+  if (candidates.length === 0) return { outcome: "no_candidate_case" };
+
+  const sameService = candidates.filter((c) => c.serviceType === n.serviceType);
+  if (sameService.length === 1) return { id: sameService[0].id, outcome: "deterministic_case_link" };
+  if (sameService.length > 1) return { outcome: "multiple_candidate_cases" };
+  // Cases exist for this patient identity but none match the note's service.
+  return { outcome: "service_mismatch" };
+}
+
 async function main(): Promise<void> {
   const apply = process.env.BACKFILL_ANCILLARY_DOCUMENTS_APPLY === "YES";
   if (apply && !featureFlags.unifiedAncillaryDocuments) {
@@ -100,10 +146,14 @@ async function main(): Promise<void> {
     .where(eq(procedureNotes.noteType, "order_note"))
     .limit(1000);
   for (const n of orderNotes) {
-    const res = await resolveAncillaryCaseId({
-      clinicId: n.clinicId, patientScreeningId: n.patientScreeningId, executionCaseId: n.executionCaseId, serviceType: n.serviceType,
+    // Phase 2E-A2: canonical Order Notes are ancillary-case-scoped. Attempt
+    // a DETERMINISTIC single-candidate case association; ambiguity never
+    // auto-attaches — it is queued for retry.
+    const res = await resolveLegacyOrderNoteCase({
+      clinicId: n.clinicId, patientScreeningId: n.patientScreeningId, executionCaseId: n.executionCaseId,
+      serviceType: n.serviceType, ancillaryCaseId: n.ancillaryCaseId, supersededAt: n.supersededAt,
     });
-    plan.push({ source: "procedure_notes", sourceId: n.id, documentKind: "order_note", clinicId: n.clinicId, ancillaryCaseId: res.id, outcome: res.outcome ?? "would_create_reference" });
+    plan.push({ source: "procedure_notes", sourceId: n.id, documentKind: "order_note", clinicId: n.clinicId, ancillaryCaseId: res.id, outcome: res.outcome });
   }
   // post_procedure_note rows are deferred to Phase 2F.
   const procNotes = await db.select({ id: procedureNotes.id, clinicId: procedureNotes.clinicId }).from(procedureNotes).where(eq(procedureNotes.noteType, "post_procedure_note")).limit(1000);
@@ -139,7 +189,15 @@ async function main(): Promise<void> {
     tenantMismatch: count("tenant_mismatch"),
     unresolvedIdentity: count("unresolved_identity"),
     ambiguousCase: count("ambiguous_case"),
-    retryRowsPlanned: count("missing_ancillary_case") + count("ambiguous_case") + count("unresolved_identity"),
+    // Phase 2E-A2 — canonical order_note case-association outcomes.
+    orderNoteDeterministicCaseLinks: count("deterministic_case_link"),
+    orderNoteAlreadyCaseLinked: count("already_case_linked"),
+    orderNoteMultipleCandidateCases: count("multiple_candidate_cases"),
+    orderNoteNoCandidateCase: count("no_candidate_case"),
+    orderNoteLegacySuperseded: count("legacy_note_superseded"),
+    retryRowsPlanned:
+      count("missing_ancillary_case") + count("ambiguous_case") + count("unresolved_identity")
+      + count("multiple_candidate_cases") + count("no_candidate_case") + count("service_mismatch"),
     unsupportedFutureKinds: count("unsupported_kind"),
     procedureNoteRowsDeferredTo2F: count("deferred_procedure_note_2f"),
     billingDocumentRowsDeferredTo2G: count("deferred_billing_document_2g"),

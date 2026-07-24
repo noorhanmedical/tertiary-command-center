@@ -108,3 +108,78 @@ CREATE INDEX IF NOT EXISTS idx_adrf_unresolved
 CREATE UNIQUE INDEX IF NOT EXISTS uq_adrf_unresolved_by_case_kind_action
   ON ancillary_document_reconciliation_failures(ancillary_case_id, document_kind, requested_action)
   WHERE resolved_at IS NULL AND ancillary_case_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Phase 2E-A2 — ANCILLARY-CASE-SCOPED CANONICAL ORDER NOTE IDENTITY
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- DEFECT being corrected: the pre-2E uniqueness on procedure_notes was
+--   idx_pn_unique_note UNIQUE (patient_screening_id, service_type, note_type)
+-- One screening can spawn MULTIPLE ancillary EPISODES of the SAME service
+-- (Phase 2B patient_ancillary_cases), each of which needs its own Order
+-- Note. Screening+service uniqueness forces episode B to collide with and
+-- reuse episode A's note. Canonical Order Note identity must instead be
+--   (ancillary_case_id, note_type)  for current canonical Order Notes.
+--
+-- This section is ADDITIVE and LEGACY-SAFE:
+--   • adds nullable case-scoped identity / evidence / supersession columns
+--   • requires ancillary_case_id for NEW order_note rows (NOT VALID so
+--     pre-existing legacy rows are not scanned and may stay unlinked until
+--     the dry-run-first backfill deterministically links them)
+--   • replaces the single global unique index with per-scope partial
+--     unique indexes (canonical current / legacy unlinked / post-procedure)
+-- No row is deleted. No clinic is modified. post_procedure_note behavior
+-- (Phase 2F) is preserved unchanged — no new versioning/generation.
+
+ALTER TABLE procedure_notes
+  ADD COLUMN IF NOT EXISTS ancillary_case_id                    INTEGER REFERENCES patient_ancillary_cases(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS global_plexus_patient_id             INTEGER REFERENCES global_plexus_patients(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS patient_clinic_membership_id         INTEGER REFERENCES patient_clinic_memberships(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS qualifying_global_schedule_event_id  INTEGER REFERENCES global_schedule_events(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS admin_review_event_id                INTEGER REFERENCES ancillary_case_admin_review_events(id) ON DELETE SET NULL,
+  -- Timeless clinical date, distinct from the actual server creation instant.
+  ADD COLUMN IF NOT EXISTS effective_clinical_date              TIMESTAMP,
+  -- Correction/version foundation only (no correction UI in this phase).
+  ADD COLUMN IF NOT EXISTS supersedes_note_id                   INTEGER REFERENCES procedure_notes(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS superseded_at                        TIMESTAMP;
+
+CREATE INDEX IF NOT EXISTS idx_pn_ancillary_case  ON procedure_notes(ancillary_case_id);
+CREATE INDEX IF NOT EXISTS idx_pn_supersedes_note ON procedure_notes(supersedes_note_id);
+CREATE INDEX IF NOT EXISTS idx_pn_superseded_at   ON procedure_notes(superseded_at);
+
+-- New canonical order_note rows MUST carry an ancillary_case_id. NOT VALID:
+-- enforced for every INSERT/UPDATE going forward, but pre-existing legacy
+-- rows are NOT scanned — so the migration cannot fail merely because legacy
+-- rows still await backfill. A later VALIDATE CONSTRAINT (post-backfill) can
+-- promote it to fully validated.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_pn_order_note_requires_case') THEN
+    ALTER TABLE procedure_notes
+      ADD CONSTRAINT chk_pn_order_note_requires_case
+      CHECK (note_type <> 'order_note' OR ancillary_case_id IS NOT NULL) NOT VALID;
+  END IF;
+END $$;
+
+-- Replace the legacy global uniqueness with scope-specific partial unique
+-- indexes. DROP INDEX removes only an index definition — never data — and
+-- is safe because 0053 is unapplied.
+DROP INDEX IF EXISTS idx_pn_unique_note;
+
+-- A. Canonical CURRENT Order Note: one non-superseded order_note per
+--    ancillary case. THIS is the corrected identity.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pn_order_note_active_case
+  ON procedure_notes(ancillary_case_id, note_type)
+  WHERE note_type = 'order_note' AND ancillary_case_id IS NOT NULL AND superseded_at IS NULL;
+
+-- B. Legacy UNLINKED Order Notes keep the original screening+service
+--    uniqueness while awaiting backfill (prevents duplicate legacy rows).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pn_order_note_legacy
+  ON procedure_notes(patient_screening_id, service_type, note_type)
+  WHERE note_type = 'order_note' AND ancillary_case_id IS NULL AND superseded_at IS NULL;
+
+-- C. post_procedure_note (Phase 2F) retains its ORIGINAL screening+service
+--    identity unchanged. No new versioning/generation is activated.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pn_post_procedure_note
+  ON procedure_notes(patient_screening_id, service_type, note_type)
+  WHERE note_type = 'post_procedure_note';

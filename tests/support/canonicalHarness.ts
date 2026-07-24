@@ -159,6 +159,7 @@ export async function loadCanonicalTables() {
   const docs = await import("../../shared/schema/ancillaryDocuments");
   const genNotes = await import("../../shared/schema/generatedNotes");
   const docReadiness = await import("../../shared/schema/documentReadiness");
+  const adminRev = await import("../../shared/schema/adminReviewEvents");
   return {
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
@@ -176,6 +177,7 @@ export async function loadCanonicalTables() {
     documentFailures: docs.ancillaryDocumentReconciliationFailures,
     procedureNotes: genNotes.procedureNotes,
     caseDocumentReadiness: docReadiness.caseDocumentReadiness,
+    adminReviewEvents: adminRev.ancillaryCaseAdminReviewEvents,
   };
 }
 

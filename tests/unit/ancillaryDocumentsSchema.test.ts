@@ -20,6 +20,7 @@ import {
   ANCILLARY_DOCUMENT_STATUSES,
   ANCILLARY_DOCUMENT_FAILURE_ACTIONS,
 } from "../../shared/schema/ancillaryDocuments";
+import { procedureNotes, insertProcedureNoteSchema } from "../../shared/schema/generatedNotes";
 import { featureFlags } from "../../server/lib/featureFlags";
 
 const ROOT = process.cwd();
@@ -128,7 +129,57 @@ async function testStatusValues() {
   assert.ok(/document_status IN \('pending','pending_signature','signed','uploaded','superseded','voided'\)/i.test(MIGRATION), "status CHECK missing/incorrect");
 }
 
+// ─── Phase 2E-A2 — case-scoped Order Note identity ────────────────
+async function testProcedureNotesCaseColumns() {
+  const cols = Object.keys(procedureNotes);
+  for (const c of ["ancillaryCaseId", "globalPlexusPatientId", "patientClinicMembershipId", "qualifyingGlobalScheduleEventId", "adminReviewEventId", "effectiveClinicalDate", "supersedesNoteId", "supersededAt"]) {
+    assert.ok(cols.includes(c), `Drizzle procedure_notes missing ${c}`);
+  }
+  for (const c of ["ancillary_case_id", "global_plexus_patient_id", "patient_clinic_membership_id", "qualifying_global_schedule_event_id", "admin_review_event_id", "effective_clinical_date", "supersedes_note_id", "superseded_at"]) {
+    assert.ok(MIGRATION.includes(c), `migration missing procedure_notes column ${c}`);
+  }
+}
+
+async function testProcedureNotesCaseFks() {
+  const fks: Array<[string, RegExp]> = [
+    ["ancillary_case_id → patient_ancillary_cases", /ancillary_case_id\s+INTEGER\s+REFERENCES\s+patient_ancillary_cases\(id\)/i],
+    ["global_plexus_patient_id → global_plexus_patients", /global_plexus_patient_id\s+INTEGER\s+REFERENCES\s+global_plexus_patients\(id\)/i],
+    ["patient_clinic_membership_id → patient_clinic_memberships", /patient_clinic_membership_id\s+INTEGER\s+REFERENCES\s+patient_clinic_memberships\(id\)/i],
+    ["qualifying_global_schedule_event_id → global_schedule_events", /qualifying_global_schedule_event_id\s+INTEGER\s+REFERENCES\s+global_schedule_events\(id\)/i],
+    ["admin_review_event_id → ancillary_case_admin_review_events", /admin_review_event_id\s+INTEGER\s+REFERENCES\s+ancillary_case_admin_review_events\(id\)/i],
+    ["supersedes_note_id → procedure_notes (self)", /supersedes_note_id\s+INTEGER\s+REFERENCES\s+procedure_notes\(id\)/i],
+  ];
+  for (const [label, re] of fks) assert.ok(re.test(MIGRATION), `missing FK: ${label}`);
+}
+
+async function testOrderNoteIdentityIndexes() {
+  // Old global unique dropped; three scope-specific partial uniques added.
+  assert.ok(/DROP INDEX IF EXISTS idx_pn_unique_note/i.test(MIGRATION), "legacy global unique must be dropped");
+  assert.ok(/uq_pn_order_note_active_case[\s\S]*?\(ancillary_case_id, note_type\)[\s\S]*?note_type = 'order_note' AND ancillary_case_id IS NOT NULL AND superseded_at IS NULL/i.test(MIGRATION), "canonical current unique missing");
+  assert.ok(/uq_pn_order_note_legacy[\s\S]*?\(patient_screening_id, service_type, note_type\)[\s\S]*?ancillary_case_id IS NULL/i.test(MIGRATION), "legacy unlinked unique missing");
+  assert.ok(/uq_pn_post_procedure_note[\s\S]*?note_type = 'post_procedure_note'/i.test(MIGRATION), "post_procedure_note uniqueness must be preserved");
+}
+
+async function testOrderNoteRequiresCaseConstraint() {
+  assert.ok(
+    /chk_pn_order_note_requires_case[\s\S]*?CHECK \(note_type <> 'order_note' OR ancillary_case_id IS NOT NULL\)[\s\S]*?NOT VALID/i.test(MIGRATION),
+    "new order_note rows must require ancillary_case_id (NOT VALID for legacy backfill)",
+  );
+}
+
+async function testServerOwnedFieldsNotClientInput() {
+  const shapeKeys = Object.keys(insertProcedureNoteSchema.shape);
+  for (const k of ["ancillaryCaseId", "globalPlexusPatientId", "patientClinicMembershipId", "qualifyingGlobalScheduleEventId", "adminReviewEventId", "effectiveClinicalDate", "supersedesNoteId", "supersededAt"]) {
+    assert.ok(!shapeKeys.includes(k), `server-owned field must not be client-insertable: ${k}`);
+  }
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["(13) procedure_notes case-scoped identity columns", testProcedureNotesCaseColumns],
+  ["(14) procedure_notes case-scoped FKs", testProcedureNotesCaseFks],
+  ["(15) Order Note identity index replacement", testOrderNoteIdentityIndexes],
+  ["(16) new order_note rows require ancillary_case_id", testOrderNoteRequiresCaseConstraint],
+  ["(17) server-owned Order Note fields are not client input", testServerOwnedFieldsNotClientInput],
   ["(1) migration ↔ Drizzle alignment", testMigrationDrizzleAlign],
   ["(2) real FKs", testRealFks],
   ["(3) unique source reference constraint", testUniqueSourceConstraint],

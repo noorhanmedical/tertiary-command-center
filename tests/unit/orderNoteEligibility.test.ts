@@ -144,7 +144,21 @@ async function testFlagOff() {
   assert.equal(r.flagOff, true);
 }
 
+// ─── (18) eligibility is evaluated per ancillary case ─────────────
+async function testPerCaseContract() {
+  const t = await loadCanonicalTables();
+  // Same screening+service, two episodes: an APPROVED case qualifies; a
+  // PENDING case (evaluated independently) does not. Eligibility never
+  // leaks approval across cases.
+  const approved = await evaluate(t, { select: () => [evt()] }, [caseRow({ id: 5, adminReviewStatus: "approved" })]);
+  const pending = await evaluate(t, { select: () => [evt()] }, [caseRow({ id: 6, adminReviewStatus: "pending" })]);
+  assert.equal(approved.eligible, true);
+  assert.equal(pending.eligible, false);
+  assert.ok(pending.reasons.includes("admin_review_pending"));
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["(18) eligibility is evaluated per ancillary case", testPerCaseContract],
   ["(1) approved + scheduled qualifies", testApprovedScheduled],
   ["(2) approved + completed qualifies", testApprovedCompleted],
   ["(3) approved + same_day_add qualifies", testApprovedSameDayAdd],
