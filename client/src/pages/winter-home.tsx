@@ -11,6 +11,8 @@ import {
   CalendarDays,
   Pin,
   PinOff,
+  User as UserIcon,
+  LogOut,
 } from "lucide-react";
 import { NAV_ITEMS } from "@/components/GlobalNav";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -619,7 +621,7 @@ function WinterWindow({
   );
 }
 
-export default function WinterHomePage({ user }: { user?: AuthUser }) {
+export default function WinterHomePage({ user, onLogout }: { user?: AuthUser; onLogout?: () => void }) {
   const [time, setTime] = useState("");
   const [date, setDate] = useState("");
   const [dockExpanded, setDockExpanded] = useState(false);
@@ -667,6 +669,20 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     refetchInterval: 60_000,
   });
 
+  // Plexus Tasks unread/overdue badge — same feeds the old global nav used.
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ["/api/plexus/tasks/unread-count"],
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
+  const taskUnreadCount = unreadData?.count ?? 0;
+  const { data: overdueData } = useQuery<{ overdueCount: number; dueTodayCount: number }>({
+    queryKey: ["/api/plexus/tasks/overdue"],
+    refetchInterval: 60_000,
+  });
+  const taskOverdue = (overdueData?.overdueCount ?? 0) > 0;
+
   const { data: calendarSummary = [] } = useQuery<CalendarSummaryRow[]>({
     queryKey: ["/api/screening-batches/calendar-summary"],
     staleTime: 60_000,
@@ -676,13 +692,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     [calendarSummary],
   );
 
-  // The dock's phone icon opens the Engagement Center (not the Outreach
-  // Center the global nav maps to at /scheduler-portal).
-  const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole)).map((item) =>
-    item.href === "/scheduler-portal"
-      ? { ...item, href: "/engagement-center", label: "Engagement Center" }
-      : item,
-  );
+  const visibleItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
   const primaryItems = visibleItems.filter((i) => PRIMARY_HREFS.includes(i.href));
   const overflowItems = visibleItems.filter((i) => !PRIMARY_HREFS.includes(i.href));
 
@@ -782,6 +792,7 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
     testId: string,
     minimizedCount: number,
     onBadgeClick?: () => void,
+    unreadBadge?: { count: number; overdue: boolean },
   ) => (
     <div className="relative group flex flex-col items-center cursor-pointer" data-testid={testId}>
       <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur text-white text-[11px] px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none z-10">
@@ -790,6 +801,19 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
       <div className={dockIconBase}>
         <Icon className="w-[22px] h-[22px] text-sky-100 group-hover:text-white transition-colors" strokeWidth={1.6} />
       </div>
+      {/* Unread-count badge (Plexus Tasks). Sits on the top-LEFT corner so it
+          coexists with the minimized-windows badge on the top-right. */}
+      {unreadBadge && (unreadBadge.count > 0 || unreadBadge.overdue) && (
+        <span
+          className={`absolute -top-1.5 -left-1.5 z-20 min-w-[18px] h-[18px] px-1 rounded-full ${
+            unreadBadge.overdue ? "bg-red-500" : "bg-sky-500"
+          } text-white text-[10px] font-bold flex items-center justify-center border border-white/60 shadow pointer-events-none`}
+          title={unreadBadge.overdue ? "You have overdue tasks" : undefined}
+          data-testid={unreadBadge.overdue ? "dock-badge-plexus-overdue" : "dock-badge-plexus-unread"}
+        >
+          {unreadBadge.count > 0 ? unreadBadge.count : "!"}
+        </span>
+      )}
       {minimizedCount > 0 && (
         <span
           role="button"
@@ -823,8 +847,16 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
         className="focus:outline-none"
         data-testid={testId}
       >
-        {renderDockIcon(app.Icon, app.label, hasOpen, `dock-icon-${slugOf(appId)}`, minCount, () =>
-          setPanelApp((cur) => (cur === appId ? null : appId)),
+        {renderDockIcon(
+          app.Icon,
+          app.label,
+          hasOpen,
+          `dock-icon-${slugOf(appId)}`,
+          minCount,
+          () => setPanelApp((cur) => (cur === appId ? null : appId)),
+          appId === "/plexus-tasks"
+            ? { count: taskUnreadCount, overdue: taskOverdue }
+            : undefined,
         )}
       </button>
     );
@@ -1056,6 +1088,52 @@ export default function WinterHomePage({ user }: { user?: AuthUser }) {
                 cells={bannerCalendarCells}
                 onOpenApp={(appId) => spawnWindow(appId, "tab")}
               />
+            </PopoverContent>
+          </Popover>
+
+          {/* User menu — name/role with sign out. Floating content must be
+              z-50+ to clear the z-40 banner and z-30/45 panes. */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-2 px-2 py-0.5 rounded hover:bg-white/25 transition-colors focus:outline-none max-w-[220px]"
+                data-testid="button-winter-user-menu"
+              >
+                <UserIcon className="w-4 h-4 text-slate-600 shrink-0" strokeWidth={2} />
+                <span className="truncate">{user?.username ?? "Account"}</span>
+                {user?.role && (
+                  <span className="hidden sm:inline text-[11px] uppercase tracking-wide text-slate-500 shrink-0">
+                    {user.role}
+                  </span>
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              className="w-56 p-3 z-[70] bg-white/25 backdrop-blur-2xl border-white/40 shadow-2xl rounded-2xl"
+              data-testid="popover-winter-user-menu"
+            >
+              <div className="px-1 pb-2 border-b border-white/40">
+                <div className="text-sm font-semibold text-slate-900 truncate" data-testid="text-winter-user-name">
+                  {user?.username ?? "Signed in"}
+                </div>
+                {user?.role && (
+                  <div className="text-[11px] uppercase tracking-wide text-slate-600" data-testid="text-winter-user-role">
+                    {user.role}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => onLogout?.()}
+                className="mt-2 w-full inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-medium text-slate-800 hover:bg-white/40 transition-colors"
+                data-testid="button-winter-sign-out"
+              >
+                <LogOut className="w-4 h-4" strokeWidth={2} />
+                Sign Out
+              </button>
             </PopoverContent>
           </Popover>
         </div>

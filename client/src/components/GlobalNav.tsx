@@ -39,14 +39,11 @@ export const NAV_ITEMS: NavItemDef[] = [
   { href: "/mission-control",  label: "Mission Control",  Icon: Radar,        roles: ["admin"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
   { href: "/imaging-central",  label: "Imaging Central",  Icon: ScanLine,     roles: ["admin", "clinician", "technician", "liaison"] },
-  // Phase-1 team-portal correction: there is no standalone Scheduler
-  // Portal product. The legacy /scheduler-portal route mounts the
-  // OutreachPage (marketing / scheduler-coverage metrics) and is
-  // relabeled here as "Outreach Center" so users find the correct
-  // surface. Patient call execution lives in PCS Workspace; ancillary
-  // execution lives in ACS Workspace. The route path stays
-  // /scheduler-portal for back-compat with deep links.
-  { href: "/scheduler-portal",         label: "Outreach Center",   Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
+  // The Engagement Center fully replaces the old Outreach Center as the
+  // navigation destination for call/engagement work. The legacy
+  // /scheduler-portal route (OutreachPage) stays reachable by direct URL
+  // for back-compat but is no longer listed in navigation.
+  { href: "/engagement-center",        label: "Engagement Center", Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
   { href: "/ancillary-documents",        label: "Ancillary Documents",   Icon: FileText,     roles: ["admin", "clinician"] },
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },

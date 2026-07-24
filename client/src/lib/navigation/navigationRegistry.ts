@@ -4,7 +4,6 @@ import {
   CheckSquare,
   Sparkles,
   CalendarDays,
-  Phone,
   TrendingUp,
   Search,
   CalendarClock,
@@ -74,14 +73,9 @@ export const DOCK_ITEMS: DockItem[] = [
     href: "/engagement-center",
     testId: "global-floating-dock-engagement",
   },
-  {
-    id: "communications",
-    label: "Communications",
-    Icon: Phone,
-    kind: "link",
-    href: "/scheduler-portal",
-    testId: "global-floating-dock-communications",
-  },
+  // The old "Communications" entry (→ /scheduler-portal Outreach page)
+  // was removed: the Engagement Center item above is its replacement.
+  // The route stays reachable by direct URL only.
 ];
 
 // Simplified dock shown to portal users (scheduler / clinician). Four

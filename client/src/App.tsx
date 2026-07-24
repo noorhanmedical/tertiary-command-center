@@ -120,7 +120,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   </SidebarProvider>
                 </Route>
                 <Route path="/winter-home">
-                  <WinterHomePage user={user} />
+                  <WinterHomePage user={user} onLogout={onLogout} />
                 </Route>
                 <Route path="/mission-control">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
