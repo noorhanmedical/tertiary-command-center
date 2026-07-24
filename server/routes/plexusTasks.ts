@@ -9,6 +9,11 @@ import {
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import { featureFlags } from "../lib/featureFlags";
+import {
+  runCallResultScheduling,
+  plexusActionForAppointmentStatus,
+} from "../services/canonicalAppointments/callResultSchedulingBridge";
 
 // ── Typed event payloads ───────────────────────────────────────────────────
 type EventPayload =
@@ -727,6 +732,12 @@ export function registerPlexusTasksRoutes(app: Express) {
     outcome: z.enum(["no_answer", "callback", "scheduled", "declined"]),
     notes: z.string().optional(),
     appointmentStatus: z.string().optional(),
+    // Phase 2D-B3 — optional REAL canonical scheduling inputs. Only
+    // consulted when FEATURE_CANONICAL_APPOINTMENT is ON. Never fabricated.
+    schedulingAction: z.enum(["cancel", "no_show", "complete", "reschedule"]).optional(),
+    globalScheduleEventId: z.number().int().optional(),
+    reason: z.string().optional(),
+    newStartsAt: z.string().optional(),
   });
 
   app.post("/api/plexus/tasks/:id/call-outcome", async (req: Request, res: Response) => {
@@ -753,6 +764,39 @@ export function registerPlexusTasksRoutes(app: Express) {
         eventWrites.push(writeEvent({ taskId, userId, eventType: "status_changed", payload: { from: task.status, to: newStatus } }));
       }
       await Promise.all(eventWrites);
+
+      // ── Phase 2D-B3: canonical scheduling bridge ───────────────
+      // When the flag is ON and the outcome carries a scheduling-state
+      // intent (explicit schedulingAction, or an appointmentStatus that
+      // maps to a canonical transition), route it through the canonical
+      // orchestration. We DO NOT directly assign appointment truth
+      // (patient_screenings.appointmentStatus) before canonical success.
+      if (featureFlags.canonicalAppointment && (parsed.data.schedulingAction != null || appointmentStatus != null)) {
+        const schedulingAction = parsed.data.schedulingAction ?? plexusActionForAppointmentStatus(appointmentStatus);
+        const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        const bridged = await runCallResultScheduling({
+          clinicId: reqClinicId,
+          executionCaseId: null,
+          patientScreeningId: task.patientScreeningId ?? null,
+          callOutcome: outcome,
+          schedulingAction,
+          appointmentInput: {
+            eventId: parsed.data.globalScheduleEventId,
+            reason: parsed.data.reason,
+            newStartsAt: parsed.data.newStartsAt ? new Date(parsed.data.newStartsAt) : undefined,
+          },
+          actorUserId: userId,
+          source: "plexus_task_call_outcome",
+        });
+        if (bridged.handled) {
+          return res.status(bridged.http).json({ task: updatedTask, ...bridged.body });
+        }
+        // schedulingAction 'none' (e.g. appointmentStatus 'scheduled'):
+        // audit recorded; the direct appointmentStatus write is
+        // intentionally skipped — canonical projection owns that truth.
+        return res.json({ task: updatedTask, scheduling: { status: "none" } });
+      }
+
       if (task.patientScreeningId && appointmentStatus) {
         await storage.updatePatientScreening(task.patientScreeningId, { appointmentStatus });
       }

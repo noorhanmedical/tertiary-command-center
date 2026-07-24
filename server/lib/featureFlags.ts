@@ -94,6 +94,20 @@ export const featureFlags = {
 
   /** Most Recently Sent (top-10) section on the Repository tab. */
   engagementRecentLists: readBool("FEATURE_ENGAGEMENT_RECENT_LISTS", false),
+
+  // ─── Phase 2D — Canonical ancillary appointments ─────────────
+  // Default OFF. Migration 0052 (canonical ancillary appointments in
+  // global_schedule_events) is NOT applied automatically.
+  //
+  // Enabling checklist:
+  //   1. Migrations 0049–0051 applied.
+  //   2. Phase 2A–2C backfills completed.
+  //   3. Phase 2A–2C flags enabled and validated.
+  //   4. Apply migrations/0052.
+  //   5. Run Phase 2D backfill dry-run + apply.
+  //   6. Set FEATURE_CANONICAL_APPOINTMENT=true and restart.
+  //   7. Production validation.
+  canonicalAppointment: readBool("FEATURE_CANONICAL_APPOINTMENT", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;

@@ -14,6 +14,8 @@ import { eq } from "drizzle-orm";
 import { buildOutreachDashboard } from "../services/outreachService";
 import { getCoverageMapForSchedulers } from "../services/teamMemberScope";
 import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
+import { featureFlags } from "../lib/featureFlags";
+import { recordOutreachAndSchedulingOutcome } from "../services/canonicalAppointments/outreachSchedulingOrchestrator";
 import {
   isRecordCallResultOutreachPreviewEnabled,
   runOutreachCallResultPreview,
@@ -344,6 +346,27 @@ export function registerOutreachRoutes(app: Express) {
         } catch (err) {
           console.warn("[outreach] markSchedulerAssignmentCompleted failed:", (err as Error)?.message);
         }
+      }
+
+      // Phase 2D-B2 — route the recorded outcome through the canonical
+      // scheduling boundary when the flag is ON. The outreach payload
+      // carries no explicit appointment action (bookings happen via the
+      // canonical scheduling route), so schedulingAction is 'none': this
+      // preserves the call record, appends a PHI-free audit, and keeps
+      // the boundary the single place scheduling-affecting outcomes flow
+      // through. Awaited; the boundary never claims false scheduling
+      // success and never throws.
+      const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+      if (featureFlags.canonicalAppointment && reqClinicId != null) {
+        await recordOutreachAndSchedulingOutcome({
+          clinicId: reqClinicId,
+          executionCaseId: null,
+          patientScreeningId: parsed.data.patientScreeningId,
+          callOutcome: parsed.data.outcome,
+          schedulingAction: "none",
+          actorUserId: userId,
+          source: "outreach_call",
+        });
       }
 
       // Ensure the canonical spine reflects whatever commit_status /

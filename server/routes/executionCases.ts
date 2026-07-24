@@ -17,6 +17,15 @@ import {
   recallExecutionCaseToCallList,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import { featureFlags } from "../lib/featureFlags";
+import {
+  runCallResultScheduling,
+  engagementActionForOutcome,
+} from "../services/canonicalAppointments/callResultSchedulingBridge";
+import {
+  getSerializedAppointmentsByService,
+  filterAppointmentsToEligibleServices,
+} from "../services/canonicalAppointments/appointmentProjection";
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires /api/scheduler-
 // portal/cases through the same role + facility access checks the
 // other portal endpoints already use. See the matching block in
@@ -153,6 +162,13 @@ const callResultBodySchema = z.object({
   assignedRole: z.string().optional().nullable(),
   facilityId: z.string().optional().nullable(),
   metadata: z.record(z.unknown()).optional(),
+  // Phase 2D-B3 — optional real scheduling inputs. Only consulted when
+  // FEATURE_CANONICAL_APPOINTMENT is ON and the callResult maps to a
+  // canonical scheduling transition. Never fabricated by the server.
+  globalScheduleEventId: z.number().int().optional().nullable(),
+  cancelReason: z.string().optional().nullable(),
+  noShowReason: z.string().optional().nullable(),
+  newStartsAt: z.string().optional().nullable(),
 });
 
 const CALL_RESULTS_NEEDING_TRIAGE = new Set([
@@ -270,6 +286,42 @@ export function registerExecutionCaseRoutes(app: Express) {
           });
         }
       }
+
+      // Phase 2D-C1 — attach the canonical per-service appointment
+      // projection when the flag is ON and the caller opts in
+      // (?withAppointments=true). Each eligible service gets its OWN
+      // canonical appointment (matched by ancillary case); one
+      // execution-case appointment is never fanned out across services.
+      // Phase 2C eligibleServices filtering is preserved untouched.
+      if (featureFlags.canonicalAppointment && q.withAppointments === "true" && rows.length > 0) {
+        const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        if (clinicId != null) {
+          try {
+            for (const row of rows) {
+              // eslint-disable-next-line no-await-in-loop
+              const byService = await getSerializedAppointmentsByService({
+                clinicId, executionCaseId: row.id, includeHistory: false,
+              });
+              // Constrain to Phase 2C eligible services (admin-approved).
+              // When the sync flag is OFF, eligibleServices is undefined
+              // and the legacy selected-service contract is preserved.
+              const eligible = (row as { eligibleServices?: string[] }).eligibleServices;
+              Object.assign(row, {
+                appointmentByService: filterAppointmentsToEligibleServices(byService, eligible),
+              });
+            }
+          } catch (e) {
+            const code = (e as { code?: string })?.code;
+            if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+              return res.status(503).json({
+                error: "canonical appointment schema unavailable — apply migration 0052",
+                code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+              });
+            }
+            throw e;
+          }
+        }
+      }
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -345,7 +397,7 @@ export function registerExecutionCaseRoutes(app: Express) {
             eligibilityByCase = new Map(filtered.map((f) => [f.executionCase.id, f.eligibleServices]));
           }
 
-          return rows.map<EngagementCallListItem>((row) => ({
+          const items: EngagementCallListItem[] = rows.map((row) => ({
             patientScreeningId:
               row.patientScreeningId != null ? String(row.patientScreeningId) : "",
             patientExecutionCaseId: String(row.id),
@@ -369,6 +421,30 @@ export function registerExecutionCaseRoutes(app: Express) {
             // (legacy contract preserved).
             eligibleServices: eligibilityByCase?.get(row.id),
           }));
+
+          // Phase 2D-D1 — attach the canonical per-service appointment
+          // projection inline when FEATURE_CANONICAL_APPOINTMENT is ON.
+          // One active event per ancillary case; historical events are
+          // history-only; doctor_visit excluded. Missing migration
+          // propagates so the outer route returns a controlled 503.
+          if (ff.canonicalAppointment) {
+            const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+            if (clinicId != null) {
+              for (let i = 0; i < items.length; i++) {
+                const execId = rows[i]?.id;
+                if (execId == null) continue;
+                // eslint-disable-next-line no-await-in-loop
+                const byService = await getSerializedAppointmentsByService({
+                  clinicId, executionCaseId: execId, includeHistory: false,
+                });
+                // keys ⊆ eligibleServices (undefined → legacy passthrough).
+                items[i].appointmentByService = filterAppointmentsToEligibleServices(
+                  byService, items[i].eligibleServices,
+                );
+              }
+            }
+          }
+          return items;
         },
       };
       const result = await getEngagementCallList(
@@ -393,6 +469,14 @@ export function registerExecutionCaseRoutes(app: Express) {
         return res.status(503).json({
           error: "PCS call-list eligibility projection unavailable",
           code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+        });
+      }
+      // Phase 2D-D1 — canonical appointment schema missing → controlled
+      // 503, never a fall back to the unrestricted legacy list.
+      if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+        return res.status(503).json({
+          error: "canonical appointment schema unavailable — apply migration 0052",
+          code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
         });
       }
       return res.status(500).json({ error: error.message });
@@ -498,6 +582,38 @@ export function registerExecutionCaseRoutes(app: Express) {
         return res.status(400).json({
           error: "Could not resolve patient (provide executionCaseId, patientScreeningId, or patientName + patientDob)",
         });
+      }
+
+      // ── Phase 2D-B3: canonical scheduling bridge ───────────────
+      // When the flag is ON, route scheduling-state outcomes
+      // (cancelled / no_show / reschedule) through the canonical
+      // orchestration. The call is recorded first; a scheduling action
+      // is attempted only when the caller supplied the REAL inputs
+      // (event id + reason / newStartsAt) — otherwise 409, never a
+      // fabricated transition. Non-scheduling outcomes fall through to
+      // the legacy engagement writes unchanged.
+      if (featureFlags.canonicalAppointment) {
+        const schedulingAction = engagementActionForOutcome(data.callResult);
+        if (schedulingAction !== "none") {
+          const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+          const bridged = await runCallResultScheduling({
+            clinicId: reqClinicId,
+            executionCaseId,
+            patientScreeningId,
+            callOutcome: data.callResult,
+            schedulingAction,
+            appointmentInput: {
+              eventId: data.globalScheduleEventId ?? undefined,
+              reason: schedulingAction === "cancel" ? (data.cancelReason ?? undefined) : (data.noShowReason ?? undefined),
+              newStartsAt: data.newStartsAt ? new Date(data.newStartsAt) : undefined,
+            },
+            actorUserId,
+            source: "engagement_call_result",
+          });
+          if (bridged.handled) {
+            return res.status(bridged.http).json(bridged.body);
+          }
+        }
       }
 
       // Compute next-action timestamp — explicit value wins, otherwise
@@ -1085,6 +1201,57 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
       const rows = await listSchedulerPortalCases(filters, limit);
+
+      // Phase 2D-C2 — attach the canonical per-service appointment
+      // projection when the flag is ON and the caller opts in
+      // (?withAppointments=true). One active scheduled event per
+      // ancillary case; independent services stay independent; historical
+      // cancelled/no_show/rescheduled events are not active. doctor_visit
+      // is excluded by the projection. Missing migration → controlled 503.
+      if (featureFlags.canonicalAppointment && q.withAppointments === "true" && rows.length > 0) {
+        const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        if (clinicId != null) {
+          try {
+            // Compute Phase 2C eligible services so appointmentByService
+            // keys stay a subset of eligibleServices — same rule as
+            // Engagement/PCS via the shared filter. Sync flag OFF →
+            // eligibleServices undefined → legacy passthrough.
+            const eligibilityByCase = new Map<number, string[]>();
+            if (featureFlags.engagementAdminReviewSync) {
+              const { projectServiceLevelEligibility } = await import(
+                "../services/engagementLists/queueProjection"
+              );
+              const filtered = await projectServiceLevelEligibility({
+                executionCases: rows,
+                requireActiveMembership: featureFlags.engagementMultiListRepository,
+              });
+              for (const f of filtered) eligibilityByCase.set(f.executionCase.id, f.eligibleServices);
+            }
+            for (const row of rows) {
+              // eslint-disable-next-line no-await-in-loop
+              const byService = await getSerializedAppointmentsByService({
+                clinicId, executionCaseId: row.id, includeHistory: false,
+              });
+              const eligible = featureFlags.engagementAdminReviewSync
+                ? (eligibilityByCase.get(row.id) ?? [])
+                : undefined;
+              Object.assign(row, {
+                eligibleServices: eligible,
+                appointmentByService: filterAppointmentsToEligibleServices(byService, eligible),
+              });
+            }
+          } catch (e) {
+            const code = (e as { code?: string })?.code;
+            if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+              return res.status(503).json({
+                error: "canonical appointment schema unavailable — apply migration 0052",
+                code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+              });
+            }
+            throw e;
+          }
+        }
+      }
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

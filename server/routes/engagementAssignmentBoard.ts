@@ -488,6 +488,14 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
           if (r.missingInfo.length > 0) needsInfo += 1;
         }
 
+        // Phase 2D — the board is an UNBOUNDED worklist (no row limit),
+        // and only the selected case's detail panel shows appointments.
+        // Attaching a per-row canonical projection here would be an
+        // unbounded sequential N+1 for data used by at most one row, so
+        // the panel fetches the projection for its single selected
+        // execution case instead (clinic-scoped, eligibility-filtered at
+        // render). See EngagementCasePanel.
+
         res.json({
           rows: filtered,
           summary: {

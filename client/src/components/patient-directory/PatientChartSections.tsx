@@ -1,6 +1,8 @@
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CanonicalAppointmentSummary } from "@/components/canonical/CanonicalAppointmentSummary";
+import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
 import {
   User, ShieldCheck, Stethoscope, Pill as PillIcon, AlertTriangle, FlaskConical,
   Scan, Activity, FileText, Phone, CalendarClock, Clock, Megaphone,
@@ -574,6 +576,38 @@ function CallsSection({ chart }: SectionProps) {
 function SchedulingSection({ chart }: SectionProps) {
   const appts = chart.scheduling ?? [];
   const today = new Date().toISOString().slice(0, 10);
+
+  // Phase 2D — when the client flag is ON and the chart carries the
+  // canonical projection, render per-ancillary-case canonical
+  // appointments (active + history within the correct case; doctor_visit
+  // excluded server-side) instead of the legacy ancillary_appointments
+  // table. Flag OFF preserves the legacy scheduling table exactly.
+  const canonicalByService = chart.canonicalAppointmentByService ?? null;
+  if (isCanonicalAppointmentUiEnabled() && canonicalByService) {
+    const entries = Object.entries(canonicalByService);
+    return (
+      <SectionCard id="scheduling" title="Scheduling" icon={<CalendarClock className="w-4 h-4" />} count={entries.length}
+        action={<Link href="/appointments"><Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-xs" data-testid="button-open-appointments"><ExternalLink className="w-3 h-3" />Calendar</Button></Link>}>
+        {entries.length === 0 ? (
+          <EmptyState icon={<CalendarClock className="w-8 h-8" />} title="No appointments scheduled" hint="Booked ancillary appointments for this patient appear here." testId="empty-scheduling" />
+        ) : (
+          <div className="space-y-2">
+            {entries.map(([serviceType, projection]) => (
+              <CanonicalAppointmentSummary
+                key={`${serviceType}-${projection.activeAppointment?.globalScheduleEventId ?? "none"}`}
+                projection={projection}
+                serviceType={serviceType}
+                showHistory
+                showReadiness
+                data-testid={`ehr-appointment-${serviceType}`}
+              />
+            ))}
+          </div>
+        )}
+      </SectionCard>
+    );
+  }
+
   return (
     <SectionCard id="scheduling" title="Scheduling" icon={<CalendarClock className="w-4 h-4" />} count={appts.length}
       action={<Link href="/appointments"><Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-xs" data-testid="button-open-appointments"><ExternalLink className="w-3 h-3" />Calendar</Button></Link>}>

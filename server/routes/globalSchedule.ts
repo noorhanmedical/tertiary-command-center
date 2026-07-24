@@ -23,6 +23,28 @@ import {
   applyScheduleTransition,
   type ScheduleTransition,
 } from "../services/scheduling/scheduleStatusService";
+import { featureFlags } from "../lib/featureFlags";
+import { scheduleCanonicalAncillaryAppointment } from "../services/canonicalAppointments/scheduleAncillaryOrchestrator";
+import { applyCanonicalAncillaryTransition } from "../services/canonicalAppointments/transitionOrchestrator";
+import {
+  getCanonicalAppointmentProjection,
+  getCanonicalAppointmentsByService,
+} from "../services/canonicalAppointments/appointmentProjection";
+
+const CANONICAL_ANCILLARY_CALENDAR_TYPES = new Set(["ancillary_appointment", "same_day_add"]);
+
+// Maps a controlled canonical read error to a 503; returns true if handled.
+function handleCanonicalReadError(res: Response, e: unknown): boolean {
+  const code = (e as { code?: string })?.code;
+  if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+    res.status(503).json({
+      error: "canonical appointment schema unavailable — apply migration 0052",
+      code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+    });
+    return true;
+  }
+  return false;
+}
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires the team-portal
 // feeds through the same role + facility access checks the rest of
 // the portal endpoints already use. Without this, an authenticated
@@ -70,10 +92,12 @@ async function resolvePhase1FacilityScope(
 }
 
 const transitionBodySchema = z.object({
-  transition: z.enum(["cancel", "reschedule", "no_show", "confirm"]),
+  transition: z.enum(["cancel", "reschedule", "no_show", "confirm", "complete"]),
   newStartsAt: z.string().optional().nullable(),
   newEndsAt: z.string().optional().nullable(),
   note: z.string().optional().nullable(),
+  // Phase 2D-B: canonical cancel/no_show require a nonblank reason.
+  reason: z.string().optional().nullable(),
 });
 
 const scheduleAncillaryBodySchema = z.object({
@@ -131,8 +155,60 @@ export function registerGlobalScheduleRoutes(app: Express) {
       }
 
       const rows = await listGlobalScheduleEvents(filters, limit);
+
+      // Phase 2D-C1 — under the canonical flag, canonical ancillary
+      // events (ancillary_appointment / same_day_add) expose a stable
+      // globalScheduleEventId + ancillaryCaseId/serviceType so calendar
+      // surfaces read the same canonical identity everyone else does.
+      // doctor_visit and every general event pass through unchanged.
+      if (featureFlags.canonicalAppointment) {
+        return res.json(
+          rows.map((r) =>
+            CANONICAL_ANCILLARY_CALENDAR_TYPES.has(r.eventType)
+              ? { ...r, globalScheduleEventId: r.id, canonicalAncillary: true }
+              : r,
+          ),
+        );
+      }
       res.json(rows);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/canonical-appointments — Phase 2D-C1 shared reader.
+  // The single canonical appointment projection every clinic-facing
+  // surface (Patient EHR, Engagement, PCS, ACS, scheduler) consumes.
+  // Query by ancillaryCaseId | patientScreeningId | executionCaseId,
+  // ?includeHistory=true, ?byService=true. Tenant-scoped from session.
+  app.get("/api/canonical-appointments", async (req, res) => {
+    try {
+      const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+      if (!featureFlags.canonicalAppointment) {
+        return res.json({ enabled: false, activeAppointment: null, appointmentHistory: [] });
+      }
+      if (clinicId == null) {
+        return res.status(400).json({ error: "clinic scope is required" });
+      }
+      const q = req.query as Record<string, string | undefined>;
+      const num = (v: string | undefined) => (v != null && /^\d+$/.test(v) ? parseInt(v, 10) : undefined);
+      const ancillaryCaseId = num(q.ancillaryCaseId);
+      const patientScreeningId = num(q.patientScreeningId);
+      const executionCaseId = num(q.executionCaseId);
+      const includeHistory = q.includeHistory === "true";
+      if (ancillaryCaseId == null && patientScreeningId == null && executionCaseId == null) {
+        return res.status(400).json({ error: "one of ancillaryCaseId, patientScreeningId, executionCaseId is required" });
+      }
+      if (q.byService === "true" && (patientScreeningId != null || executionCaseId != null)) {
+        const byService = await getCanonicalAppointmentsByService({ clinicId, patientScreeningId, executionCaseId, includeHistory });
+        return res.json({ enabled: true, appointmentByService: byService });
+      }
+      const projection = await getCanonicalAppointmentProjection({
+        clinicId, ancillaryCaseId, patientScreeningId, executionCaseId, includeHistory,
+      });
+      return res.json({ enabled: true, ...projection });
+    } catch (error: any) {
+      if (handleCanonicalReadError(res, error)) return;
       res.status(500).json({ error: error.message });
     }
   });
@@ -395,6 +471,68 @@ export function registerGlobalScheduleRoutes(app: Express) {
 
       const facilityId = data.facilityId ?? executionCase.facilityId ?? null;
 
+      // ── Phase 2D-B: canonical path ─────────────────────────────
+      // When FEATURE_CANONICAL_APPOINTMENT is ON the canonical service
+      // owns ancillary appointment truth. The legacy null-case upsert
+      // below cannot run (migration 0052's CHECK forbids an ancillary
+      // event without an ancillary_case_id), so we route through the
+      // orchestrator. Deferred (walk-in / no identity) returns 202 with
+      // the provisional stub preserved. Missing migration → 503.
+      if (featureFlags.canonicalAppointment) {
+        const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        try {
+          const canonical = await scheduleCanonicalAncillaryAppointment({
+            clinicId: reqClinicId,
+            executionCaseId: executionCase.id,
+            patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+            serviceType: data.serviceType,
+            startsAt,
+            endsAt,
+            eventType: "ancillary_appointment",
+            facilityId,
+            assignedUserId: data.assignedUserId ?? null,
+            actorUserId,
+            source: "scheduler_portal",
+            metadata: data.metadata ?? {},
+          });
+          if (canonical.status === "created" || canonical.status === "reused") {
+            return res.json({
+              ok: true,
+              canonical: true,
+              event: canonical.event,
+              created: canonical.status === "created",
+              createdStubCase,
+              globalScheduleEventId: canonical.globalScheduleEventId,
+              ancillaryCaseId: canonical.ancillaryCaseId,
+              projectionDeferred: canonical.projectionDeferred,
+              executionCase,
+            });
+          }
+          if (canonical.status === "deferred") {
+            return res.status(202).json({
+              ok: true,
+              canonical: true,
+              deferred: true,
+              reason: canonical.reason,
+              createdStubCase,
+              executionCase,
+            });
+          }
+          return res.status(503).json({
+            error: canonical.status === "error" ? canonical.message : "canonical scheduling unavailable",
+          });
+        } catch (e) {
+          const code = (e as { code?: string })?.code;
+          if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+            return res.status(503).json({
+              error: "canonical appointment schema unavailable — apply migration 0052",
+              code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+            });
+          }
+          throw e;
+        }
+      }
+
       // Upsert ancillary appointment (dedup happens inside the repo helper)
       const { event, created } = await upsertAncillaryScheduleEvent({
         executionCaseId: executionCase.id,
@@ -489,6 +627,42 @@ export function registerGlobalScheduleRoutes(app: Express) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
       }
       const actorUserId = sessionUserIdFromGlobalSchedule(req);
+
+      // Phase 2D-B: route canonical ancillary transitions through the
+      // domain service when the flag is ON. doctor_visit / general
+      // events and flag-OFF fall through to the legacy writer unchanged.
+      const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+      try {
+        const canonical = await applyCanonicalAncillaryTransition({
+          eventId: id,
+          transition: parsed.data.transition,
+          clinicId: reqClinicId,
+          reason: parsed.data.reason ?? parsed.data.note ?? null,
+          newStartsAt: parsed.data.newStartsAt ? new Date(parsed.data.newStartsAt) : null,
+          newEndsAt: parsed.data.newEndsAt ? new Date(parsed.data.newEndsAt) : null,
+          actorUserId,
+          source: "scheduler_portal",
+        });
+        if (canonical.handled) {
+          if (!canonical.ok) return res.status(canonical.status).json({ error: canonical.error });
+          return res.json(canonical.body);
+        }
+      } catch (e) {
+        const code = (e as { code?: string })?.code;
+        if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+          return res.status(503).json({
+            error: "canonical appointment schema unavailable — apply migration 0052",
+            code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+          });
+        }
+        throw e;
+      }
+
+      // "complete" is a canonical-only transition; the legacy writer
+      // has no mapping for it.
+      if (parsed.data.transition === "complete") {
+        return res.status(400).json({ error: "complete is only supported for canonical ancillary events" });
+      }
       const result = await applyScheduleTransition({
         eventId: id,
         transition: parsed.data.transition as ScheduleTransition,
