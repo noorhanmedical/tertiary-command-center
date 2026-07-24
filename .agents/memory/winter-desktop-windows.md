@@ -9,3 +9,5 @@ description: How /winter-home floating windows contain app modals and host other
   - **How to apply:** the host element must create a containing block (`transform: translateZ(0)`) so `fixed` overlay/content resolve against it; non-modal Radix dialogs auto-dismiss on outside interaction, so preventDefault onInteractOutside/onPointerDownOutside/onFocusOutside when contained; and beware JSX spread order — `{...props}` after a computed prop silently reverts it (bit us twice).
 - Other dock apps open as iframes `href?embed=1`; App.tsx hides TopBanner + GlobalFloatingDock when `embed` search param present (GlobalNav stays for in-window navigation).
 - Dock: pin state in localStorage `winterHome.dockPinned`; minimized windows show a per-icon count badge whose own click (stopPropagation) opens the restore panel; icon click always spawns a NEW window.
+
+- Contained-dialog sizing: dialog.tsx appends `!max-w-[calc(100%-1rem)]` when portaled into a winter window, overriding any caller `max-w-*`. To size a popup reliably in both contexts, set an explicit `w-[NNNpx]` (plus a viewport-safe max-w) instead of relying on max-w.

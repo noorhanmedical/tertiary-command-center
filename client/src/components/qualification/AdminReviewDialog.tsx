@@ -3033,20 +3033,20 @@ export function AdminReviewDialog({
 
   const shellChildren = (
     <>
-        {/* Frosted sub-page header — light glass strip with the patient
-            demographics; intentionally NOT a heavy banner. */}
+        {/* Demographics — sit directly on the glass surface; no banner,
+            no divider. Same continuous background as the body below. */}
         <DialogHeader
-          className="px-5 py-2.5 border-b border-slate-200/60 bg-white/60 backdrop-blur-xl text-slate-900"
+          className="px-5 pt-4 pb-1 bg-transparent text-white"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-baseline gap-2 min-w-0">
-                <DialogTitle className="text-base font-semibold tracking-tight text-slate-900 truncate">
+                <DialogTitle className="text-base font-semibold tracking-tight text-white truncate">
                   {patient.name || "Unnamed patient"}
                 </DialogTitle>
                 <span
-                  className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-500 tabular-nums"
+                  className="shrink-0 rounded border border-white/25 bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-100 tabular-nums"
                   data-testid="admin-review-banner-mrn"
                 >
                   MRN {(patient as { mrn?: string | null }).mrn || `PS-${patient.id}`}
@@ -3066,22 +3066,22 @@ export function AdminReviewDialog({
                   </span>
                 )}
                 {patient.facility && (
-                  <span className="text-slate-500" data-testid="admin-review-banner-practice">{patient.facility}</span>
+                  <span className="text-slate-200" data-testid="admin-review-banner-practice">{patient.facility}</span>
                 )}
                 {patient.insurance && (
-                  <span className="text-slate-500" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
+                  <span className="text-slate-200" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
                 )}
                 {patient.dob && (
-                  <span className="text-slate-500" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
+                  <span className="text-slate-200" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
                 )}
                 {patient.phoneNumber && (
-                  <span className="text-slate-500" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
+                  <span className="text-slate-200" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
                 )}
                 {patient.email && (
-                  <span className="text-slate-500" data-testid="admin-review-banner-email">· {patient.email}</span>
+                  <span className="text-slate-200" data-testid="admin-review-banner-email">· {patient.email}</span>
                 )}
                 {evidenceQuery.isFetching && (
-                  <span className="text-slate-400 inline-flex items-center gap-1">
+                  <span className="text-slate-300 inline-flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
                   </span>
                 )}
@@ -3096,7 +3096,7 @@ export function AdminReviewDialog({
                 aria-label="AI Logic for This Patient"
                 title="AI Logic for This Patient"
                 data-testid="admin-review-ai-logic-button"
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-violet-600 hover:text-violet-800 hover:bg-violet-50 transition-colors"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-violet-300 hover:text-violet-100 hover:bg-white/10 transition-colors"
               >
                 <Sparkles className="w-4 h-4" />
               </button>
@@ -3106,7 +3106,7 @@ export function AdminReviewDialog({
                 aria-label="Close admin review"
                 title="Close"
                 data-testid="admin-review-close-button"
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-black/5 transition-colors"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -3116,18 +3116,14 @@ export function AdminReviewDialog({
         {/* ─── Two-panel body: LEFT ancillaries playground · RIGHT action column ─── */}
         <div
           className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 md:flex-row md:gap-4 md:p-4"
-          style={{
-            background:
-              "radial-gradient(1200px 600px at 0% 0%, #e7eefb 0%, transparent 55%), radial-gradient(1000px 700px at 100% 100%, #eaf2fb 0%, transparent 50%), linear-gradient(135deg, #eef3fb 0%, #f6f9fd 100%)",
-          }}
           data-testid="admin-review-two-panel-body"
         >
           {/* ─── LEFT panel — Ancillaries playground ─── */}
           <main
-            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden"
+            className="flex min-h-0 flex-[2.3] flex-col overflow-hidden"
             data-testid="admin-review-ancillary-panel"
           >
-              <ScrollArea className="flex-1 min-h-0 px-5 py-4">
+              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-5 py-4">
                 <div
                   className="space-y-4"
                   data-testid="admin-review-ancillary-playground"
@@ -3138,7 +3134,7 @@ export function AdminReviewDialog({
                 className="flex items-center justify-between gap-2"
                 data-testid="admin-review-add-ancillary-row"
               >
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                <div className="text-sm font-bold uppercase tracking-[0.14em] text-white">
                   Ancillaries
                 </div>
                 <Popover
@@ -3369,12 +3365,12 @@ export function AdminReviewDialog({
                 return (
                   <div
                     key={id}
-                    className={`rounded-lg border overflow-hidden shadow-sm ring-1 ring-black/5 transition-shadow hover:shadow-md ${style.bg} ${style.border}`}
+                    className={`rounded-lg border overflow-hidden shadow-sm ${id === "brainwave" ? "bg-violet-50/90" : "bg-rose-50/90"} ${style.border}`}
                     data-testid="admin-review-ancillary-colored-panel"
                     data-ancillary={id}
                   >
-                    <div className="px-4 py-3 border-b border-white/50 bg-gradient-to-b from-white/55 to-white/20 backdrop-blur-md">
-                      <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-h-[56px] items-center px-4 py-2 border-b border-white/50 bg-gradient-to-b from-white/70 to-white/35 backdrop-blur-md">
+                      <div className="flex w-full items-center justify-between gap-3">
                         <button
                           type="button"
                           onClick={() => toggleExpand(id)}
@@ -3400,7 +3396,7 @@ export function AdminReviewDialog({
                             )}
                             {/* Closed bars render merged qualifying chips. */}
                             <div
-                              className="flex flex-wrap items-center gap-1"
+                              className="flex flex-wrap items-center gap-1 min-w-0"
                               data-testid="admin-review-ancillary-factor-chip-row"
                             >
                               {getMergedQualifyingChipsForAncillary(id).map((chip) => (
@@ -3485,7 +3481,7 @@ export function AdminReviewDialog({
                     )}
                     {isOpen && (
                       <div
-                        className="px-4 py-3 space-y-3 bg-white/60"
+                        className="px-4 py-3 space-y-3 bg-white/75"
                         data-testid="admin-review-ancillary-expanded"
                       >
                         {isUnder16 && (
@@ -3534,12 +3530,12 @@ export function AdminReviewDialog({
               {/* Ultrasound parent + child bars — simplified to the same
                   chip-only / icon-only pattern as BrainWave/VitalWave. */}
               <div
-                className={`rounded-lg border overflow-hidden ${categoryStyles.ultrasound.bg} ${categoryStyles.ultrasound.border}`}
+                className={`rounded-lg border overflow-hidden shadow-sm bg-emerald-50/90 ${categoryStyles.ultrasound.border}`}
                 data-testid="admin-review-ultrasound-parent-panel"
                 data-ancillary="ultrasound"
               >
-                <div className="px-4 py-3 border-b border-white/40 bg-white/30 backdrop-blur-sm">
-                  <div className="flex items-center justify-between gap-3">
+                <div className="flex min-h-[56px] items-center px-4 py-2 border-b border-white/50 bg-gradient-to-b from-white/70 to-white/35 backdrop-blur-md">
+                  <div className="flex w-full items-center justify-between gap-3">
                     <button
                       type="button"
                       onClick={() => toggleExpand("ultrasound")}
@@ -3554,7 +3550,7 @@ export function AdminReviewDialog({
                       <span className={`shrink-0 inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
                         {(() => {
                           const Icon = categoryIcons.ultrasound;
-                          return <Icon className="w-5 h-5" strokeWidth={2} fill="none" />;
+                          return <Icon className="w-4 h-4" strokeWidth={1.8} fill="none" />;
                         })()}
                       </span>
                       <div className="min-w-0 flex items-center gap-2 flex-wrap">
@@ -3568,7 +3564,7 @@ export function AdminReviewDialog({
                         )}
                         {/* Closed bars render merged qualifying chips. */}
                         <div
-                          className="flex flex-wrap items-center gap-1"
+                          className="flex flex-wrap items-center gap-1 min-w-0"
                           data-testid="admin-review-ancillary-factor-chip-row"
                         >
                           {getMergedQualifyingChipsForUltrasoundParent().map((chip) => (
@@ -3645,7 +3641,7 @@ export function AdminReviewDialog({
                   </div>
                 )}
                 {expanded.ultrasound && (
-                  <div className="px-4 py-3 space-y-3 bg-white/60">
+                  <div className="px-4 py-3 space-y-3 bg-white/75">
                     {canonicalReasoningByAncillary.ultrasound.length === 0 ? (
                       <div className="text-xs text-slate-500 italic">
                         No ultrasound services yet.
@@ -3795,7 +3791,7 @@ export function AdminReviewDialog({
                 )}
               </div>
                 </div>
-              </ScrollArea>
+              </div>
           </main>
 
           {/* ─── RIGHT panel — slim action rail. Reference + Actions sit in
@@ -3804,7 +3800,7 @@ export function AdminReviewDialog({
               surfaces (documents, note, scheduler) collapse into popovers so
               the column stays narrow. ─── */}
           <aside
-            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden bg-slate-200/60 backdrop-blur-md md:border-l md:border-slate-300/50 md:pl-1"
+            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden rounded-lg bg-slate-100/85 backdrop-blur-md border border-slate-300/60"
             data-testid="admin-review-action-panel"
           >
             {/* Scrollable middle zone — Reference + AI clues + Changes. Keeping
@@ -3817,7 +3813,7 @@ export function AdminReviewDialog({
             >
             <div className="shrink-0 space-y-3 p-3" data-testid="admin-review-reference-scroll">
               <div className="mb-1 flex items-center gap-2" data-testid="admin-review-workbench-header">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Review Workbench</span>
+                <span className="text-sm font-bold uppercase tracking-[0.14em] text-slate-700">Review Workbench</span>
                 <span className="h-px flex-1 bg-slate-200/70" />
               </div>
                     {/* Reference surfaces — split into top-of-rail buttons */}
@@ -4341,7 +4337,7 @@ export function AdminReviewDialog({
 
             {/* Changes — flex-1 tinted workbench card; fills remaining height */}
             <div
-              className="mx-3 mb-2 flex min-h-[140px] flex-1 basis-0 flex-col overflow-hidden rounded-lg border border-slate-200/70 bg-slate-50/70"
+              className="mx-3 mb-2 flex min-h-[140px] flex-1 basis-0 flex-col overflow-hidden rounded-lg border border-slate-200/70 bg-slate-50/85"
               data-testid="admin-review-updates-group"
             >
               <div
@@ -4563,8 +4559,12 @@ export function AdminReviewDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className="z-[70] flex flex-col w-[calc(100vw-0.75rem)] md:w-[calc(100vw-6rem)] max-w-[920px] h-[min(92dvh,660px)] md:h-[min(78vh,660px)] overflow-hidden p-0 gap-0 rounded-xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
-          overlayClassName="z-[65] bg-slate-900/30 backdrop-blur-[2px]"
+          className="z-[70] flex flex-col w-[900px] max-w-[calc(100vw-2rem)] h-[min(92dvh,660px)] md:h-[min(78vh,660px)] overflow-hidden p-0 gap-0 rounded-lg border border-slate-500/40 bg-transparent backdrop-blur-xl shadow-[0_24px_70px_rgba(2,20,35,0.5)] ring-1 ring-white/10"
+          style={{
+            background:
+              "linear-gradient(160deg, rgba(13,54,84,0.80) 0%, rgba(8,36,60,0.80) 55%, rgba(6,28,48,0.80) 100%)",
+          }}
+          overlayClassName="z-[65] bg-slate-900/50 backdrop-blur-md"
           hideClose
           data-testid={`dialog-admin-review-${patient.id}`}
         >
