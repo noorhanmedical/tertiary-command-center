@@ -3365,7 +3365,7 @@ export function AdminReviewDialog({
                 return (
                   <div
                     key={id}
-                    className={`rounded-lg border overflow-hidden shadow-sm ${id === "brainwave" ? "bg-violet-50/90" : "bg-rose-50/90"} ${style.border}`}
+                    className={`rounded-2xl border overflow-hidden shadow-sm ${id === "brainwave" ? "bg-violet-50/90" : "bg-rose-50/90"} ${style.border}`}
                     data-testid="admin-review-ancillary-colored-panel"
                     data-ancillary={id}
                   >
@@ -3530,7 +3530,7 @@ export function AdminReviewDialog({
               {/* Ultrasound parent + child bars — simplified to the same
                   chip-only / icon-only pattern as BrainWave/VitalWave. */}
               <div
-                className={`rounded-lg border overflow-hidden shadow-sm bg-emerald-50/90 ${categoryStyles.ultrasound.border}`}
+                className={`rounded-2xl border overflow-hidden shadow-sm bg-emerald-50/90 ${categoryStyles.ultrasound.border}`}
                 data-testid="admin-review-ultrasound-parent-panel"
                 data-ancillary="ultrasound"
               >
@@ -3657,7 +3657,7 @@ export function AdminReviewDialog({
                         return (
                           <div
                             key={card.testName}
-                            className="rounded-md border border-emerald-200 bg-white"
+                            className="rounded-xl overflow-hidden border border-emerald-200 bg-white"
                             data-testid="admin-review-ultrasound-child-panel"
                             data-test-name={card.testName}
                           >
@@ -3672,7 +3672,7 @@ export function AdminReviewDialog({
                               </div>
                             )}
                             <div
-                              className="rounded-md border border-emerald-200 bg-white"
+                              className="rounded-xl overflow-hidden border border-emerald-200 bg-white"
                               data-testid="admin-review-ultrasound-child-dropdown"
                               data-test-name={card.testName}
                             >
