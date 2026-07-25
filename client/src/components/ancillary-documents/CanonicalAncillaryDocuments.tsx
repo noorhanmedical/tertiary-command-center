@@ -10,9 +10,10 @@
 // notes are read-only. Every surface uses the SAME reference/source ids.
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   fetchAncillaryDocuments,
   documentKindLabel,
@@ -91,6 +92,20 @@ export function useAncillaryDocuments(params: AncillaryDocumentsListParams, enab
   return useQuery({
     queryKey: ["/api/ancillary-documents", params],
     queryFn: () => fetchAncillaryDocuments(params),
+    enabled,
+  });
+}
+
+// Keyset-paginated infinite query for the global list. The queryKey carries
+// the filter params, so changing ANY filter starts a brand-new query (pages
+// reset to page one). Each page requests the previous page's opaque
+// nextCursor; a background page-fetch error keeps already-loaded pages.
+export function useAncillaryDocumentsInfinite(params: AncillaryDocumentsListParams, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: ["/api/ancillary-documents", "infinite", params],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => fetchAncillaryDocuments({ ...params, cursor: pageParam }),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled,
   });
 }
@@ -174,8 +189,23 @@ export function CanonicalAncillaryDocumentsList({ enabled }: { enabled: boolean 
     documentKind: documentKind || undefined,
     documentStatus: documentStatus || undefined,
   };
-  const { data, isLoading } = useAncillaryDocuments(params, enabled);
-  const items = data?.items ?? [];
+  // Accumulated keyset pages. Changing any filter above changes the queryKey
+  // (params) → a fresh query → pages reset to page one.
+  const query = useAncillaryDocumentsInfinite(params, enabled);
+  const isLoading = query.isLoading;
+  // Flatten pages in server order + dedupe defensively by reference id.
+  const items = useMemo(() => {
+    const seen = new Set<number>();
+    const out: AncillaryDocumentContractItem[] = [];
+    for (const pg of query.data?.pages ?? []) {
+      for (const it of pg.items) {
+        if (seen.has(it.ancillaryDocumentReferenceId)) continue;
+        seen.add(it.ancillaryDocumentReferenceId);
+        out.push(it);
+      }
+    }
+    return out;
+  }, [query.data]);
 
   return (
     <div data-testid="canonical-ancillary-documents">
@@ -207,6 +237,22 @@ export function CanonicalAncillaryDocumentsList({ enabled }: { enabled: boolean 
           <div className="text-sm text-muted-foreground" data-testid="canonical-empty">No ancillary documents.</div>
         )}
         {items.map((d) => <DocRow key={d.ancillaryDocumentReferenceId} item={d} />)}
+        {query.isError && items.length > 0 && (
+          <div className="text-xs text-amber-600 mt-2" data-testid="canonical-page-error">Could not load more — showing loaded records.</div>
+        )}
+        {query.hasNextPage && (
+          <div className="mt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={query.isFetchingNextPage}
+              onClick={() => query.fetchNextPage()}
+              data-testid="load-more"
+            >
+              {query.isFetchingNextPage ? "Loading…" : "Load more"}
+            </Button>
+          </div>
+        )}
       </Card>
     </div>
   );

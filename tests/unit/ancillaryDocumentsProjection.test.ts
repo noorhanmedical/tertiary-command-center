@@ -76,10 +76,10 @@ async function testStablePointerNoBytes() {
   for (const forbidden of ["content", "bytes", "body", "generatedText", "noteText", "fileData", "blob"]) {
     assert.ok(!(forbidden in doc), `projection must not expose document bytes/body: ${forbidden}`);
   }
-  // A documents-library pointer resolves to the authorized blob route.
+  // A documents-library pointer is NOT emitted (route is not tenant-safe) → null.
   const { res: res2 } = await project(t, [ref({ id: 7, ancillaryCaseId: 5, documentKind: "consent", sourceTable: "case_document_readiness", sourceId: 42, metadata: { download_reference: "documents:123" } })]);
   const doc2 = res2.cases[0].documents.find((d) => d.ancillaryDocumentReferenceId === 7)!;
-  assert.equal(doc2.downloadReference, "/api/documents-library/123/file", "authorized route from stored pointer");
+  assert.equal(doc2.downloadReference, null, "non-tenant-safe documents route is not emitted");
   // A raw bucket key / URL is rejected outright.
   const { res: res3 } = await project(t, [ref({ id: 8, ancillaryCaseId: 5, sourceTable: "case_document_readiness", sourceId: 43, metadata: { download_reference: "s3://bucket/secret/key.pdf" } })]);
   assert.equal(res3.cases[0].documents.find((d) => d.ancillaryDocumentReferenceId === 8)!.downloadReference, null, "raw bucket key rejected");

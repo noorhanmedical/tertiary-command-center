@@ -14,6 +14,13 @@ export type CallCaseContext = {
   callReason: string;
   /** Target ancillary/workflow services on the execution case. */
   targetServices: string[];
+  // Phase 2E-B3 — EXACT ancillary-case identity for the selected case. Only
+  // set when the source row unambiguously carries a Phase 2B ancillary-case
+  // id (one case = one service). When null, canonical document surfaces
+  // render NOTHING and issue NO screening-wide request (no case guessing).
+  ancillaryCaseId: number | null;
+  /** The single service for the selected ancillary case, when known. */
+  serviceType: string | null;
   /** Originating workspace — "ACS" / "PCS" (workspaceRole). */
   sourcePortal: string;
   engagementStatus: string | null;

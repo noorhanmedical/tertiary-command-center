@@ -62,7 +62,8 @@ async function testWorkerResolvesLinkOrderNote() {
 async function testWorkerSkipsUnhandled() {
   const t = await loadCanonicalTables();
   const w = await worker();
-  const failure = { id: 9, clinicId: 1, ancillaryCaseId: 5, documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3001, requestedAction: "link_report", resolvedAt: null, attemptCount: 1 };
+  // supersede_reference has no safe automatic re-drive → skipped.
+  const failure = { id: 9, clinicId: 1, ancillaryCaseId: 5, documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3001, requestedAction: "supersede_reference", resolvedAt: null, attemptCount: 1 };
   const spec = new Map<unknown, TableSpec>([[t.documentFailures, { select: () => [failure], onInsert: (v) => [{ ...v, id: 2 }] }]]);
   const r = await runWithDb(spec, FLAGS, async () => w.retryUnresolvedAncillaryDocumentFailures({ limit: 10 }));
   assert.equal(r.outcomes[0].status, "skipped");

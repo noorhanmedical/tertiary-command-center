@@ -1281,7 +1281,7 @@
     },
     {
       "path": "client/src/components/portal/TeamPortalShell.tsx",
-      "blob": "f1bdce9c668758b7e46d12be2aab36db369a0a9b",
+      "blob": "8bba6bdf4261cfb8c8c270ccf5ef425098d29485",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1302,7 +1302,7 @@
     },
     {
       "path": "client/src/components/portal/caseWorkspace.ts",
-      "blob": "e0a1e55e55f8e59fb4fb2dbbd369e33dfe4cec57",
+      "blob": "746e517a67cd77c44b500b59c53fc23a3bb69ec6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2632,7 +2632,7 @@
     },
     {
       "path": "client/src/lib/workflow/teamMemberWorkspaceApi.ts",
-      "blob": "ddae74e2bb5c13798e45ce2048b796d02af9aeec",
+      "blob": "345e8aa22e96eb114ec1ab4f7ef80fe9f70fa37f",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

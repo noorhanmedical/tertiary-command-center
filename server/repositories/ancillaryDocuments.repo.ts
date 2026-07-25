@@ -468,28 +468,3 @@ export async function listReferencesForCaseIds(
       .where(inArray(ancillaryDocumentReferences.ancillaryCaseId, caseIds));
   }, [] as AncillaryDocumentReference[], "listReferencesForCaseIds");
 }
-
-/**
- * ONE batched, clinic-scoped, CURRENT-only read across many screening ids —
- * the primitive that lets a portal parent build per-case document summaries
- * without an N+1 per card. Superseded/voided rows are excluded in SQL.
- */
-export async function listCurrentReferencesForScreenings(
-  clinicId: number,
-  screeningIds: number[],
-): Promise<AncillaryDocumentReference[]> {
-  if (screeningIds.length === 0) return [];
-  return safeRead(async () => {
-    return db
-      .select()
-      .from(ancillaryDocumentReferences)
-      .where(and(
-        eq(ancillaryDocumentReferences.clinicId, clinicId),
-        inArray(ancillaryDocumentReferences.patientScreeningId, screeningIds),
-        isNull(ancillaryDocumentReferences.supersededAt),
-        ne(ancillaryDocumentReferences.documentStatus, "voided"),
-        ne(ancillaryDocumentReferences.documentStatus, "superseded"),
-      ))
-      .orderBy(desc(ancillaryDocumentReferences.actualCreatedAt), desc(ancillaryDocumentReferences.id));
-  }, [] as AncillaryDocumentReference[], "listCurrentReferencesForScreenings");
-}

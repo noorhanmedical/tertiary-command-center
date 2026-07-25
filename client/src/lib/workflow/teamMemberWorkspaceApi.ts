@@ -66,6 +66,10 @@ export type TeamWorkspaceCallListItem = {
   qualificationStatus?: string | null;
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
+  /** Phase 2E-B3 — EXACT ancillary-case id when the row represents a single
+   *  ancillary case (one service). Absent for multi-service rows; consumers
+   *  must NOT guess a case from the screening. */
+  ancillaryCaseId?: number | null;
   /** Target ancillary/workflow services on the execution case (drives the
    *  human-readable call reason). */
   selectedServices?: string[] | null;

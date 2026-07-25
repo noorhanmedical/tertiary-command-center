@@ -20,7 +20,6 @@ import { featureFlags } from "../../lib/featureFlags";
 import {
   searchClinicReferences,
   searchClinicReferencesPage,
-  listCurrentReferencesForScreenings,
   type ClinicDocumentSearchFilters,
   type ReferencePageCursor,
 } from "../../repositories/ancillaryDocuments.repo";
@@ -222,30 +221,8 @@ export async function getAncillaryDocumentsList(
   return { flagOff: false, items: page.map(toView), nextCursor };
 }
 
-// ─── Batched per-screening summary (ACS/PCS parent-fed, no per-card fetch) ──
-export type ScreeningDocumentsSummary = {
-  flagOff: boolean;
-  // Keyed by patient_screening_id → current-only contract items (same
-  // reference/source ids as the global list).
-  byScreeningId: Record<number, AncillaryDocumentView[]>;
-};
-
-/**
- * ONE batched query for many screenings — the primitive an ACS/PCS parent
- * uses to feed CaseOverview cards as data (no useQuery per card). Current-only
- * (superseded/voided excluded). Feature OFF → zero reads. Clinic-scoped.
- */
-export async function getAncillaryDocumentsSummaryForScreenings(
-  clinicId: number,
-  screeningIds: number[],
-): Promise<ScreeningDocumentsSummary> {
-  if (!featureFlags.unifiedAncillaryDocuments) return { flagOff: true, byScreeningId: {} };
-  const unique = Array.from(new Set(screeningIds.filter((n) => Number.isInteger(n))));
-  const refs = await listCurrentReferencesForScreenings(clinicId, unique);
-  const byScreeningId: Record<number, AncillaryDocumentView[]> = {};
-  for (const r of refs) {
-    if (r.clinicId !== clinicId || r.patientScreeningId == null) continue;
-    (byScreeningId[r.patientScreeningId] ??= []).push(toView(r));
-  }
-  return { flagOff: false, byScreeningId };
-}
+// NOTE: a batched per-screening summary path was considered for a true
+// parent-fed ACS/PCS model, but the portal shows ONE selected case at a time,
+// so Phase 2E-B3 uses the single selected-case detail model
+// (SelectedCaseOverview queries the EXACT ancillaryCaseId). No dead batch code
+// is retained.

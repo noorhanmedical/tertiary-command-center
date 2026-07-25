@@ -1766,6 +1766,13 @@ export function TeamPortalShell({
       facilityId: row.facilityId ?? facility ?? null,
       callReason: deriveCallReason(row),
       targetServices: (row.selectedServices ?? []).filter(Boolean),
+      // Phase 2E-B3 — EXACT ancillary-case identity only when the row carries
+      // it unambiguously (one case = one service). A multi-service execution
+      // case has no single ancillaryCaseId here, so it stays null and the
+      // canonical document summary renders nothing (no screening-wide fallback,
+      // no first/newest guessing).
+      ancillaryCaseId: row.ancillaryCaseId ?? null,
+      serviceType: (row.selectedServices ?? []).filter(Boolean)[0] ?? null,
       sourcePortal: (workspaceCallListContext ?? "acs").toUpperCase(),
       engagementStatus: row.engagementStatus ?? null,
       lifecycleStatus: row.lifecycleStatus ?? null,

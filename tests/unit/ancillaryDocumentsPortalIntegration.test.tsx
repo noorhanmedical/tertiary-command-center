@@ -203,6 +203,74 @@ async function testFlagDefaults() {
   }
 }
 
+// ─── Global-list Load More (keyset pagination consumption) ────────
+// The list's initial filter state is all-empty → these params.
+const LIST_PARAMS = { patientScreeningId: undefined, serviceType: undefined, documentKind: undefined, documentStatus: undefined };
+function renderInfiniteList(pages: Array<{ items: AncillaryDocumentContractItem[]; nextCursor: string | null }>, enabled = true): string {
+  const qc = new QueryClient();
+  qc.setQueryData(
+    ["/api/ancillary-documents", "infinite", LIST_PARAMS],
+    { pages, pageParams: pages.map((_, i) => (i === 0 ? undefined : "cursor")) },
+  );
+  return renderToStaticMarkup(
+    React.createElement(QueryClientProvider, { client: qc },
+      React.createElement(comp.CanonicalAncillaryDocumentsList, { enabled })),
+  );
+}
+
+// ─── (25/29) first page renders; Load More visibility tracks nextCursor ─
+async function testFirstPageAndLoadMore() {
+  const withMore = renderInfiniteList([{ items: [item({ ancillaryDocumentReferenceId: 1 }), item({ ancillaryDocumentReferenceId: 2 })], nextCursor: "c2" }]);
+  assert.ok(withMore.includes('data-reference-id="1"') && withMore.includes('data-reference-id="2"'), "(25) first page rendered");
+  assert.ok(/data-testid="load-more"/.test(withMore), "Load More shown when nextCursor exists");
+  // (29) no nextCursor → no Load More.
+  const noMore = renderInfiniteList([{ items: [item({ ancillaryDocumentReferenceId: 1 })], nextCursor: null }]);
+  assert.ok(!/data-testid="load-more"/.test(noMore), "(29) Load More hidden when no nextCursor");
+}
+
+// ─── (26/27) second page appends without duplicates ──────────────
+async function testAppendWithoutDuplicates() {
+  const html = renderInfiniteList([
+    { items: [item({ ancillaryDocumentReferenceId: 1 }), item({ ancillaryDocumentReferenceId: 2 })], nextCursor: "c2" },
+    { items: [item({ ancillaryDocumentReferenceId: 2 }), item({ ancillaryDocumentReferenceId: 3 })], nextCursor: null }, // 2 is a dup
+  ]);
+  for (const id of [1, 2, 3]) assert.ok(html.includes(`data-reference-id="${id}"`), `ref ${id} present`);
+  // ref 2 appears exactly once (deduped).
+  assert.equal((html.match(/data-reference-id="2"/g) ?? []).length, 1, "(27) duplicate reference id appended once");
+  assert.ok(!/data-testid="load-more"/.test(html), "no Load More on the last page");
+}
+
+// ─── (28/30) reset-on-filter + loading disables the button ───────
+async function testResetAndLoadingGuard() {
+  const src = readFileSync(join(ROOT, "client/src/components/ancillary-documents/CanonicalAncillaryDocuments.tsx"), "utf8");
+  // (28) the infinite queryKey carries the filter params → a filter change is a
+  // new query (pages reset to page one). And params are derived from state.
+  assert.ok(/useAncillaryDocumentsInfinite\(params/.test(src), "list uses the infinite query keyed by filter params");
+  assert.ok(/queryKey:\s*\["\/api\/ancillary-documents",\s*"infinite",\s*params\]/.test(src), "(28) queryKey includes params → filter change resets pages");
+  // (30) the Load More button is disabled while a page is fetching.
+  assert.ok(/disabled=\{query\.isFetchingNextPage\}/.test(src), "(30) repeated click while loading is prevented");
+  // Error state does not discard loaded records.
+  assert.ok(/query\.isError && items\.length > 0/.test(src), "error keeps already-loaded records");
+}
+
+// ─── (31) feature OFF → list makes zero canonical requests ───────
+async function testListFeatureOff() {
+  let fetchCalls = 0;
+  const realFetch = globalThis.fetch;
+  (globalThis as unknown as { fetch: unknown }).fetch = () => { fetchCalls++; return Promise.resolve(new Response('{"items":[],"nextCursor":null}')); };
+  try {
+    const html = renderToStaticMarkup(
+      React.createElement(QueryClientProvider, { client: new QueryClient() },
+        React.createElement(comp.CanonicalAncillaryDocumentsList, { enabled: false })),
+    );
+    assert.ok(html.includes("canonical-ancillary-documents"), "list still renders shell");
+    assert.equal(fetchCalls, 0, "(31) feature OFF issues zero canonical requests");
+    assert.ok(!/data-testid="load-more"/.test(html), "no Load More when disabled");
+  } finally {
+    (globalThis as unknown as { fetch: unknown }).fetch = realFetch;
+  }
+}
+
 // ─── (8) wiring: surfaces gate on the flag + reuse the components ──
 async function testSurfaceWiring() {
   const page = readFileSync(join(ROOT, "client/src/pages/documents.tsx"), "utf8");
@@ -224,6 +292,10 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(5) status buckets distinct", testStatusBuckets],
   ["(6) query builder: no identity search", testQueryBuilder],
   ["(7) flag default OFF", testFlagDefaults],
+  ["(25/29) first page renders; Load More tracks nextCursor", testFirstPageAndLoadMore],
+  ["(26/27) second page appends without duplicates", testAppendWithoutDuplicates],
+  ["(28/30) reset-on-filter + loading disables Load More", testResetAndLoadingGuard],
+  ["(31) feature OFF → list zero canonical requests", testListFeatureOff],
   ["(8) surfaces gate on flag + reuse components", testSurfaceWiring],
 ];
 

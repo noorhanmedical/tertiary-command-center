@@ -14,11 +14,27 @@ import type { AncillaryDocumentReference } from "@shared/schema/ancillaryDocumen
 // Allowlisted source-pointer → authorized internal route adapters. Each adapter
 // accepts a numeric source id ONLY (no free-form strings), so a raw key or URL
 // can never flow through.
-const POINTER_ADAPTERS: Array<{ prefix: string; toRoute: (id: number) => string }> = [
-  // Reports / consents / screening forms live in the documents library and are
-  // served by the existing authorized blob route.
-  { prefix: "documents", toRoute: (id) => `/api/documents-library/${id}/file` },
-];
+//
+// UNRESOLVED ADAPTER — `documents:<id>` (documents-library files):
+//   The `/api/documents-library/:id/file` route requires authentication but is
+//   NOT tenant-safe — the `documents` table has no clinic_id and the handler
+//   applies no clinic scope, so any authenticated user could fetch another
+//   clinic's file by id. Per Phase 2E-B3 §7 we DO NOT emit a fabricated
+//   pointer and DO NOT add a new download route in this patch. The
+//   `documents:` adapter is intentionally left OUT of the allowlist, so its
+//   downloadReference resolves to null until a clinic-scoped file route exists
+//   (e.g. one that joins through the clinic-scoped ancillary_document_references
+//   or adds documents.clinic_id). Any pointer added below MUST resolve to an
+//   authenticated, tenant-scoped route (enforced by a registration test).
+const POINTER_ADAPTERS: Array<{ prefix: string; toRoute: (id: number) => string }> = [];
+
+/** The prefixes this resolver will emit an authorized route for (may be empty). */
+export const AUTHORIZED_POINTER_PREFIXES: readonly string[] = POINTER_ADAPTERS.map((a) => a.prefix);
+
+/** The routes this resolver can emit, for the id-space it validates (tests assert these are registered + tenant-safe). */
+export function emittedDownloadRoutes(sampleId = 1): string[] {
+  return POINTER_ADAPTERS.map((a) => a.toRoute(sampleId));
+}
 
 /**
  * Resolve the stored metadata pointer to an authorized route, or null.

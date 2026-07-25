@@ -362,44 +362,30 @@ async function t16_exactResolutionSiblings() {
   assert.equal(fails.find((f) => f.id === 2)!.resolvedAt, null, "sibling source stays unresolved");
 }
 
-// ═══════════════ (22) batched summary: ONE query, per-screening ══
-async function t22_batchedSummary() {
-  const t = await tables();
-  const p = await projection();
-  const rows = [
-    refRow({ id: 1, patientScreeningId: 77, documentKind: "order_note", documentStatus: "signed" }),
-    refRow({ id: 2, patientScreeningId: 77, documentKind: "report", documentStatus: "uploaded" }),
-    refRow({ id: 3, patientScreeningId: 88, documentKind: "consent", documentStatus: "uploaded" }),
-    refRow({ id: 4, patientScreeningId: 77, documentKind: "report", supersededAt: T(5) }), // history excluded
-    refRow({ id: 5, clinicId: 2, patientScreeningId: 77, documentKind: "report" }), // other clinic excluded
-  ];
-  const ctrl = buildStoreFake(new Map([[t.refs, rows]]));
-  const res = await runWithStore(ctrl, { unifiedAncillaryDocuments: true }, async () =>
-    p.getAncillaryDocumentsSummaryForScreenings(1, [77, 88]));
-  assert.equal(res.flagOff, false);
-  assert.deepEqual(res.byScreeningId[77].map((d) => d.ancillaryDocumentReferenceId).sort(), [1, 2], "screening 77 current items");
-  assert.deepEqual(res.byScreeningId[88].map((d) => d.ancillaryDocumentReferenceId), [3], "screening 88 items");
-  // Feature OFF → zero reads.
-  const off = await runWithStore(ctrl, { unifiedAncillaryDocuments: false }, async () =>
-    p.getAncillaryDocumentsSummaryForScreenings(1, [77, 88]));
-  assert.equal(off.flagOff, true);
-  assert.deepEqual(off.byScreeningId, {});
-}
-
-// ═══════════════ (17-20) download reference safety ═══════════════
+// ═══════════════ (17-20/32-35) download reference safety ═════════
 async function t17_20_downloadSafety() {
   const dl = await import("../../server/services/ancillaryDocuments/downloadReference");
-  // (17) stored authorized pointer → authorized route.
-  assert.equal(dl.resolveAuthorizedDownloadReference(refRow({ metadata: { download_reference: "documents:55" } }) as any), "/api/documents-library/55/file");
-  // (18) no fabricated sourceTable:sourceId when metadata carries no pointer.
+  // (18/32) The `documents:` route is NOT tenant-safe, so it is NOT in the
+  // allowlist → resolves to null (never fabricated). No pointer is emitted.
+  assert.equal(dl.resolveAuthorizedDownloadReference(refRow({ metadata: { download_reference: "documents:55" } }) as any), null);
+  assert.deepEqual([...dl.AUTHORIZED_POINTER_PREFIXES], [], "no unsafe download pointer is emitted");
+  assert.deepEqual(dl.emittedDownloadRoutes(), [], "no download route emitted until a tenant-safe one exists");
+  // no fabricated sourceTable:sourceId when metadata carries no pointer.
   assert.equal(dl.resolveAuthorizedDownloadReference(refRow({ sourceTable: "procedure_notes", sourceId: 900, metadata: {} }) as any), null);
   // (19) unsafe/raw pointers rejected.
   for (const bad of ["s3://bucket/key.pdf", "http://evil.example/x", "/etc/passwd", "documents:abc", "documents:1;rm", "unknown_prefix:5"]) {
     assert.equal(dl.resolveAuthorizedDownloadReference(refRow({ metadata: { download_reference: bad } }) as any), null, `rejects ${bad}`);
   }
-  // (20) missing pointer → null.
+  // (20/35) missing/unknown pointer → null.
   assert.equal(dl.resolveAuthorizedDownloadReference(refRow({ metadata: {} }) as any), null);
   assert.equal(dl.resolveAuthorizedDownloadReference(refRow({ metadata: null }) as any), null);
+  // (33/34) EVERY emitted route (currently none) must be registered + tenant-safe.
+  // Assert the invariant: the emitted set is a subset of a known tenant-safe
+  // allowlist. `/api/documents-library/:id/file` is NOT tenant-safe and MUST
+  // NOT be emitted.
+  for (const route of dl.emittedDownloadRoutes()) {
+    assert.ok(!/documents-library/.test(route), "must not emit the non-tenant-safe documents-library route");
+  }
 }
 
 const tests: Array<[string, () => Promise<void>]> = [
@@ -416,8 +402,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(13/14) two source ids → two rows; own attempt counts", t13_14_sourceSpecificDedupe],
   ["(15) different clinics never dedupe", t15_clinicIsolation],
   ["(16) exact resolution leaves siblings unresolved", t16_exactResolutionSiblings],
-  ["(22) batched summary: one query, per-screening, clinic/current-scoped", t22_batchedSummary],
-  ["(17-20) download reference safety", t17_20_downloadSafety],
+  ["(17-20/32-35) download reference safety (no unsafe route emitted)", t17_20_downloadSafety],
 ];
 
 async function run() {
