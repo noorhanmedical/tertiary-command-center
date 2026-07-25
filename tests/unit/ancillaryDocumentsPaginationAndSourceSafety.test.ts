@@ -270,8 +270,8 @@ async function t10_exactSourceRace() {
   const ctrl = buildStoreFake(store);
   const res = await runWithStore(ctrl, { unifiedAncillaryDocuments: true }, async () =>
     r.createReference({ clinicId: 1, ancillaryCaseId: 5, documentKind: "report", sourceTable: "case_document_readiness", sourceId: 100, documentStatus: "uploaded" }));
-  assert.equal(res.outcome, "reused_exact_source");
-  if (res.outcome === "reused_exact_source") assert.equal(res.existing.id, 500);
+  assert.equal(res.outcome, "reused_exact_source_unchanged");
+  if (res.outcome === "reused_exact_source_unchanged") assert.equal(res.existing.id, 500);
 }
 
 // ═══════════════ (11) different-source active-kind conflict ≠ reused ═

@@ -10,13 +10,17 @@ import { featureFlags } from "../../lib/featureFlags";
 import {
   listUnresolvedAncillaryDocumentFailures,
   recordAncillaryDocumentFailure,
-  resolveAncillaryDocumentFailure,
   resolveAncillaryDocumentFailureById,
 } from "../../repositories/ancillaryDocuments.repo";
 import type { AncillaryDocumentReconciliationFailure } from "@shared/schema/ancillaryDocuments";
 import { createOrReuseOrderNote, linkOrderNoteAdminReviewEvidence } from "./orderNoteService";
 import { ensureAncillaryDocumentReference } from "./documentReferenceWriter";
-import { loadCanonicalDocumentSource, resolveCaseForSource, ACTION_TO_KIND } from "./sourceAdapters";
+import {
+  loadCanonicalDocumentSource,
+  discoverCanonicalDocumentSource,
+  resolveCaseForSource,
+  ACTION_TO_KIND,
+} from "./sourceAdapters";
 
 export type DocumentRetryStatus =
   | "resolved"
@@ -53,7 +57,32 @@ async function retryReferenceLink(
   failure: AncillaryDocumentReconciliationFailure,
 ): Promise<DocumentRetryOutcome> {
   const base = { failureId: failure.id, requestedAction: failure.requestedAction };
-  const loaded = await loadCanonicalDocumentSource(failure.sourceTable, failure.sourceId);
+
+  // Source-less failure → deterministic source discovery (never first/newest).
+  let sourceTable = failure.sourceTable;
+  let sourceId = failure.sourceId;
+  if (sourceId == null) {
+    const disc = await discoverCanonicalDocumentSource({
+      requestedAction: failure.requestedAction,
+      clinicId: failure.clinicId,
+      ancillaryCaseId: failure.ancillaryCaseId,
+      executionCaseId: failure.executionCaseId,
+      patientScreeningId: failure.patientScreeningId,
+    });
+    if (!disc.ok) {
+      const status: DocumentRetryStatus =
+        disc.reason === "cross_clinic_denied" ? "cross_clinic_denied"
+        : disc.reason === "service_mismatch" ? "service_mismatch"
+        : disc.reason === "source_not_found" ? "source_not_found"
+        : "still_deferred";
+      return { ...base, status, message: disc.reason };
+    }
+    // Preserve the DISCOVERED source identity for the rest of the retry.
+    sourceTable = disc.sourceTable;
+    sourceId = disc.sourceId;
+  }
+
+  const loaded = await loadCanonicalDocumentSource(sourceTable, sourceId);
   if (!loaded.ok) {
     const status: DocumentRetryStatus =
       loaded.reason === "source_not_found" ? "source_not_found"
@@ -102,6 +131,8 @@ async function retryReferenceLink(
     expectedClinicId: src.clinicId,
     documentStatus: src.documentStatus,
     signedAt: src.signedAt,
+    // Preserve the source's own creation timestamp (never the retry time).
+    actualCreatedAt: src.actualCreatedAt,
     downloadReference: src.downloadReference,
     source: "document_retry_worker",
   });
@@ -139,11 +170,10 @@ export async function retryAncillaryDocumentFailure(
         source: "document_retry_worker",
       });
       if ((r.status === "created" || r.status === "reused") && !r.referenceDeferred) {
-        await resolveAncillaryDocumentFailure({
-          ancillaryCaseId: failure.ancillaryCaseId,
-          documentKind: "order_note",
-          requestedAction: "link_order_note",
-        });
+        // Resolve ONLY this exact failure row — never every row sharing
+        // case + kind + action (sibling / different-source / different-clinic
+        // link_order_note failures must stay open).
+        await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
         return { failureId: failure.id, requestedAction: failure.requestedAction, status: "resolved" };
       }
       return { failureId: failure.id, requestedAction: failure.requestedAction, status: "still_deferred", message: r.status };

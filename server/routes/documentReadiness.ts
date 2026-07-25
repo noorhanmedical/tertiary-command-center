@@ -272,6 +272,8 @@ export function registerDocumentReadinessRoutes(app: Express) {
             expectedClinicId: (executionCase as { clinicId?: number | null }).clinicId ?? null,
             documentStatus: finalStatus,
             signedAt: referenceKind === "consent" && finalStatus === "completed" ? completedAt : null,
+            // Preserve the SOURCE readiness row's creation instant.
+            actualCreatedAt: row.createdAt ?? null,
             downloadReference: data.documentId != null ? `documents:${data.documentId}` : null,
             actorUserId,
             source: "document_complete_action",

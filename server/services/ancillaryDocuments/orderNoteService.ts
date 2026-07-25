@@ -260,6 +260,8 @@ export async function createOrReuseOrderNote(
       documentStatus,
       effectiveClinicalDate: input.effectiveClinicalDate ?? null,
       signedAt: note.signedAt ?? null,
+      // Preserve the SOURCE note's creation instant, not the index time.
+      actualCreatedAt: note.createdAt ?? null,
       createdByUserId: input.actorUserId ?? null,
       metadata: {
         qualifying_appointment_id: eligibility.qualifyingAppointmentId ?? null,
@@ -269,7 +271,7 @@ export async function createOrReuseOrderNote(
     });
     if (ref.outcome === "created") {
       referenceId = ref.row.id;
-    } else if (ref.outcome === "reused_exact_source") {
+    } else if (ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") {
       referenceId = ref.existing.id;
     } else {
       // active_kind_conflict: a DIFFERENT source holds this case's order_note
@@ -665,6 +667,73 @@ async function findOrderNoteReferenceBySource(
     ))
     .limit(1);
   return ref ?? null;
+}
+
+export type OrderNoteSignatureSyncResult =
+  | { status: "skipped_flag_off" }
+  | { status: "synced" }
+  | { status: "no_reference" }
+  | { status: "cross_clinic_denied" }
+  | { status: "case_mismatch" }
+  | { status: "migration_missing" }
+  | { status: "sync_failed"; retryRecorded: boolean };
+
+const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
+
+/**
+ * Phase 2E-B4 — after a tenant-scoped Order Note signature transition
+ * commits, mirror the canonical note state onto its EXACT reference row
+ * (sourceTable=procedure_notes, sourceId=noteId, documentKind=order_note):
+ * documentStatus + signedAt only. NEVER touches identity/ownership and NEVER
+ * broadly updates. Validates clinic + ancillaryCaseId. Feature OFF → zero
+ * reference reads/writes. NEVER throws — a sync failure must not reverse the
+ * already-committed signature/return; it records exact, PHI-free
+ * reconciliation work instead.
+ */
+export async function syncOrderNoteReferenceSignature(args: {
+  clinicId: number;
+  ancillaryCaseId: number | null;
+  noteId: number;
+  documentStatus: "signed" | "pending_signature";
+  signedAt: Date | null;
+}): Promise<OrderNoteSignatureSyncResult> {
+  if (!featureFlags.unifiedAncillaryDocuments) return { status: "skipped_flag_off" };
+  try {
+    const ref = await findOrderNoteReferenceBySource(args.noteId);
+    if (!ref) return { status: "no_reference" };
+    if (ref.clinicId !== args.clinicId) return { status: "cross_clinic_denied" };
+    if (args.ancillaryCaseId != null && ref.ancillaryCaseId !== args.ancillaryCaseId) return { status: "case_mismatch" };
+    // Scoped update — status + signedAt only; identity is never changed.
+    await db
+      .update(ancillaryDocumentReferences)
+      .set({ documentStatus: args.documentStatus, signedAt: args.signedAt, updatedAt: new Date() })
+      .where(and(
+        eq(ancillaryDocumentReferences.id, ref.id),
+        eq(ancillaryDocumentReferences.clinicId, args.clinicId),
+        eq(ancillaryDocumentReferences.sourceTable, ORDER_NOTE_SOURCE_TABLE),
+        eq(ancillaryDocumentReferences.sourceId, args.noteId),
+        eq(ancillaryDocumentReferences.documentKind, "order_note"),
+      ));
+    return { status: "synced" };
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code != null && MIGRATION_MISSING_CODES.has(code)) return { status: "migration_missing" };
+    let retryRecorded = false;
+    try {
+      await recordAncillaryDocumentFailure({
+        clinicId: args.clinicId,
+        ancillaryCaseId: args.ancillaryCaseId,
+        documentKind: "order_note",
+        sourceTable: ORDER_NOTE_SOURCE_TABLE,
+        sourceId: args.noteId,
+        requestedAction: "link_order_note",
+        sourceSystem: "order_note_signature_sync",
+        errorCode: "reference_signature_sync_failed",
+      });
+      retryRecorded = true;
+    } catch { /* ledger guard downstream */ }
+    return { status: "sync_failed", retryRecorded };
+  }
 }
 
 async function insertOrderNote(

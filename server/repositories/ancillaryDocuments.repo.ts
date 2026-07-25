@@ -223,6 +223,10 @@ export type CreateReferenceInput = {
   documentStatus: string;
   effectiveClinicalDate?: Date | null;
   signedAt?: Date | null;
+  // The SOURCE's own creation timestamp (procedure_notes.created_at /
+  // case_document_readiness.created_at) — NEVER the retry/insert/backfill time
+  // and never the effective clinical date. Omit to let the DB default stand.
+  actualCreatedAt?: Date | null;
   createdByUserId?: string | null;
   metadata?: Record<string, unknown>;
 };
@@ -230,19 +234,86 @@ export type CreateReferenceInput = {
 export type CreateReferenceResult =
   | { outcome: "created"; created: true; row: AncillaryDocumentReference }
   // Idempotent: the EXACT same canonical source (table, id, kind) already
-  // indexed — returned unchanged.
-  | { outcome: "reused_exact_source"; created: false; existing: AncillaryDocumentReference }
+  // indexed AND already in sync — returned unchanged.
+  | { outcome: "reused_exact_source_unchanged"; created: false; existing: AncillaryDocumentReference }
+  // Same exact source, but stale mutable fields (status/signedAt/timestamps/…)
+  // were refreshed. Immutable identity (clinic/case/source/kind) untouched.
+  | { outcome: "reused_exact_source_updated"; created: false; existing: AncillaryDocumentReference }
   // A DIFFERENT current source already holds this (case, kind) slot. NEVER
   // reused — the caller must supersede via a reviewed workflow or defer. The
   // new source is never silently attached to the existing reference id.
   | { outcome: "active_kind_conflict"; created: false; existing: AncillaryDocumentReference };
 
+// Mutable fields a same-source sync may refresh. Immutable identity
+// (clinicId, ancillaryCaseId, sourceTable, sourceId, documentKind) is NEVER
+// touched here.
+function ms(d: Date | null | undefined): number | null {
+  return d instanceof Date ? d.getTime() : null;
+}
+function computeExactSourceSyncPatch(
+  existing: AncillaryDocumentReference,
+  input: CreateReferenceInput,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (input.documentStatus !== existing.documentStatus) patch.documentStatus = input.documentStatus;
+  const inSigned = input.signedAt ?? null;
+  if (ms(existing.signedAt) !== ms(inSigned)) patch.signedAt = inSigned;
+  const inEff = input.effectiveClinicalDate ?? null;
+  if (ms(existing.effectiveClinicalDate) !== ms(inEff)) patch.effectiveClinicalDate = inEff;
+  // Correct a prior mis-indexed actual_created_at ONLY when a source timestamp
+  // is supplied and differs.
+  if (input.actualCreatedAt != null && ms(existing.actualCreatedAt) !== ms(input.actualCreatedAt)) patch.actualCreatedAt = input.actualCreatedAt;
+  if (input.serviceType != null && input.serviceType !== existing.serviceType) patch.serviceType = input.serviceType;
+  if (input.globalPlexusPatientId != null && input.globalPlexusPatientId !== existing.globalPlexusPatientId) patch.globalPlexusPatientId = input.globalPlexusPatientId;
+  if (input.patientClinicMembershipId != null && input.patientClinicMembershipId !== existing.patientClinicMembershipId) patch.patientClinicMembershipId = input.patientClinicMembershipId;
+  if (input.patientScreeningId != null && input.patientScreeningId !== existing.patientScreeningId) patch.patientScreeningId = input.patientScreeningId;
+  if (input.executionCaseId != null && input.executionCaseId !== existing.executionCaseId) patch.executionCaseId = input.executionCaseId;
+  const nextDl = (input.metadata ?? {}).download_reference;
+  const curMeta = (existing.metadata as Record<string, unknown> | null) ?? {};
+  if (nextDl !== undefined && nextDl !== curMeta.download_reference) patch.metadata = { ...curMeta, download_reference: nextDl };
+  return patch;
+}
+
 /**
- * Insert a new canonical reference. Returns `reused_exact_source` ONLY when
- * the exact (source_table, source_id, kind) already exists. If a DIFFERENT
- * source already occupies the active (case, kind) slot, returns
- * `active_kind_conflict` — it is NEVER reported as reused and the existing
- * reference is never mutated.
+ * Tenant-safe exact-source sync: refresh a same-source reference's stale
+ * mutable fields, never its immutable identity or ownership. Ownership
+ * (clinic/case) must already match — if it doesn't, the row is left UNCHANGED.
+ */
+async function syncExactSourceReference(
+  existing: AncillaryDocumentReference,
+  input: CreateReferenceInput,
+): Promise<CreateReferenceResult> {
+  // Immutable ownership guard — never re-home an existing reference.
+  if (existing.clinicId !== input.clinicId || existing.ancillaryCaseId !== input.ancillaryCaseId) {
+    return { outcome: "reused_exact_source_unchanged", created: false, existing };
+  }
+  const patch = computeExactSourceSyncPatch(existing, input);
+  if (Object.keys(patch).length === 0) {
+    return { outcome: "reused_exact_source_unchanged", created: false, existing };
+  }
+  await db
+    .update(ancillaryDocumentReferences)
+    .set({ ...patch, updatedAt: sql`CURRENT_TIMESTAMP` })
+    .where(and(
+      eq(ancillaryDocumentReferences.id, existing.id),
+      eq(ancillaryDocumentReferences.clinicId, input.clinicId),
+      eq(ancillaryDocumentReferences.ancillaryCaseId, input.ancillaryCaseId),
+      eq(ancillaryDocumentReferences.sourceTable, input.sourceTable),
+      eq(ancillaryDocumentReferences.sourceId, input.sourceId),
+      eq(ancillaryDocumentReferences.documentKind, input.documentKind),
+    ));
+  // Return the id-preserving merged view (immutable identity intact) so callers
+  // always see the exact reference id + refreshed mutable fields.
+  const merged = { ...existing, ...(patch as Partial<AncillaryDocumentReference>) };
+  return { outcome: "reused_exact_source_updated", created: false, existing: merged };
+}
+
+/**
+ * Insert a new canonical reference — or, for the EXACT same
+ * (source_table, source_id, kind), SYNC its stale mutable fields in place
+ * (never its immutable identity). A DIFFERENT source occupying the active
+ * (case, kind) slot returns `active_kind_conflict` (never reused, never
+ * overwritten). The source's own timestamp is preserved via actualCreatedAt.
  */
 export async function createReference(input: CreateReferenceInput): Promise<CreateReferenceResult> {
   guardWrite();
@@ -250,7 +321,7 @@ export async function createReference(input: CreateReferenceInput): Promise<Crea
     throw new Error(`invalid documentKind: ${input.documentKind}`);
   }
   const existingSource = await getReferenceBySource(input.sourceTable, input.sourceId, input.documentKind);
-  if (existingSource) return { outcome: "reused_exact_source", created: false, existing: existingSource };
+  if (existingSource) return syncExactSourceReference(existingSource, input);
   // A current reference of the same (case, kind) but a DIFFERENT source blocks
   // a silent reuse — surface the conflict, never overwrite the slot.
   const activeOther = await getActiveReference(input.ancillaryCaseId, input.documentKind);
@@ -275,6 +346,8 @@ export async function createReference(input: CreateReferenceInput): Promise<Crea
         documentStatus: input.documentStatus,
         effectiveClinicalDate: input.effectiveClinicalDate ?? null,
         signedAt: input.signedAt ?? null,
+        // Preserve the SOURCE's creation timestamp; omit to keep the DB default.
+        ...(input.actualCreatedAt != null ? { actualCreatedAt: input.actualCreatedAt } : {}),
         createdByUserId: input.createdByUserId ?? null,
         metadata: (input.metadata ?? {}) as unknown as never,
       })
@@ -285,7 +358,7 @@ export async function createReference(input: CreateReferenceInput): Promise<Crea
       // Concurrent insert. Reread by EXACT source only — never fall back to an
       // unrelated active reference of the same case/kind.
       const winner = await getReferenceBySource(input.sourceTable, input.sourceId, input.documentKind);
-      if (winner) return { outcome: "reused_exact_source", created: false, existing: winner };
+      if (winner) return syncExactSourceReference(winner, input);
       // The active-per-case-kind partial unique fired for a DIFFERENT source.
       const other = await getActiveReference(input.ancillaryCaseId, input.documentKind);
       if (other) return { outcome: "active_kind_conflict", created: false, existing: other };

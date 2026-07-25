@@ -181,10 +181,12 @@ async function applyReadinessReference(
       documentStatus: r.documentStatus,
       effectiveClinicalDate: null,
       signedAt: null,
+      // Preserve the ORIGINAL source timestamp — never the backfill run time.
+      actualCreatedAt: r.createdAt ?? null,
       createdByUserId: null,
       metadata: { document_kind: kind, download_reference: r.documentId != null ? `documents:${r.documentId}` : null },
     });
-    if (ref.created) applied.referencesCreated++; else applied.referencesReused++;
+    if (ref.outcome === "created") applied.referencesCreated++; else applied.referencesReused++;
   } catch { applied.applyErrors++; }
 }
 
@@ -224,10 +226,12 @@ async function applyOrderNoteBackfill(
       documentStatus: n.signatureStatus === "signed" ? "signed" : "pending_signature",
       effectiveClinicalDate: n.effectiveClinicalDate ?? null,
       signedAt: n.signedAt ?? null,
+      // Preserve the ORIGINAL note timestamp — never the backfill run time.
+      actualCreatedAt: n.createdAt ?? null,
       createdByUserId: null,
       metadata: { document_kind: "order_note" },
     });
-    if (ref.created) applied.referencesCreated++; else applied.referencesReused++;
+    if (ref.outcome === "created") applied.referencesCreated++; else applied.referencesReused++;
   } catch { applied.applyErrors++; }
 }
 

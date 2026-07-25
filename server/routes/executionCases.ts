@@ -211,6 +211,21 @@ function sessionUserIdFrom(req: Request): string | null {
   return sess?.userId ?? null;
 }
 
+/**
+ * Phase 2E-B4 — pick the EXACT ancillary case identity for a call-list row.
+ * Returns the case id + service ONLY when there is exactly one active,
+ * same-clinic ancillary case (one service). Multiple (multi-service or two
+ * same-service episodes) or zero → both null. Never first/newest.
+ */
+export function selectSingleActiveAncillaryCase(
+  activeCases: Array<{ id: number; clinicId: number; serviceType: string }>,
+  clinicId: number | null,
+): { ancillaryCaseId: number | null; serviceType: string | null } {
+  const sameClinic = activeCases.filter((c) => clinicId != null && c.clinicId === clinicId);
+  if (sameClinic.length === 1) return { ancillaryCaseId: sameClinic[0].id, serviceType: sameClinic[0].serviceType };
+  return { ancillaryCaseId: null, serviceType: null };
+}
+
 export function registerExecutionCaseRoutes(app: Express) {
   // GET /api/execution-cases
   // Filters: engagementBucket, lifecycleStatus, engagementStatus, facilityId,
@@ -1201,6 +1216,22 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
       const rows = await listSchedulerPortalCases(filters, limit);
+
+      // Phase 2E-B4 — attach the EXACT ancillary case id + service when a row
+      // has exactly ONE active ancillary case (one service). Multiple
+      // (multi-service or two same-service episodes) or zero → both null; never
+      // first/newest. ONE batched query for all visible execution cases (no
+      // per-row query). Phase 2B absent → rows unchanged.
+      try {
+        const { listActiveAncillaryCasesByExecutionCaseIds } = await import(
+          "../repositories/ancillaryCases.repo"
+        );
+        const execIds = rows.map((r) => r.id).filter((n): n is number => typeof n === "number");
+        const byExec = await listActiveAncillaryCasesByExecutionCaseIds(execIds);
+        for (const row of rows) {
+          Object.assign(row, selectSingleActiveAncillaryCase(byExec.get(row.id) ?? [], row.clinicId));
+        }
+      } catch { /* Phase 2B schema absent → leave rows unchanged */ }
 
       // Phase 2D-C2 — attach the canonical per-service appointment
       // projection when the flag is ON and the caller opts in

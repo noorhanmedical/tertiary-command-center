@@ -119,7 +119,8 @@ async function testEligibleCreates() {
   assert.equal((rp.metadata as Record<string, unknown>).admin_review_status, "approved");
   // (8) effectiveClinicalDate separate from actual creation
   assert.equal(rp.effectiveClinicalDate, EFFECTIVE);
-  assert.ok(!("actualCreatedAt" in rp), "reference actualCreatedAt is server-owned");
+  // Phase 2E-B4 — the reference preserves the SOURCE note's created_at.
+  assert.equal(rp.actualCreatedAt, START, "reference actualCreatedAt = procedure_notes.created_at");
 }
 
 // ─── (5) repeat call reuses current note ──────────────────────────

@@ -51,6 +51,9 @@ export type EnsureDocumentReferenceInput = {
   documentStatus: string;
   effectiveClinicalDate?: Date | null;
   signedAt?: Date | null;
+  // The SOURCE's own creation timestamp (case_document_readiness.created_at) —
+  // preserved into the reference; never the retry/index time.
+  actualCreatedAt?: Date | null;
   // A pointer to an already-authorized download/view route — never bytes.
   downloadReference?: string | null;
   actorUserId?: string | null;
@@ -162,6 +165,7 @@ export async function ensureAncillaryDocumentReference(
         documentStatus: input.documentStatus,
         effectiveClinicalDate: input.effectiveClinicalDate ?? null,
         signedAt: input.signedAt ?? null,
+        actualCreatedAt: input.actualCreatedAt ?? null,
         createdByUserId: input.actorUserId ?? null,
         metadata: {
           download_reference: input.downloadReference ?? null,
@@ -171,7 +175,10 @@ export async function ensureAncillaryDocumentReference(
       if (ref.outcome === "created") {
         return { status: "created", referenceId: ref.row.id, ancillaryCaseId: acase.id };
       }
-      if (ref.outcome === "reused_exact_source") {
+      // A same-source reuse (synced-in-place or unchanged) — both resolve the
+      // caller's exact-source retry; the reference row is refreshed inside
+      // createReference when stale.
+      if (ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") {
         return { status: "reused_exact_source", referenceId: ref.existing.id, ancillaryCaseId: acase.id };
       }
       // active_kind_conflict — a DIFFERENT source owns the current (case,kind)

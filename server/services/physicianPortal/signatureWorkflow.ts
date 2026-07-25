@@ -22,7 +22,35 @@ import {
   returnProcedureNoteRow,
 } from "../../repositories/generatedNotes.repo";
 import { evaluateBillingReadinessForProcedure } from "../../repositories/billingReadiness.repo";
+import { syncOrderNoteReferenceSignature } from "../ancillaryDocuments/orderNoteService";
 import type { ProcedureNote } from "@shared/schema/generatedNotes";
+
+/**
+ * Phase 2E-B4 — mirror a committed Order Note signature transition onto its
+ * exact canonical reference. NEVER throws (a sync failure must not reverse the
+ * already-successful signature/return). Feature OFF → the sync is a no-op with
+ * zero reference reads/writes. Only order_note notes have a reference.
+ */
+async function syncOrderNoteReference(
+  note: ProcedureNote,
+  documentStatus: "signed" | "pending_signature",
+): Promise<void> {
+  if (note.noteType !== "order_note" || note.clinicId == null) return;
+  try {
+    await syncOrderNoteReferenceSignature({
+      clinicId: note.clinicId,
+      ancillaryCaseId: note.ancillaryCaseId ?? null,
+      noteId: note.id,
+      documentStatus,
+      signedAt: note.signedAt ?? null,
+    });
+  } catch {
+    // Defence in depth — the sync already swallows + records; the signature
+    // transition must remain successful regardless.
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({ level: "error", source: "physicianPortal.signatureWorkflow", kind: "order_note_reference_sync_threw", note_id: note.id }));
+  }
+}
 import {
   eligibleForSign,
   computeSignatureItem,
@@ -150,6 +178,9 @@ export async function signProcedureNote(args: {
     );
   }
 
+  // Mirror signed state onto the canonical Order Note reference (best-effort).
+  await syncOrderNoteReference(updated, "signed");
+
   return { ok: true, note: updated };
 }
 
@@ -197,5 +228,7 @@ export async function returnProcedureNoteForCorrection(args: {
     reason: trimmed,
   });
   if (!updated) return { ok: false, code: 404, error: "Note not found" };
+  // Mirror pending-signature state onto the canonical Order Note reference.
+  await syncOrderNoteReference(updated, "pending_signature");
   return { ok: true, note: updated };
 }

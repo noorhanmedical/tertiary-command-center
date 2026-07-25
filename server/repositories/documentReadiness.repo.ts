@@ -113,6 +113,28 @@ export async function getCaseDocumentReadinessById(id: number): Promise<CaseDocu
   return result;
 }
 
+/**
+ * Phase 2E-B4 — clinic-scoped candidate lookup for source-less reference-retry
+ * discovery. Filters by clinic + documentType + identity (execution case OR
+ * screening); service filtering is applied by the caller so a true service
+ * mismatch can be distinguished from a missing source. Bounded.
+ */
+export async function findCaseDocumentReadinessCandidates(args: {
+  clinicId: number;
+  documentType: string;
+  executionCaseId?: number | null;
+  patientScreeningId?: number | null;
+}): Promise<CaseDocumentReadiness[]> {
+  const conds = [
+    eq(caseDocumentReadiness.clinicId, args.clinicId),
+    eq(caseDocumentReadiness.documentType, args.documentType),
+  ];
+  if (args.executionCaseId != null) conds.push(eq(caseDocumentReadiness.executionCaseId, args.executionCaseId));
+  else if (args.patientScreeningId != null) conds.push(eq(caseDocumentReadiness.patientScreeningId, args.patientScreeningId));
+  else return [];
+  return db.select().from(caseDocumentReadiness).where(and(...conds)).limit(20);
+}
+
 export async function listCaseDocumentReadiness(
   filters: ListCaseDocumentReadinessFilters = {},
   limit = 100,

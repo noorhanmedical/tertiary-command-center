@@ -10,10 +10,14 @@
  * returns a structured, unresolved reason.
  */
 
-import { getCaseDocumentReadinessById } from "../../repositories/documentReadiness.repo";
+import {
+  getCaseDocumentReadinessById,
+  findCaseDocumentReadinessCandidates,
+} from "../../repositories/documentReadiness.repo";
 import {
   listAncillaryCasesForScreening,
   listAncillaryCasesForExecutionCase,
+  getAncillaryCaseById,
 } from "../../repositories/ancillaryCases.repo";
 import type { PatientAncillaryCase } from "@shared/schema/ancillaryCases";
 
@@ -56,6 +60,54 @@ export const ACTION_TO_KIND: Record<string, CanonicalDocumentKind> = {
   link_consent: "consent",
   link_screening_form: "screening_form",
 };
+
+// The retry action → the case_document_readiness.document_type to discover.
+const ACTION_TO_READINESS_TYPE: Record<string, string> = {
+  link_report: "report",
+  link_consent: "informed_consent",
+  link_screening_form: "screening_form",
+};
+
+export type DiscoverSourceResult =
+  | { ok: true; sourceTable: "case_document_readiness"; sourceId: number }
+  | { ok: false; reason: "source_not_found" | "multiple_source_candidates" | "service_mismatch" | "cross_clinic_denied" | "service_unresolved" };
+
+/**
+ * DETERMINISTIC source discovery for a source-less reference retry. Uses the
+ * strongest canonical context (clinic + ancillary case → serviceType +
+ * execution/screening identity + document kind) to find the ONE matching
+ * case_document_readiness source. NEVER chooses first/newest/arbitrary.
+ */
+export async function discoverCanonicalDocumentSource(args: {
+  requestedAction: string;
+  clinicId: number;
+  ancillaryCaseId: number | null;
+  executionCaseId: number | null;
+  patientScreeningId: number | null;
+}): Promise<DiscoverSourceResult> {
+  const readinessType = ACTION_TO_READINESS_TYPE[args.requestedAction];
+  if (!readinessType) return { ok: false, reason: "source_not_found" };
+  // Service comes from the exact ancillary case — never guessed.
+  if (args.ancillaryCaseId == null) return { ok: false, reason: "service_unresolved" };
+  const acase = await getAncillaryCaseById(args.ancillaryCaseId);
+  if (!acase) return { ok: false, reason: "source_not_found" };
+  if (acase.clinicId !== args.clinicId) return { ok: false, reason: "cross_clinic_denied" };
+  const serviceType = acase.serviceType;
+
+  const candidates = await findCaseDocumentReadinessCandidates({
+    clinicId: args.clinicId,
+    documentType: readinessType,
+    executionCaseId: args.executionCaseId,
+    patientScreeningId: args.patientScreeningId,
+  });
+  const linkable = candidates.filter((c) => c.documentId != null && !INVALID_LINK_STATUSES.has(c.documentStatus));
+  const serviceMatch = linkable.filter((c) => c.serviceType === serviceType);
+  if (serviceMatch.length === 1) return { ok: true, sourceTable: "case_document_readiness", sourceId: serviceMatch[0].id };
+  if (serviceMatch.length > 1) return { ok: false, reason: "multiple_source_candidates" };
+  // No service match: candidates exist for the identity but not the service.
+  if (linkable.length > 0) return { ok: false, reason: "service_mismatch" };
+  return { ok: false, reason: "source_not_found" };
+}
 
 /**
  * Load + normalize the exact canonical source. Ownership fields come from the
