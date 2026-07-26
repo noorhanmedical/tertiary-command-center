@@ -307,6 +307,39 @@ export async function recordAncillaryCaseAdminReview(
     } catch { /* migration/flag guards already handled */ }
   }
 
+  // Phase 2E-B — one side of the two-condition Order Note eligibility
+  // boundary. After an APPROVED review commits, attempt canonical Order Note
+  // create/reuse. Eligibility (approval AND a qualifying appointment) is
+  // decided inside the Order Note service; a missing appointment yields
+  // not_yet_eligible. NEVER throws — a hook failure records durable retry and
+  // must never reverse the already-committed Admin Review transaction.
+  if (normalized === "approved" && featureFlags.canonicalOrderNote) {
+    try {
+      const { ensureCanonicalOrderNoteForAncillaryCase } = await import(
+        "../ancillaryDocuments/orderNoteOrchestration"
+      );
+      const hook = await ensureCanonicalOrderNoteForAncillaryCase({
+        clinicId: acase.clinicId,
+        ancillaryCaseId: acase.id,
+        actorUserId: input.actor.userId,
+        source: "admin_review",
+      });
+      if (hook.status === "failed" || hook.status === "reconciliation_not_recorded" || hook.status === "migration_missing") {
+        // eslint-disable-next-line no-console
+        console.error(JSON.stringify({
+          level: "warn", source: "admin_review", kind: "order_note_hook",
+          status: hook.status, ancillary_case_id: acase.id,
+        }));
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        level: "error", source: "admin_review", kind: "order_note_hook_threw",
+        ancillary_case_id: acase.id, code: (e as { code?: string })?.code ?? "unknown",
+      }));
+    }
+  }
+
   return {
     status: "recorded",
     ancillaryCaseId: acase.id,

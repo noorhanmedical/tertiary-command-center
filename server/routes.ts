@@ -355,6 +355,10 @@ export async function registerRoutes(
   // "route does not exist" behavior for any consumer.
   (await import("./routes/engagementRepository")).registerEngagementRepositoryRoutes(app);
   (await import("./routes/adminReviewEvents")).registerAdminReviewEventsRoutes(app);
+  // Phase 2E — clinic-scoped Ancillary Documents read APIs. Registered
+  // unconditionally; handlers return an explicit disabled contract when
+  // FEATURE_UNIFIED_ANCILLARY_DOCUMENTS is OFF (zero migration-0053 reads).
+  (await import("./routes/ancillaryDocuments")).registerAncillaryDocumentsRoutes(app);
   // Priority 4 — clinical intelligence backend deferred; UI runs on local
   // storage prototype. Enable route + seed when schema is approved.
   // registerClinicalIntelligenceRoutes(app, requireRole);

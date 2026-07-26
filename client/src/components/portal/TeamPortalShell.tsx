@@ -61,7 +61,7 @@ import {
 import type { CallCaseContext } from "@/components/portal/caseWorkspace";
 import { CallWorkspace } from "@/components/portal/CallWorkspace";
 import { SchedulingWorkspace } from "@/components/portal/SchedulingWorkspace";
-import { CaseOverview } from "@/components/portal/CaseOverview";
+import { SelectedCaseOverview } from "@/components/portal/SelectedCaseOverview";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
 import { PortalPatientDirectory } from "@/components/portal/PortalPatientDirectory";
@@ -1766,6 +1766,13 @@ export function TeamPortalShell({
       facilityId: row.facilityId ?? facility ?? null,
       callReason: deriveCallReason(row),
       targetServices: (row.selectedServices ?? []).filter(Boolean),
+      // Phase 2E-B3 — EXACT ancillary-case identity only when the row carries
+      // it unambiguously (one case = one service). A multi-service execution
+      // case has no single ancillaryCaseId here, so it stays null and the
+      // canonical document summary renders nothing (no screening-wide fallback,
+      // no first/newest guessing).
+      ancillaryCaseId: row.ancillaryCaseId ?? null,
+      serviceType: (row.selectedServices ?? []).filter(Boolean)[0] ?? null,
       sourcePortal: (workspaceCallListContext ?? "acs").toUpperCase(),
       engagementStatus: row.engagementStatus ?? null,
       lifecycleStatus: row.lifecycleStatus ?? null,
@@ -2568,7 +2575,7 @@ export function TeamPortalShell({
                   const ctx = activeTab.caseContext;
                   return (
                     <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-case-overview">
-                      <CaseOverview
+                      <SelectedCaseOverview
                         ctx={ctx}
                         onCall={() => openCaseTab("call", ctx)}
                         onSchedule={() => openCaseTab("caseSchedule", ctx)}

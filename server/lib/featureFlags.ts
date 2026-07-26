@@ -108,6 +108,20 @@ export const featureFlags = {
   //   6. Set FEATURE_CANONICAL_APPOINTMENT=true and restart.
   //   7. Production validation.
   canonicalAppointment: readBool("FEATURE_CANONICAL_APPOINTMENT", false),
+
+  // ─── Phase 2E — Unified Ancillary Documents + Order Note ─────
+  // Both default OFF. Migration 0053 (ancillary_document_references +
+  // retry ledger) is NOT applied automatically.
+  //
+  // Enabling sequence:
+  //   1. Migrations 0049–0052 applied; Phase 2A–2D backfills done.
+  //   2. Phase 2A–2D flags enabled + validated.
+  //   3. Apply migrations/0053.
+  //   4. Run Phase 2E backfill dry-run + apply.
+  //   5. Enable FEATURE_UNIFIED_ANCILLARY_DOCUMENTS; validate projections.
+  //   6. Enable FEATURE_CANONICAL_ORDER_NOTE; validate Order Note flow.
+  unifiedAncillaryDocuments: readBool("FEATURE_UNIFIED_ANCILLARY_DOCUMENTS", false),
+  canonicalOrderNote: readBool("FEATURE_CANONICAL_ORDER_NOTE", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;

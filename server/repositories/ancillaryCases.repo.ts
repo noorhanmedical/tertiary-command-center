@@ -162,6 +162,40 @@ export async function listAncillaryCasesForExecutionCase(
 }
 
 /**
+ * Phase 2E-B4 — BATCH lookup of ACTIVE ancillary cases for many execution
+ * cases in ONE query (never one query per row). Returns a map
+ * executionCaseId → active cases. Migration-absent/flag-OFF → empty map.
+ */
+export async function listActiveAncillaryCasesByExecutionCaseIds(
+  executionCaseIds: number[],
+): Promise<Map<number, PatientAncillaryCase[]>> {
+  const ids = Array.from(new Set(executionCaseIds.filter((n) => Number.isInteger(n))));
+  if (ids.length === 0) return new Map();
+  return safeRead(
+    async () => {
+      const rows = await db
+        .select()
+        .from(patientAncillaryCases)
+        .where(and(
+          inArray(patientAncillaryCases.executionCaseId, ids),
+          inArray(patientAncillaryCases.lifecycleStatus, ANCILLARY_ACTIVE_LIFECYCLE_STATUSES as unknown as string[]),
+        ))
+        .orderBy(desc(patientAncillaryCases.openedAt));
+      const map = new Map<number, PatientAncillaryCase[]>();
+      for (const row of rows) {
+        if (row.executionCaseId == null) continue;
+        const arr = map.get(row.executionCaseId) ?? [];
+        arr.push(row);
+        map.set(row.executionCaseId, arr);
+      }
+      return map;
+    },
+    new Map<number, PatientAncillaryCase[]>(),
+    "listActiveAncillaryCasesByExecutionCaseIds",
+  );
+}
+
+/**
  * The active-case probe used by reconciliation. Returns the (at most
  * one) active row matching (globalPlexusPatientId, clinicId, serviceType)
  * where lifecycle_status IN ('new','active','on_hold').

@@ -623,7 +623,7 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientChartSections.tsx",
-      "blob": "f8fa26e8c2cb445de099225e683700e0325c8000",
+      "blob": "34b08526450b4464cb7147c423dd70e00e144fe9",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1085,7 +1085,7 @@
     },
     {
       "path": "client/src/components/portal/CaseOverview.tsx",
-      "blob": "0defdae1927419121653342d6b721ec704d69d4b",
+      "blob": "13bddca994627fdeac8c286003635a202e43b349",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1281,7 +1281,7 @@
     },
     {
       "path": "client/src/components/portal/TeamPortalShell.tsx",
-      "blob": "56627354c816f2900ae777875ba1ce7ebfcac252",
+      "blob": "8bba6bdf4261cfb8c8c270ccf5ef425098d29485",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1302,7 +1302,7 @@
     },
     {
       "path": "client/src/components/portal/caseWorkspace.ts",
-      "blob": "e0a1e55e55f8e59fb4fb2dbbd369e33dfe4cec57",
+      "blob": "746e517a67cd77c44b500b59c53fc23a3bb69ec6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2632,7 +2632,7 @@
     },
     {
       "path": "client/src/lib/workflow/teamMemberWorkspaceApi.ts",
-      "blob": "ddae74e2bb5c13798e45ce2048b796d02af9aeec",
+      "blob": "345e8aa22e96eb114ec1ab4f7ef80fe9f70fa37f",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2807,7 +2807,7 @@
     },
     {
       "path": "client/src/pages/documents.tsx",
-      "blob": "149b9e6020b35b7a237c8d0633c993ed503f1e66",
+      "blob": "552b3f8e914f5ce7f8c57fdeebc04b00cb9aed2d",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true

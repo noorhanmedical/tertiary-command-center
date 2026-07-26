@@ -3,6 +3,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CanonicalAppointmentSummary } from "@/components/canonical/CanonicalAppointmentSummary";
 import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
+import { AncillaryDocumentsCard } from "@/components/ancillary-documents/CanonicalAncillaryDocuments";
+import { isUnifiedAncillaryDocumentsEnabled } from "@/lib/unifiedAncillaryDocumentsFlag";
 import {
   User, ShieldCheck, Stethoscope, Pill as PillIcon, AlertTriangle, FlaskConical,
   Scan, Activity, FileText, Phone, CalendarClock, Clock, Megaphone,
@@ -658,6 +660,13 @@ function ReportCard({ label, link, testId }: { label: string; link: { available:
 function DocumentsSection({ chart }: SectionProps) {
   const docs = chart.documents ?? [];
   const reports = chart.reports;
+  // Phase 2E-B — when the unified flag is ON and this chart has a screening
+  // context, render the CANONICAL ancillary documents card (same reference /
+  // source ids as /ancillary-documents) in place of the legacy attached list,
+  // so no duplicate legacy + canonical entries appear. Flag OFF → unchanged.
+  const canonical = isUnifiedAncillaryDocumentsEnabled();
+  const screeningId = chart.patientScreeningId ?? null;
+  const showCanonical = canonical && screeningId != null;
   return (
     <SectionCard id="documents" title="Documents" icon={<FileText className="w-4 h-4" />} count={docs.length}>
       {/* Clinician PDF + Plexus PDF (first-class) */}
@@ -665,6 +674,13 @@ function DocumentsSection({ chart }: SectionProps) {
         <ReportCard label="Clinician PDF" link={reports.clinicianPdf} testId="report-clinician-pdf" />
         <ReportCard label="Plexus PDF" link={reports.plexusPdf} testId="report-plexus-pdf" />
       </div>
+      {showCanonical ? (
+        <AncillaryDocumentsCard
+          params={{ patientScreeningId: screeningId as number }}
+          enabled
+          title="Ancillary Documents"
+        />
+      ) : (<>
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold mb-2">Attached documents</div>
       {docs.length === 0 ? (
         <EmptyState icon={<FileText className="w-8 h-8" />} title="No documents on file for this patient" hint="Consent forms, screening forms and reports linked to this patient appear here." testId="empty-documents" />
@@ -681,6 +697,7 @@ function DocumentsSection({ chart }: SectionProps) {
           ))}
         </div>
       )}
+      </>)}
     </SectionCard>
   );
 }

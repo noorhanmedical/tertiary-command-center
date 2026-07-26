@@ -10,6 +10,8 @@ import { EditableScreeningFormModal } from "@/components/EditableScreeningFormMo
 import { DocumentSection } from "@/components/DocumentSection";
 import { PageHeader } from "@/components/PageHeader";
 import { DocumentReadinessPanel } from "@/components/patient/DocumentReadinessPanel";
+import { CanonicalAncillaryDocumentsList } from "@/components/ancillary-documents/CanonicalAncillaryDocuments";
+import { isUnifiedAncillaryDocumentsEnabled } from "@/lib/unifiedAncillaryDocumentsFlag";
 type NoteSection = { heading: string; body: string };
 
 function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
@@ -132,12 +134,20 @@ export default function DocumentsPage() {
   const [refreshingPatientIds, setRefreshingPatientIds] = useState<Set<number>>(new Set());
   const [refreshAllPending, setRefreshAllPending] = useState(false);
 
+  // Phase 2E-B — canonical mode. When ON, the page reads the canonical
+  // /api/ancillary-documents contract and the legacy queries are disabled
+  // (zero legacy requests). When OFF, the page is exactly as before and
+  // issues ZERO canonical requests.
+  const canonical = isUnifiedAncillaryDocumentsEnabled();
+
   const { data: notes = [], isLoading } = useQuery<GeneratedNote[]>({
     queryKey: ["/api/generated-notes"],
+    enabled: !canonical,
   });
 
   const { data: batches = [] } = useQuery<BatchSummary[]>({
     queryKey: ["/api/screening-batches"],
+    enabled: !canonical,
     select: (data: any[]) => data.map((b) => ({ id: b.id, clinicianName: b.clinicianName ?? null })),
   });
 
@@ -316,6 +326,8 @@ export default function DocumentsPage() {
           }
         />
 
+        {canonical && <CanonicalAncillaryDocumentsList enabled />}
+        {!canonical && (<>
         <DocumentReadinessPanel />
 
         {isLoading ? (
@@ -535,6 +547,7 @@ export default function DocumentsPage() {
             ))}
           </div>
         )}
+        </>)}
       </div>
 
       {screeningFormNote && (

@@ -85,4 +85,9 @@ export * from "./engagementLists";
 // Guarded by FEATURE_CANONICAL_APPOINTMENT (default OFF); migration
 // 0052 is not applied automatically.
 export * from "./canonicalAppointments";
+// Phase 2E — Unified Ancillary Documents reference index + Order Note
+// foundation. Guarded by FEATURE_UNIFIED_ANCILLARY_DOCUMENTS /
+// FEATURE_CANONICAL_ORDER_NOTE (default OFF); migration 0053 is not
+// applied automatically.
+export * from "./ancillaryDocuments";
 export * from "../models/chat";

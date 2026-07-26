@@ -27,6 +27,7 @@
     "audit:canonical-integrity": "tsx script/auditCanonicalIntegrity.ts",
     "reconcile:canonical-duplicates": "tsx script/reconcileCanonicalDuplicates.ts",
     "retry:canonical-appointments": "tsx script/retryCanonicalAppointmentFailures.ts",
+    "retry:ancillary-documents": "tsx script/retryAncillaryDocumentFailures.ts",
     "test:call-result-canonical-write": "tsx script/testCallResultCanonicalWrite.ts",
     "test:op-flow-sprint-1": "tsx script/testOperationalFlowSprint1.ts",
     "test:patient-to-invoice-flow": "tsx script/testOperationalPatientToInvoiceFlow.ts",
