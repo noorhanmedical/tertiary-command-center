@@ -52,6 +52,16 @@ ALTER TABLE procedure_events
 
 CREATE INDEX IF NOT EXISTS idx_pe_ancillary_case ON procedure_events(ancillary_case_id);
 
+-- Canonical procedure-event identity: at most ONE canonical procedure lifecycle
+-- row per ancillary case. Additive + legacy-compatible — every existing row has
+-- ancillary_case_id NULL and is excluded by the partial predicate, so no legacy
+-- row conflicts. Enforces "a completed procedure belongs to exactly one case"
+-- and lets the canonical completion path dedupe/reselect by ancillary case
+-- (never by screening+service, which collides across episodes).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pe_canonical_ancillary_case
+  ON procedure_events(ancillary_case_id)
+  WHERE ancillary_case_id IS NOT NULL;
+
 -- ═══════════════════════════════════════════════════════════════════
 -- 2. procedure_notes — Procedure Note report evidence (additive)
 -- ═══════════════════════════════════════════════════════════════════

@@ -1,15 +1,24 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
-  listProcedureEvents,
-  getProcedureEventById,
   markProcedureComplete,
-  listUltrasoundTechCompletedProcedures,
+  listProcedureEventsForClinic,
+  getProcedureEventByIdForClinic,
+  listUltrasoundTechCompletedProceduresForClinic,
+  type ProcedureEvent,
 } from "../repositories/procedureEvents.repo";
 import { updateGlobalScheduleEvent } from "../repositories/globalSchedule.repo";
+import { featureFlags } from "../lib/featureFlags";
+import {
+  completeCanonicalProcedure,
+  type CompleteCanonicalProcedureStatus,
+} from "../services/procedureLifecycle/canonicalProcedureCompletion";
 
 const procedureCompleteSchema = z.object({
   serviceType: z.string().min(1, "serviceType is required"),
+  // Canonical case identity is server-validated; clinicId is NEVER accepted
+  // from the body (it comes only from authenticated request context).
+  ancillaryCaseId: z.number().int().optional().nullable(),
   executionCaseId: z.number().int().optional().nullable(),
   patientScreeningId: z.number().int().optional().nullable(),
   globalScheduleEventId: z.number().int().optional().nullable(),
@@ -20,104 +29,144 @@ const procedureCompleteSchema = z.object({
   completedAt: z.string().datetime({ offset: true }).optional().nullable(),
 });
 
+/** Clinic scope comes ONLY from authenticated request context. Missing context
+ *  fails closed. Never read clinicId from body/query. */
+function requireClinicScope(req: Request, res: Response): number | null {
+  const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+  if (clinicId == null) {
+    res.status(403).json({ error: "Clinic scope required" });
+    return null;
+  }
+  return clinicId;
+}
+
+/** Clinic-facing DTO — omits internal global identity (Plexus patient /
+ *  membership) ids and any reconciliation internals. */
+function toClinicDto(row: ProcedureEvent): Omit<ProcedureEvent, "globalPlexusPatientId" | "patientClinicMembershipId"> {
+  const { globalPlexusPatientId: _g, patientClinicMembershipId: _m, ...dto } = row;
+  return dto;
+}
+
+// Canonical statuses whose completion was committed → 201.
+const COMMITTED_STATUSES = new Set<CompleteCanonicalProcedureStatus>([
+  "completed_and_linked", "completed_note_created", "completed_note_reused",
+  "completed_waiting_for_report", "reconciliation_not_recorded", "migration_missing",
+]);
+// Resolution failures that behave as not-found (no disclosure).
+const NOT_FOUND_STATUSES = new Set<CompleteCanonicalProcedureStatus>(["cross_clinic_denied", "case_not_found"]);
+// Conflict-style resolution/dedupe failures.
+const CONFLICT_STATUSES = new Set<CompleteCanonicalProcedureStatus>([
+  "service_mismatch", "identity_mismatch", "invalid_schedule_event", "case_inactive",
+  "exact_case_required", "procedure_event_ambiguous", "zero_row_conflict",
+]);
+
 export function registerProcedureEventRoutes(app: Express) {
-  // GET /api/procedure-events
-  // Filters: executionCaseId, patientScreeningId, globalScheduleEventId,
-  //          facilityId, serviceType, procedureStatus, limit
+  // GET /api/procedure-events — clinic-scoped.
   app.get("/api/procedure-events", async (req, res) => {
     try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
-      const filters: Parameters<typeof listProcedureEvents>[0] = {};
-
-      if (q.executionCaseId) {
-        const id = parseInt(q.executionCaseId, 10);
-        if (!isNaN(id)) filters.executionCaseId = id;
-      }
-      if (q.patientScreeningId) {
-        const id = parseInt(q.patientScreeningId, 10);
-        if (!isNaN(id)) filters.patientScreeningId = id;
-      }
-      if (q.globalScheduleEventId) {
-        const id = parseInt(q.globalScheduleEventId, 10);
-        if (!isNaN(id)) filters.globalScheduleEventId = id;
-      }
+      const filters: Parameters<typeof listProcedureEventsForClinic>[1] = {};
+      if (q.executionCaseId) { const id = parseInt(q.executionCaseId, 10); if (!isNaN(id)) filters.executionCaseId = id; }
+      if (q.patientScreeningId) { const id = parseInt(q.patientScreeningId, 10); if (!isNaN(id)) filters.patientScreeningId = id; }
+      if (q.globalScheduleEventId) { const id = parseInt(q.globalScheduleEventId, 10); if (!isNaN(id)) filters.globalScheduleEventId = id; }
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.serviceType) filters.serviceType = q.serviceType;
       if (q.procedureStatus) filters.procedureStatus = q.procedureStatus;
-
-      const rows = await listProcedureEvents(filters, limit);
-      res.json(rows);
+      const rows = await listProcedureEventsForClinic(clinicId, filters, limit);
+      res.json(rows.map(toClinicDto));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // POST /api/procedure-events/complete
+  // POST /api/procedure-events/complete — clinic-scoped write.
   app.post("/api/procedure-events/complete", async (req, res) => {
     try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
       const parsed = procedureCompleteSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
       const { completedAt, globalScheduleEventId, ...rest } = parsed.data;
 
+      // Phase 2F canonical path — dedupe by ancillary case, awaited note ensure.
+      if (featureFlags.canonicalProcedureLifecycle) {
+        const result = await completeCanonicalProcedure({
+          ...rest,
+          clinicId,
+          globalScheduleEventId: globalScheduleEventId ?? undefined,
+          completedAt: completedAt ? new Date(completedAt) : undefined,
+          completedByUserId: req.session?.userId ?? undefined,
+          actorUserId: req.session?.userId ?? undefined,
+        });
+        if (COMMITTED_STATUSES.has(result.status)) {
+          if (globalScheduleEventId != null) {
+            void updateGlobalScheduleEvent(globalScheduleEventId, { status: "completed" }).catch((err) => {
+              console.error("[procedureEvents.route] global schedule update failed:", err);
+            });
+          }
+          return res.status(201).json(result);
+        }
+        if (NOT_FOUND_STATUSES.has(result.status)) return res.status(404).json({ error: "Not found", status: result.status });
+        if (CONFLICT_STATUSES.has(result.status)) return res.status(409).json({ error: "Canonical completion conflict", status: result.status });
+        if (result.status === "deferred_ambiguous_case") return res.status(202).json(result);
+        return res.status(500).json({ error: "Canonical completion error", status: result.status });
+      }
+
+      // Legacy path (flag OFF) — preserved behavior; legacy note writer is
+      // suppressed only when FEATURE_CANONICAL_PROCEDURE_NOTE is ON.
       const { procedureEvent, documentRows } = await markProcedureComplete({
         ...rest,
         globalScheduleEventId: globalScheduleEventId ?? undefined,
         completedAt: completedAt ? new Date(completedAt) : undefined,
         completedByUserId: req.session?.userId ?? undefined,
       });
-
       if (globalScheduleEventId != null) {
         void updateGlobalScheduleEvent(globalScheduleEventId, { status: "completed" }).catch((err) => {
           console.error("[procedureEvents.route] global schedule update failed:", err);
         });
       }
-
-      return res.status(201).json({ procedureEvent, documentReadinessRows: documentRows });
+      return res.status(201).json({ procedureEvent: toClinicDto(procedureEvent), documentReadinessRows: documentRows });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
   });
 
-  // GET /api/ultrasound-tech/completed-procedures
-  // Filters: completedByUserId, facilityId, serviceType, procedureStatus,
-  //          startDate, endDate, limit
-  // Defaults to procedureStatus="complete" and ultrasound-relevant service
-  // types when no explicit overrides are provided. Ordered by completedAt DESC.
+  // GET /api/ultrasound-tech/completed-procedures — clinic-scoped.
   app.get("/api/ultrasound-tech/completed-procedures", async (req, res) => {
     try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
-      const filters: Parameters<typeof listUltrasoundTechCompletedProcedures>[0] = {};
+      const filters: Parameters<typeof listUltrasoundTechCompletedProceduresForClinic>[1] = {};
       if (q.completedByUserId) filters.completedByUserId = q.completedByUserId;
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.serviceType) filters.serviceType = q.serviceType;
       if (q.procedureStatus) filters.procedureStatus = q.procedureStatus;
-      if (q.startDate) {
-        const d = new Date(q.startDate);
-        if (!isNaN(d.getTime())) filters.startDate = d;
-      }
-      if (q.endDate) {
-        const d = new Date(q.endDate);
-        if (!isNaN(d.getTime())) filters.endDate = d;
-      }
-      const rows = await listUltrasoundTechCompletedProcedures(filters, limit);
-      res.json(rows);
+      if (q.startDate) { const d = new Date(q.startDate); if (!isNaN(d.getTime())) filters.startDate = d; }
+      if (q.endDate) { const d = new Date(q.endDate); if (!isNaN(d.getTime())) filters.endDate = d; }
+      const rows = await listUltrasoundTechCompletedProceduresForClinic(clinicId, filters, limit);
+      res.json(rows.map(toClinicDto));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // GET /api/procedure-events/:id
+  // GET /api/procedure-events/:id — clinic-scoped single-record.
   app.get("/api/procedure-events/:id", async (req, res) => {
     try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const row = await getProcedureEventById(id);
+      const row = await getProcedureEventByIdForClinic(id, clinicId);
       if (!row) return res.status(404).json({ error: "Procedure event not found" });
-      res.json(row);
+      res.json(toClinicDto(row));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

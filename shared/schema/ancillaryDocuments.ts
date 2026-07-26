@@ -214,6 +214,14 @@ export const ORDER_NOTE_SOURCE_TABLE = "procedure_notes";
 // order_note reference that shares the same source_table.
 export const PROCEDURE_NOTE_SOURCE_TABLE = "procedure_notes";
 
+// The canonical procedure lifecycle/completion source. A completion or
+// case-link reconciliation failure is keyed to the EXACT procedure_events row
+// (sourceTable=procedure_events, sourceId=procedureEventId) — NEVER stored
+// under sourceTable=procedure_notes (which is reserved for real
+// post_procedure_note ids). Both use documentKind='procedure_note'; the
+// source_table disambiguates which canonical source the failure names.
+export const PROCEDURE_EVENT_SOURCE_TABLE = "procedure_events";
+
 // Canonical source tables for the non-Order-Note reference kinds. The
 // reference row NEVER stores bytes — only (source_table, source_id) + a
 // download pointer to an already-authorized route.

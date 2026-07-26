@@ -240,9 +240,14 @@ async function testMultipleLegacyNotesDeferred() {
 async function testHookLinksAndCreates() {
   const t = await loadCanonicalTables();
   const o = await orch();
+  // The event starts UNLINKED (ancillary_case_id null): getById in the hook +
+  // getById inside linkProcedureEventToAncillaryCase see it unlinked; after the
+  // linkage write, eligibility's completion read sees it linked to case 5.
+  const peUnlinked = peRow({ ancillaryCaseId: null });
+  const peLinked = peRow({ ancillaryCaseId: 5 });
   const spec = new Map<unknown, TableSpec>([
     [t.ancillaryCases, { select: () => [caseRow()] }],
-    [t.procedureEvents, { select: () => [peRow()], onUpdate: (v) => [{ ...peRow(), ...v }] }],
+    [t.procedureEvents, { select: qsel([[peUnlinked], [peUnlinked], [peLinked]]), onUpdate: (v) => [{ ...peLinked, ...v }] }],
     [t.documentReferences, { select: qsel([[reportRef()], [], []]), onInsert: (v) => [{ ...v, id: 42 }] }],
     [t.procedureNotes, { select: qsel([[], []]), onInsert: (v) => [{ ...noteRow(), ...v, id: 900 }] }],
     [t.journeyEvents, { onInsert: () => [] }],

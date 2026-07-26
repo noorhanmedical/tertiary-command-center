@@ -121,13 +121,49 @@ The report is indexed (never copied) in `ancillary_document_references`
 retains the immutable reference id + source id. `procedure_notes.report_document_reference_id`
 records the qualifying reference id as permanent evidence.
 
+## 6a. Phase 2F-A2 hardening (identity, tenancy, retries)
+
+- **Canonical completion** goes through `completeCanonicalProcedure`
+  (`canonicalProcedureCompletion.ts`) when the lifecycle flag is ON: it resolves
+  the EXACT ancillary case (direct id → schedule event → deterministic legacy
+  fallback), dedupes/reselects by `ancillary_case_id` (never screening+service),
+  and inserts a fresh event per episode. The completion is committed first; the
+  awaited, non-throwing Procedure Note ensure never reverses it. The route
+  returns a canonical outcome (`completed_and_linked`, `completed_note_created`,
+  `completed_note_reused`, `completed_waiting_for_report`,
+  `deferred_ambiguous_case`, `reconciliation_not_recorded`, `migration_missing`).
+- **Server-owned ownership commands** — `linkProcedureEventToAncillaryCase`
+  (exact-ownership scoped, `.returning()` affected-row check, never re-homes) and
+  `completeExistingProcedureEvent` / `insertCanonicalProcedureEvent`. The general
+  `insertProcedureEventSchema` omits `clinicId` + the case identity, so no
+  `Partial<InsertProcedureEvent>` path can seed/re-home ownership.
+- **Tenancy** — all procedure-event routes derive clinic ONLY from
+  `req.clinicId` (fail closed), use clinic-scoped repository reads, and return a
+  DTO that omits `globalPlexusPatientId` / `patientClinicMembershipId`.
+- **Legacy-note suppression** — when `FEATURE_CANONICAL_PROCEDURE_NOTE` is ON,
+  `markProcedureComplete` no longer calls `createPendingProcedureNotes`; the
+  two-condition canonical service is the only post-procedure-note creator.
+- **Hooks are awaited** (no async DB task escapes the caller) and record
+  SOURCE-CORRECT reconciliation: completion/case-link failures key on
+  `sourceTable=procedure_events`, `sourceId=procedureEventId`,
+  `requestedAction=link_procedure_note` — never under `procedure_notes`.
+- **Retry execution** — the bounded worker handles `link_procedure_note`
+  (procedure_events source → completion hook; procedure_notes/source-less →
+  case ensure) and `link_procedure_note_evidence` (LINK-ONLY, signed-note-safe),
+  resolving ONLY the exact failure id.
+- **Evidence** — eligibility surfaces `procedure_event_ambiguous` for >1
+  completed case-linked event (never latest-picking); `effectiveClinicalDate`
+  defaults to the qualifying procedure's actual `completedAt`.
+
 ## 7. Migration 0054 (`migrations/0054_add_canonical_procedure_lifecycle.sql`)
 
 Additive-only, unapplied, does not amend 0049–0053:
 
 1. `procedure_events` += `ancillary_case_id`, `global_plexus_patient_id`,
    `patient_clinic_membership_id` (nullable, FK, `ON DELETE SET NULL`) +
-   `idx_pe_ancillary_case`.
+   `idx_pe_ancillary_case`, plus `uq_pe_canonical_ancillary_case` (partial
+   unique on `ancillary_case_id WHERE ancillary_case_id IS NOT NULL` — one
+   canonical procedure event per case; additive since legacy rows are NULL).
 2. `procedure_notes` += `report_document_reference_id` (FK →
    `ancillary_document_references`, `ON DELETE SET NULL`) + index.
 3. Replace `uq_pn_post_procedure_note` with two disjoint partial-unique

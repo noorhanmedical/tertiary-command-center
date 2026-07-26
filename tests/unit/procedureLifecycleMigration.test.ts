@@ -83,7 +83,10 @@ async function testNoBillingDocument() {
 
 // (26) no clinical Procedure Note body is generated
 async function testNoBodyGeneration() {
-  assert.ok(!/generatedText/i.test(ALL_SERVICE_SRC), "services never write generatedText");
+  // Guard on ASSIGNMENTS (a write), not mere mentions — link-only comments name
+  // these protected fields to document that they are NEVER touched.
+  assert.ok(!/generatedText\s*:/i.test(ALL_SERVICE_SRC), "services never write generatedText");
+  assert.ok(!/sourceData\s*:/i.test(ALL_SERVICE_SRC), "services never write sourceData");
   assert.ok(!/openai|generateNote|generate_note|generatedByAi:\s*true/i.test(ALL_SERVICE_SRC), "no note-body generation");
   // generationStatus is always left 'pending'.
   assert.ok(/generationStatus:\s*"pending"/.test(NOTE_SRC), "generationStatus stays pending");

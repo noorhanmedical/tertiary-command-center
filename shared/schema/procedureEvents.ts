@@ -58,10 +58,21 @@ export const procedureEvents = pgTable("procedure_events", {
   index("idx_pe_ancillary_case").on(table.ancillaryCaseId),
 ]);
 
+// General insert/create contract. It deliberately OMITS the canonical
+// ownership/identity fields (clinicId + the Phase 2F case identity) and the
+// server-owned timestamps: those are set EXCLUSIVELY by dedicated,
+// clinic-scoped, server-owned repository commands
+// (completeCanonicalProcedure / linkProcedureEventToAncillaryCase), never by a
+// general Partial<InsertProcedureEvent> path — so a client body can never seed
+// or re-home canonical ownership.
 export const insertProcedureEventSchema = createInsertSchema(procedureEvents).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  clinicId: true,
+  ancillaryCaseId: true,
+  globalPlexusPatientId: true,
+  patientClinicMembershipId: true,
 });
 
 export type ProcedureEvent = typeof procedureEvents.$inferSelect;

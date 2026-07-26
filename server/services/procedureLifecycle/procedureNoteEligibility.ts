@@ -76,8 +76,9 @@ export async function evaluateProcedureNoteEligibility(
     eligible: false, procedureComplete: false, reportAssociated: false,
     reasons: [], warnings: [], ancillaryCaseId: input.ancillaryCaseId, serviceType: null,
   };
-  // Feature OFF ⇒ zero Phase 2F reads.
-  if (!featureFlags.canonicalProcedureNote) {
+  // Feature OFF ⇒ zero Phase 2F reads. Procedure Note eligibility reads the
+  // canonical report reference (Phase 2E index), so BOTH flags are required.
+  if (!featureFlags.canonicalProcedureNote || !featureFlags.unifiedAncillaryDocuments) {
     return { ...base, flagOff: true, reasons: ["procedure_note_flag_off"] };
   }
 
@@ -140,9 +141,11 @@ async function evaluateProcedureCompletion(
   if (own.length === 0) return { procedureComplete: false, reason: "procedure_event_missing" };
   const completed = own.filter((r) => r.procedureStatus === "complete" && r.completedAt != null);
   if (completed.length === 0) return { procedureComplete: false, reason: "procedure_not_complete" };
-  const winner = completed.reduce((a, b) =>
-    (b.completedAt as Date).getTime() > (a.completedAt as Date).getTime() ? b : a,
-  );
+  // The migration-0054 partial unique guarantees ≤1 canonical event per case.
+  // More than one completed case-linked event is pre-backfill corruption — we
+  // surface it for reconciliation and NEVER pick the latest to hide ambiguity.
+  if (completed.length > 1) return { procedureComplete: false, reason: "procedure_event_ambiguous" };
+  const winner = completed[0];
   return { procedureComplete: true, eventId: winner.id, completedAt: winner.completedAt };
 }
 

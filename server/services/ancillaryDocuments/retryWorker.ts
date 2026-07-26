@@ -12,9 +12,16 @@ import {
   recordAncillaryDocumentFailure,
   resolveAncillaryDocumentFailureById,
 } from "../../repositories/ancillaryDocuments.repo";
-import type { AncillaryDocumentReconciliationFailure } from "@shared/schema/ancillaryDocuments";
+import {
+  PROCEDURE_EVENT_SOURCE_TABLE,
+  PROCEDURE_NOTE_SOURCE_TABLE,
+  type AncillaryDocumentReconciliationFailure,
+} from "@shared/schema/ancillaryDocuments";
 import { createOrReuseOrderNote, linkOrderNoteAdminReviewEvidence } from "./orderNoteService";
 import { ensureAncillaryDocumentReference } from "./documentReferenceWriter";
+import { createOrReuseProcedureNote, linkProcedureNoteEvidence } from "../procedureLifecycle/procedureNoteService";
+import { onProcedureCompleted } from "../procedureLifecycle/procedureLifecycleOrchestration";
+import { featureFlags as flags } from "../../lib/featureFlags";
 import {
   loadCanonicalDocumentSource,
   discoverCanonicalDocumentSource,
@@ -25,13 +32,17 @@ import {
 export type DocumentRetryStatus =
   | "resolved"
   | "still_deferred"
+  | "not_yet_eligible"
   | "skipped"
+  | "skipped_flag_off"
+  | "retry_not_recorded"
   | "error"
   | "active_kind_conflict"
   | "source_not_found"
   | "source_type_mismatch"
   | "service_mismatch"
   | "case_mismatch"
+  | "ownership_conflict"
   | "cross_clinic_denied"
   | "migration_missing";
 
@@ -200,6 +211,12 @@ export async function retryAncillaryDocumentFailure(
       // note_not_found / reference_update_failed → keep the failure UNRESOLVED.
       return { failureId: failure.id, requestedAction: failure.requestedAction, status: "still_deferred", message: r.status };
     }
+    if (failure.requestedAction === "link_procedure_note") {
+      return await retryProcedureNoteLink(failure);
+    }
+    if (failure.requestedAction === "link_procedure_note_evidence") {
+      return await retryProcedureNoteEvidence(failure);
+    }
     if (REFERENCE_ACTIONS.has(failure.requestedAction)) {
       return await retryReferenceLink(failure);
     }
@@ -222,6 +239,85 @@ export async function retryAncillaryDocumentFailure(
       });
     } catch { /* ledger guard downstream */ }
     return { failureId: failure.id, requestedAction: failure.requestedAction, status: "error", message: (e as Error)?.message ?? String(e) };
+  }
+}
+
+/**
+ * Retry a Procedure Note case-link failure. Three exact shapes:
+ *   • sourceTable=procedure_events + sourceId → re-drive the completion hook
+ *     (resolve/link the exact case, run the canonical ensure). Requires the
+ *     lifecycle flag.
+ *   • sourceTable=procedure_notes + sourceId → the note exists; re-create/reuse
+ *     ONLY its exact reference via the case-scoped ensure. Requires the note flag.
+ *   • source-less + ancillaryCaseId → rerun the centralized case-level ensure.
+ * Resolves ONLY this exact failure id on complete success — never siblings.
+ */
+async function retryProcedureNoteLink(
+  failure: AncillaryDocumentReconciliationFailure,
+): Promise<DocumentRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+
+  // Procedure-event source → completion linkage + ensure.
+  if (failure.sourceTable === PROCEDURE_EVENT_SOURCE_TABLE && failure.sourceId != null) {
+    if (!flags.canonicalProcedureLifecycle) return { ...base, status: "skipped_flag_off" };
+    const r = await onProcedureCompleted(failure.sourceId);
+    switch (r.status) {
+      case "created": case "reused": case "linked_pending_note":
+        await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+        return { ...base, status: "resolved" };
+      case "not_yet_eligible": return { ...base, status: "not_yet_eligible", message: r.warnings[0] };
+      case "ownership_conflict": return { ...base, status: "ownership_conflict" };
+      case "cross_clinic_denied": return { ...base, status: "cross_clinic_denied" };
+      case "migration_missing": return { ...base, status: "migration_missing" };
+      case "skipped_flag_off": return { ...base, status: "skipped_flag_off" };
+      case "deferred_reference": return { ...base, status: "still_deferred", message: "deferred_reference" };
+      default: return { ...base, status: "still_deferred", message: r.status };
+    }
+  }
+
+  // Note source OR source-less case-level → centralized case ensure.
+  if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
+  if (!flags.canonicalProcedureNote) return { ...base, status: "skipped_flag_off" };
+  const r = await createOrReuseProcedureNote({
+    clinicId: failure.clinicId,
+    ancillaryCaseId: failure.ancillaryCaseId,
+    source: "document_retry_worker",
+  });
+  if ((r.status === "created" || r.status === "reused") && !r.referenceDeferred) {
+    await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+    return { ...base, status: "resolved" };
+  }
+  if (r.status === "ineligible") return { ...base, status: "not_yet_eligible", message: r.eligibility.reasons[0] };
+  if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
+  if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
+  return { ...base, status: "still_deferred", message: r.status };
+}
+
+/** Retry a Procedure Note evidence link — LINK-ONLY, signed-note-safe. */
+async function retryProcedureNoteEvidence(
+  failure: AncillaryDocumentReconciliationFailure,
+): Promise<DocumentRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+  // Evidence is keyed to the exact post_procedure_note id (never procedure_events).
+  if (failure.sourceTable != null && failure.sourceTable !== PROCEDURE_NOTE_SOURCE_TABLE) {
+    return { ...base, status: "source_type_mismatch", message: "evidence_source_must_be_procedure_notes" };
+  }
+  const r = await linkProcedureNoteEvidence({
+    clinicId: failure.clinicId,
+    ancillaryCaseId: failure.ancillaryCaseId,
+    sourceId: failure.sourceId,
+  });
+  switch (r.status) {
+    case "linked":
+      await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+      return { ...base, status: "resolved" };
+    case "skipped_flag_off": return { ...base, status: "skipped_flag_off" };
+    case "not_yet_eligible": return { ...base, status: "not_yet_eligible" };
+    case "cross_clinic_denied": return { ...base, status: "cross_clinic_denied" };
+    case "note_case_mismatch": return { ...base, status: "case_mismatch" };
+    case "source_not_found": return { ...base, status: "source_not_found" };
+    case "source_type_mismatch": return { ...base, status: "source_type_mismatch" };
+    default: return { ...base, status: "still_deferred" };
   }
 }
 
