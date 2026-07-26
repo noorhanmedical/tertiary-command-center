@@ -52,7 +52,31 @@ export async function updateProcedureEvent(
     });
   }
 
+  // Phase 2F Hook A: a procedure transitioned INTO "complete" via a generic
+  // update. Fire the canonical Procedure Note orchestration (flag-gated;
+  // OFF ⇒ zero Phase 2F reads/writes). Best-effort: never reverses this
+  // already-committed update.
+  if (result && updates.procedureStatus === "complete") {
+    fireProcedureCompletedHook(id);
+  }
+
   return result;
+}
+
+/** Lazily-imported, flag-gated, non-throwing Phase 2F completion hook. A
+ *  dynamic import breaks the static import cycle with the orchestration
+ *  service (which reads procedure_events through this repo). */
+function fireProcedureCompletedHook(procedureEventId: number): void {
+  void (async () => {
+    try {
+      const { onProcedureCompleted } = await import(
+        "../services/procedureLifecycle/procedureLifecycleOrchestration"
+      );
+      await onProcedureCompleted(procedureEventId);
+    } catch (err) {
+      console.error("[procedureEvents.repo] onProcedureCompleted failed:", err);
+    }
+  })();
 }
 
 export async function getProcedureEventById(id: number): Promise<ProcedureEvent | undefined> {
@@ -250,6 +274,10 @@ export async function markProcedureComplete(
   }).catch((err) => {
     console.error("[procedureEvents.repo] evaluateBillingReadinessForProcedure failed:", err);
   });
+
+  // Phase 2F Hook A: the canonical procedure-completion boundary. Flag-gated
+  // (OFF ⇒ zero Phase 2F reads/writes); never reverses the committed completion.
+  fireProcedureCompletedHook(procedureEvent.id);
 
   return { procedureEvent, documentRows };
 }

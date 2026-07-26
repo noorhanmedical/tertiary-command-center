@@ -106,6 +106,8 @@ export type FlagOverrides = {
   plexusIdentityWrite?: boolean;
   unifiedAncillaryDocuments?: boolean;
   canonicalOrderNote?: boolean;
+  canonicalProcedureLifecycle?: boolean;
+  canonicalProcedureNote?: boolean;
 };
 
 export async function runWithDb<T>(
@@ -127,6 +129,8 @@ export async function runWithDb<T>(
     plexusIdentityWrite: ff.plexusIdentityWrite,
     unifiedAncillaryDocuments: ff.unifiedAncillaryDocuments,
     canonicalOrderNote: ff.canonicalOrderNote,
+    canonicalProcedureLifecycle: ff.canonicalProcedureLifecycle,
+    canonicalProcedureNote: ff.canonicalProcedureNote,
   };
   const { db: fake, calls } = buildFakeDb(spec);
   for (const k of Object.keys(savedDb)) dbObj[k] = (fake as unknown as Record<string, unknown>)[k];
@@ -135,6 +139,8 @@ export async function runWithDb<T>(
   if (flags.plexusIdentityWrite !== undefined) ff.plexusIdentityWrite = flags.plexusIdentityWrite;
   if (flags.unifiedAncillaryDocuments !== undefined) ff.unifiedAncillaryDocuments = flags.unifiedAncillaryDocuments;
   if (flags.canonicalOrderNote !== undefined) ff.canonicalOrderNote = flags.canonicalOrderNote;
+  if (flags.canonicalProcedureLifecycle !== undefined) ff.canonicalProcedureLifecycle = flags.canonicalProcedureLifecycle;
+  if (flags.canonicalProcedureNote !== undefined) ff.canonicalProcedureNote = flags.canonicalProcedureNote;
   try {
     return await fn(calls);
   } finally {
@@ -144,6 +150,8 @@ export async function runWithDb<T>(
     ff.plexusIdentityWrite = savedFlags.plexusIdentityWrite!;
     ff.unifiedAncillaryDocuments = savedFlags.unifiedAncillaryDocuments!;
     ff.canonicalOrderNote = savedFlags.canonicalOrderNote!;
+    ff.canonicalProcedureLifecycle = savedFlags.canonicalProcedureLifecycle!;
+    ff.canonicalProcedureNote = savedFlags.canonicalProcedureNote!;
   }
 }
 
@@ -160,6 +168,7 @@ export async function loadCanonicalTables() {
   const genNotes = await import("../../shared/schema/generatedNotes");
   const docReadiness = await import("../../shared/schema/documentReadiness");
   const adminRev = await import("../../shared/schema/adminReviewEvents");
+  const procEvents = await import("../../shared/schema/procedureEvents");
   return {
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
@@ -178,6 +187,7 @@ export async function loadCanonicalTables() {
     procedureNotes: genNotes.procedureNotes,
     caseDocumentReadiness: docReadiness.caseDocumentReadiness,
     adminReviewEvents: adminRev.ancillaryCaseAdminReviewEvents,
+    procedureEvents: procEvents.procedureEvents,
   };
 }
 

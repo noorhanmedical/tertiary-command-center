@@ -122,6 +122,34 @@ export const featureFlags = {
   //   6. Enable FEATURE_CANONICAL_ORDER_NOTE; validate Order Note flow.
   unifiedAncillaryDocuments: readBool("FEATURE_UNIFIED_ANCILLARY_DOCUMENTS", false),
   canonicalOrderNote: readBool("FEATURE_CANONICAL_ORDER_NOTE", false),
+
+  // ─── Phase 2F — Canonical procedure lifecycle + Procedure Note ─────
+  // Both default OFF. Migration 0054 (procedure_events ancillary identity +
+  // procedure_notes report evidence + case-scoped post_procedure_note
+  // identity) is NOT applied automatically.
+  //
+  // Enabling sequence:
+  //   1. Migrations 0049–0053 applied; Phase 2A–2E backfills done.
+  //   2. Phase 2A–2E flags enabled + validated.
+  //   3. Apply migrations/0054.
+  //   4. Run Phase 2F backfill dry-run + apply (procedure_events ancillary
+  //      linkage) once authored.
+  //   5. Enable FEATURE_CANONICAL_PROCEDURE_LIFECYCLE; the completion hook
+  //      begins writing the ancillary-case linkage onto procedure_events.
+  //   6. Enable FEATURE_CANONICAL_PROCEDURE_NOTE; validate the two-condition
+  //      Procedure Note flow (procedure complete AND current report).
+  //
+  // Both gate ZERO Phase 2F reads/writes while OFF. Neither auto-signs and
+  // neither generates any Procedure Note body.
+
+  /** Writes the canonical ancillary-case linkage onto completed
+   *  procedure_events and fires the Procedure Note orchestration hook. */
+  canonicalProcedureLifecycle: readBool("FEATURE_CANONICAL_PROCEDURE_LIFECYCLE", false),
+
+  /** Enables the canonical Procedure Note (post_procedure_note) eligibility +
+   *  create/reuse foundation. Pair-gated: the eligibility read of the report
+   *  reference also needs the Phase 2E reference index applied/ON. */
+  canonicalProcedureNote: readBool("FEATURE_CANONICAL_PROCEDURE_NOTE", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;

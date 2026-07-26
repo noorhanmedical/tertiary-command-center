@@ -412,7 +412,12 @@ Phase 2E is a STACKED PR on Phase 2D. The enablement steps MUST run in this
 exact order, and only after human approval at each gate:
 
 1. **Merge the prerequisite stacked PRs in order** (Phase 2A → 2B → 2C → 2D →
-   2E). Phase 2E's PR (#320-stacked) merges last.
+   2E). Phase 2E's PR (#321) merges last.
+   <!-- Phase 2F backport note: the "(#320-stacked)" reference here was a typo
+        corrected to "(#321)" on the phase/2f-procedure-lifecycle branch. Flag
+        for backport into PR #321 before merge — do NOT modify PR #321 from the
+        Phase 2F run. -->
+
 2. **Apply migrations 0049–0053** through the approved migration process
    (never `drizzle-kit push --force`, never `db:push`). 0053 is additive and
    legacy-compatible; if any migration tool proposes truncating `clinics`,

@@ -34,6 +34,18 @@ export const procedureEvents = pgTable("procedure_events", {
   completedAt: timestamp("completed_at"),
   note: text("note"),
   metadata: jsonb("metadata").default({}),
+  // ── Phase 2F canonical procedure lifecycle identity (migration 0054) ──
+  // Additive, nullable, legacy-safe. procedure_events remains the canonical
+  // procedure execution/completion row; these columns anchor a completed
+  // procedure to exactly one ancillary case as immutable Procedure Note
+  // completion evidence (never patient-name / first / newest matching). FKs
+  // are declared in migration 0054 only (a reverse import of
+  // patientAncillaryCases / plexus identity here would risk a schema import
+  // cycle — same pattern as procedure_notes' case-scoped links). All nullable
+  // so legacy procedure_events writers stay valid while the flags are OFF.
+  ancillaryCaseId: integer("ancillary_case_id"),
+  globalPlexusPatientId: integer("global_plexus_patient_id"),
+  patientClinicMembershipId: integer("patient_clinic_membership_id"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -43,6 +55,7 @@ export const procedureEvents = pgTable("procedure_events", {
   index("idx_pe_facility_id").on(table.facilityId),
   index("idx_pe_service_type").on(table.serviceType),
   index("idx_pe_procedure_status").on(table.procedureStatus),
+  index("idx_pe_ancillary_case").on(table.ancillaryCaseId),
 ]);
 
 export const insertProcedureEventSchema = createInsertSchema(procedureEvents).omit({

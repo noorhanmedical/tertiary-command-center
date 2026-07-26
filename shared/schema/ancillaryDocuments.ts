@@ -27,15 +27,19 @@ import {
 } from "./_common";
 import { clinics } from "./clinics";
 
-// ─── Allowed Phase 2E document kinds ────────────────────────────
-// procedure_note is Phase 2F, billing_document is Phase 2G — NEITHER is
-// a Phase 2E registry kind. (The wider case_document_readiness catalog
-// separately tracks those; this reference index is Phase-2E-scoped.)
+// ─── Allowed document kinds ─────────────────────────────────────
+// order_note/report/consent/screening_form are Phase 2E; procedure_note
+// is Phase 2F (canonical post_procedure_note in procedure_notes). Both the
+// TS union AND the DB CHECK (migration 0054) must include procedure_note for
+// the reference index to accept it. billing_document remains Phase 2G — NOT
+// added here. (The wider case_document_readiness catalog separately tracks
+// billing_document.)
 export const ANCILLARY_DOCUMENT_KINDS = [
   "order_note",
   "report",
   "consent",
   "screening_form",
+  "procedure_note",
 ] as const;
 export type AncillaryDocumentKind = (typeof ANCILLARY_DOCUMENT_KINDS)[number];
 
@@ -124,6 +128,13 @@ export const ANCILLARY_DOCUMENT_FAILURE_ACTIONS = [
   // (migration/backfill state). Durable retry links admin_review_event_id
   // once the approved event surfaces — never fabricated up front.
   "link_order_note_evidence",
+  // ── Phase 2F Procedure Note reconciliation actions (migration 0054) ──
+  // link_procedure_note: (re)create/reuse the canonical post_procedure_note
+  // + its unified reference for an eligible case whose hook deferred.
+  // link_procedure_note_evidence: link the immutable procedure-event /
+  // report-reference evidence once it becomes resolvable — never fabricated.
+  "link_procedure_note",
+  "link_procedure_note_evidence",
 ] as const;
 export type AncillaryDocumentFailureAction =
   (typeof ANCILLARY_DOCUMENT_FAILURE_ACTIONS)[number];
@@ -182,6 +193,11 @@ export const ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES = {
   // Admin Review evidence was deferred AND the durable retry row could not
   // be persisted — surfaced so reconciliation durability is never overstated.
   evidenceRetryNotRecorded: "ancillary_document_evidence_retry_not_recorded",
+  // ── Phase 2F canonical Procedure Note journey/audit events ──
+  procedureNoteEligibilityEvaluated: "procedure_note_eligibility_evaluated",
+  procedureNoteCreated: "procedure_note_created",
+  procedureNoteReused: "procedure_note_reused",
+  procedureNotePendingSignature: "procedure_note_pending_signature",
 } as const;
 export type AncillaryDocumentJourneyEventType =
   (typeof ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES)[keyof typeof ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES];
@@ -191,6 +207,12 @@ export type AncillaryDocumentJourneyEventType =
 // store. This constant documents the reference's source_table for Order
 // Notes so readers/backfill agree.
 export const ORDER_NOTE_SOURCE_TABLE = "procedure_notes";
+
+// Canonical Procedure Note source ALSO lives in procedure_notes (note_type =
+// 'post_procedure_note') — Phase 2F reuses it and never creates a competing
+// note store. The reference kind (procedure_note) distinguishes it from the
+// order_note reference that shares the same source_table.
+export const PROCEDURE_NOTE_SOURCE_TABLE = "procedure_notes";
 
 // Canonical source tables for the non-Order-Note reference kinds. The
 // reference row NEVER stores bytes — only (source_table, source_id) + a

@@ -68,6 +68,12 @@ export const procedureNotes = pgTable("procedure_notes", {
   // Correction/version foundation only (no correction UI in this phase).
   supersedesNoteId: integer("supersedes_note_id"),
   supersededAt: timestamp("superseded_at"),
+  // ── Phase 2F canonical Procedure Note report evidence (migration 0054) ──
+  // The immutable ancillary_document_references row (documentKind='report')
+  // that satisfied the second Procedure Note eligibility condition. Nullable;
+  // only the canonical post_procedure_note path writes it. FK declared in
+  // migration 0054 only (peer schema module — avoids a schema import cycle).
+  reportDocumentReferenceId: integer("report_document_reference_id"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -81,13 +87,17 @@ export const procedureNotes = pgTable("procedure_notes", {
   index("idx_pn_ancillary_case").on(table.ancillaryCaseId),
   index("idx_pn_supersedes_note").on(table.supersedesNoteId),
   index("idx_pn_superseded_at").on(table.supersededAt),
+  index("idx_pn_report_doc_ref").on(table.reportDocumentReferenceId),
   // NOTE: the pre-2E `idx_pn_unique_note` global unique
   // (patient_screening_id, service_type, note_type) is REPLACED in
   // migration 0053 by three partial unique indexes that Drizzle's table
   // API cannot model (partial WHERE clauses):
   //   uq_pn_order_note_active_case  (ancillary_case_id, note_type)  — canonical current
   //   uq_pn_order_note_legacy       (screening, service, note_type) — legacy unlinked
-  //   uq_pn_post_procedure_note     (screening, service, note_type) — Phase 2F preserved
+  // Migration 0054 REPLACES the single uq_pn_post_procedure_note with two
+  // disjoint partial unique indexes (same shape as the order_note treatment):
+  //   uq_pn_post_procedure_note_active_case (ancillary_case_id, note_type)  — canonical current
+  //   uq_pn_post_procedure_note_legacy      (screening, service, note_type) — legacy unlinked
 ]);
 
 // General client-input insert/create validation. This is the CREATE
@@ -117,6 +127,7 @@ export const insertProcedureNoteSchema = createInsertSchema(procedureNotes).omit
   effectiveClinicalDate: true,
   supersedesNoteId: true,
   supersededAt: true,
+  reportDocumentReferenceId: true,
 });
 
 export type ProcedureNote = typeof procedureNotes.$inferSelect;
