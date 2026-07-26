@@ -181,6 +181,12 @@ export async function ensureAncillaryDocumentReference(
       if (ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") {
         return { status: "reused_exact_source", referenceId: ref.existing.id, ancillaryCaseId: acase.id };
       }
+      // Exact-source OWNERSHIP conflict (clinic/case) or a zero-row concurrent
+      // change — never reused; record a source-specific retry and stay deferred.
+      if (ref.outcome === "source_clinic_conflict" || ref.outcome === "source_case_conflict" || ref.outcome === "synchronization_conflict") {
+        const rec = await recordReferenceRetry(input, acase.id, acase.clinicId, ref.outcome);
+        return rec ? { status: "deferred_reference", retryRecorded: true } : { status: "retry_not_recorded", warnings: [ref.outcome, "retry_not_recorded"] };
+      }
       // active_kind_conflict — a DIFFERENT source owns the current (case,kind)
       // slot. Never reused; never overwrite. Record a source-specific retry so
       // a reviewed supersession can resolve it later.

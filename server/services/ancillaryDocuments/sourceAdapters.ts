@@ -73,10 +73,57 @@ export type DiscoverSourceResult =
   | { ok: false; reason: "source_not_found" | "multiple_source_candidates" | "service_mismatch" | "cross_clinic_denied" | "service_unresolved" };
 
 /**
- * DETERMINISTIC source discovery for a source-less reference retry. Uses the
- * strongest canonical context (clinic + ancillary case → serviceType +
- * execution/screening identity + document kind) to find the ONE matching
- * case_document_readiness source. NEVER chooses first/newest/arbitrary.
+ * Resolve the exact SERVICE + strongest execution/screening identity for a
+ * source-less retry, using the ancillary case when known, else exactly one
+ * active ancillary case for the identity. NEVER guesses across multiple
+ * services or episodes.
+ */
+async function resolveServiceIdentity(args: {
+  clinicId: number;
+  ancillaryCaseId: number | null;
+  executionCaseId: number | null;
+  patientScreeningId: number | null;
+}): Promise<
+  | { ok: true; serviceType: string; executionCaseId: number | null; patientScreeningId: number | null }
+  | { ok: false; reason: "source_not_found" | "cross_clinic_denied" | "service_unresolved" }
+> {
+  if (args.ancillaryCaseId != null) {
+    const acase = await getAncillaryCaseById(args.ancillaryCaseId);
+    if (!acase) return { ok: false, reason: "source_not_found" };
+    if (acase.clinicId !== args.clinicId) return { ok: false, reason: "cross_clinic_denied" };
+    // Derive missing identity fields FROM the case.
+    return {
+      ok: true,
+      serviceType: acase.serviceType,
+      executionCaseId: args.executionCaseId ?? acase.executionCaseId ?? null,
+      patientScreeningId: args.patientScreeningId ?? acase.originatingScreeningId ?? null,
+    };
+  }
+  // No ancillary case named → derive from the active cases for the identity.
+  let cases: PatientAncillaryCase[] = [];
+  if (args.executionCaseId != null) cases = await listAncillaryCasesForExecutionCase(args.executionCaseId);
+  else if (args.patientScreeningId != null) cases = await listAncillaryCasesForScreening(args.patientScreeningId);
+  else return { ok: false, reason: "service_unresolved" };
+  const active = cases.filter((c) => c.clinicId === args.clinicId && ACTIVE_LIFECYCLE.has(c.lifecycleStatus));
+  if (active.length === 0) return { ok: false, reason: "source_not_found" };
+  // Exactly one active case → unambiguous service + identity. Multiple
+  // services OR multiple episodes → ambiguous (never guess).
+  if (active.length !== 1) return { ok: false, reason: "service_unresolved" };
+  const c = active[0];
+  return {
+    ok: true,
+    serviceType: c.serviceType,
+    executionCaseId: args.executionCaseId ?? c.executionCaseId ?? null,
+    patientScreeningId: args.patientScreeningId ?? c.originatingScreeningId ?? null,
+  };
+}
+
+/**
+ * DETERMINISTIC source discovery for a source-less reference retry. Resolves
+ * the exact service + strongest identity, then finds the ONE matching
+ * case_document_readiness source. A missing documentId does NOT block indexing
+ * (the readiness row itself is the canonical source; documentId only affects
+ * downloadReference). NEVER chooses first/newest/arbitrary.
  */
 export async function discoverCanonicalDocumentSource(args: {
   requestedAction: string;
@@ -87,24 +134,26 @@ export async function discoverCanonicalDocumentSource(args: {
 }): Promise<DiscoverSourceResult> {
   const readinessType = ACTION_TO_READINESS_TYPE[args.requestedAction];
   if (!readinessType) return { ok: false, reason: "source_not_found" };
-  // Service comes from the exact ancillary case — never guessed.
-  if (args.ancillaryCaseId == null) return { ok: false, reason: "service_unresolved" };
-  const acase = await getAncillaryCaseById(args.ancillaryCaseId);
-  if (!acase) return { ok: false, reason: "source_not_found" };
-  if (acase.clinicId !== args.clinicId) return { ok: false, reason: "cross_clinic_denied" };
-  const serviceType = acase.serviceType;
 
+  const resolved = await resolveServiceIdentity(args);
+  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  const { serviceType, executionCaseId, patientScreeningId } = resolved;
+
+  // Query by identity + type (NOT service) so a genuine service mismatch is
+  // distinguishable from a missing source; the exact service filter is applied
+  // in-code below.
   const candidates = await findCaseDocumentReadinessCandidates({
     clinicId: args.clinicId,
     documentType: readinessType,
-    executionCaseId: args.executionCaseId,
-    patientScreeningId: args.patientScreeningId,
+    executionCaseId,
+    patientScreeningId,
   });
-  const linkable = candidates.filter((c) => c.documentId != null && !INVALID_LINK_STATUSES.has(c.documentStatus));
+  // documentId is NOT required — the readiness row IS the canonical source.
+  const linkable = candidates.filter((c) => !INVALID_LINK_STATUSES.has(c.documentStatus));
   const serviceMatch = linkable.filter((c) => c.serviceType === serviceType);
   if (serviceMatch.length === 1) return { ok: true, sourceTable: "case_document_readiness", sourceId: serviceMatch[0].id };
   if (serviceMatch.length > 1) return { ok: false, reason: "multiple_source_candidates" };
-  // No service match: candidates exist for the identity but not the service.
+  // Candidates exist for the identity but not the service → true mismatch.
   if (linkable.length > 0) return { ok: false, reason: "service_mismatch" };
   return { ok: false, reason: "source_not_found" };
 }

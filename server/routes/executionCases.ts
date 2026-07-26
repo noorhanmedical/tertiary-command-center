@@ -212,18 +212,36 @@ function sessionUserIdFrom(req: Request): string | null {
 }
 
 /**
- * Phase 2E-B4 — pick the EXACT ancillary case identity for a call-list row.
- * Returns the case id + service ONLY when there is exactly one active,
- * same-clinic ancillary case (one service). Multiple (multi-service or two
- * same-service episodes) or zero → both null. Never first/newest.
+ * Phase 2E final review — SERVICE-AWARE ancillary-case identity for a
+ * scheduler call-list row. Matching hierarchy:
+ *   A. a direct ancillaryCaseId already on the row → preserved only when it is
+ *      an active same-clinic case for this row;
+ *   B. a service-SPECIFIC row (exactly one selected service) → filter active
+ *      cases by that exact service; one match → attach, else null;
+ *   C. non-service-specific row (multi/none) → exactly one active case overall
+ *      → attach, else null.
+ * Multiple same-service episodes → null. Never first/newest.
  */
-export function selectSingleActiveAncillaryCase(
+export function selectAncillaryCaseForRow(
+  row: { clinicId: number | null; selectedServices?: string[] | null; ancillaryCaseId?: number | null },
   activeCases: Array<{ id: number; clinicId: number; serviceType: string }>,
-  clinicId: number | null,
 ): { ancillaryCaseId: number | null; serviceType: string | null } {
-  const sameClinic = activeCases.filter((c) => clinicId != null && c.clinicId === clinicId);
-  if (sameClinic.length === 1) return { ancillaryCaseId: sameClinic[0].id, serviceType: sameClinic[0].serviceType };
-  return { ancillaryCaseId: null, serviceType: null };
+  const sameClinic = activeCases.filter((c) => row.clinicId != null && c.clinicId === row.clinicId);
+  // A. Direct ancillaryCaseId already present — preserve only when valid.
+  if (row.ancillaryCaseId != null) {
+    const match = sameClinic.find((c) => c.id === row.ancillaryCaseId);
+    return match ? { ancillaryCaseId: match.id, serviceType: match.serviceType } : { ancillaryCaseId: null, serviceType: null };
+  }
+  const services = (row.selectedServices ?? []).filter(Boolean);
+  // B. Service-specific ONLY when exactly one selected service (never infer
+  //    specificity from selectedServices[0] when there are several).
+  if (services.length === 1) {
+    const svc = services[0];
+    const matches = sameClinic.filter((c) => c.serviceType === svc);
+    return matches.length === 1 ? { ancillaryCaseId: matches[0].id, serviceType: matches[0].serviceType } : { ancillaryCaseId: null, serviceType: null };
+  }
+  // C. Non-service-specific → exactly one active case overall.
+  return sameClinic.length === 1 ? { ancillaryCaseId: sameClinic[0].id, serviceType: sameClinic[0].serviceType } : { ancillaryCaseId: null, serviceType: null };
 }
 
 export function registerExecutionCaseRoutes(app: Express) {
@@ -1217,21 +1235,23 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
       const rows = await listSchedulerPortalCases(filters, limit);
 
-      // Phase 2E-B4 — attach the EXACT ancillary case id + service when a row
-      // has exactly ONE active ancillary case (one service). Multiple
-      // (multi-service or two same-service episodes) or zero → both null; never
-      // first/newest. ONE batched query for all visible execution cases (no
-      // per-row query). Phase 2B absent → rows unchanged.
-      try {
+      // Phase 2E final review — attach the EXACT, SERVICE-AWARE ancillary case
+      // id + service per row (see selectAncillaryCaseForRow). ONE batched query
+      // for all visible execution cases (never per row). The batch read returns
+      // an empty map on a known migration-absent/flag-off condition (safeRead),
+      // in which case every row gets null/null — but the keys are ALWAYS
+      // emitted. Unexpected repository failures are NOT swallowed here; they
+      // propagate to the route's controlled 500 handler below.
+      {
         const { listActiveAncillaryCasesByExecutionCaseIds } = await import(
           "../repositories/ancillaryCases.repo"
         );
         const execIds = rows.map((r) => r.id).filter((n): n is number => typeof n === "number");
         const byExec = await listActiveAncillaryCasesByExecutionCaseIds(execIds);
         for (const row of rows) {
-          Object.assign(row, selectSingleActiveAncillaryCase(byExec.get(row.id) ?? [], row.clinicId));
+          Object.assign(row, selectAncillaryCaseForRow(row as never, byExec.get(row.id) ?? []));
         }
-      } catch { /* Phase 2B schema absent → leave rows unchanged */ }
+      }
 
       // Phase 2D-C2 — attach the canonical per-service appointment
       // projection when the flag is ON and the caller opts in

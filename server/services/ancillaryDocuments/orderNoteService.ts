@@ -274,9 +274,10 @@ export async function createOrReuseOrderNote(
     } else if (ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") {
       referenceId = ref.existing.id;
     } else {
-      // active_kind_conflict: a DIFFERENT source holds this case's order_note
-      // slot. NEVER attach the new note to the old reference id. Defer to a
-      // reviewed supersession via a source-specific retry.
+      // active_kind_conflict / source_clinic_conflict / source_case_conflict /
+      // synchronization_conflict: NEVER attach the new note to another owner's
+      // reference id. Defer to a reviewed supersession via a source-specific
+      // retry keyed to this exact note.
       referenceDeferred = true;
       try {
         await recordAncillaryDocumentFailure({
@@ -289,7 +290,7 @@ export async function createOrReuseOrderNote(
           sourceId: note.id,
           requestedAction: "link_order_note",
           sourceSystem: input.source,
-          errorCode: "active_document_kind_conflict",
+          errorCode: ref.outcome,
         });
       } catch { /* ledger guard downstream */ }
     }
@@ -672,13 +673,49 @@ async function findOrderNoteReferenceBySource(
 export type OrderNoteSignatureSyncResult =
   | { status: "skipped_flag_off" }
   | { status: "synced" }
-  | { status: "no_reference" }
+  | { status: "no_reference"; retryRecorded: boolean }
   | { status: "cross_clinic_denied" }
   | { status: "case_mismatch" }
   | { status: "migration_missing" }
   | { status: "sync_failed"; retryRecorded: boolean };
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
+
+/** Record an exact, PHI-free link_order_note reconciliation row for a sync gap. */
+async function recordOrderNoteSyncRetry(
+  args: { clinicId: number; ancillaryCaseId: number | null; noteId: number },
+  errorCode: string,
+): Promise<boolean> {
+  try {
+    await recordAncillaryDocumentFailure({
+      clinicId: args.clinicId,
+      ancillaryCaseId: args.ancillaryCaseId,
+      documentKind: "order_note",
+      sourceTable: ORDER_NOTE_SOURCE_TABLE,
+      sourceId: args.noteId,
+      requestedAction: "link_order_note",
+      sourceSystem: "order_note_signature_sync",
+      errorCode,
+    });
+    return true;
+  } catch { return false; }
+}
+
+/** PHI-free security/audit event for a denied cross-owner sync (no cross-clinic detail). */
+async function recordOrderNoteSyncDenied(
+  args: { clinicId: number; ancillaryCaseId: number | null; noteId: number },
+  reason: "clinic_mismatch" | "case_mismatch",
+): Promise<void> {
+  await appendAudit({
+    eventType: "ancillary_document_signature_sync_denied",
+    patientScreeningId: null,
+    executionCaseId: null,
+    actorUserId: null,
+    source: "order_note_signature_sync",
+    summary: `Order Note signature reference sync denied (${reason})`,
+    metadata: { clinic_id: args.clinicId, ancillary_case_id: args.ancillaryCaseId, source_id: args.noteId, reason },
+  });
+}
 
 /**
  * Phase 2E-B4 — after a tenant-scoped Order Note signature transition
@@ -697,41 +734,49 @@ export async function syncOrderNoteReferenceSignature(args: {
   documentStatus: "signed" | "pending_signature";
   signedAt: Date | null;
 }): Promise<OrderNoteSignatureSyncResult> {
-  if (!featureFlags.unifiedAncillaryDocuments) return { status: "skipped_flag_off" };
+  // Require BOTH flags — either OFF ⇒ zero reference reads/writes/ledger work.
+  if (!featureFlags.unifiedAncillaryDocuments || !featureFlags.canonicalOrderNote) return { status: "skipped_flag_off" };
   try {
     const ref = await findOrderNoteReferenceBySource(args.noteId);
-    if (!ref) return { status: "no_reference" };
-    if (ref.clinicId !== args.clinicId) return { status: "cross_clinic_denied" };
-    if (args.ancillaryCaseId != null && ref.ancillaryCaseId !== args.ancillaryCaseId) return { status: "case_mismatch" };
-    // Scoped update — status + signedAt only; identity is never changed.
-    await db
+    if (!ref) {
+      // A signed note with no reference yet — record an exact, PHI-free retry.
+      const retryRecorded = await recordOrderNoteSyncRetry(args, "ORDER_NOTE_REFERENCE_MISSING_AFTER_SIGNATURE");
+      return { status: "no_reference", retryRecorded };
+    }
+    if (ref.clinicId !== args.clinicId) {
+      await recordOrderNoteSyncDenied(args, "clinic_mismatch");
+      return { status: "cross_clinic_denied" };
+    }
+    if (args.ancillaryCaseId != null && ref.ancillaryCaseId !== args.ancillaryCaseId) {
+      await recordOrderNoteSyncDenied(args, "case_mismatch");
+      return { status: "case_mismatch" };
+    }
+    // Exact WHERE (id + clinic + case + source table/id + kind); status +
+    // signedAt only; identity is never changed. `.returning()` verifies exactly
+    // one affected row.
+    const updated = await db
       .update(ancillaryDocumentReferences)
       .set({ documentStatus: args.documentStatus, signedAt: args.signedAt, updatedAt: new Date() })
       .where(and(
         eq(ancillaryDocumentReferences.id, ref.id),
         eq(ancillaryDocumentReferences.clinicId, args.clinicId),
+        eq(ancillaryDocumentReferences.ancillaryCaseId, ref.ancillaryCaseId),
         eq(ancillaryDocumentReferences.sourceTable, ORDER_NOTE_SOURCE_TABLE),
         eq(ancillaryDocumentReferences.sourceId, args.noteId),
         eq(ancillaryDocumentReferences.documentKind, "order_note"),
-      ));
+      ))
+      .returning();
+    if (updated.length !== 1) {
+      // Concurrent ownership/identity change — never report success.
+      const retryRecorded = await recordOrderNoteSyncRetry(args, "reference_signature_sync_zero_row");
+      return { status: "sync_failed", retryRecorded };
+    }
     return { status: "synced" };
   } catch (e) {
     const code = (e as { code?: string })?.code;
+    // Missing migration → truthful, no insert into a missing retry table.
     if (code != null && MIGRATION_MISSING_CODES.has(code)) return { status: "migration_missing" };
-    let retryRecorded = false;
-    try {
-      await recordAncillaryDocumentFailure({
-        clinicId: args.clinicId,
-        ancillaryCaseId: args.ancillaryCaseId,
-        documentKind: "order_note",
-        sourceTable: ORDER_NOTE_SOURCE_TABLE,
-        sourceId: args.noteId,
-        requestedAction: "link_order_note",
-        sourceSystem: "order_note_signature_sync",
-        errorCode: "reference_signature_sync_failed",
-      });
-      retryRecorded = true;
-    } catch { /* ledger guard downstream */ }
+    const retryRecorded = await recordOrderNoteSyncRetry(args, "reference_signature_sync_failed");
     return { status: "sync_failed", retryRecorded };
   }
 }

@@ -406,7 +406,38 @@ Order is deliberate: **do not swap 2D before 2B** — appointments anchor on `an
 
 **Feature flags:** `FEATURE_ORDER_NOTE_ELIGIBILITY_STRICT`, `FEATURE_NOTE_GENERATOR`, `FEATURE_ANCILLARY_DOCS_CANONICAL_READ`.
 
-### Phase 2E-B enablement operations (implemented)
+### Phase 2E enablement runbook (EXACT ORDER — nothing below was run in development)
+
+Phase 2E is a STACKED PR on Phase 2D. The enablement steps MUST run in this
+exact order, and only after human approval at each gate:
+
+1. **Merge the prerequisite stacked PRs in order** (Phase 2A → 2B → 2C → 2D →
+   2E). Phase 2E's PR (#320-stacked) merges last.
+2. **Apply migrations 0049–0053** through the approved migration process
+   (never `drizzle-kit push --force`, never `db:push`). 0053 is additive and
+   legacy-compatible; if any migration tool proposes truncating `clinics`,
+   answer **“No, add the constraint without truncating.”**
+3. **Keep ALL flags OFF** through the backfill phase.
+4. **Perform dry-run identity/document backfills** (Phase 2A–2E), starting
+   with `npx tsx script/backfillAncillaryDocuments.ts` (dry-run default).
+5. **Review the ambiguous / retry counts** in the dry-run output; resolve
+   ambiguous cases before proceeding.
+6. **Run controlled apply mode ONLY after approval** — see the gated commands
+   below.
+7. **Enable the server flags in order:** `FEATURE_UNIFIED_ANCILLARY_DOCUMENTS`
+   first (validate projections/read APIs), then `FEATURE_CANONICAL_ORDER_NOTE`
+   (validate the Order Note flow + signature sync).
+8. **Enable the client flags after server verification:**
+   `VITE_FEATURE_UNIFIED_ANCILLARY_DOCUMENTS`, then
+   `VITE_FEATURE_CANONICAL_ORDER_NOTE`.
+9. **Execute the migration-dependent E2E gate** (not run in development —
+   requires migrations 0049–0053 applied).
+10. **Monitor `ancillary_document_reconciliation_failures`** and drain via the
+    retry CLI below; watch for a rising backlog.
+
+Development invariants (asserted): **no migrations were run**; the historical
+proposed **migration 0043 must not run**; **no `drizzle-kit push --force`**;
+**no production data was modified** and **no clinics were truncated**.
 
 Server flags (default OFF): `FEATURE_UNIFIED_ANCILLARY_DOCUMENTS`, `FEATURE_CANONICAL_ORDER_NOTE`.
 Client flags (default OFF): `VITE_FEATURE_UNIFIED_ANCILLARY_DOCUMENTS`, `VITE_FEATURE_CANONICAL_ORDER_NOTE`.

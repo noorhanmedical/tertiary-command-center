@@ -239,6 +239,14 @@ export type CreateReferenceResult =
   // Same exact source, but stale mutable fields (status/signedAt/timestamps/…)
   // were refreshed. Immutable identity (clinic/case/source/kind) untouched.
   | { outcome: "reused_exact_source_updated"; created: false; existing: AncillaryDocumentReference }
+  // The exact source record is indexed under a DIFFERENT clinic — never reuse,
+  // never update, never disclose cross-clinic detail. Reconciliation deferred.
+  | { outcome: "source_clinic_conflict"; created: false }
+  // The exact source record is indexed under a DIFFERENT ancillary case.
+  | { outcome: "source_case_conflict"; created: false }
+  // The scoped update affected zero rows (concurrent ownership/identity change)
+  // — never reported as success.
+  | { outcome: "synchronization_conflict"; created: false }
   // A DIFFERENT current source already holds this (case, kind) slot. NEVER
   // reused — the caller must supersede via a reviewed workflow or defer. The
   // new source is never silently attached to the existing reference id.
@@ -276,22 +284,24 @@ function computeExactSourceSyncPatch(
 
 /**
  * Tenant-safe exact-source sync: refresh a same-source reference's stale
- * mutable fields, never its immutable identity or ownership. Ownership
- * (clinic/case) must already match — if it doesn't, the row is left UNCHANGED.
+ * mutable fields, NEVER its immutable identity or ownership. An ownership
+ * mismatch (clinic or ancillary case) is a structured CONFLICT — never a
+ * reuse, never an update. The update is scoped by full identity and verified
+ * with `.returning()`: exactly one affected row → updated; zero rows (a
+ * concurrent ownership/identity change) → synchronization_conflict.
  */
 async function syncExactSourceReference(
   existing: AncillaryDocumentReference,
   input: CreateReferenceInput,
 ): Promise<CreateReferenceResult> {
-  // Immutable ownership guard — never re-home an existing reference.
-  if (existing.clinicId !== input.clinicId || existing.ancillaryCaseId !== input.ancillaryCaseId) {
-    return { outcome: "reused_exact_source_unchanged", created: false, existing };
-  }
+  // Ownership conflicts — never re-home an existing reference, never reuse.
+  if (existing.clinicId !== input.clinicId) return { outcome: "source_clinic_conflict", created: false };
+  if (existing.ancillaryCaseId !== input.ancillaryCaseId) return { outcome: "source_case_conflict", created: false };
   const patch = computeExactSourceSyncPatch(existing, input);
   if (Object.keys(patch).length === 0) {
     return { outcome: "reused_exact_source_unchanged", created: false, existing };
   }
-  await db
+  const updated = await db
     .update(ancillaryDocumentReferences)
     .set({ ...patch, updatedAt: sql`CURRENT_TIMESTAMP` })
     .where(and(
@@ -301,9 +311,12 @@ async function syncExactSourceReference(
       eq(ancillaryDocumentReferences.sourceTable, input.sourceTable),
       eq(ancillaryDocumentReferences.sourceId, input.sourceId),
       eq(ancillaryDocumentReferences.documentKind, input.documentKind),
-    ));
-  // Return the id-preserving merged view (immutable identity intact) so callers
-  // always see the exact reference id + refreshed mutable fields.
+    ))
+    .returning();
+  // Exactly one affected row → updated. Zero → a concurrent ownership/identity
+  // change slipped in; NEVER report success.
+  if (updated.length !== 1) return { outcome: "synchronization_conflict", created: false };
+  // Id-preserving merged view (immutable identity intact + refreshed fields).
   const merged = { ...existing, ...(patch as Partial<AncillaryDocumentReference>) };
   return { outcome: "reused_exact_source_updated", created: false, existing: merged };
 }

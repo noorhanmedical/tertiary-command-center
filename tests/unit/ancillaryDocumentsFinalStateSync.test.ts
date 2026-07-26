@@ -216,15 +216,16 @@ async function t09_crossClinicDiscovery() {
 
 // ═══════════ (10/11/12) scheduler-portal one-active rule ═════════
 async function t10_11_12_schedulerRule() {
-  const { selectSingleActiveAncillaryCase } = await routeMod();
-  // (10) exactly one active same-clinic case → attach.
-  assert.deepEqual(selectSingleActiveAncillaryCase([{ id: 5, clinicId: 1, serviceType: "EchoWave" }], 1), { ancillaryCaseId: 5, serviceType: "EchoWave" });
+  const { selectAncillaryCaseForRow } = await routeMod();
+  const R = (o: any = {}) => ({ clinicId: 1, ...o });
+  // (10) non-service-specific row, exactly one active same-clinic case → attach.
+  assert.deepEqual(selectAncillaryCaseForRow(R(), [{ id: 5, clinicId: 1, serviceType: "EchoWave" }]), { ancillaryCaseId: 5, serviceType: "EchoWave" });
   // (11) multiple active cases → null.
-  assert.deepEqual(selectSingleActiveAncillaryCase([{ id: 5, clinicId: 1, serviceType: "EchoWave" }, { id: 6, clinicId: 1, serviceType: "BrainWave" }], 1), { ancillaryCaseId: null, serviceType: null });
+  assert.deepEqual(selectAncillaryCaseForRow(R(), [{ id: 5, clinicId: 1, serviceType: "EchoWave" }, { id: 6, clinicId: 1, serviceType: "BrainWave" }]), { ancillaryCaseId: null, serviceType: null });
   // (12) two SAME-service episodes → ambiguous → null.
-  assert.deepEqual(selectSingleActiveAncillaryCase([{ id: 5, clinicId: 1, serviceType: "EchoWave" }, { id: 9, clinicId: 1, serviceType: "EchoWave" }], 1), { ancillaryCaseId: null, serviceType: null });
+  assert.deepEqual(selectAncillaryCaseForRow(R(), [{ id: 5, clinicId: 1, serviceType: "EchoWave" }, { id: 9, clinicId: 1, serviceType: "EchoWave" }]), { ancillaryCaseId: null, serviceType: null });
   // cross-clinic case is filtered out (so a lone same-clinic case still attaches).
-  assert.deepEqual(selectSingleActiveAncillaryCase([{ id: 5, clinicId: 1, serviceType: "EchoWave" }, { id: 7, clinicId: 2, serviceType: "EchoWave" }], 1), { ancillaryCaseId: 5, serviceType: "EchoWave" });
+  assert.deepEqual(selectAncillaryCaseForRow(R(), [{ id: 5, clinicId: 1, serviceType: "EchoWave" }, { id: 7, clinicId: 2, serviceType: "EchoWave" }]), { ancillaryCaseId: 5, serviceType: "EchoWave" });
 }
 
 // ═══════════ (13) batched, not per-row ═══════════════════════════
@@ -336,7 +337,7 @@ async function t23_signSync() {
   const t = await T();
   const store = new Map<any, Row[]>([[t.refs, [refRow({ id: 42, documentKind: "order_note", sourceTable: "procedure_notes", sourceId: 900, documentStatus: "pending_signature", signedAt: null })]]]);
   const ctrl = buildStoreFake(store);
-  await runWithStore(ctrl, { unifiedAncillaryDocuments: true }, async () =>
+  await runWithStore(ctrl, { unifiedAncillaryDocuments: true, canonicalOrderNote: true }, async () =>
     (await orderNote()).syncOrderNoteReferenceSignature({ clinicId: 1, ancillaryCaseId: 5, noteId: 900, documentStatus: "signed", signedAt: NOW }));
   const row = store.get(t.refs)![0];
   assert.equal(row.documentStatus, "signed");
@@ -348,7 +349,7 @@ async function t24_returnSync() {
   const t = await T();
   const store = new Map<any, Row[]>([[t.refs, [refRow({ id: 42, documentKind: "order_note", sourceTable: "procedure_notes", sourceId: 900, documentStatus: "signed", signedAt: NOW })]]]);
   const ctrl = buildStoreFake(store);
-  await runWithStore(ctrl, { unifiedAncillaryDocuments: true }, async () =>
+  await runWithStore(ctrl, { unifiedAncillaryDocuments: true, canonicalOrderNote: true }, async () =>
     (await orderNote()).syncOrderNoteReferenceSignature({ clinicId: 1, ancillaryCaseId: 5, noteId: 900, documentStatus: "pending_signature", signedAt: null }));
   const row = store.get(t.refs)![0];
   assert.equal(row.documentStatus, "pending_signature");
@@ -368,7 +369,7 @@ async function t25_signSurvivesSyncFailure() {
     ]);
     // Make the reference UPDATE fail (sync failure) — the note sign still commits.
     const ctrl = buildStoreFake(store, { failTable: t.refs });
-    const r = await runWithStore(ctrl, { unifiedAncillaryDocuments: true }, async () => wf.signProcedureNote({ id: 900, clinicId: 1, authenticatedSignerUserId: "u1" }));
+    const r = await runWithStore(ctrl, { unifiedAncillaryDocuments: true, canonicalOrderNote: true }, async () => wf.signProcedureNote({ id: 900, clinicId: 1, authenticatedSignerUserId: "u1" }));
     assert.equal(r.ok, true, "signature transition remains successful despite sync failure");
   } finally { wf.setBillingReevalScheduler(null); }
 }
@@ -386,7 +387,7 @@ async function t26_syncFailureRetry() {
   // Override refs update to reject while keeping refs select working.
   const origUpdate = ctrl.db.update;
   ctrl.db.update = (tbl: any) => { if (tbl === t.refs) return { set() { return { where() { return { returning: () => Promise.reject(Object.assign(new Error("boom"), { code: "08006" })), then: (_r: any, j: any) => Promise.reject(Object.assign(new Error("boom"), { code: "08006" })).catch(j) }; } }; } }; return origUpdate(tbl); };
-  const res = await runWithStore(ctrl, { unifiedAncillaryDocuments: true }, async () =>
+  const res = await runWithStore(ctrl, { unifiedAncillaryDocuments: true, canonicalOrderNote: true }, async () =>
     (await orderNote()).syncOrderNoteReferenceSignature({ clinicId: 1, ancillaryCaseId: 5, noteId: 900, documentStatus: "signed", signedAt: NOW }));
   assert.equal(res.status, "sync_failed");
   if (res.status === "sync_failed") assert.equal(res.retryRecorded, true);
@@ -413,7 +414,7 @@ async function t28_syncMigrationMissing() {
   const t = await T();
   const store = new Map<any, Row[]>([[t.refs, []]]);
   const ctrl = buildStoreFake(store, { failTable: t.refs, failCode: "42P01" });
-  const res = await runWithStore(ctrl, { unifiedAncillaryDocuments: true }, async () =>
+  const res = await runWithStore(ctrl, { unifiedAncillaryDocuments: true, canonicalOrderNote: true }, async () =>
     (await orderNote()).syncOrderNoteReferenceSignature({ clinicId: 1, ancillaryCaseId: 5, noteId: 900, documentStatus: "signed", signedAt: NOW }));
   assert.equal(res.status, "migration_missing", "missing migration reported truthfully, not swallowed");
 }
