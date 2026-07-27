@@ -56,6 +56,16 @@ const PORTALS: PortalCard[] = [
   },
 ];
 
+// When this hub is hosted inside a winter-home ?embed=1 iframe, in-iframe
+// navigation must carry the embed flag forward or the destination portal
+// re-renders the top banner + dock inside the iframe (double chrome).
+function withEmbedParam(href: string): string {
+  if (typeof window === "undefined") return href;
+  return new URLSearchParams(window.location.search).has("embed")
+    ? `${href}?embed=1`
+    : href;
+}
+
 export default function TeamMemberPortalsPage() {
   return (
     <div className="flex flex-col h-full">
@@ -80,7 +90,7 @@ export default function TeamMemberPortalsPage() {
         <div className="w-full px-4 sm:px-6 lg:px-8 py-8 lg:py-10 xl:py-12">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6 xl:gap-8">
             {PORTALS.map((portal) => (
-              <Link key={portal.href} href={portal.href}>
+              <Link key={portal.href} href={withEmbedParam(portal.href)}>
                 <div
                   className="group rounded-2xl bg-white border border-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)] hover:border-plexus-navy-800/40 transition-all p-6 lg:p-8 xl:p-10 cursor-pointer h-full flex flex-col"
                   data-testid={portal.testId}

@@ -58,8 +58,10 @@ export const NAV_ITEMS: NavItemDef[] = [
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },
-  { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
-  { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  // The Team Portals hub replaces the retired Technician Portal and Liaison
+  // Technician Portal nav entries. Those routes stay reachable by direct URL
+  // only (same retirement pattern as the old Outreach Center).
+  { href: "/team-member-portals", label: "Team Portals", Icon: HeartHandshake, roles: ["admin", "technician", "liaison", "scheduler"] },
   { href: "/admin/settings",   label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 
