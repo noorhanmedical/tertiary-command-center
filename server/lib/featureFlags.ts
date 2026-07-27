@@ -157,3 +157,21 @@ export type FeatureFlagName = keyof typeof featureFlags;
 export function isEnabled(name: FeatureFlagName): boolean {
   return featureFlags[name];
 }
+
+/**
+ * The SINGLE canonical Procedure Note runtime gate. The canonical Procedure
+ * Note path (eligibility reads, create/reuse, evidence sync, retry execution,
+ * report-side hook, and legacy-writer suppression) requires ALL THREE flags —
+ * lifecycle (so the completed procedure event carries its case linkage), note
+ * (the canonical creator), and unified documents (the reference index). Partial
+ * enablement must NEVER perform partial canonical reads/writes and must NEVER
+ * suppress the legacy writer — otherwise the workflow is stranded with neither
+ * a legacy nor a canonical note.
+ */
+export function procedureNoteRuntimeEnabled(): boolean {
+  return (
+    featureFlags.canonicalProcedureLifecycle &&
+    featureFlags.canonicalProcedureNote &&
+    featureFlags.unifiedAncillaryDocuments
+  );
+}

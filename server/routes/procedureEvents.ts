@@ -47,17 +47,12 @@ function toClinicDto(row: ProcedureEvent): Omit<ProcedureEvent, "globalPlexusPat
   return dto;
 }
 
-// Canonical statuses whose completion was committed → 201.
-const COMMITTED_STATUSES = new Set<CompleteCanonicalProcedureStatus>([
-  "completed_and_linked", "completed_note_created", "completed_note_reused",
-  "completed_waiting_for_report", "reconciliation_not_recorded", "migration_missing",
-]);
-// Resolution failures that behave as not-found (no disclosure).
+// Pre-commit resolution failures that behave as not-found (no disclosure).
 const NOT_FOUND_STATUSES = new Set<CompleteCanonicalProcedureStatus>(["cross_clinic_denied", "case_not_found"]);
-// Conflict-style resolution/dedupe failures.
+// Pre-commit conflict-style failures (identity/dedupe/timestamp).
 const CONFLICT_STATUSES = new Set<CompleteCanonicalProcedureStatus>([
   "service_mismatch", "identity_mismatch", "invalid_schedule_event", "case_inactive",
-  "exact_case_required", "procedure_event_ambiguous", "zero_row_conflict",
+  "exact_case_required", "procedure_event_ambiguous", "zero_row_conflict", "timestamp_conflict",
 ]);
 
 export function registerProcedureEventRoutes(app: Express) {
@@ -103,16 +98,27 @@ export function registerProcedureEventRoutes(app: Express) {
           completedByUserId: req.session?.userId ?? undefined,
           actorUserId: req.session?.userId ?? undefined,
         });
-        if (COMMITTED_STATUSES.has(result.status)) {
-          if (globalScheduleEventId != null) {
-            void updateGlobalScheduleEvent(globalScheduleEventId, { status: "completed" }).catch((err) => {
-              console.error("[procedureEvents.route] global schedule update failed:", err);
-            });
+        // 201 ONLY when the completion genuinely committed (excluding a
+        // timestamp conflict, which committed earlier but rejects THIS change).
+        if (result.completionCommitted && result.status !== "timestamp_conflict") {
+          const warnings = [...(result.warnings ?? [])];
+          // Mirror ONLY the schedule event that completeCanonicalProcedure
+          // VALIDATED (never a raw client-supplied id). Awaited + non-throwing;
+          // completion remains committed even if the mirror fails.
+          if (result.qualifyingScheduleEventId != null) {
+            try {
+              await updateGlobalScheduleEvent(result.qualifyingScheduleEventId, { status: "completed" });
+            } catch (err) {
+              warnings.push("schedule_mirror_failed");
+              console.error("[procedureEvents.route] schedule mirror failed:", err);
+            }
           }
-          return res.status(201).json(result);
+          return res.status(201).json({ ...result, warnings });
         }
+        // Not committed (or timestamp conflict) → truthful codes; NEVER mirror.
+        if (result.status === "migration_missing") return res.status(503).json({ error: "Migration required", status: result.status });
         if (NOT_FOUND_STATUSES.has(result.status)) return res.status(404).json({ error: "Not found", status: result.status });
-        if (CONFLICT_STATUSES.has(result.status)) return res.status(409).json({ error: "Canonical completion conflict", status: result.status });
+        if (CONFLICT_STATUSES.has(result.status)) return res.status(409).json({ error: "Canonical completion conflict", status: result.status, completionCommitted: result.completionCommitted });
         if (result.status === "deferred_ambiguous_case") return res.status(202).json(result);
         return res.status(500).json({ error: "Canonical completion error", status: result.status });
       }

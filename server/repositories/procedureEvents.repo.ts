@@ -10,7 +10,7 @@ import { upsertCaseDocumentReadinessForProcedureComplete } from "./documentReadi
 import { createPendingProcedureNotes } from "./generatedNotes.repo";
 import { evaluateBillingReadinessForProcedure } from "./billingReadiness.repo";
 import { upsertProcedureCompleteEvent, clearProcedureCompleteEvent } from "./globalSchedule.repo";
-import { featureFlags } from "../lib/featureFlags";
+import { featureFlags, procedureNoteRuntimeEnabled } from "../lib/featureFlags";
 
 const PG_UNDEFINED_TABLE = "42P01";
 const PG_UNDEFINED_COLUMN = "42703";
@@ -67,7 +67,8 @@ export async function updateProcedureEvent(
       const { onProcedureCompleted } = await import(
         "../services/procedureLifecycle/procedureLifecycleOrchestration"
       );
-      await onProcedureCompleted(id);
+      // Pass the committed event's clinic as the expected clinic scope.
+      await onProcedureCompleted({ procedureEventId: id, expectedClinicId: result.clinicId ?? null });
     } catch (err) {
       console.error("[procedureEvents.repo] onProcedureCompleted failed:", err);
     }
@@ -279,15 +280,35 @@ export async function insertCanonicalProcedureEvent(
   return row;
 }
 
-/** Mark an existing canonical procedure event complete, scoped by (id, clinic).
- *  Never touches ownership identity. Returns null on a zero-row (cross-clinic
- *  or concurrent) miss. */
+export type CompleteExistingOutcome =
+  | { outcome: "completed"; procedureEvent: ProcedureEvent }
+  | { outcome: "already_complete_preserved"; procedureEvent: ProcedureEvent }
+  | { outcome: "timestamp_conflict"; procedureEvent: ProcedureEvent }
+  | { outcome: "zero_row_conflict" };
+
+/**
+ * Mark an existing canonical procedure event complete. FULLY scoped: the
+ * update WHERE requires the exact id + clinic + ancillary case + service. The
+ * canonical completedAt is IMMUTABLE — the first transition to complete owns
+ * it. A repeated idempotent completion preserves the existing completedAt /
+ * completedByUserId / note (no silent rewrite); an EXPLICIT, different
+ * completedAt on an already-complete event returns timestamp_conflict (reviewed
+ * correction is out of scope). `.returning()` requires exactly one affected row.
+ */
 export async function completeExistingProcedureEvent(
-  id: number,
-  clinicId: number,
-  patch: { completedAt: Date; completedByUserId?: string | null; note?: string | null },
-): Promise<ProcedureEvent | null> {
-  const [row] = await db
+  existing: ProcedureEvent,
+  expected: { clinicId: number; ancillaryCaseId: number; serviceType: string },
+  patch: { completedAt: Date; explicit: boolean; completedByUserId?: string | null; note?: string | null },
+): Promise<CompleteExistingOutcome> {
+  const alreadyComplete = existing.procedureStatus === "complete" && existing.completedAt != null;
+  if (alreadyComplete) {
+    if (patch.explicit && existing.completedAt != null && existing.completedAt.getTime() !== patch.completedAt.getTime()) {
+      return { outcome: "timestamp_conflict", procedureEvent: existing };
+    }
+    // Idempotent repeat — preserve the original completion instant + fields.
+    return { outcome: "already_complete_preserved", procedureEvent: existing };
+  }
+  const rows = await db
     .update(procedureEvents)
     .set({
       procedureStatus: "complete",
@@ -296,15 +317,22 @@ export async function completeExistingProcedureEvent(
       note: patch.note ?? undefined,
       updatedAt: new Date(),
     })
-    .where(and(eq(procedureEvents.id, id), eq(procedureEvents.clinicId, clinicId)))
+    .where(and(
+      eq(procedureEvents.id, existing.id),
+      eq(procedureEvents.clinicId, expected.clinicId),
+      eq(procedureEvents.ancillaryCaseId, expected.ancillaryCaseId),
+      eq(procedureEvents.serviceType, expected.serviceType),
+    ))
     .returning();
-  return row ?? null;
+  if (rows.length !== 1) return { outcome: "zero_row_conflict" };
+  return { outcome: "completed", procedureEvent: rows[0] };
 }
 
 export type LinkProcedureEventOutcome =
   | { outcome: "linked"; procedureEvent: ProcedureEvent }
-  | { outcome: "already_linked_same_case"; procedureEvent: ProcedureEvent }
+  | { outcome: "already_linked_same_case_and_synced"; procedureEvent: ProcedureEvent }
   | { outcome: "ownership_conflict" }
+  | { outcome: "identity_conflict" }
   | { outcome: "zero_row_conflict" }
   | { outcome: "migration_missing" };
 
@@ -312,10 +340,14 @@ export type LinkProcedureEventOutcome =
  * Link a procedure event to its ancillary case — server-owned ownership write.
  * NEVER re-homes an event from one case to another. Requires: the event's
  * clinic is the same clinic OR NULL (unassigned legacy row being adopted); and
- * its ancillary_case_id is NULL or already equal to the target case. The write
- * is scoped by EXACT ownership expectations (`id` + `ancillary_case_id IS NULL`
- * + clinic same-or-null) and verified with `.returning()` — a zero affected-row
- * count (concurrent change) is `zero_row_conflict`, never reported as linked.
+ * its ancillary_case_id is NULL or already equal to the target case.
+ *
+ * When ALREADY the same case, this SYNCHRONIZES rather than short-circuiting:
+ * it fills a NULL clinic (eligibility requires clinic + case) and fills NULL
+ * canonical identity (global patient / membership) when tenant-consistent. A
+ * conflicting NON-NULL identity is `identity_conflict` (never overwritten). All
+ * writes are exact-ownership scoped and `.returning()` affected-row checked — a
+ * zero-row race is `zero_row_conflict`, never reported as linked/synced.
  */
 export async function linkProcedureEventToAncillaryCase(input: {
   procedureEventId: number;
@@ -333,7 +365,29 @@ export async function linkProcedureEventToAncillaryCase(input: {
     if (!pe) return { outcome: "zero_row_conflict" };
     if (pe.clinicId != null && pe.clinicId !== input.clinicId) return { outcome: "ownership_conflict" };
     if (pe.ancillaryCaseId != null && pe.ancillaryCaseId !== input.ancillaryCaseId) return { outcome: "ownership_conflict" };
-    if (pe.ancillaryCaseId === input.ancillaryCaseId) return { outcome: "already_linked_same_case", procedureEvent: pe };
+
+    if (pe.ancillaryCaseId === input.ancillaryCaseId) {
+      // Same case — validate + synchronize; never overwrite a conflicting non-null.
+      if (pe.globalPlexusPatientId != null && input.globalPlexusPatientId != null && pe.globalPlexusPatientId !== input.globalPlexusPatientId) return { outcome: "identity_conflict" };
+      if (pe.patientClinicMembershipId != null && input.patientClinicMembershipId != null && pe.patientClinicMembershipId !== input.patientClinicMembershipId) return { outcome: "identity_conflict" };
+      const patch: Record<string, unknown> = {};
+      if (pe.clinicId == null) patch.clinicId = input.clinicId;
+      if (pe.globalPlexusPatientId == null && input.globalPlexusPatientId != null) patch.globalPlexusPatientId = input.globalPlexusPatientId;
+      if (pe.patientClinicMembershipId == null && input.patientClinicMembershipId != null) patch.patientClinicMembershipId = input.patientClinicMembershipId;
+      if (Object.keys(patch).length === 0) return { outcome: "already_linked_same_case_and_synced", procedureEvent: pe };
+      const rows = await db
+        .update(procedureEvents)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(
+          eq(procedureEvents.id, input.procedureEventId),
+          eq(procedureEvents.ancillaryCaseId, input.ancillaryCaseId),
+          or(isNull(procedureEvents.clinicId), eq(procedureEvents.clinicId, input.clinicId)),
+        ))
+        .returning();
+      if (rows.length !== 1) return { outcome: "zero_row_conflict" };
+      return { outcome: "already_linked_same_case_and_synced", procedureEvent: rows[0] };
+    }
+
     const rows = await db
       .update(procedureEvents)
       .set({
@@ -451,11 +505,12 @@ export async function markProcedureComplete(
     serviceType: input.serviceType,
   });
 
-  // Legacy post-procedure-note writer. Phase 2F: when the canonical Procedure
-  // Note flag is ON, the two-condition canonical service is the ONLY
-  // post_procedure_note creator — suppress the legacy writer so no parallel
-  // unlinked legacy note is created. Flag OFF preserves legacy behavior exactly.
-  if (!featureFlags.canonicalProcedureNote) {
+  // Legacy post-procedure-note writer. Phase 2F: suppress ONLY when the FULL
+  // canonical Procedure Note runtime is enabled (all three flags) — then the
+  // two-condition canonical service is the only post_procedure_note creator.
+  // Partial enablement preserves the legacy writer so the workflow is never
+  // stranded with neither a legacy nor a canonical note.
+  if (!procedureNoteRuntimeEnabled()) {
     void createPendingProcedureNotes({
       executionCaseId: input.executionCaseId ?? null,
       patientScreeningId: input.patientScreeningId ?? null,

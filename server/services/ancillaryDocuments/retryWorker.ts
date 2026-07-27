@@ -19,9 +19,9 @@ import {
 } from "@shared/schema/ancillaryDocuments";
 import { createOrReuseOrderNote, linkOrderNoteAdminReviewEvidence } from "./orderNoteService";
 import { ensureAncillaryDocumentReference } from "./documentReferenceWriter";
-import { createOrReuseProcedureNote, linkProcedureNoteEvidence } from "../procedureLifecycle/procedureNoteService";
+import { createOrReuseProcedureNote, linkProcedureNoteEvidence, ensureProcedureNoteReferenceForNote } from "../procedureLifecycle/procedureNoteService";
 import { onProcedureCompleted } from "../procedureLifecycle/procedureLifecycleOrchestration";
-import { featureFlags as flags } from "../../lib/featureFlags";
+import { featureFlags as flags, procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 import {
   loadCanonicalDocumentSource,
   discoverCanonicalDocumentSource,
@@ -33,6 +33,9 @@ export type DocumentRetryStatus =
   | "resolved"
   | "still_deferred"
   | "not_yet_eligible"
+  | "linked_waiting_for_note_runtime"
+  | "signed_evidence_conflict"
+  | "reference_missing"
   | "skipped"
   | "skipped_flag_off"
   | "retry_not_recorded"
@@ -257,27 +260,58 @@ async function retryProcedureNoteLink(
 ): Promise<DocumentRetryOutcome> {
   const base = { failureId: failure.id, requestedAction: failure.requestedAction };
 
-  // Procedure-event source → completion linkage + ensure.
+  // Procedure-event source → completion linkage + ensure. Pass the FAILURE's
+  // clinic (never manufacture 0) and its case so clinic A cannot touch clinic B.
   if (failure.sourceTable === PROCEDURE_EVENT_SOURCE_TABLE && failure.sourceId != null) {
     if (!flags.canonicalProcedureLifecycle) return { ...base, status: "skipped_flag_off" };
-    const r = await onProcedureCompleted(failure.sourceId);
+    const r = await onProcedureCompleted({
+      procedureEventId: failure.sourceId,
+      expectedClinicId: failure.clinicId,
+      expectedAncillaryCaseId: failure.ancillaryCaseId,
+    });
     switch (r.status) {
-      case "created": case "reused": case "linked_pending_note":
+      case "created": case "reused":
+        // Full work complete → resolve ONLY this exact failure id.
         await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
         return { ...base, status: "resolved" };
+      case "linked_pending_note":
+        // Case linked but the Procedure Note runtime is OFF — NOT complete;
+        // keep the failure unresolved so the note is created once runtime is ON.
+        return { ...base, status: "linked_waiting_for_note_runtime" };
       case "not_yet_eligible": return { ...base, status: "not_yet_eligible", message: r.warnings[0] };
-      case "ownership_conflict": return { ...base, status: "ownership_conflict" };
+      case "ownership_conflict": case "identity_conflict": return { ...base, status: "ownership_conflict", message: r.status };
       case "cross_clinic_denied": return { ...base, status: "cross_clinic_denied" };
+      case "unscoped_event": return { ...base, status: "still_deferred", message: "unscoped_event" };
+      case "not_completed": return { ...base, status: "source_not_found", message: r.warnings[0] ?? "not_completed" };
       case "migration_missing": return { ...base, status: "migration_missing" };
       case "skipped_flag_off": return { ...base, status: "skipped_flag_off" };
-      case "deferred_reference": return { ...base, status: "still_deferred", message: "deferred_reference" };
       default: return { ...base, status: "still_deferred", message: r.status };
     }
   }
 
-  // Note source OR source-less case-level → centralized case ensure.
+  // Exact note-source retry → reconcile ONLY that named note's exact reference.
+  if (failure.sourceTable === PROCEDURE_NOTE_SOURCE_TABLE && failure.sourceId != null) {
+    if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
+    if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
+    const r = await ensureProcedureNoteReferenceForNote({
+      clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, noteId: failure.sourceId, source: "document_retry_worker",
+    });
+    switch (r.status) {
+      case "resolved":
+        await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+        return { ...base, status: "resolved" };
+      case "source_not_found": return { ...base, status: "source_not_found" };
+      case "note_case_mismatch": return { ...base, status: "case_mismatch" };
+      case "cross_clinic_denied": return { ...base, status: "cross_clinic_denied" };
+      case "source_type_mismatch": return { ...base, status: "source_type_mismatch" };
+      case "migration_missing": return { ...base, status: "migration_missing" };
+      default: return { ...base, status: "still_deferred" };
+    }
+  }
+
+  // Source-less case-level → centralized case ensure (never first/newest).
   if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
-  if (!flags.canonicalProcedureNote) return { ...base, status: "skipped_flag_off" };
+  if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
   const r = await createOrReuseProcedureNote({
     clinicId: failure.clinicId,
     ancillaryCaseId: failure.ancillaryCaseId,
@@ -309,14 +343,18 @@ async function retryProcedureNoteEvidence(
   });
   switch (r.status) {
     case "linked":
+      // Note + reference updated atomically → resolve ONLY this exact failure.
       await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
       return { ...base, status: "resolved" };
     case "skipped_flag_off": return { ...base, status: "skipped_flag_off" };
     case "not_yet_eligible": return { ...base, status: "not_yet_eligible" };
+    case "signed_evidence_conflict": return { ...base, status: "signed_evidence_conflict" };
+    case "reference_missing": return { ...base, status: "reference_missing" };
     case "cross_clinic_denied": return { ...base, status: "cross_clinic_denied" };
     case "note_case_mismatch": return { ...base, status: "case_mismatch" };
     case "source_not_found": return { ...base, status: "source_not_found" };
     case "source_type_mismatch": return { ...base, status: "source_type_mismatch" };
+    case "migration_missing": return { ...base, status: "migration_missing" };
     default: return { ...base, status: "still_deferred" };
   }
 }

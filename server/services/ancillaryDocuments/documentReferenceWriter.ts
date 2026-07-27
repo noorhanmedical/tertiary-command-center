@@ -16,7 +16,7 @@
  * when indexing is deferred.
  */
 
-import { featureFlags } from "../../lib/featureFlags";
+import { featureFlags, procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 import {
   createReference,
   recordAncillaryDocumentFailure,
@@ -142,7 +142,7 @@ async function fireProcedureNoteHookForReport(
   clinicId: number,
 ): Promise<void> {
   if (input.documentKind !== "report") return;
-  if (!featureFlags.canonicalProcedureNote) return;
+  if (!procedureNoteRuntimeEnabled()) return;
   try {
     const { ensureCanonicalProcedureNoteForAncillaryCase } = await import(
       "../procedureLifecycle/procedureLifecycleOrchestration"

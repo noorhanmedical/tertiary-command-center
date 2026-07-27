@@ -20,7 +20,7 @@
  * by name / first / newest / cross-clinic.
  */
 
-import { featureFlags } from "../../lib/featureFlags";
+import { featureFlags, procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 import type { PatientAncillaryCase } from "@shared/schema/ancillaryCases";
 import {
   PROCEDURE_EVENT_SOURCE_TABLE,
@@ -46,7 +46,9 @@ export type ProcedureNoteHookStatus =
   | "not_completed"
   | "deferred_ambiguous_case"
   | "ownership_conflict"
+  | "identity_conflict"
   | "cross_clinic_denied"
+  | "unscoped_event"
   | "linked_pending_note"
   | "not_yet_eligible"
   | "created"
@@ -110,7 +112,7 @@ export type EnsureProcedureNoteInput = {
 export async function ensureCanonicalProcedureNoteForAncillaryCase(
   input: EnsureProcedureNoteInput,
 ): Promise<ProcedureNoteHookResult> {
-  if (!featureFlags.canonicalProcedureNote) {
+  if (!procedureNoteRuntimeEnabled()) {
     return { status: "skipped_flag_off", ancillaryCaseId: input.ancillaryCaseId, warnings: [] };
   }
   try {
@@ -196,33 +198,72 @@ function validateLinkedCase(pe: ProcedureEvent, c: PatientAncillaryCase | null):
   return true;
 }
 
-export async function onProcedureCompleted(procedureEventId: number): Promise<ProcedureNoteHookResult> {
+export type OnProcedureCompletedInput = {
+  procedureEventId: number;
+  // The clinic that owns this operation (authenticated clinic / failure clinic /
+  // committed event clinic). The event's clinic must equal it, or be NULL only
+  // during a reviewed same-clinic linkage. NEVER manufactured as 0.
+  expectedClinicId: number | null;
+  // When present (event-source retry), the failure's case must match the event.
+  expectedAncillaryCaseId?: number | null;
+};
+
+export async function onProcedureCompleted(input: OnProcedureCompletedInput): Promise<ProcedureNoteHookResult> {
   if (!featureFlags.canonicalProcedureLifecycle) {
     return { status: "skipped_flag_off", warnings: [] };
   }
+  const { procedureEventId, expectedClinicId } = input;
   try {
     const pe = await getProcedureEventById(procedureEventId);
-    if (!pe || pe.procedureStatus !== "complete") {
-      return { status: "not_completed", warnings: [] };
+    if (!pe) return { status: "not_completed", warnings: ["source_not_found"] };
+    if (pe.procedureStatus !== "complete") return { status: "not_completed", warnings: [] };
+
+    // Tenant scope: the event clinic must equal the expected clinic (or be NULL
+    // during a reviewed same-clinic linkage). Another clinic's event is denied.
+    if (pe.clinicId != null && expectedClinicId != null && pe.clinicId !== expectedClinicId) {
+      return { status: "cross_clinic_denied", warnings: ["cross_clinic_denied"] };
+    }
+    // The clinic we can safely act under — NEVER 0, never manufactured.
+    const scopeClinicId = pe.clinicId ?? expectedClinicId ?? null;
+    if (scopeClinicId == null) {
+      // No valid clinic — cannot durably reconcile without manufacturing a clinic.
+      return { status: "unscoped_event", ancillaryCaseId: pe.ancillaryCaseId ?? undefined, warnings: ["unscoped_event"] };
+    }
+    // Event-source retry: the failure's case must match the event's case.
+    if (input.expectedAncillaryCaseId != null && pe.ancillaryCaseId != null && pe.ancillaryCaseId !== input.expectedAncillaryCaseId) {
+      await recordProcedureRetry({ clinicId: scopeClinicId, ancillaryCaseId: pe.ancillaryCaseId, procedureEventId, errorCode: "procedure_event_case_mismatch" });
+      return { status: "ownership_conflict", ancillaryCaseId: pe.ancillaryCaseId, warnings: ["case_mismatch"] };
     }
 
     let acase: PatientAncillaryCase | null = null;
     if (pe.ancillaryCaseId != null) {
       // Already linked — VALIDATE the case; a mismatch is an ownership conflict.
       acase = await getAncillaryCaseById(pe.ancillaryCaseId);
-      if (!validateLinkedCase(pe, acase)) {
-        await recordProcedureRetry({ clinicId: pe.clinicId ?? acase?.clinicId ?? 0, ancillaryCaseId: pe.ancillaryCaseId, procedureEventId, errorCode: "procedure_event_case_ownership_conflict" });
+      if (acase == null || !validateLinkedCase(pe, acase)) {
+        await recordProcedureRetry({ clinicId: scopeClinicId, ancillaryCaseId: pe.ancillaryCaseId, procedureEventId, errorCode: "procedure_event_case_ownership_conflict" });
         return { status: "ownership_conflict", ancillaryCaseId: pe.ancillaryCaseId, warnings: ["ownership_conflict"] };
       }
+      // Synchronize a clinicless/underfilled same-case event (eligibility needs clinic+case).
+      const sync = await linkProcedureEventToAncillaryCase({
+        procedureEventId, clinicId: acase.clinicId, ancillaryCaseId: acase.id,
+        globalPlexusPatientId: acase.globalPlexusPatientId ?? null,
+        patientClinicMembershipId: acase.patientClinicMembershipId ?? null,
+      });
+      if (sync.outcome === "identity_conflict" || sync.outcome === "ownership_conflict") {
+        await recordProcedureRetry({ clinicId: scopeClinicId, ancillaryCaseId: acase.id, procedureEventId, errorCode: sync.outcome });
+        return { status: sync.outcome, ancillaryCaseId: acase.id, warnings: [sync.outcome] };
+      }
     } else {
-      const resolved = await resolveOwningCase(pe);
+      const resolved = await resolveOwningCase({ ...pe, clinicId: scopeClinicId });
       if (resolved.kind !== "one") {
-        if (pe.clinicId != null) {
-          await recordProcedureRetry({ clinicId: pe.clinicId, procedureEventId, errorCode: `procedure_case_${resolved.kind}` });
-        }
+        await recordProcedureRetry({ clinicId: scopeClinicId, procedureEventId, errorCode: `procedure_case_${resolved.kind}` });
         return { status: "deferred_ambiguous_case", warnings: [`procedure_case_${resolved.kind}`] };
       }
       acase = resolved.case;
+      if (input.expectedAncillaryCaseId != null && input.expectedAncillaryCaseId !== acase.id) {
+        await recordProcedureRetry({ clinicId: scopeClinicId, ancillaryCaseId: acase.id, procedureEventId, errorCode: "procedure_event_case_mismatch" });
+        return { status: "ownership_conflict", ancillaryCaseId: acase.id, warnings: ["case_mismatch"] };
+      }
       // Hardened, exact-ownership linkage (affected-row checked, never re-homed).
       const link = await linkProcedureEventToAncillaryCase({
         procedureEventId, clinicId: acase.clinicId, ancillaryCaseId: acase.id,
@@ -230,16 +271,16 @@ export async function onProcedureCompleted(procedureEventId: number): Promise<Pr
         patientClinicMembershipId: acase.patientClinicMembershipId ?? null,
       });
       if (link.outcome === "migration_missing") return { status: "migration_missing", ancillaryCaseId: acase.id, warnings: ["migration_missing"] };
-      if (link.outcome === "ownership_conflict" || link.outcome === "zero_row_conflict") {
+      if (link.outcome === "ownership_conflict" || link.outcome === "identity_conflict" || link.outcome === "zero_row_conflict") {
         await recordProcedureRetry({ clinicId: acase.clinicId, ancillaryCaseId: acase.id, procedureEventId, errorCode: link.outcome });
-        return { status: link.outcome === "ownership_conflict" ? "ownership_conflict" : "deferred_ambiguous_case", ancillaryCaseId: acase.id, warnings: [link.outcome] };
+        return { status: link.outcome === "zero_row_conflict" ? "deferred_ambiguous_case" : link.outcome, ancillaryCaseId: acase.id, warnings: [link.outcome] };
       }
     }
 
     if (!acase) return { status: "deferred_ambiguous_case", warnings: ["no_case"] };
 
-    // Delegate the two-condition Procedure Note ensure. Note flag OFF →
-    // skipped_flag_off; the linkage is still written.
+    // Delegate the two-condition Procedure Note ensure. Full runtime gate OFF →
+    // skipped_flag_off; the linkage is still written (linked, note pending runtime).
     const noteResult = await ensureCanonicalProcedureNoteForAncillaryCase({
       clinicId: acase.clinicId,
       ancillaryCaseId: acase.id,

@@ -155,6 +155,52 @@ records the qualifying reference id as permanent evidence.
   completed case-linked event (never latest-picking); `effectiveClinicalDate`
   defaults to the qualifying procedure's actual `completedAt`.
 
+## 6b. Phase 2F-A3 hardening (commit truth, exact retries, evidence consistency)
+
+- **Commit truth** — `completeCanonicalProcedure` returns
+  `completionCommitted` + `completionStage`. A pre-commit rejection
+  (identity/migration/conflict) is `completionCommitted=false` → the route uses
+  503/404/409/202 and NEVER mirrors the schedule event or claims a
+  `procedureEventId`; a committed completion whose Procedure Note reconciliation
+  deferred is `completionCommitted=true` → 201 with truthful warnings.
+  Pre-commit `migration_missing` (503) is distinct from post-commit
+  `completed_reconciliation_migration_missing` (201).
+- **Full identity agreement** — every supplied identifier must agree; a
+  co-supplied `globalScheduleEventId` is independently validated
+  (`ancillary_appointment`/`same_day_add`, not cancelled/no_show, exact case +
+  service + execution + screening). Only the VALIDATED `qualifyingScheduleEventId`
+  is returned, and the route mirrors ONLY that (awaited, non-throwing, warns on
+  failure) — never a raw client-supplied id.
+- **Immutable completedAt** — the first transition owns it; idempotent repeats
+  preserve it; a concurrent reselect preserves the winner's; an explicit
+  different time on an already-complete event is `timestamp_conflict`.
+- **Existing-event completion** — fully scoped (`.returning()` affected-row
+  check on id + clinic + case + service) and compatibility-validated before
+  reuse.
+- **Same-case link sync** — a clinicless/underfilled same-case event is
+  synchronized (clinic + canonical identity filled when NULL); a conflicting
+  non-null identity is `identity_conflict`, never overwritten.
+- **Expected-clinic hooks** — `onProcedureCompleted({procedureEventId,
+  expectedClinicId, expectedAncillaryCaseId})`; another clinic's event is
+  `cross_clinic_denied`; no retry persistence ever manufactures `clinicId=0`
+  (`unscoped_event`).
+- **One runtime gate** — `procedureNoteRuntimeEnabled()` (all three flags) gates
+  eligibility, create/reuse, evidence sync, retry execution, the report hook,
+  and legacy-writer suppression. Partial enablement preserves the legacy path.
+- **Exact retries** — event-source `link_procedure_note` re-drives the
+  completion hook (resolving only on full success; `linked_waiting_for_note_runtime`
+  when the note runtime is OFF); note-source `link_procedure_note` reconciles
+  ONLY that named note's exact reference; `link_procedure_note_evidence` updates
+  note + reference ATOMICALLY (rollback on partial; `reference_missing` when
+  none), signed-note-safe.
+- **Evidence consistency** — a reused unsigned note's stale evidence is
+  synchronized exactly (body/signature untouched); a signed note is never
+  rewritten and its reference metadata reflects the SIGNED note's stored
+  evidence (an exact `link_procedure_note_evidence` reconciliation is recorded).
+  Reference metadata is always derived from the final note row, never directly
+  from eligibility. Retry persistence returns `retryRecorded` and is never
+  swallowed.
+
 ## 7. Migration 0054 (`migrations/0054_add_canonical_procedure_lifecycle.sql`)
 
 Additive-only, unapplied, does not amend 0049–0053:

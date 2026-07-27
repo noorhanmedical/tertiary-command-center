@@ -22,7 +22,7 @@ const NOTE_SRC = readFileSync(join(process.cwd(), "server/services/procedureLife
 const COMPLETED_AT = new Date("2027-06-10T09:00:00Z");
 const CREATED_AT = new Date("2027-06-01T10:00:00Z");
 const ALL = { canonicalProcedureLifecycle: true, canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
-const NOTE_FLAGS = { canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
+const NOTE_FLAGS = { canonicalProcedureLifecycle: true, canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
 
 function caseRow(over: Record<string, unknown> = {}) {
   return {
@@ -80,8 +80,9 @@ function eligibleCompletionSpec(
 async function testDedupeByCase() {
   const t = await loadCanonicalTables();
   const c = await completion();
-  const existing = peRow({ id: 300 });
-  const spec = eligibleCompletionSpec(t, { peSelect: () => [existing] });
+  // Existing NOT-yet-complete event for the case → transitioned via update, never re-inserted.
+  const existing = peRow({ id: 300, procedureStatus: "in_progress", completedAt: null });
+  const spec = eligibleCompletionSpec(t, { peSelect: qsel([[existing], [peRow()]]) });
   const r = await runWithDb(spec, ALL, async (calls: Call[]) => {
     const res = await c.completeCanonicalProcedure({ clinicId: 1, serviceType: "BrainWave", ancillaryCaseId: 5, completedAt: COMPLETED_AT });
     assert.equal(countOps(calls, "insert", t.procedureEvents), 0, "existing case event reused, not re-inserted");
@@ -147,7 +148,7 @@ async function testConcurrentReselect() {
   assert.equal(r.procedureEventId, 300, "reselected the exact concurrent case winner");
 }
 
-// (5) canonical Procedure Note flag ON suppresses createPendingProcedureNotes
+// (5) FULL canonical runtime (all three flags) suppresses createPendingProcedureNotes
 async function testCanonicalSuppressesLegacyNotes() {
   const t = await loadCanonicalTables();
   const r = await repo();
@@ -157,10 +158,28 @@ async function testCanonicalSuppressesLegacyNotes() {
     [t.caseDocumentReadiness, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }], onUpdate: (v) => [{ ...v }] }],
     [t.gse, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);
-  await runWithDb(spec, { canonicalProcedureNote: true, unifiedAncillaryDocuments: true }, async (calls: Call[]) => {
+  await runWithDb(spec, ALL, async (calls: Call[]) => {
     await r.markProcedureComplete({ serviceType: "BrainWave", patientScreeningId: 77, executionCaseId: 900 });
     await flush();
-    assert.equal(countOps(calls, "insert", t.procedureNotes), 0, "canonical flag ON ⇒ zero legacy-note inserts");
+    assert.equal(countOps(calls, "insert", t.procedureNotes), 0, "full runtime ⇒ zero legacy-note inserts");
+  });
+}
+
+// (22b) partial flag enablement preserves the legacy writer (not suppressed)
+async function testPartialFlagsPreserveLegacy() {
+  const t = await loadCanonicalTables();
+  const r = await repo();
+  const spec = new Map<unknown, TableSpec>([
+    [t.procedureEvents, { select: () => [], onInsert: (v) => [{ ...v, id: 300 }] }],
+    [t.procedureNotes, { select: () => [], onInsert: (v) => [{ ...v, id: 900 }] }],
+    [t.caseDocumentReadiness, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }], onUpdate: (v) => [{ ...v }] }],
+    [t.gse, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]);
+  // Note flag ON but lifecycle OFF → legacy writer NOT suppressed (workflow never stranded).
+  await runWithDb(spec, { canonicalProcedureLifecycle: false, canonicalProcedureNote: true, unifiedAncillaryDocuments: true }, async (calls: Call[]) => {
+    await r.markProcedureComplete({ serviceType: "BrainWave", patientScreeningId: 77, executionCaseId: 900 });
+    await flush();
+    assert.ok(countOps(calls, "insert", t.procedureNotes) >= 1, "partial flags preserve the legacy note writer");
   });
 }
 
@@ -316,7 +335,7 @@ async function testReconciliationSourceIdentity() {
     [t.ancillaryCases, { select: () => [] }], // no owning case → deferred + retry
     [t.documentFailures, { select: () => [], onInsert: (v) => { failurePayload = v; return [{ ...v, id: 1 }]; } }],
   ]);
-  const r = await runWithDb(spec, ALL, async () => o.onProcedureCompleted(300));
+  const r = await runWithDb(spec, ALL, async () => o.onProcedureCompleted({ procedureEventId: 300, expectedClinicId: 1 }));
   assert.equal(r.status, "deferred_ambiguous_case");
   const f = failurePayload as Record<string, unknown>;
   assert.equal(f.sourceTable, "procedure_events", "(16) completion failure keyed to procedure_events");
@@ -387,7 +406,7 @@ async function testEvidenceLinker() {
     ]),
     ALL, async (calls) => { const r = await n.linkProcedureNoteEvidence({ clinicId: 1, ancillaryCaseId: 5, sourceId: 900 }); assert.equal(countOps(calls, "update", t.procedureNotes), 0, "signed note never rewritten"); return r; },
   );
-  assert.equal(signed.status, "still_deferred");
+  assert.equal(signed.status, "signed_evidence_conflict", "signed note evidence change → reviewed conflict, not silent rewrite");
 }
 
 // (21) feature OFF → zero Phase 2F retry reads/writes
@@ -521,7 +540,8 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(2) two same-service episodes create separate events", testSeparateEpisodes],
   ["(3) never reuses another case's event", testNeverReuseAnotherCase],
   ["(4) concurrent duplicate reselects exact case winner", testConcurrentReselect],
-  ["(5) canonical flag ON suppresses createPendingProcedureNotes", testCanonicalSuppressesLegacyNotes],
+  ["(5) full canonical runtime suppresses createPendingProcedureNotes", testCanonicalSuppressesLegacyNotes],
+  ["(22b) partial flags preserve the legacy note writer", testPartialFlagsPreserveLegacy],
   ["(6) canonical flag OFF preserves legacy note writer", testLegacyNotesActiveWhenFlagOff],
   ["(7) completion route derives clinic from context", testCompletionRouteRequiresClinic],
   ["(8) completion cannot act on another clinic's case", testCompletionCrossClinicDenied],

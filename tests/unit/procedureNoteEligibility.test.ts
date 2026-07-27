@@ -10,7 +10,7 @@ import { runWithDb, loadCanonicalTables, countOps, type TableSpec, type Call } f
 const svc = () => import("../../server/services/procedureLifecycle/procedureNoteEligibility");
 const COMPLETED_AT = new Date("2027-06-10T09:00:00Z");
 const CREATED_AT = new Date("2027-06-01T10:00:00Z");
-const FLAGS = { canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
+const FLAGS = { canonicalProcedureLifecycle: true, canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
 
 function caseRow(over: Record<string, unknown> = {}) {
   return {

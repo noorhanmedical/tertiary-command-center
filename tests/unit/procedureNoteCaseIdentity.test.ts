@@ -13,7 +13,7 @@ const orch = () => import("../../server/services/procedureLifecycle/procedureLif
 
 const COMPLETED_AT = new Date("2027-06-10T09:00:00Z");
 const CREATED_AT = new Date("2027-06-01T10:00:00Z");
-const FLAGS = { canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
+const FLAGS = { canonicalProcedureLifecycle: true, canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
 const HOOK_FLAGS = { canonicalProcedureLifecycle: true, canonicalProcedureNote: true, unifiedAncillaryDocuments: true } as const;
 
 function caseRow(over: Record<string, unknown> = {}) {
@@ -106,7 +106,8 @@ async function testReuse() {
     [t.ancillaryCases, { select: () => [caseRow()] }],
     [t.procedureEvents, { select: () => [peRow()] }],
     [t.documentReferences, { select: qsel([[reportRef()], [reportRef({ id: 55, documentKind: "procedure_note", sourceId: 900, sourceTable: "procedure_notes" })]]), onInsert: (v) => [{ ...v, id: 99 }] }],
-    [t.procedureNotes, { select: () => [noteRow()], onInsert: (v) => [{ ...v, id: 901 }] }],
+    // Evidence already matches eligibility → the unsigned reuse sync is a no-op.
+    [t.procedureNotes, { select: () => [noteRow({ effectiveClinicalDate: COMPLETED_AT })], onInsert: (v) => [{ ...v, id: 901 }], onUpdate: (v) => [{ ...noteRow(), ...v }] }],
     [t.journeyEvents, { onInsert: () => [] }],
     [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);

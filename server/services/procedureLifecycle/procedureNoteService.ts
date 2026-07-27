@@ -13,11 +13,11 @@
  */
 
 import { db } from "../../db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { patientJourneyEvents } from "@shared/schema/executionCase";
 import { procedureNotes } from "@shared/schema/generatedNotes";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
-import { featureFlags } from "../../lib/featureFlags";
+import { featureFlags, procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 import {
   PROCEDURE_NOTE_SOURCE_TABLE,
   ANCILLARY_DOCUMENT_JOURNEY_EVENT_TYPES,
@@ -117,9 +117,9 @@ type AncillaryCaseShape = {
 export async function createOrReuseProcedureNote(
   input: CreateOrReuseProcedureNoteInput,
 ): Promise<CreateOrReuseProcedureNoteResult> {
-  // Both flags required: the reference write needs the Phase 2E index; either
-  // OFF ⇒ zero Phase 2F reads/writes.
-  if (!featureFlags.canonicalProcedureNote || !featureFlags.unifiedAncillaryDocuments) {
+  // The FULL canonical Procedure Note runtime gate (all three flags). Partial
+  // enablement ⇒ zero Phase 2F reads/writes (legacy path stays available).
+  if (!procedureNoteRuntimeEnabled()) {
     return { status: "skipped_flag_off" };
   }
 
@@ -207,10 +207,42 @@ export async function createOrReuseProcedureNote(
       note = await insertProcedureNote(input, acase, procedureEventId, reportReferenceId, effectiveDate);
       reused = false;
     }
+  } else if (!adoptedLegacy) {
+    // A pre-existing case-scoped note is being reused. Reconcile its stored
+    // evidence with current eligibility BEFORE indexing.
+    if (note.signatureStatus === "signed") {
+      // A SIGNED note is NEVER silently rewritten. If its stored evidence
+      // differs from current eligibility, record an exact evidence
+      // reconciliation for reviewed supersession — the reference metadata will
+      // reflect the SIGNED note's stored evidence, not the newer eligibility.
+      const stale = (note.procedureEventId ?? null) !== procedureEventId || (note.reportDocumentReferenceId ?? null) !== reportReferenceId;
+      if (stale) {
+        const recorded = await recordEvidenceRetry(input, acase, note.id);
+        warnings.push(recorded ? "signed_evidence_conflict" : "signed_evidence_conflict_retry_not_recorded");
+      }
+    } else {
+      // An UNSIGNED current note: synchronize stale evidence exactly.
+      const sync = await synchronizeUnsignedProcedureNoteEvidence({
+        clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, noteId: note.id,
+        procedureEventId, reportReferenceId, effectiveDate,
+      });
+      if (sync.status === "evidence_updated" && sync.note) note = sync.note;
+      else if (sync.status === "zero_row_conflict") warnings.push("evidence_sync_zero_row");
+      else if (sync.status === "signed_evidence_conflict") {
+        const recorded = await recordEvidenceRetry(input, acase, note.id);
+        warnings.push(recorded ? "signed_evidence_conflict" : "signed_evidence_conflict_retry_not_recorded");
+      }
+    }
   }
 
   // Never auto-sign. Mirror the note's current signature status only.
   const documentStatus = note.signatureStatus === "signed" ? "signed" : "pending_signature";
+  // §12 — reference evidence metadata is derived from the ACTUAL final note row
+  // (its stored procedure/report evidence), NEVER directly from the latest
+  // eligibility result (which a signed note may not reflect).
+  const refProcedureEventId = note.procedureEventId ?? null;
+  const refReportReferenceId = note.reportDocumentReferenceId ?? null;
+  const refEffectiveDate = note.effectiveClinicalDate ?? effectiveDate;
 
   // Append the unified Ancillary Documents reference (best-effort + durable
   // retry — the note already exists and must not be lost).
@@ -230,14 +262,14 @@ export async function createOrReuseProcedureNote(
       sourceId: note.id,
       serviceType: acase.serviceType,
       documentStatus,
-      effectiveClinicalDate: effectiveDate,
+      effectiveClinicalDate: refEffectiveDate,
       signedAt: note.signedAt ?? null,
       // Preserve the SOURCE note's creation instant, not the index time.
       actualCreatedAt: note.createdAt ?? null,
       createdByUserId: input.actorUserId ?? null,
       metadata: {
-        procedure_event_id: procedureEventId,
-        report_document_reference_id: reportReferenceId,
+        procedure_event_id: refProcedureEventId,
+        report_document_reference_id: refReportReferenceId,
       },
     });
     if (ref.outcome === "created") {
@@ -485,7 +517,153 @@ async function insertProcedureNote(
   return row;
 }
 
-// ─── Phase 2F — Procedure Note evidence linker (retry worker entry) ─────────
+/** PHI-free exact evidence retry (source=procedure_notes, sourceId=noteId).
+ *  Returns whether the ledger row was actually persisted. */
+async function recordEvidenceRetry(
+  input: CreateOrReuseProcedureNoteInput,
+  acase: AncillaryCaseShape,
+  noteId: number,
+): Promise<boolean> {
+  try {
+    await recordAncillaryDocumentFailure({
+      clinicId: input.clinicId,
+      ancillaryCaseId: input.ancillaryCaseId,
+      patientScreeningId: acase.originatingScreeningId ?? null,
+      executionCaseId: acase.executionCaseId ?? null,
+      documentKind: "procedure_note",
+      sourceTable: PROCEDURE_NOTE_SOURCE_TABLE,
+      sourceId: noteId,
+      requestedAction: "link_procedure_note_evidence",
+      sourceSystem: input.source,
+      errorCode: "signed_evidence_conflict",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
+
+// ─── Phase 2F §11 — dedicated unsigned-note evidence synchronization ────────
+export type SyncEvidenceInput = {
+  clinicId: number;
+  ancillaryCaseId: number;
+  noteId: number;
+  procedureEventId: number | null;
+  reportReferenceId: number | null;
+  effectiveDate: Date | null;
+};
+export type SyncEvidenceResult =
+  | { status: "evidence_unchanged"; note: typeof procedureNotes.$inferSelect }
+  | { status: "evidence_updated"; note: typeof procedureNotes.$inferSelect }
+  | { status: "signed_evidence_conflict" }
+  | { status: "ownership_conflict" }
+  | { status: "zero_row_conflict" }
+  | { status: "source_not_found" }
+  | { status: "migration_missing" };
+
+/**
+ * Synchronize a CURRENT UNSIGNED Procedure Note's evidence
+ * (procedureEventId / reportDocumentReferenceId / effectiveClinicalDate). Exact
+ * clinic/case/current/unsigned predicates; `.returning()` exactly one row.
+ * NEVER touches generatedText, sourceData, generationStatus, signatureStatus,
+ * signedAt, or signedByUserId. A signed note yields signed_evidence_conflict.
+ */
+export async function synchronizeUnsignedProcedureNoteEvidence(
+  input: SyncEvidenceInput,
+): Promise<SyncEvidenceResult> {
+  try {
+    const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, input.noteId)).limit(1);
+    if (!note) return { status: "source_not_found" };
+    if (note.clinicId !== input.clinicId || note.ancillaryCaseId !== input.ancillaryCaseId) return { status: "ownership_conflict" };
+    if (note.noteType !== "post_procedure_note" || note.supersededAt != null) return { status: "ownership_conflict" };
+    if (note.signatureStatus === "signed") return { status: "signed_evidence_conflict" };
+    const ed = input.effectiveDate ?? null;
+    const same = (note.procedureEventId ?? null) === input.procedureEventId
+      && (note.reportDocumentReferenceId ?? null) === input.reportReferenceId
+      && (note.effectiveClinicalDate?.getTime() ?? null) === (ed?.getTime() ?? null);
+    if (same) return { status: "evidence_unchanged", note };
+    const rows = await db
+      .update(procedureNotes)
+      .set({ procedureEventId: input.procedureEventId ?? undefined, reportDocumentReferenceId: input.reportReferenceId ?? undefined, effectiveClinicalDate: ed ?? undefined, updatedAt: new Date() })
+      .where(and(
+        eq(procedureNotes.id, input.noteId),
+        eq(procedureNotes.clinicId, input.clinicId),
+        eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId),
+        isNull(procedureNotes.supersededAt),
+        sql`${procedureNotes.signatureStatus} IS DISTINCT FROM 'signed'`,
+      ))
+      .returning();
+    if (rows.length !== 1) return { status: "zero_row_conflict" };
+    return { status: "evidence_updated", note: rows[0] };
+  } catch (e) {
+    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+    throw e;
+  }
+}
+
+// ─── Phase 2F §10 — exact note-source reference retry ───────────────────────
+export type NoteSourceReferenceResult =
+  | { status: "resolved" }
+  | { status: "source_not_found" }
+  | { status: "note_case_mismatch" }
+  | { status: "cross_clinic_denied" }
+  | { status: "source_type_mismatch" }
+  | { status: "deferred" }
+  | { status: "migration_missing" };
+
+/**
+ * Create/reuse ONLY the exact unified reference for a NAMED post_procedure_note
+ * (never adopts another note, never picks a case's current note instead). The
+ * reference status/signedAt/actualCreatedAt/evidence metadata are all derived
+ * from that exact note row.
+ */
+export async function ensureProcedureNoteReferenceForNote(args: {
+  clinicId: number;
+  ancillaryCaseId: number;
+  noteId: number;
+  source: string;
+}): Promise<NoteSourceReferenceResult> {
+  try {
+    const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, args.noteId)).limit(1);
+    if (!note) return { status: "source_not_found" };
+    if (note.clinicId !== args.clinicId) return { status: "cross_clinic_denied" };
+    if (note.ancillaryCaseId !== args.ancillaryCaseId) return { status: "note_case_mismatch" };
+    if (note.noteType !== "post_procedure_note") return { status: "source_type_mismatch" };
+    if (note.supersededAt != null) return { status: "deferred" };
+    const acase = await getAncillaryCaseById(args.ancillaryCaseId);
+    if (!acase || acase.clinicId !== args.clinicId) return { status: "cross_clinic_denied" };
+    const documentStatus = note.signatureStatus === "signed" ? "signed" : "pending_signature";
+    const ref = await createReference({
+      clinicId: args.clinicId,
+      globalPlexusPatientId: acase.globalPlexusPatientId ?? null,
+      patientClinicMembershipId: acase.patientClinicMembershipId ?? null,
+      patientScreeningId: acase.originatingScreeningId ?? null,
+      executionCaseId: acase.executionCaseId ?? null,
+      ancillaryCaseId: args.ancillaryCaseId,
+      documentKind: "procedure_note",
+      sourceSystem: args.source,
+      sourceTable: PROCEDURE_NOTE_SOURCE_TABLE,
+      sourceId: note.id,
+      serviceType: note.serviceType,
+      documentStatus,
+      effectiveClinicalDate: note.effectiveClinicalDate ?? null,
+      signedAt: note.signedAt ?? null,
+      actualCreatedAt: note.createdAt ?? null,
+      metadata: { procedure_event_id: note.procedureEventId ?? null, report_document_reference_id: note.reportDocumentReferenceId ?? null },
+    });
+    if (ref.outcome === "created" || ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") {
+      return { status: "resolved" };
+    }
+    return { status: "deferred" };
+  } catch (e) {
+    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+    return { status: "deferred" };
+  }
+}
+
+// ─── Phase 2F §13 — atomic Procedure Note evidence linker (retry entry) ─────
 export type ProcedureNoteEvidenceRetryResult =
   | { status: "skipped_flag_off" }
   | { status: "still_deferred" }
@@ -494,6 +672,9 @@ export type ProcedureNoteEvidenceRetryResult =
   | { status: "note_case_mismatch" }
   | { status: "source_not_found" }
   | { status: "source_type_mismatch" }
+  | { status: "signed_evidence_conflict" }
+  | { status: "reference_missing" }
+  | { status: "migration_missing" }
   | { status: "linked"; procedureNoteId: number };
 
 export type ProcedureNoteEvidenceRetryInput = {
@@ -503,21 +684,18 @@ export type ProcedureNoteEvidenceRetryInput = {
 };
 
 /**
- * Link/refresh a current Procedure Note's IMMUTABLE evidence (procedureEventId +
- * reportDocumentReferenceId) once exact eligibility evidence is resolvable.
- * Fully tenant-validated: the note must exist, be same-clinic, same-case,
- * post_procedure_note, and NOT superseded. LINK-ONLY — never touches
- * generatedText, sourceData, signatureStatus, signedAt, or signedByUserId. A
- * SIGNED current note is left UNCHANGED (evidence changes on a signed clinical
- * note require reviewed supersession/correction, never a silent rewrite).
- * Requires BOTH flags; either OFF ⇒ zero reads/writes.
+ * Link a current unsigned Procedure Note's evidence AND its reference metadata
+ * ATOMICALLY. Validates the exact note + exact reference before mutation; both
+ * updates run in one transaction and each must affect exactly one row — a
+ * reference failure rolls back the note evidence update, so `linked` is
+ * returned ONLY when all required writes succeeded. A missing reference returns
+ * `reference_missing` (a separate exact link_procedure_note retry creates it).
+ * A SIGNED note is left unchanged (signed_evidence_conflict). Full runtime gate.
  */
 export async function linkProcedureNoteEvidence(
   input: ProcedureNoteEvidenceRetryInput,
 ): Promise<ProcedureNoteEvidenceRetryResult> {
-  if (!featureFlags.canonicalProcedureNote || !featureFlags.unifiedAncillaryDocuments) {
-    return { status: "skipped_flag_off" };
-  }
+  if (!procedureNoteRuntimeEnabled()) return { status: "skipped_flag_off" };
   const { clinicId, ancillaryCaseId, sourceId } = input;
   if (ancillaryCaseId == null || sourceId == null) return { status: "still_deferred" };
 
@@ -531,43 +709,60 @@ export async function linkProcedureNoteEvidence(
   if (note.ancillaryCaseId !== ancillaryCaseId) return { status: "note_case_mismatch" };
   if (note.noteType !== "post_procedure_note") return { status: "source_type_mismatch" };
   if (note.supersededAt != null) return { status: "still_deferred" };
+  if (note.signatureStatus === "signed") return { status: "signed_evidence_conflict" };
 
   const elig = await evaluateProcedureNoteEligibility({ clinicId, ancillaryCaseId });
   if (!elig.eligible) return { status: "not_yet_eligible" };
-
-  // A signed clinical note is never silently rewritten — defer to reviewed handling.
-  if (note.signatureStatus === "signed") return { status: "still_deferred" };
-
   const procedureEventId = elig.qualifyingProcedureEventId ?? null;
   const reportReferenceId = elig.qualifyingReportReferenceId ?? null;
 
-  // Evidence-only, exact clinic/case/current-note scoped write + affected-row check.
-  const rows = await db
-    .update(procedureNotes)
-    .set({ procedureEventId: procedureEventId ?? undefined, reportDocumentReferenceId: reportReferenceId ?? undefined, updatedAt: new Date() })
-    .where(and(
-      eq(procedureNotes.id, sourceId),
-      eq(procedureNotes.clinicId, clinicId),
-      eq(procedureNotes.ancillaryCaseId, ancillaryCaseId),
-      isNull(procedureNotes.supersededAt),
-    ))
-    .returning();
-  if (rows.length !== 1) return { status: "still_deferred" };
+  // The exact reference must already exist — otherwise leave a separate exact
+  // link_procedure_note retry to create it (never fabricate here).
+  const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
+    eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE),
+    eq(ancillaryDocumentReferences.sourceId, sourceId),
+    eq(ancillaryDocumentReferences.documentKind, "procedure_note"),
+  )).limit(1);
+  if (!ref) return { status: "reference_missing" };
+  if (ref.clinicId !== clinicId || ref.ancillaryCaseId !== ancillaryCaseId) return { status: "note_case_mismatch" };
 
-  // Best-effort reference metadata refresh (never identity/ownership).
   try {
-    const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
-      eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE),
-      eq(ancillaryDocumentReferences.sourceId, sourceId),
-      eq(ancillaryDocumentReferences.documentKind, "procedure_note"),
-    )).limit(1);
-    if (ref && ref.clinicId === clinicId && ref.ancillaryCaseId === ancillaryCaseId) {
+    await db.transaction(async (tx) => {
+      const noteRows = await tx
+        .update(procedureNotes)
+        .set({ procedureEventId: procedureEventId ?? undefined, reportDocumentReferenceId: reportReferenceId ?? undefined, updatedAt: new Date() })
+        .where(and(
+          eq(procedureNotes.id, sourceId),
+          eq(procedureNotes.clinicId, clinicId),
+          eq(procedureNotes.ancillaryCaseId, ancillaryCaseId),
+          isNull(procedureNotes.supersededAt),
+          sql`${procedureNotes.signatureStatus} IS DISTINCT FROM 'signed'`,
+        ))
+        .returning();
+      if (noteRows.length !== 1) throw new EvidenceTxError("note");
       const metadata = { ...((ref.metadata as Record<string, unknown>) ?? {}), procedure_event_id: procedureEventId, report_document_reference_id: reportReferenceId };
-      await db.update(ancillaryDocumentReferences)
+      const refRows = await tx
+        .update(ancillaryDocumentReferences)
         .set({ metadata: metadata as never, updatedAt: new Date() })
-        .where(and(eq(ancillaryDocumentReferences.id, ref.id), eq(ancillaryDocumentReferences.clinicId, clinicId)));
-    }
-  } catch { /* reference refresh is best-effort; note evidence is already linked */ }
-
+        .where(and(
+          eq(ancillaryDocumentReferences.id, ref.id),
+          eq(ancillaryDocumentReferences.clinicId, clinicId),
+          eq(ancillaryDocumentReferences.ancillaryCaseId, ancillaryCaseId),
+          eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE),
+          eq(ancillaryDocumentReferences.sourceId, sourceId),
+          eq(ancillaryDocumentReferences.documentKind, "procedure_note"),
+        ))
+        .returning();
+      if (refRows.length !== 1) throw new EvidenceTxError("reference");
+    });
+  } catch (e) {
+    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+    // Note + reference updates rolled back together — never partial success.
+    return { status: "still_deferred" };
+  }
   return { status: "linked", procedureNoteId: sourceId };
+}
+
+class EvidenceTxError extends Error {
+  constructor(public kind: "note" | "reference") { super(kind); }
 }

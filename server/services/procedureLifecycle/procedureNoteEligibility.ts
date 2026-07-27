@@ -27,7 +27,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { procedureEvents } from "@shared/schema/procedureEvents";
 import { ancillaryDocumentReferences } from "@shared/schema/ancillaryDocuments";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
-import { featureFlags } from "../../lib/featureFlags";
+import { procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 
 export type ProcedureNoteEligibilityInput = {
   clinicId: number;
@@ -76,9 +76,10 @@ export async function evaluateProcedureNoteEligibility(
     eligible: false, procedureComplete: false, reportAssociated: false,
     reasons: [], warnings: [], ancillaryCaseId: input.ancillaryCaseId, serviceType: null,
   };
-  // Feature OFF ⇒ zero Phase 2F reads. Procedure Note eligibility reads the
-  // canonical report reference (Phase 2E index), so BOTH flags are required.
-  if (!featureFlags.canonicalProcedureNote || !featureFlags.unifiedAncillaryDocuments) {
+  // Full runtime gate (all three flags) ⇒ otherwise zero Phase 2F reads.
+  // Eligibility reads procedure_events (populated by lifecycle) + the canonical
+  // report reference (Phase 2E index), so partial enablement must not read.
+  if (!procedureNoteRuntimeEnabled()) {
     return { ...base, flagOff: true, reasons: ["procedure_note_flag_off"] };
   }
 
