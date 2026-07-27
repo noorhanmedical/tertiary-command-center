@@ -11,12 +11,19 @@ import { clinics } from "./clinics";
 export const PROCEDURE_STATUSES = [
   "not_started",
   "in_progress",
+  "paused",
   "complete",
   "cancelled",
   "no_show",
+  "unable_to_complete",
   "reschedule_needed",
 ] as const;
 export type ProcedureStatus = typeof PROCEDURE_STATUSES[number];
+
+// Terminal states cannot be reopened through a general update route.
+export const PROCEDURE_TERMINAL_STATUSES: readonly ProcedureStatus[] = [
+  "complete", "cancelled", "no_show", "unable_to_complete",
+];
 
 export const procedureEvents = pgTable("procedure_events", {
   id: serial("id").primaryKey(),
@@ -46,6 +53,18 @@ export const procedureEvents = pgTable("procedure_events", {
   ancillaryCaseId: integer("ancillary_case_id"),
   globalPlexusPatientId: integer("global_plexus_patient_id"),
   patientClinicMembershipId: integer("patient_clinic_membership_id"),
+  // ── Phase 2F-B procedure state-machine history (migration 0054) ──
+  // All nullable + server-owned; legacy rows stay valid. Stamped only by the
+  // dedicated clinic-scoped transition commands, never a client body.
+  startedAt: timestamp("started_at"),
+  pausedAt: timestamp("paused_at"),
+  resumedAt: timestamp("resumed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancellationReason: text("cancellation_reason"),
+  noShowAt: timestamp("no_show_at"),
+  unableToCompleteAt: timestamp("unable_to_complete_at"),
+  unableToCompleteReason: text("unable_to_complete_reason"),
+  lastTransitionAt: timestamp("last_transition_at"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -73,6 +92,15 @@ export const insertProcedureEventSchema = createInsertSchema(procedureEvents).om
   ancillaryCaseId: true,
   globalPlexusPatientId: true,
   patientClinicMembershipId: true,
+  startedAt: true,
+  pausedAt: true,
+  resumedAt: true,
+  cancelledAt: true,
+  cancellationReason: true,
+  noShowAt: true,
+  unableToCompleteAt: true,
+  unableToCompleteReason: true,
+  lastTransitionAt: true,
 });
 
 export type ProcedureEvent = typeof procedureEvents.$inferSelect;

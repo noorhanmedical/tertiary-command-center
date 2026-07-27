@@ -234,6 +234,30 @@ export async function findCanonicalProcedureEventsByCase(
     .limit(5);
 }
 
+/**
+ * INTERNAL canonical lookup that can find a same-case row whose clinic is the
+ * authenticated clinic OR NULL (a clinicless row awaiting synchronization) —
+ * never another non-null clinic's row. NOT exposed through any clinic-facing
+ * API. Used before a duplicate insert so corruption is never hidden behind the
+ * unique-violation path.
+ */
+export async function findCanonicalProcedureEventsByCaseInternal(
+  clinicId: number,
+  ancillaryCaseId: number,
+): Promise<ProcedureEvent[]> {
+  const rows = await db
+    .select()
+    .from(procedureEvents)
+    .where(and(
+      eq(procedureEvents.ancillaryCaseId, ancillaryCaseId),
+      or(isNull(procedureEvents.clinicId), eq(procedureEvents.clinicId, clinicId)),
+    ))
+    .orderBy(desc(procedureEvents.completedAt))
+    .limit(5);
+  // Defensive: never a row belonging to another non-null clinic.
+  return rows.filter((r) => r.clinicId == null || r.clinicId === clinicId);
+}
+
 export type CanonicalProcedureEventInput = {
   clinicId: number;
   ancillaryCaseId: number;
@@ -328,6 +352,22 @@ export async function completeExistingProcedureEvent(
   return { outcome: "completed", procedureEvent: rows[0] };
 }
 
+/** Server-owned sync of a NULL qualifying schedule-event id onto an existing
+ *  canonical event. Exact clinic/case scoped; only fills a currently-NULL id. */
+export async function setProcedureEventScheduleId(
+  id: number, clinicId: number, ancillaryCaseId: number, scheduleEventId: number,
+): Promise<void> {
+  await db
+    .update(procedureEvents)
+    .set({ globalScheduleEventId: scheduleEventId, updatedAt: new Date() })
+    .where(and(
+      eq(procedureEvents.id, id),
+      eq(procedureEvents.clinicId, clinicId),
+      eq(procedureEvents.ancillaryCaseId, ancillaryCaseId),
+      isNull(procedureEvents.globalScheduleEventId),
+    ));
+}
+
 export type LinkProcedureEventOutcome =
   | { outcome: "linked"; procedureEvent: ProcedureEvent }
   | { outcome: "already_linked_same_case_and_synced"; procedureEvent: ProcedureEvent }
@@ -410,6 +450,31 @@ export async function linkProcedureEventToAncillaryCase(input: {
     if (code === PG_UNDEFINED_TABLE || code === PG_UNDEFINED_COLUMN) return { outcome: "migration_missing" };
     throw e;
   }
+}
+
+/**
+ * Apply an exact procedure-event state transition. The WHERE requires the exact
+ * id + clinic + a CURRENT status in `fromStatuses`, and `.returning()` must
+ * affect exactly one row — an invalid/racing transition affects zero rows and
+ * returns null (the caller reports a conflict, never a false success). Never
+ * touches ownership identity. `patch.procedureStatus` is the target state.
+ */
+export async function applyProcedureTransition(
+  id: number,
+  clinicId: number,
+  fromStatuses: readonly string[],
+  patch: Record<string, unknown>,
+): Promise<ProcedureEvent | null> {
+  const rows = await db
+    .update(procedureEvents)
+    .set({ ...patch, lastTransitionAt: new Date(), updatedAt: new Date() })
+    .where(and(
+      eq(procedureEvents.id, id),
+      eq(procedureEvents.clinicId, clinicId),
+      inArray(procedureEvents.procedureStatus, fromStatuses as string[]),
+    ))
+    .returning();
+  return rows.length === 1 ? rows[0] : null;
 }
 
 export type MarkProcedureCompleteInput = {

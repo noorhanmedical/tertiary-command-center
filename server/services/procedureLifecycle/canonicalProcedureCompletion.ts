@@ -30,10 +30,11 @@ import {
 } from "../../repositories/ancillaryCases.repo";
 import { getGlobalScheduleEventById } from "../../repositories/globalSchedule.repo";
 import {
-  findCanonicalProcedureEventsByCase,
+  findCanonicalProcedureEventsByCaseInternal,
   insertCanonicalProcedureEvent,
   completeExistingProcedureEvent,
   linkProcedureEventToAncillaryCase,
+  setProcedureEventScheduleId,
   type ProcedureEvent,
 } from "../../repositories/procedureEvents.repo";
 import { upsertProcedureCompleteEvent } from "../../repositories/globalSchedule.repo";
@@ -139,7 +140,8 @@ function validateScheduleEvent(
   expectedCaseId: number | null,
 ): ResolveResult | { kind: "ok"; event: GlobalScheduleEvent } {
   if (!evt || !CANONICAL_EVENT_TYPES.has(evt.eventType)) return { kind: "invalid_schedule_event" };
-  if (evt.clinicId != null && evt.clinicId !== input.clinicId) return { kind: "cross_clinic_denied" };
+  // A canonical schedule event must carry a non-null clinic equal to the auth clinic.
+  if (evt.clinicId == null || evt.clinicId !== input.clinicId) return { kind: "cross_clinic_denied" };
   if (evt.ancillaryCaseId == null) return { kind: "invalid_schedule_event" };
   if (expectedCaseId != null && evt.ancillaryCaseId !== expectedCaseId) return { kind: "invalid_schedule_event" };
   // Not cancelled / no_show / blocked / pending_sync / rescheduled-away.
@@ -148,6 +150,17 @@ function validateScheduleEvent(
   if (input.executionCaseId != null && evt.executionCaseId != null && evt.executionCaseId !== input.executionCaseId) return { kind: "identity_mismatch" };
   if (input.patientScreeningId != null && evt.patientScreeningId != null && evt.patientScreeningId !== input.patientScreeningId) return { kind: "identity_mismatch" };
   return { kind: "ok", event: evt };
+}
+
+/** §2C — the schedule event must agree with the RESOLVED case even when the
+ *  request omitted executionCaseId / patientScreeningId. */
+function scheduleAgreesWithCase(evt: GlobalScheduleEvent, c: PatientAncillaryCase): ResolveResult | { kind: "ok" } {
+  if (evt.ancillaryCaseId !== c.id) return { kind: "invalid_schedule_event" };
+  if (evt.clinicId !== c.clinicId) return { kind: "cross_clinic_denied" };
+  if (evt.serviceType != null && evt.serviceType !== c.serviceType) return { kind: "service_mismatch" };
+  if (evt.executionCaseId != null && c.executionCaseId != null && evt.executionCaseId !== c.executionCaseId) return { kind: "identity_mismatch" };
+  if (evt.patientScreeningId != null && c.originatingScreeningId != null && evt.patientScreeningId !== c.originatingScreeningId) return { kind: "identity_mismatch" };
+  return { kind: "ok" };
 }
 
 export async function resolveCanonicalProcedureCaseIdentity(
@@ -161,6 +174,8 @@ export async function resolveCanonicalProcedureCaseIdentity(
     if (input.globalScheduleEventId != null) {
       const sv = validateScheduleEvent(input, await getGlobalScheduleEventById(input.globalScheduleEventId), v.case.id);
       if (sv.kind !== "ok") return sv;
+      const ag = scheduleAgreesWithCase(sv.event, v.case);
+      if (ag.kind !== "ok") return ag;
       qualifying = sv.event.id;
     }
     return { kind: "resolved", case: v.case, qualifyingScheduleEventId: qualifying };
@@ -171,6 +186,8 @@ export async function resolveCanonicalProcedureCaseIdentity(
     if (sv.kind !== "ok") return sv;
     const v = validateCase(input, await getAncillaryCaseById(sv.event.ancillaryCaseId as number));
     if (v.kind !== "ok") return v;
+    const ag = scheduleAgreesWithCase(sv.event, v.case);
+    if (ag.kind !== "ok") return ag;
     return { kind: "resolved", case: v.case, qualifyingScheduleEventId: sv.event.id };
   }
   // 3. Deterministic legacy fallback — exactly one active same-clinic case.
@@ -195,8 +212,11 @@ async function runDerivedSideEffects(
   input: CompleteCanonicalProcedureInput,
   completedAt: Date,
 ): Promise<void> {
+  // §2B — derived effects use the PERSISTED event.completedAt (the immutable
+  // canonical completion instant), never the request/retry-time variable.
+  const effectiveCompletedAt = pe.completedAt ?? completedAt;
   const ctx = {
-    procedureEventId: pe.id, completedAt, serviceType: input.serviceType,
+    procedureEventId: pe.id, completedAt: effectiveCompletedAt, serviceType: input.serviceType,
     executionCaseId: input.executionCaseId ?? pe.executionCaseId ?? null,
     patientScreeningId: input.patientScreeningId ?? pe.patientScreeningId ?? null,
     patientName: input.patientName ?? null, patientDob: input.patientDob ?? null,
@@ -312,14 +332,45 @@ type EventResult =
   | { kind: "timestamp_conflict"; event: ProcedureEvent }
   | { kind: "identity_mismatch" };
 
-/** Validate an existing case-scoped event is compatible before reusing it. */
-function existingCompatible(ex: ProcedureEvent, input: CompleteCanonicalProcedureInput, acase: PatientAncillaryCase): boolean {
+/** Validate an existing case-scoped event is compatible before reusing it —
+ *  including exact schedule-event agreement (a conflicting non-null schedule id
+ *  is identity_mismatch). */
+function existingCompatible(ex: ProcedureEvent, input: CompleteCanonicalProcedureInput, acase: PatientAncillaryCase, qualifyingScheduleEventId: number | null): boolean {
   if (ex.clinicId != null && ex.clinicId !== input.clinicId) return false;
   if (ex.ancillaryCaseId !== acase.id) return false;
   if (ex.serviceType !== input.serviceType) return false;
   if (ex.executionCaseId != null && input.executionCaseId != null && ex.executionCaseId !== input.executionCaseId) return false;
   if (ex.patientScreeningId != null && input.patientScreeningId != null && ex.patientScreeningId !== input.patientScreeningId) return false;
+  if (ex.globalScheduleEventId != null && qualifyingScheduleEventId != null && ex.globalScheduleEventId !== qualifyingScheduleEventId) return false;
   return true;
+}
+
+/** Complete an existing (possibly clinicless) same-case row. A clinicless row
+ *  is synchronized (clinic filled) via the hardened linkage BEFORE completion,
+ *  so its clinic-scoped completion WHERE matches — corruption is never hidden. */
+async function completeExisting(ex: ProcedureEvent, input: CompleteCanonicalProcedureInput, acase: PatientAncillaryCase, qualifyingScheduleEventId: number | null, completedAt: Date, explicit: boolean): Promise<EventResult> {
+  if (!existingCompatible(ex, input, acase, qualifyingScheduleEventId)) return { kind: "identity_mismatch" };
+  let row = ex;
+  if (row.clinicId == null || row.globalScheduleEventId == null && qualifyingScheduleEventId != null) {
+    const link = await linkProcedureEventToAncillaryCase({
+      procedureEventId: row.id, clinicId: input.clinicId, ancillaryCaseId: acase.id,
+      globalPlexusPatientId: acase.globalPlexusPatientId ?? null, patientClinicMembershipId: acase.patientClinicMembershipId ?? null,
+    });
+    if (link.outcome === "identity_conflict" || link.outcome === "ownership_conflict") return { kind: "identity_mismatch" };
+    if (link.outcome === "zero_row_conflict") return { kind: "zero_row" };
+    if (link.outcome === "linked" || link.outcome === "already_linked_same_case_and_synced") row = link.procedureEvent;
+    // Synchronize a NULL schedule-event id to the validated qualifying event.
+    if (row.globalScheduleEventId == null && qualifyingScheduleEventId != null && row.clinicId != null) {
+      await setProcedureEventScheduleId(row.id, row.clinicId, acase.id, qualifyingScheduleEventId);
+    }
+  }
+  const done = await completeExistingProcedureEvent(row, { clinicId: input.clinicId, ancillaryCaseId: acase.id, serviceType: input.serviceType }, { completedAt, explicit, completedByUserId: input.completedByUserId ?? null, note: input.note ?? null });
+  switch (done.outcome) {
+    case "completed":
+    case "already_complete_preserved": return { kind: "event", event: done.procedureEvent };
+    case "timestamp_conflict": return { kind: "timestamp_conflict", event: done.procedureEvent };
+    case "zero_row_conflict": return { kind: "zero_row" };
+  }
 }
 
 async function selectOrCreateCanonicalEvent(
@@ -329,18 +380,10 @@ async function selectOrCreateCanonicalEvent(
   completedAt: Date,
   explicit: boolean,
 ): Promise<EventResult> {
-  const existing = await findCanonicalProcedureEventsByCase(input.clinicId, acase.id);
+  const existing = await findCanonicalProcedureEventsByCaseInternal(input.clinicId, acase.id);
   if (existing.length > 1) return { kind: "ambiguous" };
   if (existing.length === 1) {
-    const ex = existing[0];
-    if (!existingCompatible(ex, input, acase)) return { kind: "identity_mismatch" };
-    const done = await completeExistingProcedureEvent(ex, { clinicId: input.clinicId, ancillaryCaseId: acase.id, serviceType: input.serviceType }, { completedAt, explicit, completedByUserId: input.completedByUserId ?? null, note: input.note ?? null });
-    switch (done.outcome) {
-      case "completed":
-      case "already_complete_preserved": return { kind: "event", event: done.procedureEvent };
-      case "timestamp_conflict": return { kind: "timestamp_conflict", event: done.procedureEvent };
-      case "zero_row_conflict": return { kind: "zero_row" };
-    }
+    return completeExisting(existing[0], input, acase, qualifyingScheduleEventId, completedAt, explicit);
   }
   try {
     const created = await insertCanonicalProcedureEvent({
@@ -359,13 +402,10 @@ async function selectOrCreateCanonicalEvent(
     if ((e as { code?: string })?.code === PG_UNIQUE_VIOLATION) {
       // Concurrent insert for the SAME case — reselect the exact case winner and
       // preserve ITS completedAt (idempotent, never rewrite the winner's time).
-      const again = await findCanonicalProcedureEventsByCase(input.clinicId, acase.id);
+      const again = await findCanonicalProcedureEventsByCaseInternal(input.clinicId, acase.id);
       if (again.length > 1) return { kind: "ambiguous" };
       if (again.length === 1) {
-        const done = await completeExistingProcedureEvent(again[0], { clinicId: input.clinicId, ancillaryCaseId: acase.id, serviceType: input.serviceType }, { completedAt, explicit, completedByUserId: input.completedByUserId ?? null, note: input.note ?? null });
-        if (done.outcome === "timestamp_conflict") return { kind: "timestamp_conflict", event: done.procedureEvent };
-        if (done.outcome === "zero_row_conflict") return { kind: "zero_row" };
-        return { kind: "event", event: done.procedureEvent };
+        return completeExisting(again[0], input, acase, qualifyingScheduleEventId, completedAt, explicit);
       }
     }
     throw e;

@@ -135,6 +135,11 @@ export const ANCILLARY_DOCUMENT_FAILURE_ACTIONS = [
   // report-reference evidence once it becomes resolvable — never fabricated.
   "link_procedure_note",
   "link_procedure_note_evidence",
+  // ── Phase 2F-B Procedure Note lifecycle reconciliation actions ──
+  "generate_procedure_note",         // run the generator for an exact pending note
+  "reconcile_procedure_note_lineage", // supersede + create amendment on report replacement
+  "void_procedure_note",             // void a note whose procedure became invalid
+  "sync_procedure_note_signature",   // mirror a signature transition onto the exact reference
 ] as const;
 export type AncillaryDocumentFailureAction =
   (typeof ANCILLARY_DOCUMENT_FAILURE_ACTIONS)[number];

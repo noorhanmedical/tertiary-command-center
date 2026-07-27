@@ -17,6 +17,10 @@ export const NOTE_GENERATION_STATUSES = [
   "generated",
   "failed",
   "approved",
+  // Phase 2F-B — an unsigned note voided because its procedure became invalid
+  // (cancelled/no_show/unable_to_complete) or its report was superseded. The
+  // generated body is retained for audit; the note is superseded (not current).
+  "voided",
 ] as const;
 export type NoteGenerationStatus = typeof NOTE_GENERATION_STATUSES[number];
 

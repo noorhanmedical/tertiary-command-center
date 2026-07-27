@@ -19,9 +19,12 @@ import {
 } from "@shared/schema/ancillaryDocuments";
 import { createOrReuseOrderNote, linkOrderNoteAdminReviewEvidence } from "./orderNoteService";
 import { ensureAncillaryDocumentReference } from "./documentReferenceWriter";
-import { createOrReuseProcedureNote, linkProcedureNoteEvidence, ensureProcedureNoteReferenceForNote } from "../procedureLifecycle/procedureNoteService";
-import { onProcedureCompleted } from "../procedureLifecycle/procedureLifecycleOrchestration";
-import { featureFlags as flags, procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
+import { createOrReuseProcedureNote, linkProcedureNoteEvidence, ensureProcedureNoteReferenceForNote, syncProcedureNoteReferenceSignature } from "../procedureLifecycle/procedureNoteService";
+import { onProcedureCompleted, ensureCanonicalProcedureNoteForAncillaryCase } from "../procedureLifecycle/procedureLifecycleOrchestration";
+import { generateProcedureNote } from "../procedureLifecycle/procedureNoteGenerator";
+import { voidProcedureNoteLineageForCase } from "../procedureLifecycle/procedureNoteLineage";
+import { getProcedureNoteByIdForClinic } from "../../repositories/physicianPortal.repo";
+import { featureFlags as flags, procedureNoteRuntimeEnabled, procedureNoteGeneratorEnabled } from "../../lib/featureFlags";
 import {
   loadCanonicalDocumentSource,
   discoverCanonicalDocumentSource,
@@ -220,6 +223,18 @@ export async function retryAncillaryDocumentFailure(
     if (failure.requestedAction === "link_procedure_note_evidence") {
       return await retryProcedureNoteEvidence(failure);
     }
+    if (failure.requestedAction === "generate_procedure_note") {
+      return await retryGenerateProcedureNote(failure);
+    }
+    if (failure.requestedAction === "reconcile_procedure_note_lineage") {
+      return await retryProcedureNoteLineage(failure);
+    }
+    if (failure.requestedAction === "void_procedure_note") {
+      return await retryVoidProcedureNote(failure);
+    }
+    if (failure.requestedAction === "sync_procedure_note_signature") {
+      return await retryProcedureNoteSignatureSync(failure);
+    }
     if (REFERENCE_ACTIONS.has(failure.requestedAction)) {
       return await retryReferenceLink(failure);
     }
@@ -357,6 +372,64 @@ async function retryProcedureNoteEvidence(
     case "migration_missing": return { ...base, status: "migration_missing" };
     default: return { ...base, status: "still_deferred" };
   }
+}
+
+/** §9 — run the generator for an EXACT pending note; resolve only on success. */
+async function retryGenerateProcedureNote(failure: AncillaryDocumentReconciliationFailure): Promise<DocumentRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+  if (!procedureNoteGeneratorEnabled()) return { ...base, status: "skipped_flag_off" };
+  if (failure.ancillaryCaseId == null || failure.sourceId == null || failure.sourceTable !== PROCEDURE_NOTE_SOURCE_TABLE) return { ...base, status: "still_deferred", message: "invalid_source" };
+  const r = await generateProcedureNote({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, noteId: failure.sourceId });
+  if (r.status === "generated") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
+  if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
+  if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
+  if (r.status === "not_yet_eligible") return { ...base, status: "not_yet_eligible" };
+  return { ...base, status: "still_deferred", message: r.status };
+}
+
+/** §9 — re-drive the case ensure (which supersedes + amends on report change). */
+async function retryProcedureNoteLineage(failure: AncillaryDocumentReconciliationFailure): Promise<DocumentRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+  if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
+  if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
+  const r = await ensureCanonicalProcedureNoteForAncillaryCase({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, source: "document_retry_worker" });
+  if (r.status === "created" || r.status === "reused") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
+  if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
+  if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
+  if (r.status === "not_yet_eligible") return { ...base, status: "not_yet_eligible" };
+  return { ...base, status: "still_deferred", message: r.status };
+}
+
+/** §9 — idempotent void of the current note lineage for a case. */
+async function retryVoidProcedureNote(failure: AncillaryDocumentReconciliationFailure): Promise<DocumentRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+  if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
+  if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
+  const r = await voidProcedureNoteLineageForCase({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, reason: "retry_void", actorUserId: null });
+  if (r.status === "voided" || r.status === "no_current_note") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
+  if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
+  return { ...base, status: "still_deferred", message: r.status };
+}
+
+/** §9 — mirror an exact note's current signature onto its exact reference. */
+async function retryProcedureNoteSignatureSync(failure: AncillaryDocumentReconciliationFailure): Promise<DocumentRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+  if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
+  if (failure.sourceId == null || failure.sourceTable !== PROCEDURE_NOTE_SOURCE_TABLE) return { ...base, status: "still_deferred", message: "invalid_source" };
+  const note = await getProcedureNoteByIdForClinic({ id: failure.sourceId, clinicId: failure.clinicId });
+  if (!note) return { ...base, status: "source_not_found" };
+  const documentStatus = note.signatureStatus === "signed" ? "signed" as const : "pending_signature" as const;
+  const r = await syncProcedureNoteReferenceSignature({ clinicId: failure.clinicId, ancillaryCaseId: note.ancillaryCaseId ?? null, noteId: note.id, documentStatus, signedAt: note.signedAt ?? null });
+  if (r.status === "synced") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
+  if (r.status === "case_mismatch") return { ...base, status: "case_mismatch" };
+  if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
+  if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
+  if (r.status === "no_reference") return { ...base, status: "reference_missing" };
+  return { ...base, status: "still_deferred" };
 }
 
 export async function retryUnresolvedAncillaryDocumentFailures(args?: {

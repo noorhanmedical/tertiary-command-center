@@ -150,6 +150,11 @@ export const featureFlags = {
    *  create/reuse foundation. Pair-gated: the eligibility read of the report
    *  reference also needs the Phase 2E reference index applied/ON. */
   canonicalProcedureNote: readBool("FEATURE_CANONICAL_PROCEDURE_NOTE", false),
+
+  /** Enables the Procedure Note clinical-body GENERATOR. Requires the full
+   *  Procedure Note runtime (all three flags above) IN ADDITION to this flag —
+   *  see procedureNoteGeneratorEnabled(). Default OFF. Never auto-signs. */
+  procedureNoteGenerator: readBool("FEATURE_PROCEDURE_NOTE_GENERATOR", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;
@@ -174,4 +179,9 @@ export function procedureNoteRuntimeEnabled(): boolean {
     featureFlags.canonicalProcedureNote &&
     featureFlags.unifiedAncillaryDocuments
   );
+}
+
+/** The generator requires the full Procedure Note runtime AND its own flag. */
+export function procedureNoteGeneratorEnabled(): boolean {
+  return procedureNoteRuntimeEnabled() && featureFlags.procedureNoteGenerator;
 }

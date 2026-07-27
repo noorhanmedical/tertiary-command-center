@@ -137,8 +137,22 @@ export async function ensureCanonicalProcedureNoteForAncillaryCase(
       }
       case "deferred_legacy_ambiguous":
         return { status: "deferred_ambiguous_case", ancillaryCaseId: input.ancillaryCaseId, warnings: [r.reason] };
+      case "deferred_evidence_sync":
+        return { status: "deferred_reference", ancillaryCaseId: input.ancillaryCaseId, warnings: [r.reason] };
+      case "amended":
+        // A new pending amendment note was created — treat as reused (a current
+        // note exists); generation is deferred to the generator/retry.
+        return { status: "reused", procedureNoteId: r.newNoteId ?? undefined, ancillaryCaseId: input.ancillaryCaseId, warnings: ["amended"] };
       case "created":
       case "reused": {
+        // Trigger the clinical-body generator when its runtime is enabled
+        // (awaited, non-throwing). Default OFF ⇒ no-op; never auto-signs.
+        if (featureFlags.procedureNoteGenerator && r.procedureNoteId != null) {
+          try {
+            const { generateProcedureNote } = await import("./procedureNoteGenerator");
+            await generateProcedureNote({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, noteId: r.procedureNoteId });
+          } catch { /* generator is non-blocking; its own retry ledger covers failure */ }
+        }
         const status: ProcedureNoteHookStatus = r.referenceDeferred ? "deferred_reference" : r.status;
         return { status, procedureNoteId: r.procedureNoteId, ancillaryCaseId: input.ancillaryCaseId, warnings: r.warnings };
       }

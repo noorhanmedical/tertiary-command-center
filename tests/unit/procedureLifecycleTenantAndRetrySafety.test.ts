@@ -532,7 +532,7 @@ async function testMigration() {
   const body = MIGRATION.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
   assert.ok(/CREATE UNIQUE INDEX IF NOT EXISTS uq_pe_canonical_ancillary_case[\s\S]*?ON procedure_events\(ancillary_case_id\)[\s\S]*?WHERE ancillary_case_id IS NOT NULL/i.test(body), "(31) canonical procedure-event case uniqueness added");
   assert.ok(!/DROP COLUMN/i.test(body.toUpperCase()) && !/DROP TABLE/i.test(body.toUpperCase()) && !/TRUNCATE/i.test(body.toUpperCase()), "(32) additive/legacy-compatible");
-  assert.ok(!/(?<!IS )\bNOT NULL\b/i.test(body.toUpperCase()), "no column NOT NULL that breaks legacy inserts");
+  assert.ok(!/ADD COLUMN[^,;]*\bNOT NULL\b/i.test(body), "no ADD COLUMN NOT NULL that breaks legacy inserts");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [

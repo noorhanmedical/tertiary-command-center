@@ -108,6 +108,7 @@ export type FlagOverrides = {
   canonicalOrderNote?: boolean;
   canonicalProcedureLifecycle?: boolean;
   canonicalProcedureNote?: boolean;
+  procedureNoteGenerator?: boolean;
 };
 
 export async function runWithDb<T>(
@@ -131,6 +132,7 @@ export async function runWithDb<T>(
     canonicalOrderNote: ff.canonicalOrderNote,
     canonicalProcedureLifecycle: ff.canonicalProcedureLifecycle,
     canonicalProcedureNote: ff.canonicalProcedureNote,
+    procedureNoteGenerator: ff.procedureNoteGenerator,
   };
   const { db: fake, calls } = buildFakeDb(spec);
   for (const k of Object.keys(savedDb)) dbObj[k] = (fake as unknown as Record<string, unknown>)[k];
@@ -141,6 +143,7 @@ export async function runWithDb<T>(
   if (flags.canonicalOrderNote !== undefined) ff.canonicalOrderNote = flags.canonicalOrderNote;
   if (flags.canonicalProcedureLifecycle !== undefined) ff.canonicalProcedureLifecycle = flags.canonicalProcedureLifecycle;
   if (flags.canonicalProcedureNote !== undefined) ff.canonicalProcedureNote = flags.canonicalProcedureNote;
+  if (flags.procedureNoteGenerator !== undefined) ff.procedureNoteGenerator = flags.procedureNoteGenerator;
   try {
     return await fn(calls);
   } finally {
@@ -152,6 +155,7 @@ export async function runWithDb<T>(
     ff.canonicalOrderNote = savedFlags.canonicalOrderNote!;
     ff.canonicalProcedureLifecycle = savedFlags.canonicalProcedureLifecycle!;
     ff.canonicalProcedureNote = savedFlags.canonicalProcedureNote!;
+    ff.procedureNoteGenerator = savedFlags.procedureNoteGenerator!;
   }
 }
 
@@ -169,6 +173,7 @@ export async function loadCanonicalTables() {
   const docReadiness = await import("../../shared/schema/documentReadiness");
   const adminRev = await import("../../shared/schema/adminReviewEvents");
   const procEvents = await import("../../shared/schema/procedureEvents");
+  const prereq = await import("../../shared/schema/procedurePrerequisites");
   return {
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
@@ -188,6 +193,7 @@ export async function loadCanonicalTables() {
     caseDocumentReadiness: docReadiness.caseDocumentReadiness,
     adminReviewEvents: adminRev.ancillaryCaseAdminReviewEvents,
     procedureEvents: procEvents.procedureEvents,
+    prerequisiteConfig: prereq.ancillaryServicePrerequisiteConfig,
   };
 }
 

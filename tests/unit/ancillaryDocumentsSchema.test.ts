@@ -105,6 +105,8 @@ async function testRetryLedgerNoPhi() {
     "create_reference", "refresh_projection", "link_order_note", "link_report",
     "link_consent", "link_screening_form", "supersede_reference",
     "link_order_note_evidence", "link_procedure_note", "link_procedure_note_evidence",
+    "generate_procedure_note", "reconcile_procedure_note_lineage",
+    "void_procedure_note", "sync_procedure_note_signature",
   ]);
   // Phase 2E actions live in the 0053 CHECK; the two Phase 2F actions are
   // widened in by 0054 and MUST NOT have been retro-added to 0053.

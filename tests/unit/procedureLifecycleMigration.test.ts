@@ -63,9 +63,10 @@ async function testNoTruncateClinics() {
 // (24) legacy unlinked post-procedure-note writes remain valid with flags OFF:
 //      no case-required CHECK / NOT NULL is imposed on the identity columns.
 async function testLegacyWritersRemainValid() {
-  // "ancillary_case_id IS NOT NULL" (a partial-index WHERE predicate) is fine;
-  // a column-level NOT NULL constraint is what would break legacy inserts.
-  assert.ok(!/(?<!IS )\bNOT NULL\b/i.test(BODY_UP), "no column NOT NULL imposed (would break legacy inserts)");
+  // A NOT NULL on an ADD COLUMN of an EXISTING table breaks legacy inserts. A
+  // new CREATE TABLE with NOT NULL columns is fine (no legacy rows). "IS NOT
+  // NULL" partial-index predicates are also fine.
+  assert.ok(!/ADD COLUMN[^,;]*\bNOT NULL\b/i.test(BODY), "no ADD COLUMN NOT NULL imposed (would break legacy inserts)");
   assert.ok(!/ADD CONSTRAINT\s+\w*\s*CHECK\s*\([^)]*ancillary_case_id/i.test(BODY), "no case-required CHECK on procedure rows");
   // The legacy partial (ancillary_case_id IS NULL) must survive so
   // createPendingProcedureNotes keeps inserting unlinked post_procedure_notes.

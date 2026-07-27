@@ -48,7 +48,18 @@
 ALTER TABLE procedure_events
   ADD COLUMN IF NOT EXISTS ancillary_case_id            INTEGER REFERENCES patient_ancillary_cases(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS global_plexus_patient_id     INTEGER REFERENCES global_plexus_patients(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS patient_clinic_membership_id INTEGER REFERENCES patient_clinic_memberships(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS patient_clinic_membership_id INTEGER REFERENCES patient_clinic_memberships(id) ON DELETE SET NULL,
+  -- Phase 2F-B procedure state-machine history — all nullable + server-owned;
+  -- legacy rows stay valid (no mandatory constraint / CHECK).
+  ADD COLUMN IF NOT EXISTS started_at                   TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS paused_at                    TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS resumed_at                   TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS cancelled_at                 TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS cancellation_reason          TEXT,
+  ADD COLUMN IF NOT EXISTS no_show_at                   TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS unable_to_complete_at        TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS unable_to_complete_reason    TEXT,
+  ADD COLUMN IF NOT EXISTS last_transition_at           TIMESTAMP;
 
 CREATE INDEX IF NOT EXISTS idx_pe_ancillary_case ON procedure_events(ancillary_case_id);
 
@@ -119,5 +130,48 @@ ALTER TABLE ancillary_document_reconciliation_failures
     CHECK (requested_action IN (
       'create_reference','refresh_projection','link_order_note','link_report',
       'link_consent','link_screening_form','supersede_reference',
-      'link_order_note_evidence','link_procedure_note','link_procedure_note_evidence'
+      'link_order_note_evidence','link_procedure_note','link_procedure_note_evidence',
+      'generate_procedure_note','reconcile_procedure_note_lineage',
+      'void_procedure_note','sync_procedure_note_signature'
     ));
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 6. Configurable service-specific procedure prerequisites (Phase 2F-B)
+-- ═══════════════════════════════════════════════════════════════════
+-- Consent / insurance / authorization / coding are NOT universal blockers.
+-- Each clinic (or a platform default when clinic_id IS NULL) configures per
+-- service + stage whether a requirement is a hard/soft/documentation/billing/
+-- claim blocker and whether an authorized role may override it. Additive.
+CREATE TABLE IF NOT EXISTS ancillary_service_prerequisite_config (
+  id                       SERIAL PRIMARY KEY,
+  clinic_id                INTEGER REFERENCES clinics(id) ON DELETE CASCADE,
+  service_type             TEXT NOT NULL,
+  requirement_code         TEXT NOT NULL,
+  blocker_category         TEXT NOT NULL,
+  blocks_stage             TEXT NOT NULL,
+  required                 BOOLEAN NOT NULL DEFAULT TRUE,
+  override_allowed         BOOLEAN NOT NULL DEFAULT FALSE,
+  override_roles           TEXT,
+  override_audit_required  BOOLEAN NOT NULL DEFAULT TRUE,
+  active                   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT chk_aspc_blocker_category CHECK (blocker_category IN (
+    'hard_procedure_blocker','soft_operational_warning','documentation_follow_up',
+    'billing_blocker','claim_submission_blocker')),
+  CONSTRAINT chk_aspc_blocks_stage CHECK (blocks_stage IN (
+    'scheduling','check_in','procedure_start','billing','claim_submission'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_aspc_service ON ancillary_service_prerequisite_config(service_type);
+CREATE INDEX IF NOT EXISTS idx_aspc_clinic  ON ancillary_service_prerequisite_config(clinic_id);
+
+-- Deterministic uniqueness by clinic/default + service + requirement + stage.
+-- Two disjoint partial-unique models (a set clinic vs the NULL platform default)
+-- so a clinic override and the default never collide.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_aspc_clinic
+  ON ancillary_service_prerequisite_config(clinic_id, service_type, requirement_code, blocks_stage)
+  WHERE clinic_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_aspc_default
+  ON ancillary_service_prerequisite_config(service_type, requirement_code, blocks_stage)
+  WHERE clinic_id IS NULL;

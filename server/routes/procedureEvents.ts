@@ -13,6 +13,11 @@ import {
   completeCanonicalProcedure,
   type CompleteCanonicalProcedureStatus,
 } from "../services/procedureLifecycle/canonicalProcedureCompletion";
+import {
+  startProcedure, pauseProcedure, resumeProcedure, cancelProcedure,
+  markProcedureNoShow, markProcedureUnableToComplete,
+  type ProcedureTransitionResult, type StartProcedureResult,
+} from "../services/procedureLifecycle/procedureStateMachine";
 
 const procedureCompleteSchema = z.object({
   serviceType: z.string().min(1, "serviceType is required"),
@@ -161,6 +166,68 @@ export function registerProcedureEventRoutes(app: Express) {
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  // ─── Phase 2F-B procedure state machine (clinic-scoped) ───────────────────
+  function mapTransition(res: Response, r: ProcedureTransitionResult) {
+    if (r.status === "transitioned") return res.status(200).json({ status: r.status, procedureEvent: r.procedureEvent ? toClinicDto(r.procedureEvent) : undefined });
+    if (r.status === "not_found") return res.status(404).json({ error: "Not found", status: r.status });
+    if (r.status === "skipped_flag_off") return res.status(409).json({ error: "Canonical procedure lifecycle disabled", status: r.status });
+    return res.status(409).json({ error: "Invalid transition", status: r.status });
+  }
+  function idParam(req: Request, res: Response): number | null {
+    const id = parseInt(String(req.params.id), 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return null; }
+    return id;
+  }
+
+  app.post("/api/procedure-events/start", async (req, res) => {
+    try {
+      const clinicId = requireClinicScope(req, res); if (clinicId == null) return;
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      if (typeof b.serviceType !== "string" || b.serviceType.length === 0) return res.status(400).json({ error: "serviceType is required" });
+      const serviceType: string = b.serviceType;
+      const r: StartProcedureResult = await startProcedure({
+        clinicId, serviceType,
+        ancillaryCaseId: typeof b.ancillaryCaseId === "number" ? b.ancillaryCaseId : undefined,
+        globalScheduleEventId: typeof b.globalScheduleEventId === "number" ? b.globalScheduleEventId : undefined,
+        executionCaseId: typeof b.executionCaseId === "number" ? b.executionCaseId : undefined,
+        patientScreeningId: typeof b.patientScreeningId === "number" ? b.patientScreeningId : undefined,
+        actorUserId: req.session?.userId ?? null, actorRole: req.session?.role ?? null,
+      });
+      if (r.status === "started") return res.status(201).json({ status: r.status, procedureEvent: r.procedureEvent ? toClinicDto(r.procedureEvent) : undefined, prerequisites: r.prerequisites });
+      if (r.status === "prerequisites_blocked") return res.status(422).json({ status: r.status, prerequisites: r.prerequisites });
+      if (r.status === "migration_missing") return res.status(503).json({ status: r.status });
+      if (r.status === "case_not_found" || r.status === "cross_clinic_denied") return res.status(404).json({ error: "Not found", status: r.status });
+      if (r.status === "skipped_flag_off") return res.status(409).json({ error: "Canonical procedure lifecycle disabled", status: r.status });
+      return res.status(409).json({ error: "Cannot start", status: r.status });
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  const bodyReason = (req: Request): string | null => {
+    const r = (req.body ?? {}) as Record<string, unknown>;
+    return typeof r.reason === "string" && r.reason.trim().length > 0 ? r.reason.trim() : null;
+  };
+
+  app.post("/api/procedure-events/:id/pause", async (req, res) => {
+    try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await pauseProcedure(id, c, req.session?.userId ?? null)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post("/api/procedure-events/:id/resume", async (req, res) => {
+    try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await resumeProcedure(id, c, req.session?.userId ?? null)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post("/api/procedure-events/:id/cancel", async (req, res) => {
+    try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await cancelProcedure(id, c, bodyReason(req), req.session?.userId ?? null)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post("/api/procedure-events/:id/no-show", async (req, res) => {
+    try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await markProcedureNoShow(id, c, bodyReason(req), req.session?.userId ?? null)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post("/api/procedure-events/:id/unable-to-complete", async (req, res) => {
+    try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await markProcedureUnableToComplete(id, c, bodyReason(req), req.session?.userId ?? null)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // GET /api/procedure-events/:id — clinic-scoped single-record.

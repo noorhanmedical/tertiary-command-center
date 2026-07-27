@@ -367,38 +367,36 @@ async function testUnsignedEvidenceSync() {
   assert.equal(zero.status, "zero_row_conflict");
 }
 
-// (30/31/32) signed note evidence conflict — unchanged, reference not rewritten, exact reconciliation
+// (30/31/32) signed note whose report changed → audited AMENDMENT: prior signed
+// body/signer/signedAt immutable, superseded; a new pending amendment created.
 async function testSignedEvidenceConflict() {
   const t = await loadCanonicalTables();
   const n = await noteSvc();
-  let refPayload: Record<string, unknown> | null = null;
-  let failurePayload: Record<string, unknown> | null = null;
+  let supersedePayload: Record<string, unknown> | null = null;
+  let newNotePayload: Record<string, unknown> | null = null;
   // Signed note whose STORED evidence (111/222) differs from eligibility (300/42).
   const signed = noteRow({ signatureStatus: "signed", signedAt: OLD, procedureEventId: 111, reportDocumentReferenceId: 222 });
   const spec = new Map<unknown, TableSpec>([
     [t.ancillaryCases, { select: () => [caseRow()] }],
     [t.procedureEvents, { select: () => [peRow()] }],
-    [t.documentReferences, { select: qsel([[reportRef()], [], []]), onInsert: (v) => { refPayload = v; return [{ ...v, id: 55 }]; } }],
-    [t.procedureNotes, { select: () => [signed], onUpdate: () => { throw new Error("signed note must not be updated"); } }],
+    [t.documentReferences, { select: qsel([[reportRef()]]), onUpdate: (v) => [{ ...v }] }],
+    [t.procedureNotes, { select: () => [signed], onUpdate: (v) => { supersedePayload = v; return [{ ...signed, ...v }]; }, onInsert: (v) => { newNotePayload = v; return [{ ...noteRow(), ...v, id: 901 }]; } }],
     [t.journeyEvents, { onInsert: () => [] }],
-    [t.documentFailures, { select: () => [], onInsert: (v) => { failurePayload = v; return [{ ...v, id: 1 }]; } }],
+    [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);
-  const r = await runWithDb(spec, ALL, async (calls: Call[]) => {
-    const res = await n.createOrReuseProcedureNote({ clinicId: 1, ancillaryCaseId: 5, source: "test" });
-    assert.equal(countOps(calls, "update", t.procedureNotes), 0, "(30) signed note is never rewritten");
-    return res;
-  });
-  assert.equal(r.status, "reused");
-  if (r.status === "reused") assert.ok(r.warnings.includes("signed_evidence_conflict"));
-  // (31) reference metadata reflects the SIGNED note's stored evidence, not eligibility.
-  const meta = (refPayload as Record<string, unknown>).metadata as Record<string, unknown>;
-  assert.equal(meta.procedure_event_id, 111, "(31) reference keeps signed note's stored evidence");
-  assert.equal(meta.report_document_reference_id, 222);
-  // (32) exact link_procedure_note_evidence reconciliation recorded for the note.
-  const f = failurePayload as Record<string, unknown>;
-  assert.equal(f.requestedAction, "link_procedure_note_evidence");
-  assert.equal(f.sourceTable, "procedure_notes");
-  assert.equal(f.sourceId, 900, "(32) exact note id reconciliation");
+  const r = await runWithDb(spec, ALL, async () => n.createOrReuseProcedureNote({ clinicId: 1, ancillaryCaseId: 5, source: "test" }));
+  assert.equal(r.status, "amended");
+  if (r.status === "amended") { assert.equal(r.wasSigned, true); assert.equal(r.priorNoteId, 900); }
+  // (30) the prior SIGNED note is only superseded — its body/signer/signedAt are untouched.
+  const sp = supersedePayload as Record<string, unknown>;
+  assert.ok("supersededAt" in sp, "prior note superseded");
+  for (const f of ["generatedText", "generationStatus", "signatureStatus", "signedAt", "signedByUserId"]) assert.ok(!(f in sp), `(30) signed note ${f} never rewritten`);
+  // (31/32) a NEW pending amendment carrying the exact new evidence + lineage link.
+  const np = newNotePayload as Record<string, unknown>;
+  assert.equal(np.supersedesNoteId, 900, "(32) amendment links to the prior note");
+  assert.equal(np.generationStatus, "pending");
+  assert.equal(np.signatureStatus, "needs_signature");
+  assert.equal(np.reportDocumentReferenceId, 42, "(31) amendment carries the exact new report evidence");
 }
 
 // (33/34/35) atomic evidence retry
@@ -465,22 +463,25 @@ async function testExactResolution() {
   assert.equal(resolves, 1, "(36) exactly one exact-id resolution");
 }
 
-// (37) retry-persistence failure is surfaced truthfully
+// (37) retry-persistence failure is surfaced truthfully. A signed-note amendment
+// that loses a zero-row race falls back to an evidence retry; when the ledger
+// write itself fails, retryRecorded is FALSE (never overstated).
 async function testRetryPersistenceFailure() {
   const t = await loadCanonicalTables();
   const n = await noteSvc();
-  const signed = noteRow({ signatureStatus: "signed", signedAt: OLD, procedureEventId: 111 });
+  const signed = noteRow({ signatureStatus: "signed", signedAt: OLD, procedureEventId: 111, reportDocumentReferenceId: 222 });
   const spec = new Map<unknown, TableSpec>([
     [t.ancillaryCases, { select: () => [caseRow()] }],
     [t.procedureEvents, { select: () => [peRow()] }],
-    [t.documentReferences, { select: qsel([[reportRef()], [], []]), onInsert: (v) => [{ ...v, id: 55 }] }],
-    [t.procedureNotes, { select: () => [signed] }],
+    [t.documentReferences, { select: qsel([[reportRef()]]), onUpdate: (v) => [{ ...v }] }],
+    // amendment supersede loses the race (zero rows) → deferred; then the retry ledger throws.
+    [t.procedureNotes, { select: () => [signed], onUpdate: () => [], onInsert: (v) => [{ ...v, id: 901 }] }],
     [t.journeyEvents, { onInsert: () => [] }],
     [t.documentFailures, { select: () => [], onInsert: () => { throw new Error("ledger down"); } }],
   ]);
   const r = await runWithDb(spec, ALL, async () => n.createOrReuseProcedureNote({ clinicId: 1, ancillaryCaseId: 5, source: "test" }));
-  assert.equal(r.status, "reused");
-  if (r.status === "reused") assert.ok(r.warnings.includes("signed_evidence_conflict_retry_not_recorded"), "(37) ledger failure surfaced, not swallowed");
+  assert.equal(r.status, "deferred_evidence_sync");
+  if (r.status === "deferred_evidence_sync") assert.equal(r.retryRecorded, false, "(37) ledger failure surfaced, not swallowed");
 }
 
 // (39) no uncontrolled canonical schedule-update task escapes teardown
