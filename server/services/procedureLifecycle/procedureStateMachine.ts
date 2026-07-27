@@ -51,7 +51,28 @@ async function appendTransitionAudit(pe: ProcedureEvent, eventType: string, acto
 export type ProcedureTransitionStatus =
   | "skipped_flag_off" | "not_found" | "terminal_state" | "invalid_transition"
   | "transitioned";
-export type ProcedureTransitionResult = { status: ProcedureTransitionStatus; procedureEvent?: ProcedureEvent };
+// Truthful downstream note-reconciliation outcome for a terminal transition.
+export type NoteReconciliationOutcome =
+  | "not_required" | "voided" | "no_current_note" | "deferred_retry_recorded"
+  | "reconciliation_not_recorded" | "migration_missing" | "reference_missing";
+export type ProcedureTransitionResult = {
+  status: ProcedureTransitionStatus;
+  procedureEvent?: ProcedureEvent;
+  noteReconciliation?: NoteReconciliationOutcome;
+};
+
+function mapVoidToReconciliation(s: string): NoteReconciliationOutcome {
+  switch (s) {
+    case "voided": return "voided";
+    case "voided_retry_recorded":
+    case "deferred_retry_recorded": return "deferred_retry_recorded";
+    case "reference_missing": return "reference_missing";
+    case "no_current_note": return "no_current_note";
+    case "migration_missing": return "migration_missing";
+    case "skipped_flag_off": return "not_required";
+    default: return "reconciliation_not_recorded";
+  }
+}
 
 type TransitionSpec = {
   eventType: string;
@@ -72,11 +93,15 @@ async function runTransition(
   const updated = await applyProcedureTransition(id, clinicId, spec.fromStatuses, spec.patch(now, reason));
   if (!updated) return { status: "invalid_transition", procedureEvent: pe };
   await appendTransitionAudit(updated, spec.eventType, actorUserId, { clinic_id: clinicId, procedure_event_id: id, ancillary_case_id: updated.ancillaryCaseId ?? null, service_type: updated.serviceType, new_status: updated.procedureStatus });
-  // A procedure leaving an active state → reconcile (void) its current note lineage.
+  // A procedure leaving an active state → reconcile (void) its current note
+  // lineage. The transition stays COMMITTED regardless; the truthful
+  // reconciliation outcome is surfaced (never implies a void that did not occur).
+  let noteReconciliation: NoteReconciliationOutcome = "not_required";
   if (spec.voidsNote && updated.ancillaryCaseId != null && updated.clinicId != null) {
-    await voidProcedureNoteLineageForCase({ clinicId: updated.clinicId, ancillaryCaseId: updated.ancillaryCaseId, reason: spec.eventType, actorUserId });
+    const v = await voidProcedureNoteLineageForCase({ clinicId: updated.clinicId, ancillaryCaseId: updated.ancillaryCaseId, reason: spec.eventType, actorUserId });
+    noteReconciliation = mapVoidToReconciliation(v.status);
   }
-  return { status: "transitioned", procedureEvent: updated };
+  return { status: "transitioned", procedureEvent: updated, noteReconciliation };
 }
 
 export const pauseProcedure = (id: number, clinicId: number, actorUserId: string | null) =>

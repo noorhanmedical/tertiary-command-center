@@ -408,7 +408,11 @@ async function retryVoidProcedureNote(failure: AncillaryDocumentReconciliationFa
   if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
   if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
   const r = await voidProcedureNoteLineageForCase({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, reason: "retry_void", actorUserId: null });
-  if (r.status === "voided" || r.status === "no_current_note") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  // Note void succeeded (with/without a reference) → resolve this exact failure.
+  if (r.status === "voided" || r.status === "voided_retry_recorded" || r.status === "reference_missing" || r.status === "no_current_note") {
+    await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+    return { ...base, status: "resolved" };
+  }
   if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
   if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
   return { ...base, status: "still_deferred", message: r.status };

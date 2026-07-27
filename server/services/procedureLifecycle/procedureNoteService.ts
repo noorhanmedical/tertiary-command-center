@@ -239,7 +239,7 @@ export async function createOrReuseProcedureNote(
       // note's stored evidence.
       if (stale) {
         const amended = await amendProcedureNoteLineage({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, newReportReferenceId: reportReferenceId, procedureEventId, effectiveDate, actorUserId: input.actorUserId ?? null });
-        if (amended.status === "amended") return { status: "amended", ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType, priorNoteId: note.id, newNoteId: amended.newNoteId, wasSigned: true };
+        if (amended.status === "amended_reference_created" || amended.status === "amended_reference_retry_recorded") return { status: "amended", ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType, priorNoteId: note.id, newNoteId: amended.newNoteId, wasSigned: true };
         const recorded = await recordEvidenceRetry(input, acase, note.id);
         return { status: "deferred_evidence_sync", ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType, reason: `signed_${amended.status}`, retryRecorded: recorded };
       }
@@ -247,7 +247,7 @@ export async function createOrReuseProcedureNote(
       // §6-B — a GENERATED unsigned body is never rewritten against new evidence;
       // supersede + create a new pending amendment.
       const amended = await amendProcedureNoteLineage({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, newReportReferenceId: reportReferenceId, procedureEventId, effectiveDate, actorUserId: input.actorUserId ?? null });
-      if (amended.status === "amended") return { status: "amended", ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType, priorNoteId: note.id, newNoteId: amended.newNoteId, wasSigned: false };
+      if (amended.status === "amended_reference_created" || amended.status === "amended_reference_retry_recorded") return { status: "amended", ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType, priorNoteId: note.id, newNoteId: amended.newNoteId, wasSigned: false };
       const recorded = await recordEvidenceRetry(input, acase, note.id);
       return { status: "deferred_evidence_sync", ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType, reason: `generated_${amended.status}`, retryRecorded: recorded };
     } else if (stale) {

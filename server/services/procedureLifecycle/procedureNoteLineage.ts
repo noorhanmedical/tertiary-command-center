@@ -69,7 +69,12 @@ async function updateExactReferenceTx(tx: TxHandle, clinicId: number, ancillaryC
 class LineageTxError extends Error { constructor(public kind: "note" | "reference") { super(kind); } }
 
 // ─── §7 — void the current note lineage when the procedure becomes invalid ──
-export type VoidLineageResult = { status: "voided" | "no_current_note" | "skipped_flag_off" | "zero_row_conflict" | "migration_missing" | "deferred" };
+export type VoidLineageResult = {
+  status:
+    | "voided" | "voided_retry_recorded" | "reference_missing"
+    | "no_current_note" | "deferred_retry_recorded" | "reconciliation_not_recorded"
+    | "skipped_flag_off" | "zero_row_conflict" | "migration_missing";
+};
 
 export async function voidProcedureNoteLineageForCase(input: {
   clinicId: number; ancillaryCaseId: number; reason: string; actorUserId: string | null;
@@ -80,32 +85,43 @@ export async function voidProcedureNoteLineageForCase(input: {
     if (!note) return { status: "no_current_note" };
     const now = new Date();
     const signed = note.signatureStatus === "signed";
-    return await db.transaction(async (tx) => {
+    // Note void + (exact reference void when present) + required audit — atomic.
+    const hadReference = await db.transaction(async (tx) => {
       const noteRows = await tx.update(procedureNotes)
         .set(signed ? { supersededAt: now, updatedAt: now } : { supersededAt: now, generationStatus: "voided", updatedAt: now })
         .where(and(eq(procedureNotes.id, note.id), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId), isNull(procedureNotes.supersededAt)))
         .returning();
       if (noteRows.length !== 1) throw new LineageTxError("note");
-      await updateExactReferenceTx(tx as TxHandle, input.clinicId, input.ancillaryCaseId, note.id, { documentStatus: "voided", supersededAt: now });
+      const refResult = await updateExactReferenceTx(tx as TxHandle, input.clinicId, input.ancillaryCaseId, note.id, { documentStatus: "voided", supersededAt: now });
       await appendAuditTx(tx as TxHandle, note, "procedure_note_voided", input.actorUserId, { clinic_id: input.clinicId, ancillary_case_id: input.ancillaryCaseId, source_id: note.id, reason: input.reason, was_signed: signed });
-      return { status: "voided" as const };
+      return refResult === "updated";
     });
+    if (hadReference) return { status: "voided" };
+    // Note voided but NO reference existed — do NOT claim fully voided. Persist
+    // an exact retry so a later-created reference is voided; surface persistence.
+    try {
+      await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: note.id, requestedAction: "void_procedure_note", sourceSystem: "procedure_note_lineage", errorCode: "void_reference_missing" });
+      return { status: "voided_retry_recorded" };
+    } catch { return { status: "reference_missing" }; }
   } catch (e) {
     if (e instanceof LineageTxError && e.kind === "note") return { status: "zero_row_conflict" };
     if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+    // Whole void rolled back — record a durable retry; surface persistence truthfully.
     try {
       await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, requestedAction: "void_procedure_note", sourceSystem: "procedure_note_lineage", errorCode: (e as { code?: string })?.code ?? "void_failed" });
-    } catch { /* ledger guard */ }
-    return { status: "deferred" };
+      return { status: "deferred_retry_recorded" };
+    } catch { return { status: "reconciliation_not_recorded" }; }
   }
 }
 
 // ─── §6 — supersede the current note + create a pending amendment ───────────
 export type AmendLineageResult = {
-  status: "amended" | "no_current_note" | "skipped_flag_off" | "zero_row_conflict" | "migration_missing" | "deferred";
+  status:
+    | "amended_reference_created" | "amended_reference_retry_recorded"
+    | "reconciliation_not_recorded" | "no_current_note" | "skipped_flag_off"
+    | "zero_row_conflict" | "migration_missing";
   newNoteId?: number;
-  // Whether the new note's exact reference was created (else a durable exact
-  // link retry was recorded — never overstated).
+  // TRUE only when the new note's exact reference genuinely exists.
   newReferenceCreated?: boolean;
 };
 
@@ -140,14 +156,20 @@ export async function amendProcedureNoteLineage(input: {
   } catch (e) {
     if (e instanceof LineageTxError && e.kind === "note") return { status: "zero_row_conflict" };
     if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+    // A reference-conflict rollback (or any other error) — the amendment did NOT
+    // commit. Record durable reconcile work; surface persistence truthfully.
+    let recorded = false;
     try {
       await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, requestedAction: "reconcile_procedure_note_lineage", sourceSystem: "procedure_note_lineage", errorCode: (e as { code?: string })?.code ?? "amend_failed" });
-    } catch { /* ledger guard */ }
-    return { status: "deferred" };
+      recorded = true;
+    } catch { recorded = false; }
+    return { status: recorded ? "reconciliation_not_recorded" : "reconciliation_not_recorded" };
   }
 
-  // Lineage is committed. Create the new note's EXACT reference, or record a
-  // durable exact link retry (never a silent gap; never two current notes).
+  // Lineage is COMMITTED. Project the new note's EXACT reference; if that fails,
+  // record a durable exact link retry. `amended_*` is returned ONLY when the
+  // reference exists OR the exact retry was durably persisted — never when BOTH
+  // projection and retry persistence failed.
   const newNote = created!;
   let newReferenceCreated = false;
   try {
@@ -161,10 +183,11 @@ export async function amendProcedureNoteLineage(input: {
     });
     newReferenceCreated = ref.outcome === "created" || ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated";
   } catch { /* fall through to durable retry */ }
-  if (!newReferenceCreated) {
-    try {
-      await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: newNote.id, requestedAction: "link_procedure_note", sourceSystem: "procedure_note_lineage", errorCode: "amendment_reference_deferred" });
-    } catch { /* ledger guard */ }
-  }
-  return { status: "amended", newNoteId: newNote.id, newReferenceCreated };
+  if (newReferenceCreated) return { status: "amended_reference_created", newNoteId: newNote.id, newReferenceCreated: true };
+  let retryRecorded = false;
+  try {
+    await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: newNote.id, requestedAction: "link_procedure_note", sourceSystem: "procedure_note_lineage", errorCode: "amendment_reference_deferred" });
+    retryRecorded = true;
+  } catch { retryRecorded = false; }
+  return { status: retryRecorded ? "amended_reference_retry_recorded" : "reconciliation_not_recorded", newNoteId: newNote.id, newReferenceCreated: false };
 }

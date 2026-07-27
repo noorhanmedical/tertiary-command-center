@@ -246,6 +246,24 @@ records the qualifying reference id as permanent evidence.
 - **Void** (§7): cancel/no_show/unable_to_complete void the current unsigned
   note + reference atomically (generated body retained for audit); a signed note
   is superseded (body/signer/signedAt immutable); reference-zero-row rolls back.
+- **Truthful reconciliation durability** — every generator/amendment/void/retry
+  outcome is explicit about persistence: the generator returns
+  `…_retry_recorded`/`…_retry_not_recorded`; amendment returns
+  `amended_reference_created` / `amended_reference_retry_recorded` /
+  `reconciliation_not_recorded` (never `amended` when both the new reference and
+  its retry failed); void returns `voided` / `voided_retry_recorded` /
+  `reference_missing` / `deferred_retry_recorded` / `reconciliation_not_recorded`
+  (a missing reference is never silently reported as voided). A terminal
+  transition stays committed but surfaces a `noteReconciliation` field
+  (`not_required` | `voided` | `no_current_note` | `deferred_retry_recorded` |
+  `reconciliation_not_recorded` | `migration_missing` | `reference_missing`) on
+  the cancel/no-show/unable-to-complete response — never implying a void that
+  did not occur. Backfill APPLY links deterministic identities via the canonical
+  hook and queues exact source-specific retries per classification
+  (`link_procedure_note`, `generate_procedure_note`,
+  `reconcile_procedure_note_lineage`, `link_procedure_note_evidence`,
+  `void_procedure_note`) — never generating bodies; report-evidence-missing stays
+  unresolved.
 - **Signature sync** (§8): after a canonical `post_procedure_note` sign/return,
   `syncProcedureNoteReferenceSignature` mirrors documentStatus + signedAt onto
   the exact reference (never throws; missing reference → exact retry). Order Note

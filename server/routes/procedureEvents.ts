@@ -171,7 +171,7 @@ export function registerProcedureEventRoutes(app: Express) {
 
   // ─── Phase 2F-B procedure state machine (clinic-scoped) ───────────────────
   function mapTransition(res: Response, r: ProcedureTransitionResult) {
-    if (r.status === "transitioned") return res.status(200).json({ status: r.status, procedureEvent: r.procedureEvent ? toClinicDto(r.procedureEvent) : undefined });
+    if (r.status === "transitioned") return res.status(200).json({ status: r.status, procedureEvent: r.procedureEvent ? toClinicDto(r.procedureEvent) : undefined, noteReconciliation: r.noteReconciliation ?? "not_required" });
     if (r.status === "not_found") return res.status(404).json({ error: "Not found", status: r.status });
     if (r.status === "skipped_flag_off") return res.status(409).json({ error: "Canonical procedure lifecycle disabled", status: r.status });
     return res.status(409).json({ error: "Invalid transition", status: r.status });

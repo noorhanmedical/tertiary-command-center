@@ -257,7 +257,7 @@ async function testGeneratorReportUnavailable() {
     [t.caseDocumentReadiness, { select: () => [] }],
   ]);
   const r = await runWithDb(spec, GEN, async () => g.generateProcedureNote({ clinicId: 1, ancillaryCaseId: 5, noteId: 900 }));
-  assert.equal(r.status, "report_content_unavailable");
+  assert.equal(r.status, "report_content_unavailable_retry_recorded");
   const fp = failPayload as Record<string, unknown>;
   assert.equal(fp.generationStatus, "failed", "(21) moves to failed");
   assert.equal(fp.errorMessage, "report_content_unavailable", "(21) PHI-free error code");
@@ -274,7 +274,7 @@ async function testAmendmentCreatesOne() {
     [t.journeyEvents, { onInsert: () => [] }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);
   const r = await runWithDb(spec, ALL, async () => l.amendProcedureNoteLineage({ clinicId: 1, ancillaryCaseId: 5, newReportReferenceId: 99, procedureEventId: 300, effectiveDate: OLD, actorUserId: "u1" }));
-  assert.equal(r.status, "amended");
+  assert.equal(r.status, "amended_reference_created");
   assert.equal(inserts, 1, "(23) exactly one amendment note");
 }
 
@@ -300,9 +300,10 @@ async function testVoidOnInvalidProcedure() {
 async function testVoidSignedNote() {
   const t = await loadCanonicalTables(); const l = await lineage();
   let notePatch: Record<string, unknown> | null = null;
+  const procRef = reportRef({ id: 55, documentKind: "procedure_note", sourceTable: "procedure_notes", sourceId: 900 });
   const spec = new Map<unknown, TableSpec>([
     [t.procedureNotes, { select: () => [noteRow({ signatureStatus: "signed", signedAt: OLD, generationStatus: "approved" })], onUpdate: (v) => { notePatch = v; return [{ ...v }]; } }],
-    [t.documentReferences, { onUpdate: () => [{}] }], [t.journeyEvents, { onInsert: () => [] }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
+    [t.documentReferences, { select: () => [procRef], onUpdate: () => [procRef] }], [t.journeyEvents, { onInsert: () => [] }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);
   const r = await runWithDb(spec, ALL, async () => l.voidProcedureNoteLineageForCase({ clinicId: 1, ancillaryCaseId: 5, reason: "cancelled", actorUserId: "u1" }));
   assert.equal(r.status, "voided");

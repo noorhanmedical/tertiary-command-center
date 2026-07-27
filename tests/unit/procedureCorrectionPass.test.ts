@@ -104,8 +104,8 @@ async function testAmendmentReferenceRollback() {
     [t.journeyEvents, { onInsert: () => [] }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);
   const r = await runWithDb(spec, ALL, async () => l.amendProcedureNoteLineage({ clinicId: 1, ancillaryCaseId: 5, newReportReferenceId: 99, procedureEventId: 300, effectiveDate: OLD, actorUserId: "u1" }));
-  assert.notEqual(r.status, "amended", "(18) partial reference failure never returns amended");
-  assert.equal(r.status, "deferred");
+  assert.ok(r.status !== "amended_reference_created" && r.status !== "amended_reference_retry_recorded", "(18) partial reference failure never returns amended");
+  assert.equal(r.status, "reconciliation_not_recorded");
 }
 
 // (19/20) void: reference zero-row rolls back the note void (deferred, not voided)
@@ -118,8 +118,8 @@ async function testVoidReferenceRollback() {
     [t.journeyEvents, { onInsert: () => [] }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);
   const r = await runWithDb(spec, ALL, async () => l.voidProcedureNoteLineageForCase({ clinicId: 1, ancillaryCaseId: 5, reason: "cancelled", actorUserId: "u1" }));
-  assert.notEqual(r.status, "voided", "(20) partial reference failure never returns voided");
-  assert.equal(r.status, "deferred");
+  assert.ok(r.status !== "voided" && r.status !== "voided_retry_recorded", "(20) partial reference failure never returns voided");
+  assert.equal(r.status, "deferred_retry_recorded");
 }
 
 // (21) amendment records an exact durable link retry when the new reference can't be created
@@ -134,7 +134,7 @@ async function testAmendmentNewReferenceRetry() {
     [t.documentFailures, { select: () => [], onInsert: (v) => { failurePayload = v; return [{ ...v, id: 1 }]; } }],
   ]);
   const r = await runWithDb(spec, ALL, async () => l.amendProcedureNoteLineage({ clinicId: 1, ancillaryCaseId: 5, newReportReferenceId: 99, procedureEventId: 300, effectiveDate: OLD, actorUserId: "u1" }));
-  assert.equal(r.status, "amended");
+  assert.equal(r.status, "amended_reference_retry_recorded");
   assert.equal(r.newReferenceCreated, false);
   const f = failurePayload as Record<string, unknown>;
   assert.equal(f.requestedAction, "link_procedure_note", "(21) exact durable link retry for the new note");

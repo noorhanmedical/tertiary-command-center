@@ -38,8 +38,9 @@ const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
 export type GenerateProcedureNoteResult = {
   status:
     | "skipped_flag_off" | "note_not_found" | "not_pending" | "already_claimed"
-    | "cross_clinic_denied" | "not_yet_eligible" | "report_content_unavailable"
-    | "generated" | "failed" | "migration_missing";
+    | "cross_clinic_denied" | "not_yet_eligible"
+    | "report_content_unavailable_retry_recorded" | "report_content_unavailable_retry_not_recorded"
+    | "generated" | "failed_retry_recorded" | "failed_retry_not_recorded" | "migration_missing";
   procedureNoteId?: number;
 };
 
@@ -76,8 +77,8 @@ export async function generateProcedureNote(input: {
     const pe = elig.qualifyingProcedureEventId != null ? await getProcedureEventById(elig.qualifyingProcedureEventId) : undefined;
     const report = await loadReportEvidence(input.clinicId, input.ancillaryCaseId, elig.qualifyingReportReferenceId ?? null);
     if (!acase || !pe || !report) {
-      await failNote(input.noteId, input.clinicId, "report_content_unavailable");
-      return { status: "report_content_unavailable" };
+      const recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "report_content_unavailable");
+      return { status: recorded ? "report_content_unavailable_retry_recorded" : "report_content_unavailable_retry_not_recorded" };
     }
 
     // Deterministic, evidence-anchored CERTIFICATION — NO invented findings, timeless.
@@ -94,7 +95,7 @@ export async function generateProcedureNote(input: {
       .set({ generationStatus: "generated", generatedText: body, generatedByAi: false, sourceData: sourceData as never, errorMessage: null, updatedAt: new Date() })
       .where(and(eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.generationStatus, "generating")))
       .returning();
-    if (!done) { await failNote(input.noteId, input.clinicId, "generation_commit_conflict"); return { status: "failed" }; }
+    if (!done) { const rec = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "generation_commit_conflict"); return { status: rec ? "failed_retry_recorded" : "failed_retry_not_recorded" }; }
 
     // Mirror generated status onto the exact reference (truthful; body never stored there).
     await db.update(ancillaryDocumentReferences)
@@ -104,20 +105,27 @@ export async function generateProcedureNote(input: {
     return { status: "generated", procedureNoteId: input.noteId };
   } catch (e) {
     if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
-    try { await failNote(input.noteId, input.clinicId, (e as { code?: string })?.code ?? "generation_failed"); } catch { /* ignore */ }
-    return { status: "failed" };
+    let recorded = false;
+    try { recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, (e as { code?: string })?.code ?? "generation_failed"); } catch { recorded = false; }
+    return { status: recorded ? "failed_retry_recorded" : "failed_retry_not_recorded" };
   }
 }
 
-/** PHI-free failure stamp (error CODE only, never note body) + durable exact
- *  generate_procedure_note retry so the note is regenerated later (§8). */
-async function failNote(noteId: number, clinicId: number, code: string): Promise<void> {
+/**
+ * PHI-free failure stamp (error CODE only, never note body / report content) +
+ * a durable exact generate_procedure_note retry (exact clinic + case + source).
+ * Returns whether the ledger row was actually persisted — the note stays
+ * truthfully `failed` even when persistence fails; durability is never
+ * overstated (§2/§7).
+ */
+async function failNote(noteId: number, clinicId: number, ancillaryCaseId: number, code: string): Promise<boolean> {
   await db.update(procedureNotes)
     .set({ generationStatus: "failed", errorMessage: code, updatedAt: new Date() })
     .where(and(eq(procedureNotes.id, noteId), eq(procedureNotes.clinicId, clinicId), eq(procedureNotes.generationStatus, "generating")));
   try {
-    await recordAncillaryDocumentFailure({ clinicId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: noteId, requestedAction: "generate_procedure_note", sourceSystem: "procedure_note_generator", errorCode: code });
-  } catch { /* ledger guard — status is already truthful on the note */ }
+    await recordAncillaryDocumentFailure({ clinicId, ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: noteId, requestedAction: "generate_procedure_note", sourceSystem: "procedure_note_generator", errorCode: code });
+    return true;
+  } catch { return false; }
 }
 
 /** Resolve the exact CURRENT report source through internal repositories only —
