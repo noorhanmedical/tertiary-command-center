@@ -201,6 +201,47 @@ records the qualifying reference id as permanent evidence.
   from eligibility. Retry persistence returns `retryRecorded` and is never
   swallowed.
 
+## 6c. Phase 2F-B — state machine, generator, lineage, void, signature sync
+
+- **Procedure state machine** (`procedureStateMachine.ts`, routes
+  `/api/procedure-events/{start,:id/pause,:id/resume,:id/cancel,:id/no-show,:id/unable-to-complete}`):
+  clinic-scoped, server-owned transitions (`not_started→in_progress→paused⇄`,
+  `→cancelled|no_show|unable_to_complete`). Each derives clinic from context,
+  validates the exact case, stamps server time + actor, appends a PHI-free
+  journey event, and applies an affected-row-checked exact-state WHERE. Terminal
+  rows never reopen through general routes. `start` runs the prerequisite gate.
+- **Configurable prerequisites** (`ancillary_service_prerequisite_config`,
+  `evaluateProcedurePrerequisites`): consent/insurance/authorization/coding are
+  NOT universal blockers — each requirement's effect (hard / soft / documentation
+  / billing / claim) is per-clinic-or-default configured per stage. Only
+  tenancy, active case, and a valid canonical appointment are always-hard.
+  Overrides apply only when configured for an explicitly allowed role.
+- **Generator** (`procedureNoteGenerator.ts`, `FEATURE_PROCEDURE_NOTE_GENERATOR`
+  + full runtime): claims exactly one pending note (`.returning()`), builds a
+  deterministic, timeless, evidence-anchored body from EXACT procedure/report
+  evidence (never invents findings, never reads bytes via the clinic-facing
+  route, `report_content_unavailable` when unresolvable), `pending→generating→
+  generated` (or `failed` with a PHI-free code). Never auto-signs.
+- **Lineage** (`procedureNoteLineage.ts`): report replacement / signed-note
+  change → audited amendment (supersede prior + new pending note, prior body
+  immutable). Never two current notes.
+- **Void** (§7): cancel/no_show/unable_to_complete void the current unsigned
+  note + reference (generated body retained for audit); a signed note is
+  superseded (body/signer/signedAt immutable).
+- **Signature sync** (§8): after a canonical `post_procedure_note` sign/return,
+  `syncProcedureNoteReferenceSignature` mirrors documentStatus + signedAt onto
+  the exact reference (never throws; missing reference → exact retry). Order Note
+  sync unchanged.
+- **Reconciliation** (§9): new bounded-worker actions `generate_procedure_note`,
+  `reconcile_procedure_note_lineage`, `void_procedure_note`,
+  `sync_procedure_note_signature` — flag-gated, exact-source, exact-failure-id
+  resolution, PHI-free.
+- **Backfill** (`script/backfillCanonicalProcedureLifecycle.ts`): dry-run
+  default (zero writes); apply gated by
+  `BACKFILL_CANONICAL_PROCEDURE_LIFECYCLE_APPLY=YES` + all three flags; links
+  only deterministic identities via the canonical hook (preserves
+  completedAt/signed bodies, never generates), idempotent.
+
 ## 7. Migration 0054 (`migrations/0054_add_canonical_procedure_lifecycle.sql`)
 
 Additive-only, unapplied, does not amend 0049–0053:
