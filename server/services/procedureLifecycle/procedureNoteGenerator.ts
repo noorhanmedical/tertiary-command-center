@@ -1,16 +1,24 @@
 /**
- * Phase 2F-B — canonical Procedure Note generator.
+ * Phase 2F-B — canonical Procedure Note generator (EVIDENCE-ONLY procedure
+ * completion CERTIFICATION — option B).
+ *
+ * The generated document is explicitly a NON-FINDINGS procedural completion
+ * certification: it certifies that the exact ancillary procedure completed and
+ * that a current canonical report is associated, and points the signer to that
+ * report for clinical findings. It is NOT rendered from report content and
+ * makes NO clinical findings claims — nothing is fabricated.
  *
  * Runs ONLY under procedureNoteGeneratorEnabled() (full Procedure Note runtime
  * + FEATURE_PROCEDURE_NOTE_GENERATOR). Never a second note table. Concurrency-
  * safe: claims exactly one pending note (id + clinic + case + pending +
  * not-superseded) via `.returning()`; a second worker never produces a
- * duplicate body. Deterministic + evidence-anchored — it NEVER invents clinical
- * findings, never copies bytes from the unsafe clinic-facing download route,
- * never uses another case's/service's/superseded report, and never uses retry
- * time as clinical time. If the report source cannot be safely resolved through
- * the tenant-scoped internal repository, generation fails with
- * `report_content_unavailable`. Never auto-signs. No note body in logs/ledger.
+ * duplicate. Uses only EXACT tenant/case/service/current/non-superseded report
+ * + procedure evidence resolved through internal repositories (never the unsafe
+ * clinic-facing download route, never bytes); if the exact report source cannot
+ * be resolved, it fails with `report_content_unavailable` (never a generic
+ * success). Never uses retry time as clinical time. Never auto-signs. No
+ * document body appears in logs or retry rows. A failure records/preserves an
+ * exact generate_procedure_note retry.
  */
 
 import { db } from "../../db";
@@ -21,10 +29,11 @@ import { ancillaryDocumentReferences, PROCEDURE_NOTE_SOURCE_TABLE, REPORT_SOURCE
 import { procedureNoteGeneratorEnabled } from "../../lib/featureFlags";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { getProcedureEventById } from "../../repositories/procedureEvents.repo";
+import { recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
 import { evaluateProcedureNoteEligibility } from "./procedureNoteEligibility";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
-const GENERATOR_TEMPLATE_VERSION = "procedure_note_v1";
+const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
 
 export type GenerateProcedureNoteResult = {
   status:
@@ -71,12 +80,14 @@ export async function generateProcedureNote(input: {
       return { status: "report_content_unavailable" };
     }
 
-    // Deterministic, evidence-anchored body — NO invented findings, timeless.
+    // Deterministic, evidence-anchored CERTIFICATION — NO invented findings, timeless.
     const body = renderBody({ serviceType: note.serviceType, completedAt: pe.completedAt ?? null, reportReferenceId: report.referenceId, reportSourceId: report.sourceId });
     const sourceData = {
+      document_kind: "procedure_completion_certification",
       template: GENERATOR_TEMPLATE_VERSION,
       procedure_event_id: pe.id, procedure_completed_at: pe.completedAt?.toISOString() ?? null,
       report_document_reference_id: report.referenceId, report_source_table: REPORT_SOURCE_TABLE, report_source_id: report.sourceId,
+      report_document_status: report.documentStatus,
       ancillary_case_id: input.ancillaryCaseId, service_type: note.serviceType,
     };
     const [done] = await db.update(procedureNotes)
@@ -98,15 +109,21 @@ export async function generateProcedureNote(input: {
   }
 }
 
-/** PHI-free failure stamp (error CODE only, never note body). */
+/** PHI-free failure stamp (error CODE only, never note body) + durable exact
+ *  generate_procedure_note retry so the note is regenerated later (§8). */
 async function failNote(noteId: number, clinicId: number, code: string): Promise<void> {
   await db.update(procedureNotes)
     .set({ generationStatus: "failed", errorMessage: code, updatedAt: new Date() })
     .where(and(eq(procedureNotes.id, noteId), eq(procedureNotes.clinicId, clinicId), eq(procedureNotes.generationStatus, "generating")));
+  try {
+    await recordAncillaryDocumentFailure({ clinicId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: noteId, requestedAction: "generate_procedure_note", sourceSystem: "procedure_note_generator", errorCode: code });
+  } catch { /* ledger guard — status is already truthful on the note */ }
 }
 
-/** Load the exact report source through the internal readiness repository only. */
-async function loadReportEvidence(clinicId: number, ancillaryCaseId: number, referenceId: number | null): Promise<{ referenceId: number; sourceId: number } | null> {
+/** Resolve the exact CURRENT report source through internal repositories only —
+ *  a readiness row ALONE is insufficient; the reference must be the exact
+ *  tenant/case/report kind, non-superseded, and its readiness source resolvable. */
+async function loadReportEvidence(clinicId: number, ancillaryCaseId: number, referenceId: number | null): Promise<{ referenceId: number; sourceId: number; documentStatus: string } | null> {
   if (referenceId == null) return null;
   const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
     eq(ancillaryDocumentReferences.id, referenceId), eq(ancillaryDocumentReferences.clinicId, clinicId),
@@ -114,20 +131,24 @@ async function loadReportEvidence(clinicId: number, ancillaryCaseId: number, ref
     isNull(ancillaryDocumentReferences.supersededAt),
   )).limit(1);
   if (!ref) return null;
-  // Verify the canonical readiness source is resolvable (tenant-scoped) — never
-  // the clinic-facing download route, never bytes.
+  // The canonical readiness source must be resolvable + tenant-consistent + in an
+  // acceptable current status (never the clinic-facing download route, never bytes).
   const [src] = await db.select().from(caseDocumentReadiness).where(eq(caseDocumentReadiness.id, ref.sourceId)).limit(1);
   if (!src || (src.clinicId != null && src.clinicId !== clinicId)) return null;
-  return { referenceId: ref.id, sourceId: ref.sourceId };
+  if (!ACCEPTABLE_REPORT_SOURCE_STATUSES.has(src.documentStatus)) return null;
+  return { referenceId: ref.id, sourceId: ref.sourceId, documentStatus: src.documentStatus };
 }
 
-/** Deterministic, timeless body from canonical evidence only (no findings). */
+const ACCEPTABLE_REPORT_SOURCE_STATUSES = new Set(["uploaded", "generated", "approved", "completed", "signed"]);
+
+/** Deterministic, timeless procedure-completion CERTIFICATION — evidence-only,
+ *  explicitly NOT rendered from report content and asserting NO clinical findings. */
 function renderBody(args: { serviceType: string; completedAt: Date | null; reportReferenceId: number; reportSourceId: number }): string {
   const when = args.completedAt ? args.completedAt.toISOString().slice(0, 10) : "the recorded procedure date";
   return [
-    `Post-Procedure Note — ${args.serviceType}.`,
-    `The ${args.serviceType} procedure was completed on ${when}.`,
-    `A current diagnostic report is on file (canonical report reference #${args.reportReferenceId}).`,
-    `Clinical findings are documented in the associated report; this note certifies procedure completion and report association for signature.`,
+    `Procedure Completion Certification — ${args.serviceType}.`,
+    `This certification records that the ${args.serviceType} procedure was completed on ${when} and that a current canonical diagnostic report is associated (report reference #${args.reportReferenceId}).`,
+    `This is an evidence-based completion certification only — it does not reproduce or interpret report content. Clinical findings are documented exclusively in the associated report.`,
+    `Prepared for physician review and signature.`,
   ].join("\n");
 }

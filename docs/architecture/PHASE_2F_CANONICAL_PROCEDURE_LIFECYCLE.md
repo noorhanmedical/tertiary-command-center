@@ -207,27 +207,45 @@ records the qualifying reference id as permanent evidence.
   `/api/procedure-events/{start,:id/pause,:id/resume,:id/cancel,:id/no-show,:id/unable-to-complete}`):
   clinic-scoped, server-owned transitions (`not_started→in_progress→paused⇄`,
   `→cancelled|no_show|unable_to_complete`). Each derives clinic from context,
-  validates the exact case, stamps server time + actor, appends a PHI-free
-  journey event, and applies an affected-row-checked exact-state WHERE. Terminal
-  rows never reopen through general routes. `start` runs the prerequisite gate.
+  validates the exact case, stamps server time (`lastTransitionAt`) + actor,
+  appends a PHI-free journey event, and applies an affected-row-checked
+  exact-state WHERE. `start` INSERTS an `in_progress` row directly in a single
+  write (never a completed row, `completed_at` NULL, no completion side effects;
+  concurrent starts converge on the exact case winner). Terminal rows never
+  reopen. Completion is allowed only from `in_progress`/`paused` (a
+  `not_started` row never jumps to complete). `cancel`/`unable-to-complete`
+  require a non-empty reason (400 otherwise); `no_show` reason is optional.
 - **Configurable prerequisites** (`ancillary_service_prerequisite_config`,
   `evaluateProcedurePrerequisites`): consent/insurance/authorization/coding are
   NOT universal blockers — each requirement's effect (hard / soft / documentation
-  / billing / claim) is per-clinic-or-default configured per stage. Only
-  tenancy, active case, and a valid canonical appointment are always-hard.
-  Overrides apply only when configured for an explicitly allowed role.
+  / billing / claim) is per-clinic-or-default configured per stage. Always-hard:
+  tenancy, active case, valid canonical appointment, and unresolved canonical
+  identity (when Plexus writes are engaged); readiness reads are clinic-scoped in
+  SQL. Overrides require an EXPLICIT request (`{reason, requirementCodes}`) — role
+  eligibility ALONE never overrides; only named requirements, for an allowed
+  role, with a non-empty reason, are cleared, and each applied override is
+  audited transactionally with the start (audit failure defers the start).
 - **Generator** (`procedureNoteGenerator.ts`, `FEATURE_PROCEDURE_NOTE_GENERATOR`
-  + full runtime): claims exactly one pending note (`.returning()`), builds a
-  deterministic, timeless, evidence-anchored body from EXACT procedure/report
-  evidence (never invents findings, never reads bytes via the clinic-facing
-  route, `report_content_unavailable` when unresolvable), `pending→generating→
-  generated` (or `failed` with a PHI-free code). Never auto-signs.
-- **Lineage** (`procedureNoteLineage.ts`): report replacement / signed-note
-  change → audited amendment (supersede prior + new pending note, prior body
-  immutable). Never two current notes.
+  + full runtime) — produces an **evidence-only procedure-completion
+  CERTIFICATION** (option B): a non-findings document that certifies the exact
+  procedure completed and a current canonical report is associated, and points
+  the signer to that report. It is NOT rendered from report content and makes NO
+  clinical-findings claims. Claims exactly one pending note (`.returning()`),
+  requires the exact current report reference + resolvable readiness source
+  (`report_content_unavailable` otherwise), `pending→generating→generated` (or
+  `failed` with a PHI-free code + a durable `generate_procedure_note` retry).
+  Never auto-signs; no document body in logs/ledger.
+- **Lineage** (`procedureNoteLineage.ts`) — ATOMIC: report replacement /
+  signed-note change supersedes the prior note + reference and inserts a new
+  pending note in ONE transaction (shared handle for note/reference/audit,
+  affected-row checked, full reference ownership predicates); a reference
+  conflict or required-audit failure rolls the whole operation back (never
+  `amended`/`voided` on partial success). The new note's exact reference is
+  created or a durable exact `link_procedure_note` retry is recorded. Never two
+  current notes; prior signed body/signer/signedAt immutable.
 - **Void** (§7): cancel/no_show/unable_to_complete void the current unsigned
-  note + reference (generated body retained for audit); a signed note is
-  superseded (body/signer/signedAt immutable).
+  note + reference atomically (generated body retained for audit); a signed note
+  is superseded (body/signer/signedAt immutable); reference-zero-row rolls back.
 - **Signature sync** (§8): after a canonical `post_procedure_note` sign/return,
   `syncProcedureNoteReferenceSignature` mirrors documentStatus + signedAt onto
   the exact reference (never throws; missing reference → exact retry). Order Note

@@ -101,20 +101,29 @@ async function testConsentBlocksOnlyConfiguredService() {
   assert.equal(allowed.allowed, true);
 }
 
-// (5) authorized override succeeds; (6) unauthorized/non-overrideable stays blocked
+// (5) authorized EXPLICIT override succeeds; (6) role alone / unauthorized stays blocked
 async function testOverride() {
   const t = await loadCanonicalTables(); const p = await prereq();
-  const spec = (role: string | null) => new Map<unknown, TableSpec>([
+  const spec = () => new Map<unknown, TableSpec>([
     [t.ancillaryCases, { select: () => [caseRow()] }],
     [t.gse, { select: () => [apptEvt()] }],
     [t.prerequisiteConfig, { select: () => [prereqRow({ overrideAllowed: true, overrideRoles: "admin,clinician" })] }],
     [t.caseDocumentReadiness, { select: () => [] }],
   ]);
-  const authorized = await runWithDb(spec("admin"), LIFE, async () => p.evaluateProcedurePrerequisites({ clinicId: 1, ancillaryCaseId: 5, stage: "procedure_start", actorRole: "admin" }));
-  assert.equal(authorized.allowed, true, "(5) authorized override clears the hard blocker");
-  assert.ok(authorized.overrideableBlockers.length >= 1);
-  const unauthorized = await runWithDb(spec("biller"), LIFE, async () => p.evaluateProcedurePrerequisites({ clinicId: 1, ancillaryCaseId: 5, stage: "procedure_start", actorRole: "biller" }));
+  const override = { reason: "clinical urgency", requirementCodes: ["informed_consent"] };
+  // (6a) role alone (no override request) does NOT clear the hard blocker.
+  const roleOnly = await runWithDb(spec(), LIFE, async () => p.evaluateProcedurePrerequisites({ clinicId: 1, ancillaryCaseId: 5, stage: "procedure_start", actorRole: "admin" }));
+  assert.equal(roleOnly.allowed, false, "role eligibility alone never overrides");
+  assert.ok(roleOnly.overrideableBlockers.length >= 1);
+  assert.equal(roleOnly.appliedOverrides.length, 0);
+  // (5) authorized explicit override with a reason clears it.
+  const authorized = await runWithDb(spec(), LIFE, async () => p.evaluateProcedurePrerequisites({ clinicId: 1, ancillaryCaseId: 5, stage: "procedure_start", actorRole: "admin", override }));
+  assert.equal(authorized.allowed, true, "(5) authorized explicit override clears the hard blocker");
+  assert.equal(authorized.appliedOverrides[0]?.requirementCode, "informed_consent");
+  // (6) unauthorized role remains blocked even WITH an explicit override request.
+  const unauthorized = await runWithDb(spec(), LIFE, async () => p.evaluateProcedurePrerequisites({ clinicId: 1, ancillaryCaseId: 5, stage: "procedure_start", actorRole: "biller", override }));
   assert.equal(unauthorized.allowed, false, "(6) unauthorized role remains blocked");
+  assert.equal(unauthorized.appliedOverrides.length, 0);
 }
 
 // (7) start/pause/resume transitions
@@ -273,9 +282,10 @@ async function testAmendmentCreatesOne() {
 async function testVoidOnInvalidProcedure() {
   const t = await loadCanonicalTables(); const l = await lineage();
   let notePatch: Record<string, unknown> | null = null; let refUpd = 0;
+  const procRef = reportRef({ id: 55, documentKind: "procedure_note", sourceTable: "procedure_notes", sourceId: 900 });
   const spec = new Map<unknown, TableSpec>([
     [t.procedureNotes, { select: () => [noteRow({ generationStatus: "generated" })], onUpdate: (v) => { notePatch = v; return [{ ...v }]; } }],
-    [t.documentReferences, { onUpdate: () => { refUpd++; return [{}]; } }],
+    [t.documentReferences, { select: () => [procRef], onUpdate: () => { refUpd++; return [procRef]; } }],
     [t.journeyEvents, { onInsert: () => [] }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
   ]);
   const r = await runWithDb(spec, ALL, async () => l.voidProcedureNoteLineageForCase({ clinicId: 1, ancillaryCaseId: 5, reason: "cancelled", actorUserId: "u1" }));

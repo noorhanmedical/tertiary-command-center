@@ -58,6 +58,7 @@ const NOT_FOUND_STATUSES = new Set<CompleteCanonicalProcedureStatus>(["cross_cli
 const CONFLICT_STATUSES = new Set<CompleteCanonicalProcedureStatus>([
   "service_mismatch", "identity_mismatch", "invalid_schedule_event", "case_inactive",
   "exact_case_required", "procedure_event_ambiguous", "zero_row_conflict", "timestamp_conflict",
+  "invalid_from_state",
 ]);
 
 export function registerProcedureEventRoutes(app: Express) {
@@ -187,6 +188,16 @@ export function registerProcedureEventRoutes(app: Express) {
       const b = (req.body ?? {}) as Record<string, unknown>;
       if (typeof b.serviceType !== "string" || b.serviceType.length === 0) return res.status(400).json({ error: "serviceType is required" });
       const serviceType: string = b.serviceType;
+      // Validate the override payload shape (actor identity/role NEVER from body).
+      let override: { reason: string; requirementCodes: string[] } | null = null;
+      if (b.override != null) {
+        const ov = b.override as Record<string, unknown>;
+        const reason = typeof ov.reason === "string" ? ov.reason.trim() : "";
+        const codes = Array.isArray(ov.requirementCodes) ? ov.requirementCodes.filter((x): x is string => typeof x === "string") : [];
+        if (reason.length === 0) return res.status(400).json({ error: "override.reason is required and must be non-empty" });
+        if (codes.length === 0) return res.status(400).json({ error: "override.requirementCodes must name at least one requirement" });
+        override = { reason, requirementCodes: codes };
+      }
       const r: StartProcedureResult = await startProcedure({
         clinicId, serviceType,
         ancillaryCaseId: typeof b.ancillaryCaseId === "number" ? b.ancillaryCaseId : undefined,
@@ -194,6 +205,7 @@ export function registerProcedureEventRoutes(app: Express) {
         executionCaseId: typeof b.executionCaseId === "number" ? b.executionCaseId : undefined,
         patientScreeningId: typeof b.patientScreeningId === "number" ? b.patientScreeningId : undefined,
         actorUserId: req.session?.userId ?? null, actorRole: req.session?.role ?? null,
+        override,
       });
       if (r.status === "started") return res.status(201).json({ status: r.status, procedureEvent: r.procedureEvent ? toClinicDto(r.procedureEvent) : undefined, prerequisites: r.prerequisites });
       if (r.status === "prerequisites_blocked") return res.status(422).json({ status: r.status, prerequisites: r.prerequisites });
@@ -218,16 +230,25 @@ export function registerProcedureEventRoutes(app: Express) {
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   app.post("/api/procedure-events/:id/cancel", async (req, res) => {
-    try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await cancelProcedure(id, c, bodyReason(req), req.session?.userId ?? null)); }
-    catch (e: any) { res.status(500).json({ error: e.message }); }
+    try {
+      const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return;
+      const reason = bodyReason(req);
+      if (reason == null) return res.status(400).json({ error: "A non-empty cancellation reason is required" });
+      mapTransition(res, await cancelProcedure(id, c, reason, req.session?.userId ?? null));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   app.post("/api/procedure-events/:id/no-show", async (req, res) => {
+    // no_show reason is optional (kept when provided).
     try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await markProcedureNoShow(id, c, bodyReason(req), req.session?.userId ?? null)); }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   app.post("/api/procedure-events/:id/unable-to-complete", async (req, res) => {
-    try { const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return; mapTransition(res, await markProcedureUnableToComplete(id, c, bodyReason(req), req.session?.userId ?? null)); }
-    catch (e: any) { res.status(500).json({ error: e.message }); }
+    try {
+      const c = requireClinicScope(req, res); if (c == null) return; const id = idParam(req, res); if (id == null) return;
+      const reason = bodyReason(req);
+      if (reason == null) return res.status(400).json({ error: "A non-empty reason is required" });
+      mapTransition(res, await markProcedureUnableToComplete(id, c, reason, req.session?.userId ?? null));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // GET /api/procedure-events/:id — clinic-scoped single-record.

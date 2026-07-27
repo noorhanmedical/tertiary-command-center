@@ -84,6 +84,7 @@ export type CompleteCanonicalProcedureStatus =
   | "case_inactive"
   | "zero_row_conflict"
   | "timestamp_conflict"
+  | "invalid_from_state"
   | "migration_missing"
   // ── post-commit (completionCommitted=true) ──
   | "completed_and_linked"
@@ -282,6 +283,7 @@ export async function completeCanonicalProcedure(
       case "ambiguous": return preCommit("procedure_event_ambiguous", "procedure_event_write", { ancillaryCaseId: acase.id });
       case "zero_row": return preCommit("zero_row_conflict", "procedure_event_write", { ancillaryCaseId: acase.id });
       case "identity_mismatch": return preCommit("identity_mismatch", "procedure_event_write", { ancillaryCaseId: acase.id });
+      case "invalid_from_state": return preCommit("invalid_from_state", "procedure_event_write", { ancillaryCaseId: acase.id });
       case "timestamp_conflict":
         // The event IS complete (a prior commit) — truthful conflict on the
         // REQUESTED different time; nothing new committed here.
@@ -330,7 +332,13 @@ type EventResult =
   | { kind: "ambiguous" }
   | { kind: "zero_row" }
   | { kind: "timestamp_conflict"; event: ProcedureEvent }
-  | { kind: "identity_mismatch" };
+  | { kind: "identity_mismatch" }
+  | { kind: "invalid_from_state" };
+
+// A completion may only come from in_progress / paused (or be idempotent on an
+// already-complete row). A not_started or terminal-non-complete row must NEVER
+// jump to complete through the canonical route.
+const COMPLETABLE_FROM = new Set(["in_progress", "paused", "complete"]);
 
 /** Validate an existing case-scoped event is compatible before reusing it —
  *  including exact schedule-event agreement (a conflicting non-null schedule id
@@ -350,6 +358,8 @@ function existingCompatible(ex: ProcedureEvent, input: CompleteCanonicalProcedur
  *  so its clinic-scoped completion WHERE matches — corruption is never hidden. */
 async function completeExisting(ex: ProcedureEvent, input: CompleteCanonicalProcedureInput, acase: PatientAncillaryCase, qualifyingScheduleEventId: number | null, completedAt: Date, explicit: boolean): Promise<EventResult> {
   if (!existingCompatible(ex, input, acase, qualifyingScheduleEventId)) return { kind: "identity_mismatch" };
+  // §7 — never complete from not_started or a terminal-non-complete state.
+  if (!COMPLETABLE_FROM.has(ex.procedureStatus)) return { kind: "invalid_from_state" };
   let row = ex;
   if (row.clinicId == null || row.globalScheduleEventId == null && qualifyingScheduleEventId != null) {
     const link = await linkProcedureEventToAncillaryCase({

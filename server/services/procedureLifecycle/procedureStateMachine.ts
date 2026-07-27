@@ -17,18 +17,18 @@
  */
 
 import { db } from "../../db";
+import { and, eq, inArray } from "drizzle-orm";
 import { patientJourneyEvents } from "@shared/schema/executionCase";
 import { featureFlags } from "../../lib/featureFlags";
-import { PROCEDURE_TERMINAL_STATUSES, type ProcedureEvent } from "@shared/schema/procedureEvents";
+import { procedureEvents, PROCEDURE_TERMINAL_STATUSES, type ProcedureEvent } from "@shared/schema/procedureEvents";
 import {
   getProcedureEventByIdForClinic,
   applyProcedureTransition,
   findCanonicalProcedureEventsByCase,
-  insertCanonicalProcedureEvent,
 } from "../../repositories/procedureEvents.repo";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { resolveCanonicalProcedureCaseIdentity } from "./canonicalProcedureCompletion";
-import { evaluateProcedurePrerequisites, type EvaluateProcedurePrerequisitesResult } from "./procedurePrerequisites";
+import { evaluateProcedurePrerequisites, type EvaluateProcedurePrerequisitesResult, type ProcedureOverrideRequest } from "./procedurePrerequisites";
 import { voidProcedureNoteLineageForCase } from "./procedureNoteLineage";
 
 const AUDIT_SENTINEL_NAME = "[procedure_lifecycle_audit]";
@@ -100,17 +100,20 @@ export type StartProcedureInput = {
   ancillaryCaseId?: number | null; globalScheduleEventId?: number | null;
   executionCaseId?: number | null; patientScreeningId?: number | null;
   actorUserId?: string | null; actorRole?: string | null;
+  override?: ProcedureOverrideRequest | null;
 };
 export type StartProcedureStatus =
   | "skipped_flag_off" | "prerequisites_blocked" | "cross_clinic_denied" | "case_not_found"
   | "case_inactive" | "service_mismatch" | "identity_mismatch" | "invalid_schedule_event"
   | "deferred_ambiguous_case" | "exact_case_required" | "procedure_event_ambiguous"
-  | "invalid_transition" | "migration_missing" | "started";
+  | "invalid_transition" | "override_audit_failed" | "migration_missing" | "started";
 export type StartProcedureResult = {
   status: StartProcedureStatus;
   procedureEvent?: ProcedureEvent;
   prerequisites?: EvaluateProcedurePrerequisitesResult;
 };
+
+const PG_UNIQUE_VIOLATION = "23505";
 
 export async function startProcedure(input: StartProcedureInput): Promise<StartProcedureResult> {
   if (!featureFlags.canonicalProcedureLifecycle) return { status: "skipped_flag_off" };
@@ -124,39 +127,88 @@ export async function startProcedure(input: StartProcedureInput): Promise<StartP
     return { status: map[resolved.kind] };
   }
   const acase = resolved.case;
-  // Prerequisites gate (always-hard tenancy/active/appointment + configured).
-  const prereq = await evaluateProcedurePrerequisites({ clinicId: input.clinicId, ancillaryCaseId: acase.id, stage: "procedure_start", actorRole: input.actorRole ?? null });
+  const prereq = await evaluateProcedurePrerequisites({ clinicId: input.clinicId, ancillaryCaseId: acase.id, stage: "procedure_start", actorRole: input.actorRole ?? null, override: input.override ?? null });
   if (prereq.migrationMissing) return { status: "migration_missing", prerequisites: prereq };
   if (!prereq.allowed) return { status: "prerequisites_blocked", prerequisites: prereq };
+
+  // Any applied override MUST be audited transactionally with the start write —
+  // if the required audit fails, the start rolls back (remains blocked/deferred).
+  const auditMeta = { clinic_id: input.clinicId, ancillary_case_id: acase.id, service_type: acase.serviceType };
+  const writeOverrideAudits = async (tx: Pick<typeof db, "insert">) => {
+    for (const ov of prereq.appliedOverrides) {
+      await tx.insert(patientJourneyEvents).values({
+        patientName: AUDIT_SENTINEL_NAME, patientDob: null,
+        patientScreeningId: acase.originatingScreeningId ?? null, executionCaseId: acase.executionCaseId ?? null,
+        eventType: "procedure_prerequisite_override", eventSource: "procedure_state_machine", actorUserId: input.actorUserId ?? null,
+        summary: `Prerequisite override applied (${acase.serviceType})`,
+        metadata: { ...auditMeta, requirement_code: ov.requirementCode, actor_role: input.actorRole ?? null, reason: input.override?.reason ?? null },
+      });
+    }
+  };
 
   try {
     const existing = await findCanonicalProcedureEventsByCase(input.clinicId, acase.id);
     if (existing.length > 1) return { status: "procedure_event_ambiguous", prerequisites: prereq };
     const now = new Date();
+
     if (existing.length === 1) {
       const ex = existing[0];
       if (TERMINAL.has(ex.procedureStatus) || ex.procedureStatus === "paused") return { status: "invalid_transition", procedureEvent: ex, prerequisites: prereq };
       if (ex.procedureStatus === "in_progress") return { status: "started", procedureEvent: ex, prerequisites: prereq }; // idempotent
-      const updated = await applyProcedureTransition(ex.id, input.clinicId, ["not_started"], { procedureStatus: "in_progress", startedAt: now });
-      if (!updated) return { status: "invalid_transition", procedureEvent: ex, prerequisites: prereq };
-      await appendTransitionAudit(updated, "procedure_started", input.actorUserId ?? null, { clinic_id: input.clinicId, procedure_event_id: ex.id, ancillary_case_id: acase.id, service_type: acase.serviceType });
-      return { status: "started", procedureEvent: updated, prerequisites: prereq };
+      // not_started → in_progress + override audits, atomically.
+      try {
+        const row = await db.transaction(async (tx) => {
+          const rows = await tx.update(procedureEvents)
+            .set({ procedureStatus: "in_progress", startedAt: now, lastTransitionAt: now, updatedAt: now })
+            .where(and(eq(procedureEvents.id, ex.id), eq(procedureEvents.clinicId, input.clinicId), inArray(procedureEvents.procedureStatus, ["not_started"]))).returning();
+          if (rows.length !== 1) throw new StartTxError("transition");
+          await writeOverrideAudits(tx);
+          return rows[0];
+        });
+        await appendTransitionAudit(row, "procedure_started", input.actorUserId ?? null, { ...auditMeta, procedure_event_id: ex.id });
+        return { status: "started", procedureEvent: row, prerequisites: prereq };
+      } catch (te) {
+        if (te instanceof StartTxError && te.kind === "transition") return { status: "invalid_transition", procedureEvent: ex, prerequisites: prereq };
+        return { status: "override_audit_failed", prerequisites: prereq };
+      }
     }
-    const created = await insertCanonicalProcedureEvent({
-      clinicId: input.clinicId, ancillaryCaseId: acase.id,
-      globalPlexusPatientId: acase.globalPlexusPatientId ?? null, patientClinicMembershipId: acase.patientClinicMembershipId ?? null,
-      executionCaseId: acase.executionCaseId ?? input.executionCaseId ?? null,
-      patientScreeningId: acase.originatingScreeningId ?? input.patientScreeningId ?? null,
-      globalScheduleEventId: resolved.qualifyingScheduleEventId ?? null, serviceType: acase.serviceType,
-      completedByUserId: null, completedAt: now, note: null,
-    });
-    // A freshly created event begins in_progress (started), not complete.
-    const started = await applyProcedureTransition(created.id, input.clinicId, ["complete", "in_progress", "not_started"], { procedureStatus: "in_progress", startedAt: now, completedAt: null });
-    const row = started ?? created;
-    await appendTransitionAudit(row, "procedure_started", input.actorUserId ?? null, { clinic_id: input.clinicId, procedure_event_id: created.id, ancillary_case_id: acase.id, service_type: acase.serviceType });
-    return { status: "started", procedureEvent: row, prerequisites: prereq };
+
+    // No existing event → a SINGLE in_progress insert (never a completed row) +
+    // override audits in one transaction. Concurrent start → reselect winner.
+    try {
+      const created = await db.transaction(async (tx) => {
+        const [row] = await tx.insert(procedureEvents).values({
+          clinicId: input.clinicId, ancillaryCaseId: acase.id,
+          globalPlexusPatientId: acase.globalPlexusPatientId ?? null, patientClinicMembershipId: acase.patientClinicMembershipId ?? null,
+          executionCaseId: acase.executionCaseId ?? input.executionCaseId ?? null,
+          patientScreeningId: acase.originatingScreeningId ?? input.patientScreeningId ?? null,
+          globalScheduleEventId: resolved.qualifyingScheduleEventId ?? null, serviceType: acase.serviceType,
+          procedureStatus: "in_progress", startedAt: now, lastTransitionAt: now, completedAt: null, completedByUserId: null, note: null,
+        }).returning();
+        try { await writeOverrideAudits(tx); } catch { throw new StartTxError("audit"); }
+        return row;
+      });
+      await appendTransitionAudit(created, "procedure_started", input.actorUserId ?? null, { ...auditMeta, procedure_event_id: created.id });
+      return { status: "started", procedureEvent: created, prerequisites: prereq };
+    } catch (ie) {
+      // A required override-audit failure rolled the start back — remain deferred.
+      if (ie instanceof StartTxError) return { status: "override_audit_failed", prerequisites: prereq };
+      if ((ie as { code?: string })?.code === PG_UNIQUE_VIOLATION) {
+        // Concurrent start for the SAME case — converge on the exact winner.
+        const again = await findCanonicalProcedureEventsByCase(input.clinicId, acase.id);
+        if (again.length === 1) {
+          const w = again[0];
+          if (w.procedureStatus === "in_progress") return { status: "started", procedureEvent: w, prerequisites: prereq };
+          return { status: "invalid_transition", procedureEvent: w, prerequisites: prereq };
+        }
+        if (again.length > 1) return { status: "procedure_event_ambiguous", prerequisites: prereq };
+      }
+      throw ie;
+    }
   } catch (e) {
     if (["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"].includes((e as { code?: string })?.code ?? "")) return { status: "migration_missing", prerequisites: prereq };
     throw e;
   }
 }
+
+class StartTxError extends Error { constructor(public kind: "transition" | "audit") { super(kind); } }

@@ -304,6 +304,41 @@ export async function insertCanonicalProcedureEvent(
   return row;
 }
 
+/**
+ * Insert a canonical procedure event that STARTS in_progress — a single write.
+ * NEVER inserts a completed row: procedure_status='in_progress', started_at +
+ * last_transition_at stamped, completed_at / completed_by NULL. Throws PG unique
+ * violation (23505) on a concurrent case-scoped start so the caller reselects
+ * the exact winner. No completion side effects are triggered by this insert.
+ */
+export async function insertStartedCanonicalProcedureEvent(
+  input: Omit<CanonicalProcedureEventInput, "completedAt" | "completedByUserId"> & { startedAt: Date },
+): Promise<ProcedureEvent> {
+  const [row] = await db
+    .insert(procedureEvents)
+    .values({
+      clinicId: input.clinicId,
+      ancillaryCaseId: input.ancillaryCaseId,
+      globalPlexusPatientId: input.globalPlexusPatientId ?? null,
+      patientClinicMembershipId: input.patientClinicMembershipId ?? null,
+      executionCaseId: input.executionCaseId ?? null,
+      patientScreeningId: input.patientScreeningId ?? null,
+      globalScheduleEventId: input.globalScheduleEventId ?? null,
+      patientName: input.patientName ?? null,
+      patientDob: input.patientDob ?? null,
+      facilityId: input.facilityId ?? null,
+      serviceType: input.serviceType,
+      procedureStatus: "in_progress",
+      startedAt: input.startedAt,
+      lastTransitionAt: input.startedAt,
+      completedByUserId: null,
+      completedAt: null,
+      note: input.note ?? null,
+    })
+    .returning();
+  return row;
+}
+
 export type CompleteExistingOutcome =
   | { outcome: "completed"; procedureEvent: ProcedureEvent }
   | { outcome: "already_complete_preserved"; procedureEvent: ProcedureEvent }
