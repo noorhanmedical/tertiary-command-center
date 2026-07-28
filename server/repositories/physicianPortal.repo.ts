@@ -92,6 +92,7 @@ export async function listSignatureCandidateRows(
       effectiveClinicalDate: procedureNotes.effectiveClinicalDate,
       supersedesNoteId: procedureNotes.supersedesNoteId,
       supersededAt: procedureNotes.supersededAt,
+      reportDocumentReferenceId: procedureNotes.reportDocumentReferenceId,
       createdAt: procedureNotes.createdAt,
       updatedAt: procedureNotes.updatedAt,
       patientName: patientScreenings.name,

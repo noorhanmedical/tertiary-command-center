@@ -16,7 +16,7 @@
  * when indexing is deferred.
  */
 
-import { featureFlags } from "../../lib/featureFlags";
+import { featureFlags, procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 import {
   createReference,
   recordAncillaryDocumentFailure,
@@ -129,6 +129,39 @@ async function recordReferenceRetry(
   }
 }
 
+/**
+ * Phase 2F Hook B. Only a REPORT reference is a Procedure Note eligibility
+ * signal (report is condition 2). AWAITED (no async DB task escapes the caller)
+ * and non-throwing via the orchestration; a lazy dynamic import keeps this
+ * Phase-2E writer decoupled from the Phase 2F module graph. Never affects the
+ * reference result.
+ */
+async function fireProcedureNoteHookForReport(
+  input: EnsureDocumentReferenceInput,
+  ancillaryCaseId: number,
+  clinicId: number,
+): Promise<void> {
+  if (input.documentKind !== "report") return;
+  if (!procedureNoteRuntimeEnabled()) return;
+  try {
+    const { ensureCanonicalProcedureNoteForAncillaryCase } = await import(
+      "../procedureLifecycle/procedureLifecycleOrchestration"
+    );
+    await ensureCanonicalProcedureNoteForAncillaryCase({
+      clinicId,
+      ancillaryCaseId,
+      actorUserId: input.actorUserId ?? null,
+      source: "report_associated_hook",
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error", source: "ancillary_document", kind: "report_procedure_note_hook_failed",
+      ancillary_case_id: ancillaryCaseId, code: (e as { code?: string })?.code ?? "unknown",
+    }));
+  }
+}
+
 export async function ensureAncillaryDocumentReference(
   input: EnsureDocumentReferenceInput,
 ): Promise<EnsureDocumentReferenceResult> {
@@ -173,12 +206,17 @@ export async function ensureAncillaryDocumentReference(
         },
       });
       if (ref.outcome === "created") {
+        // Phase 2F Hook B: a canonical REPORT just became current for a
+        // deterministically-resolved case. Awaited Procedure Note ensure
+        // (flag-gated; OFF ⇒ no-op). Never blocks or reverses this reference.
+        await fireProcedureNoteHookForReport(input, acase.id, acase.clinicId);
         return { status: "created", referenceId: ref.row.id, ancillaryCaseId: acase.id };
       }
       // A same-source reuse (synced-in-place or unchanged) — both resolve the
       // caller's exact-source retry; the reference row is refreshed inside
       // createReference when stale.
       if (ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") {
+        await fireProcedureNoteHookForReport(input, acase.id, acase.clinicId);
         return { status: "reused_exact_source", referenceId: ref.existing.id, ancillaryCaseId: acase.id };
       }
       // Exact-source OWNERSHIP conflict (clinic/case) or a zero-row concurrent

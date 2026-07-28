@@ -122,12 +122,36 @@ async function testBackfillDeterministicIdempotent() {
   assert.equal(reused.status, "reused_exact_source");
 }
 
+// ─── (6) Phase 2F: worker handles link_procedure_note (procedure_events) ──
+async function testWorkerHandlesProcedureNoteLink() {
+  const t = await loadCanonicalTables();
+  const w = await worker();
+  const peRow = { id: 300, clinicId: 1, ancillaryCaseId: 5, executionCaseId: 900, patientScreeningId: 77, serviceType: "EchoWave", procedureStatus: "complete", completedAt: START, createdAt: START, updatedAt: START, globalPlexusPatientId: null, patientClinicMembershipId: null };
+  const reportRef = { id: 42, clinicId: 1, ancillaryCaseId: 5, documentKind: "report", serviceType: "EchoWave", documentStatus: "uploaded", supersededAt: null, sourceTable: "case_document_readiness", sourceId: 1000, actualCreatedAt: START, metadata: {} };
+  const noteRow = { id: 900, clinicId: 1, ancillaryCaseId: 5, executionCaseId: 900, patientScreeningId: 77, serviceType: "EchoWave", noteType: "post_procedure_note", generationStatus: "pending", signatureStatus: "needs_signature", signedAt: null, supersededAt: null, procedureEventId: 300, reportDocumentReferenceId: 42, createdAt: START, updatedAt: START };
+  const failure = { id: 7, clinicId: 1, ancillaryCaseId: 5, documentKind: "procedure_note", sourceTable: "procedure_events", sourceId: 300, requestedAction: "link_procedure_note", resolvedAt: null, attemptCount: 1 };
+  const spec = new Map<unknown, TableSpec>([
+    [t.documentFailures, { select: () => [failure], onInsert: (v) => [{ ...v, id: 8 }], onUpdate: (v) => [{ ...v }] }],
+    [t.ancillaryCases, { select: () => [caseRow()] }],
+    [t.procedureEvents, { select: () => [peRow], onUpdate: (v) => [{ ...peRow, ...v }] }],
+    [t.documentReferences, { select: (() => { const q = [[reportRef], [], []]; let i = 0; return () => q[Math.min(i++, q.length - 1)]; })(), onInsert: (v) => [{ ...v, id: 55 }] }],
+    [t.procedureNotes, { select: (() => { const q = [[], []]; let i = 0; return () => q[Math.min(i++, q.length - 1)]; })(), onInsert: (v) => [{ ...noteRow, ...v, id: 900 }] }],
+    [t.journeyEvents, { onInsert: () => [] }],
+  ]);
+  const r = await runWithDb(spec, { unifiedAncillaryDocuments: true, canonicalProcedureLifecycle: true, canonicalProcedureNote: true, canonicalAppointment: true }, async () => w.retryUnresolvedAncillaryDocumentFailures({ limit: 10 }));
+  assert.equal(r.processed, 1);
+  assert.ok(["resolved", "not_yet_eligible", "still_deferred"].includes(r.outcomes[0].status), `unexpected: ${r.outcomes[0].status}`);
+  // PHI-free outcome keys only.
+  for (const o of r.outcomes) for (const k of Object.keys(o)) assert.ok(["failureId", "requestedAction", "status", "message"].includes(k), `unexpected key ${k}`);
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
   ["(1) worker flag OFF → zero processed, zero IO", testWorkerFlagOff],
   ["(2) worker drains + resolves link_order_note; PHI-free outcomes", testWorkerResolvesLinkOrderNote],
   ["(3) worker skips actions with no automatic retry", testWorkerSkipsUnhandled],
   ["(4) backfill + CLI apply gates present", testBackfillGates],
   ["(5) backfill deterministic + idempotent (no note/clinic writes)", testBackfillDeterministicIdempotent],
+  ["(6) worker handles Phase 2F link_procedure_note (procedure_events)", testWorkerHandlesProcedureNoteLink],
 ];
 
 async function run() {

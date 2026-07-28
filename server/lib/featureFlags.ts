@@ -122,10 +122,66 @@ export const featureFlags = {
   //   6. Enable FEATURE_CANONICAL_ORDER_NOTE; validate Order Note flow.
   unifiedAncillaryDocuments: readBool("FEATURE_UNIFIED_ANCILLARY_DOCUMENTS", false),
   canonicalOrderNote: readBool("FEATURE_CANONICAL_ORDER_NOTE", false),
+
+  // ─── Phase 2F — Canonical procedure lifecycle + Procedure Note ─────
+  // Both default OFF. Migration 0054 (procedure_events ancillary identity +
+  // procedure_notes report evidence + case-scoped post_procedure_note
+  // identity) is NOT applied automatically.
+  //
+  // Enabling sequence:
+  //   1. Migrations 0049–0053 applied; Phase 2A–2E backfills done.
+  //   2. Phase 2A–2E flags enabled + validated.
+  //   3. Apply migrations/0054.
+  //   4. Run Phase 2F backfill dry-run + apply (procedure_events ancillary
+  //      linkage) once authored.
+  //   5. Enable FEATURE_CANONICAL_PROCEDURE_LIFECYCLE; the completion hook
+  //      begins writing the ancillary-case linkage onto procedure_events.
+  //   6. Enable FEATURE_CANONICAL_PROCEDURE_NOTE; validate the two-condition
+  //      Procedure Note flow (procedure complete AND current report).
+  //
+  // Both gate ZERO Phase 2F reads/writes while OFF. Neither auto-signs and
+  // neither generates any Procedure Note body.
+
+  /** Writes the canonical ancillary-case linkage onto completed
+   *  procedure_events and fires the Procedure Note orchestration hook. */
+  canonicalProcedureLifecycle: readBool("FEATURE_CANONICAL_PROCEDURE_LIFECYCLE", false),
+
+  /** Enables the canonical Procedure Note (post_procedure_note) eligibility +
+   *  create/reuse foundation. Pair-gated: the eligibility read of the report
+   *  reference also needs the Phase 2E reference index applied/ON. */
+  canonicalProcedureNote: readBool("FEATURE_CANONICAL_PROCEDURE_NOTE", false),
+
+  /** Enables the Procedure Note clinical-body GENERATOR. Requires the full
+   *  Procedure Note runtime (all three flags above) IN ADDITION to this flag —
+   *  see procedureNoteGeneratorEnabled(). Default OFF. Never auto-signs. */
+  procedureNoteGenerator: readBool("FEATURE_PROCEDURE_NOTE_GENERATOR", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;
 
 export function isEnabled(name: FeatureFlagName): boolean {
   return featureFlags[name];
+}
+
+/**
+ * The SINGLE canonical Procedure Note runtime gate. The canonical Procedure
+ * Note path (eligibility reads, create/reuse, evidence sync, retry execution,
+ * report-side hook, and legacy-writer suppression) requires ALL THREE flags —
+ * lifecycle (so the completed procedure event carries its case linkage), note
+ * (the canonical creator), and unified documents (the reference index). Partial
+ * enablement must NEVER perform partial canonical reads/writes and must NEVER
+ * suppress the legacy writer — otherwise the workflow is stranded with neither
+ * a legacy nor a canonical note.
+ */
+export function procedureNoteRuntimeEnabled(): boolean {
+  return (
+    featureFlags.canonicalProcedureLifecycle &&
+    featureFlags.canonicalProcedureNote &&
+    featureFlags.unifiedAncillaryDocuments
+  );
+}
+
+/** The generator requires the full Procedure Note runtime AND its own flag. */
+export function procedureNoteGeneratorEnabled(): boolean {
+  return procedureNoteRuntimeEnabled() && featureFlags.procedureNoteGenerator;
 }

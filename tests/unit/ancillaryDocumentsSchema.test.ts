@@ -64,15 +64,19 @@ async function testUniqueSourceConstraint() {
 }
 
 async function testAllowedKinds() {
-  assert.deepEqual([...ANCILLARY_DOCUMENT_KINDS], ["order_note", "report", "consent", "screening_form"]);
-  assert.ok(/document_kind IN \('order_note','report','consent','screening_form'\)/i.test(MIGRATION), "kind CHECK missing/incorrect");
+  // Shared union now includes the Phase 2F procedure_note kind.
+  assert.deepEqual([...ANCILLARY_DOCUMENT_KINDS], ["order_note", "report", "consent", "screening_form", "procedure_note"]);
+  // Migration 0053 (Phase 2E) CHECK stays scoped to the four 2E kinds; the
+  // procedure_note kind is widened in by migration 0054, never by amending 0053.
+  assert.ok(/document_kind IN \('order_note','report','consent','screening_form'\)/i.test(MIGRATION), "0053 kind CHECK must stay Phase-2E-scoped");
 }
 
 async function testNoProcedureNoteKind() {
-  // The registry must not introduce a procedure_note document kind.
-  assert.ok(!(ANCILLARY_DOCUMENT_KINDS as readonly string[]).includes("procedure_note"), "procedure_note must not be a registry kind");
+  // procedure_note IS a Phase 2F registry kind (shared union + migration 0054),
+  // and MUST NOT have been retro-added to the Phase 2E migration 0053.
+  assert.ok((ANCILLARY_DOCUMENT_KINDS as readonly string[]).includes("procedure_note"), "procedure_note is a Phase 2F registry kind");
   const kindCheck = MIGRATION.match(/document_kind IN \([^)]*\)/i)?.[0] ?? "";
-  assert.ok(!/procedure_note/.test(kindCheck), "procedure_note must not appear in the kind CHECK");
+  assert.ok(!/procedure_note/.test(kindCheck), "procedure_note must not appear in the 0053 kind CHECK");
 }
 
 async function testNoBillingDocumentKind() {
@@ -100,10 +104,19 @@ async function testRetryLedgerNoPhi() {
   assert.deepEqual([...ANCILLARY_DOCUMENT_FAILURE_ACTIONS], [
     "create_reference", "refresh_projection", "link_order_note", "link_report",
     "link_consent", "link_screening_form", "supersede_reference",
-    "link_order_note_evidence",
+    "link_order_note_evidence", "link_procedure_note", "link_procedure_note_evidence",
+    "generate_procedure_note", "reconcile_procedure_note_lineage",
+    "void_procedure_note", "sync_procedure_note_signature",
+  ]);
+  // Phase 2E actions live in the 0053 CHECK; the two Phase 2F actions are
+  // widened in by 0054 and MUST NOT have been retro-added to 0053.
+  const PHASE_2E_ACTIONS = new Set([
+    "create_reference", "refresh_projection", "link_order_note", "link_report",
+    "link_consent", "link_screening_form", "supersede_reference", "link_order_note_evidence",
   ]);
   for (const a of ANCILLARY_DOCUMENT_FAILURE_ACTIONS) {
-    assert.ok(MIGRATION.includes(`'${a}'`), `retry action CHECK missing '${a}'`);
+    if (PHASE_2E_ACTIONS.has(a)) assert.ok(MIGRATION.includes(`'${a}'`), `0053 retry action CHECK missing '${a}'`);
+    else assert.ok(!MIGRATION.includes(`'${a}'`), `Phase 2F action '${a}' must not be in migration 0053`);
   }
 }
 
