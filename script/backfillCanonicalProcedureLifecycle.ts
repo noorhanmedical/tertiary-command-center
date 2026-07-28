@@ -172,7 +172,9 @@ export async function queueApplyWork(
   try {
     // Deterministic link (+ deterministic legacy-note adoption) via the canonical hook.
     if (set.has("deterministic_link") || set.has("legacy_procedure_note_adoptable")) {
-      const r = await onProcedureCompleted({ procedureEventId: pe.id, expectedClinicId: pe.clinicId ?? null });
+      // suppressGeneration:true — the completion-hook linkage route must NEVER
+      // generate a body either (even with the generator flag ON).
+      const r = await onProcedureCompleted({ procedureEventId: pe.id, expectedClinicId: pe.clinicId ?? null, suppressGeneration: true });
       actions.link = ["created", "reused", "linked_pending_note"].includes(r.status) ? "completed" : (r.status === "not_yet_eligible" ? "unresolved" : "conflict");
     }
     // For work needing an EXACT note (generation / reference / adoption), ENSURE
@@ -180,7 +182,10 @@ export async function queueApplyWork(
     let noteId = ctx.noteId;
     const needsNote = set.has("note_generation_candidate") || set.has("legacy_procedure_note_adoptable") || set.has("procedure_note_reference_create");
     if (needsNote && clinicId != null && ctx.caseId != null && noteId == null) {
-      const ensure = await ensureCanonicalProcedureNoteForAncillaryCase({ clinicId, ancillaryCaseId: ctx.caseId, source: "procedure_lifecycle_backfill" });
+      // suppressGeneration:true — the backfill creates/adopts a PENDING note and
+      // queues exact generation work; it NEVER generates a body (even if the
+      // generator flag is ON). Enforced in code, not operationally.
+      const ensure = await ensureCanonicalProcedureNoteForAncillaryCase({ clinicId, ancillaryCaseId: ctx.caseId, source: "procedure_lifecycle_backfill", suppressGeneration: true });
       if (!["created", "reused"].includes(ensure.status)) { actions.ensure_note = "unresolved"; }
       else {
         const n = await currentNote(clinicId, ctx.caseId);
@@ -192,7 +197,9 @@ export async function queueApplyWork(
       // Generation is QUEUED against a NON-NULL exact note id only — never generated here.
       if (set.has("note_generation_candidate")) actions.generation = noteId != null ? await queue("generate_procedure_note", noteId, "backfill_generation_candidate") : "unresolved";
       if (set.has("procedure_note_reference_create")) actions.reference = noteId != null ? await queue("link_procedure_note", noteId, "backfill_reference_create") : "unresolved";
-      if (set.has("generated_note_amendment_required")) actions.amendment = await queue("reconcile_procedure_note_lineage", null, "backfill_amendment_required");
+      // Lineage reconciliation is queued against the EXACT stale current note id
+      // (never sourceTable=procedure_notes with sourceId=null).
+      if (set.has("generated_note_amendment_required")) actions.amendment = ctx.noteId != null ? await queue("reconcile_procedure_note_lineage", ctx.noteId, "backfill_amendment_required") : "unresolved";
       if (set.has("signed_evidence_conflict")) actions.signed = ctx.noteId != null ? await queue("link_procedure_note_evidence", ctx.noteId, "backfill_signed_evidence_conflict") : "unresolved";
       if (set.has("voided_or_terminal_with_current_note")) actions.void = ctx.noteId != null ? await queue("void_procedure_note", ctx.noteId, "backfill_terminal_void") : "unresolved";
     }

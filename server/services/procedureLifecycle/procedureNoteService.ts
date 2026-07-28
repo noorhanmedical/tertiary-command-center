@@ -466,7 +466,9 @@ async function recordLegacyLinkRetry(
       patientScreeningId: acase.originatingScreeningId ?? null,
       executionCaseId: acase.executionCaseId ?? null,
       documentKind: "procedure_note",
-      sourceTable: PROCEDURE_NOTE_SOURCE_TABLE,
+      // Source-LESS case-level row → sourceTable/sourceId both NULL (never
+      // procedure_notes + null, which the retry worker cannot exactly resolve).
+      sourceTable: null,
       requestedAction: "link_procedure_note",
       sourceSystem: input.source,
       errorCode,

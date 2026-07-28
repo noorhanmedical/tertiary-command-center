@@ -278,6 +278,27 @@ records the qualifying reference id as permanent evidence.
   queue `generate_procedure_note` against it (never `sourceId=null`, never
   `applied` when no note exists). Amendment distinguishes
   `amendment_deferred_retry_recorded` from `reconciliation_not_recorded`.
+- **Exact-recovery closeout** — the backfill passes `suppressGeneration:true` into
+  the canonical ensure, so an APPLY run creates/adopts a PENDING note and queues
+  exact generation work but NEVER invokes the generator or writes a body — even
+  when `FEATURE_PROCEDURE_NOTE_GENERATOR` is ON (enforced in code). Void
+  reconciliation additionally requires TERMINAL procedure evidence: the exact
+  procedure event must be owned by the same clinic/case/service and be
+  `cancelled`/`no_show`/`unable_to_complete` — a report-amendment-superseded note
+  (procedure still `complete`) returns `terminal_evidence_missing` and is never
+  voided. A claimed note is never stranded `generating`: every post-claim
+  non-success (migration-missing, ineligible, unexpected) restores
+  `generating→failed` with an exact affected-row WHERE. The generated reference is
+  synchronized TRUTHFULLY via `syncProcedureNoteReferenceSignature` (exact
+  clinic+case+source+kind, affected-row checked); a missing / zero-row / failed
+  projection keeps the note `generated` and records a DISTINCT
+  `sync_procedure_note_signature` retry (`generated_reference_retry_recorded` /
+  `_not_recorded`) — never a false plain `generated`. Failed-note regeneration is
+  bound to an EXACT unresolved `generate_procedure_note` failure (matching
+  action + `procedure_notes` + `sourceId` + clinic + case), else
+  `failure_not_verified` with no claim. All Phase 2F retry rows use valid
+  source pairings (source-less ⇒ `sourceTable=null`; never
+  `procedure_notes`/`procedure_events` with a null `sourceId`).
 - **Signature sync** (§8): after a canonical `post_procedure_note` sign/return,
   `syncProcedureNoteReferenceSignature` mirrors documentStatus + signedAt onto
   the exact reference (never throws; missing reference → exact retry). Order Note

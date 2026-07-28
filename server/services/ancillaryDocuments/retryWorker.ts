@@ -383,31 +383,69 @@ async function retryGenerateProcedureNote(failure: AncillaryDocumentReconciliati
   const note = await getProcedureNoteByIdForClinic({ id: failure.sourceId, clinicId: failure.clinicId });
   if (!note) return { ...base, status: "source_not_found" };
   if (note.ancillaryCaseId !== failure.ancillaryCaseId) return { ...base, status: "case_mismatch" };
-  // Already generated (or superseded away) — the generation work is complete;
-  // resolve this exact failure rather than looping forever.
-  if (note.generationStatus === "generated" || note.generationStatus === "approved" || note.supersededAt != null) {
+  // Superseded away (amended/voided) — generation is moot; lineage owns the
+  // reference. Resolve this exact failure rather than looping forever.
+  if (note.supersededAt != null) {
     await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
     return { ...base, status: "resolved" };
   }
+  // Already generated — generation is COMPLETE, but the exact reference
+  // projection may still be out of sync (§6). Synchronize it; resolve the
+  // generation boundary only once the reference is synced OR a DISTINCT exact
+  // reference retry is durably recorded (so the projection is never lost).
+  if (note.generationStatus === "generated" || note.generationStatus === "approved") {
+    const documentStatus = note.signatureStatus === "signed" ? "signed" as const : "pending_signature" as const;
+    const sync = await syncProcedureNoteReferenceSignature({ clinicId: failure.clinicId, ancillaryCaseId: note.ancillaryCaseId ?? failure.ancillaryCaseId, noteId: note.id, documentStatus, signedAt: note.signedAt ?? null });
+    if (sync.status === "synced") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+    if ((sync.status === "no_reference" || sync.status === "sync_failed") && sync.retryRecorded) { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+    if (sync.status === "migration_missing") return { ...base, status: "migration_missing" };
+    // Projection incomplete and no separate retry persisted → keep this failure open.
+    return { ...base, status: "still_deferred", message: `reference_${sync.status}` };
+  }
   const args = { clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, noteId: failure.sourceId };
   const r = note.generationStatus === "failed"
-    ? await retryFailedProcedureNoteGeneration(args)
+    ? await retryFailedProcedureNoteGeneration({ ...args, failureId: failure.id })
     : await generateProcedureNote(args);
-  // Resolve ONLY after the exact note is genuinely generated.
-  if (r.status === "generated") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  // Resolve once the generation boundary is satisfied: the note is generated
+  // (reference synced) OR generated with a DISTINCT reference retry recorded.
+  if (r.status === "generated" || r.status === "generated_reference_retry_recorded") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
   if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
   if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
   if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
   if (r.status === "not_yet_eligible") return { ...base, status: "not_yet_eligible" };
-  // failed_retry_*, report_content_unavailable_*, already_claimed, not_pending → NEVER resolve.
+  // generated_reference_retry_not_recorded, failed_retry_*, report_content_unavailable_*,
+  // already_claimed, not_pending, failure_not_verified → NEVER resolve.
   return { ...base, status: "still_deferred", message: r.status };
 }
 
-/** §9 — re-drive the case ensure (which supersedes + amends on report change). */
+/** §4/§9 — reconcile a Procedure Note lineage failure.
+ *   • SOURCE-BEARING (procedure_notes + sourceId) → require the EXACT named note,
+ *     validate clinic/case/type, confirm it is a lineage node for the case, then
+ *     re-drive the case ensure (which supersedes + amends on report change) to
+ *     reconcile ONLY that case's lineage. NEVER silently broadened.
+ *   • SOURCE-LESS (sourceTable null) → case-level ensure.
+ *   • procedure_notes + null sourceId is an INVALID pairing → never processed.
+ *  Resolves ONLY this exact failure id on complete success. */
 async function retryProcedureNoteLineage(failure: AncillaryDocumentReconciliationFailure): Promise<DocumentRetryOutcome> {
   const base = { failureId: failure.id, requestedAction: failure.requestedAction };
   if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
   if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
+
+  // Source-bearing → bind to the EXACT named lineage note before reconciling.
+  if (failure.sourceTable === PROCEDURE_NOTE_SOURCE_TABLE) {
+    if (failure.sourceId == null) return { ...base, status: "still_deferred", message: "invalid_source_pairing" };
+    const note = await getProcedureNoteByIdForClinic({ id: failure.sourceId, clinicId: failure.clinicId });
+    if (!note) return { ...base, status: "source_not_found" };
+    if (note.ancillaryCaseId !== failure.ancillaryCaseId) return { ...base, status: "case_mismatch" };
+    if (note.noteType !== "post_procedure_note") return { ...base, status: "source_type_mismatch" };
+    // `note` is a post_procedure_note for the exact case — a genuine lineage node
+    // (current stale note or a superseded predecessor). Re-driving the case-scoped
+    // ensure reconciles exactly this lineage (service is validated within ensure).
+  } else if (failure.sourceTable != null) {
+    // Lineage work is only ever keyed to procedure_notes (or source-less).
+    return { ...base, status: "source_type_mismatch", message: "lineage_source_must_be_procedure_notes" };
+  }
+
   const r = await ensureCanonicalProcedureNoteForAncillaryCase({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, source: "document_retry_worker" });
   if (r.status === "created" || r.status === "reused") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
   if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
@@ -437,6 +475,9 @@ async function retryVoidProcedureNote(failure: AncillaryDocumentReconciliationFa
     if (r.status === "source_not_found") return { ...base, status: "source_not_found" };
     if (r.status === "ownership_conflict") return { ...base, status: "ownership_conflict" };
     if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
+    // §3 — no terminal procedure invalidation (e.g. amendment-superseded note):
+    // NEVER resolve; the reference must not be voided without terminal evidence.
+    if (r.status === "terminal_evidence_missing") return { ...base, status: "still_deferred", message: "terminal_evidence_missing" };
     return { ...base, status: "still_deferred", message: r.status };
   }
 

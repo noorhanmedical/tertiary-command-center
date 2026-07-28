@@ -525,6 +525,34 @@ export async function resolveAncillaryDocumentFailureById(args: {
   return rows.length > 0;
 }
 
+/**
+ * Load EXACTLY ONE unresolved reconciliation failure by primary key, scoped to
+ * the owning clinic. Used to VERIFY that a recovery action (e.g. a failed
+ * Procedure Note regeneration) is being executed for a genuine, still-open
+ * failure — never to casually reclaim work from an unrelated caller. Returns
+ * null when the id does not exist, belongs to another clinic, or is already
+ * resolved.
+ */
+export async function getUnresolvedAncillaryDocumentFailureById(args: {
+  id: number;
+  clinicId: number;
+}): Promise<AncillaryDocumentReconciliationFailure | null> {
+  return safeRead(async () => {
+    const [row] = await db
+      .select()
+      .from(ancillaryDocumentReconciliationFailures)
+      .where(
+        and(
+          eq(ancillaryDocumentReconciliationFailures.id, args.id),
+          eq(ancillaryDocumentReconciliationFailures.clinicId, args.clinicId),
+          isNull(ancillaryDocumentReconciliationFailures.resolvedAt),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  }, null as AncillaryDocumentReconciliationFailure | null, "getUnresolvedAncillaryDocumentFailureById");
+}
+
 export async function listUnresolvedAncillaryDocumentFailures(args?: {
   clinicId?: number;
   limit?: number;

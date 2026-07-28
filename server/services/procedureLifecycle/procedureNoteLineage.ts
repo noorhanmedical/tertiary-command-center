@@ -19,8 +19,12 @@ import { patientJourneyEvents } from "@shared/schema/executionCase";
 import { ancillaryDocumentReferences, PROCEDURE_NOTE_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 import { createReference, recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
+import { getProcedureEventById } from "../../repositories/procedureEvents.repo";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
+// A void reconciliation is valid ONLY when the exact procedure was terminally
+// INVALIDATED — never `complete` (that is an amendment, not a void).
+const TERMINAL_INVALIDATION_STATUSES = new Set(["cancelled", "no_show", "unable_to_complete"]);
 
 // A minimal tx surface (db or a transaction handle) for the shared writers.
 type TxHandle = Pick<typeof db, "select" | "update" | "insert">;
@@ -80,20 +84,23 @@ export async function voidProcedureNoteLineageForCase(input: {
   clinicId: number; ancillaryCaseId: number; reason: string; actorUserId: string | null;
 }): Promise<VoidLineageResult> {
   if (!procedureNoteRuntimeEnabled()) return { status: "skipped_flag_off" };
+  // Hoisted so the rollback catch can record an EXACT source-bearing retry.
+  let note: typeof procedureNotes.$inferSelect | null = null;
   try {
-    const note = await currentCaseNote(input.clinicId, input.ancillaryCaseId);
+    note = await currentCaseNote(input.clinicId, input.ancillaryCaseId);
     if (!note) return { status: "no_current_note" };
+    const n = note; // const alias preserves non-null narrowing inside the tx closure.
     const now = new Date();
-    const signed = note.signatureStatus === "signed";
+    const signed = n.signatureStatus === "signed";
     // Note void + (exact reference void when present) + required audit — atomic.
     const hadReference = await db.transaction(async (tx) => {
       const noteRows = await tx.update(procedureNotes)
         .set(signed ? { supersededAt: now, updatedAt: now } : { supersededAt: now, generationStatus: "voided", updatedAt: now })
-        .where(and(eq(procedureNotes.id, note.id), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId), isNull(procedureNotes.supersededAt)))
+        .where(and(eq(procedureNotes.id, n.id), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId), isNull(procedureNotes.supersededAt)))
         .returning();
       if (noteRows.length !== 1) throw new LineageTxError("note");
-      const refResult = await updateExactReferenceTx(tx as TxHandle, input.clinicId, input.ancillaryCaseId, note.id, { documentStatus: "voided", supersededAt: now });
-      await appendAuditTx(tx as TxHandle, note, "procedure_note_voided", input.actorUserId, { clinic_id: input.clinicId, ancillary_case_id: input.ancillaryCaseId, source_id: note.id, reason: input.reason, was_signed: signed });
+      const refResult = await updateExactReferenceTx(tx as TxHandle, input.clinicId, input.ancillaryCaseId, n.id, { documentStatus: "voided", supersededAt: now });
+      await appendAuditTx(tx as TxHandle, n, "procedure_note_voided", input.actorUserId, { clinic_id: input.clinicId, ancillary_case_id: input.ancillaryCaseId, source_id: n.id, reason: input.reason, was_signed: signed });
       return refResult === "updated";
     });
     if (hadReference) return { status: "voided" };
@@ -106,9 +113,11 @@ export async function voidProcedureNoteLineageForCase(input: {
   } catch (e) {
     if (e instanceof LineageTxError && e.kind === "note") return { status: "zero_row_conflict" };
     if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
-    // Whole void rolled back — record a durable retry; surface persistence truthfully.
+    // Whole void rolled back — record a durable retry; surface persistence
+    // truthfully. Source-bearing (exact note) when the note was resolved, else a
+    // valid source-LESS case-level row (never procedure_notes + null sourceId).
     try {
-      await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, requestedAction: "void_procedure_note", sourceSystem: "procedure_note_lineage", errorCode: (e as { code?: string })?.code ?? "void_failed" });
+      await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: note != null ? PROCEDURE_NOTE_SOURCE_TABLE : null, sourceId: note?.id ?? null, requestedAction: "void_procedure_note", sourceSystem: "procedure_note_lineage", errorCode: (e as { code?: string })?.code ?? "void_failed" });
       return { status: "deferred_retry_recorded" };
     } catch { return { status: "reconciliation_not_recorded" }; }
   }
@@ -133,25 +142,29 @@ export async function amendProcedureNoteLineage(input: {
 }): Promise<AmendLineageResult> {
   if (!procedureNoteRuntimeEnabled()) return { status: "skipped_flag_off" };
   let created: typeof procedureNotes.$inferSelect | null = null;
+  // Hoisted so the rollback catch can queue reconciliation against the EXACT
+  // stale current (prior) note — never sourceTable=procedure_notes + null.
+  let prior: typeof procedureNotes.$inferSelect | null = null;
   try {
-    const prior = await currentCaseNote(input.clinicId, input.ancillaryCaseId);
+    prior = await currentCaseNote(input.clinicId, input.ancillaryCaseId);
     if (!prior) return { status: "no_current_note" };
+    const p = prior; // const alias preserves non-null narrowing inside the tx closure.
     const now = new Date();
     created = await db.transaction(async (tx) => {
       const supRows = await tx.update(procedureNotes)
         .set({ supersededAt: now, updatedAt: now })
-        .where(and(eq(procedureNotes.id, prior.id), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId), isNull(procedureNotes.supersededAt)))
+        .where(and(eq(procedureNotes.id, p.id), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId), isNull(procedureNotes.supersededAt)))
         .returning();
       if (supRows.length !== 1) throw new LineageTxError("note");
-      await updateExactReferenceTx(tx as TxHandle, input.clinicId, input.ancillaryCaseId, prior.id, { supersededAt: now, documentStatus: "superseded" });
+      await updateExactReferenceTx(tx as TxHandle, input.clinicId, input.ancillaryCaseId, p.id, { supersededAt: now, documentStatus: "superseded" });
       const [row] = await tx.insert(procedureNotes).values({
-        clinicId: input.clinicId, executionCaseId: prior.executionCaseId ?? null, patientScreeningId: prior.patientScreeningId ?? null,
-        serviceType: prior.serviceType, noteType: "post_procedure_note", generationStatus: "pending", signatureStatus: "needs_signature",
-        ancillaryCaseId: input.ancillaryCaseId, globalPlexusPatientId: prior.globalPlexusPatientId ?? null, patientClinicMembershipId: prior.patientClinicMembershipId ?? null,
+        clinicId: input.clinicId, executionCaseId: p.executionCaseId ?? null, patientScreeningId: p.patientScreeningId ?? null,
+        serviceType: p.serviceType, noteType: "post_procedure_note", generationStatus: "pending", signatureStatus: "needs_signature",
+        ancillaryCaseId: input.ancillaryCaseId, globalPlexusPatientId: p.globalPlexusPatientId ?? null, patientClinicMembershipId: p.patientClinicMembershipId ?? null,
         procedureEventId: input.procedureEventId ?? null, reportDocumentReferenceId: input.newReportReferenceId ?? null,
-        supersedesNoteId: prior.id, effectiveClinicalDate: input.effectiveDate ?? null,
+        supersedesNoteId: p.id, effectiveClinicalDate: input.effectiveDate ?? null,
       }).returning();
-      await appendAuditTx(tx as TxHandle, prior, "procedure_note_amended", input.actorUserId, { clinic_id: input.clinicId, ancillary_case_id: input.ancillaryCaseId, prior_note_id: prior.id, new_note_id: row.id, was_signed: prior.signatureStatus === "signed" });
+      await appendAuditTx(tx as TxHandle, p, "procedure_note_amended", input.actorUserId, { clinic_id: input.clinicId, ancillary_case_id: input.ancillaryCaseId, prior_note_id: p.id, new_note_id: row.id, was_signed: p.signatureStatus === "signed" });
       return row;
     });
   } catch (e) {
@@ -162,7 +175,7 @@ export async function amendProcedureNoteLineage(input: {
     // DISTINCTLY (deferred-retry-recorded vs never-persisted).
     let recorded = false;
     try {
-      await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, requestedAction: "reconcile_procedure_note_lineage", sourceSystem: "procedure_note_lineage", errorCode: (e as { code?: string })?.code ?? "amend_failed" });
+      await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: prior != null ? PROCEDURE_NOTE_SOURCE_TABLE : null, sourceId: prior?.id ?? null, requestedAction: "reconcile_procedure_note_lineage", sourceSystem: "procedure_note_lineage", errorCode: (e as { code?: string })?.code ?? "amend_failed" });
       recorded = true;
     } catch { recorded = false; }
     return { status: recorded ? "amendment_deferred_retry_recorded" : "reconciliation_not_recorded" };
@@ -196,14 +209,19 @@ export async function amendProcedureNoteLineage(input: {
 
 // ─── §4 — exact reconciliation of a voided/superseded note's reference ───────
 export type ReconcileVoidedReferenceResult = {
-  status: "reconciled" | "already_reconciled" | "reference_missing" | "source_not_found" | "ownership_conflict" | "migration_missing";
+  status: "reconciled" | "already_reconciled" | "reference_missing" | "source_not_found" | "ownership_conflict" | "terminal_evidence_missing" | "migration_missing";
 };
 
 /**
  * Source-BEARING void recovery. Loads the EXACT named note by id (including
  * superseded/voided rows — NEVER currentCaseNote, never another note from the
- * case), validates ownership + that it is actually superseded/voided, then
- * reconciles its EXACT reference (clinic + case + procedure_notes + noteId +
+ * case), validates ownership + that it is actually superseded/voided, AND
+ * requires TERMINAL procedure evidence (§3): the note's exact procedure event
+ * must be owned by the same clinic/case/service and be in a terminal INVALIDATION
+ * status (cancelled / no_show / unable_to_complete). A note superseded merely by
+ * a report AMENDMENT (procedure still `complete`) is NOT voidable by this path —
+ * it returns `terminal_evidence_missing` and stays unresolved. Only then does it
+ * reconcile the EXACT reference (clinic + case + procedure_notes + noteId +
  * procedure_note). Never creates a new current reference for a voided note.
  * `reference_missing` stays unresolved.
  */
@@ -218,6 +236,17 @@ export async function reconcileVoidedProcedureNoteReference(input: {
     if (note.noteType !== "post_procedure_note") return { status: "ownership_conflict" };
     // The note MUST actually be superseded/voided for a void reconciliation.
     if (note.supersededAt == null && note.generationStatus !== "voided") return { status: "ownership_conflict" };
+
+    // §3 — require EXACT terminal procedure-invalidation evidence. This rejects
+    // amendment-superseded notes (procedure still `complete`) and cross-tenant /
+    // cross-service procedure events.
+    if (note.procedureEventId == null) return { status: "terminal_evidence_missing" };
+    const pe = await getProcedureEventById(note.procedureEventId);
+    if (!pe) return { status: "terminal_evidence_missing" };
+    if (pe.clinicId != null && pe.clinicId !== input.clinicId) return { status: "ownership_conflict" };
+    if (pe.ancillaryCaseId != null && pe.ancillaryCaseId !== input.ancillaryCaseId) return { status: "ownership_conflict" };
+    if (pe.serviceType != null && note.serviceType != null && pe.serviceType !== note.serviceType) return { status: "ownership_conflict" };
+    if (!TERMINAL_INVALIDATION_STATUSES.has(pe.procedureStatus)) return { status: "terminal_evidence_missing" };
 
     const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
       eq(ancillaryDocumentReferences.clinicId, input.clinicId),

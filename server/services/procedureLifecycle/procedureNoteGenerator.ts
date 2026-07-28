@@ -29,8 +29,9 @@ import { ancillaryDocumentReferences, PROCEDURE_NOTE_SOURCE_TABLE, REPORT_SOURCE
 import { procedureNoteGeneratorEnabled } from "../../lib/featureFlags";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { getProcedureEventById } from "../../repositories/procedureEvents.repo";
-import { recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
+import { recordAncillaryDocumentFailure, getUnresolvedAncillaryDocumentFailureById } from "../../repositories/ancillaryDocuments.repo";
 import { evaluateProcedureNoteEligibility } from "./procedureNoteEligibility";
+import { syncProcedureNoteReferenceSignature } from "./procedureNoteService";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
@@ -40,11 +41,15 @@ export type GenerateProcedureNoteResult = {
     | "skipped_flag_off" | "note_not_found" | "not_pending" | "already_claimed"
     | "cross_clinic_denied" | "not_yet_eligible"
     | "report_content_unavailable_retry_recorded" | "report_content_unavailable_retry_not_recorded"
-    | "generated" | "failed_retry_recorded" | "failed_retry_not_recorded" | "migration_missing";
+    | "generated" | "generated_reference_retry_recorded" | "generated_reference_retry_not_recorded"
+    | "failed_retry_recorded" | "failed_retry_not_recorded" | "migration_missing"
+    | "failure_not_verified";
   procedureNoteId?: number;
 };
 
 type GenInput = { clinicId: number; ancillaryCaseId: number; noteId: number; actorUserId?: string | null };
+// The exact-failure retry MUST carry the reconciliation failure it is executing.
+type RetryGenInput = GenInput & { failureId: number };
 type NoteRow = typeof procedureNotes.$inferSelect;
 
 /** Normal generator — claims ONLY a pending note. */
@@ -72,15 +77,32 @@ export async function generateProcedureNote(input: GenInput): Promise<GeneratePr
 }
 
 /**
- * Exact FAILED-note regeneration (§3). Reclaims ONLY the exact named note that
- * is `failed` (never first/newest/current-by-case), atomically failed→generating,
- * re-evaluates exact eligibility AFTER the claim, and never overwrites an
- * already-generated body. Reverts generating→failed on ineligibility so a note
- * is never stranded `generating`.
+ * Exact FAILED-note regeneration (§3/§7). Bound to an EXACT unresolved
+ * `generate_procedure_note` reconciliation failure: the caller (only the
+ * verified retry-worker boundary) must supply the failure id, whose recorded
+ * (action, source_table, source_id, clinic, case) must match this exact note —
+ * no route or unrelated service can casually reclaim a failed note. Reclaims
+ * ONLY the exact named `failed` note (never first/newest/current-by-case),
+ * atomically failed→generating, re-evaluates exact eligibility AFTER the claim,
+ * and never overwrites an already-generated body. Reverts generating→failed on
+ * ineligibility / migration-missing so a note is NEVER stranded `generating`.
  */
-export async function retryFailedProcedureNoteGeneration(input: GenInput): Promise<GenerateProcedureNoteResult> {
+export async function retryFailedProcedureNoteGeneration(input: RetryGenInput): Promise<GenerateProcedureNoteResult> {
   if (!procedureNoteGeneratorEnabled()) return { status: "skipped_flag_off" };
   try {
+    // §7 — VERIFY the exact unresolved failure before any state change.
+    const failure = await getUnresolvedAncillaryDocumentFailureById({ id: input.failureId, clinicId: input.clinicId });
+    if (
+      !failure
+      || failure.requestedAction !== "generate_procedure_note"
+      || failure.sourceTable !== PROCEDURE_NOTE_SOURCE_TABLE
+      || failure.sourceId !== input.noteId
+      || failure.clinicId !== input.clinicId
+      || (failure.ancillaryCaseId != null && failure.ancillaryCaseId !== input.ancillaryCaseId)
+    ) {
+      return { status: "failure_not_verified" };
+    }
+
     const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, input.noteId)).limit(1);
     if (!note) return { status: "note_not_found" };
     if (note.clinicId !== input.clinicId || note.ancillaryCaseId !== input.ancillaryCaseId) return { status: "cross_clinic_denied" };
@@ -95,8 +117,7 @@ export async function retryFailedProcedureNoteGeneration(input: GenInput): Promi
     // Re-evaluate exact eligibility AFTER the claim; revert on ineligibility.
     const elig = await evaluateProcedureNoteEligibility({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
     if (!elig.eligible) {
-      await db.update(procedureNotes).set({ generationStatus: "failed", updatedAt: new Date() })
-        .where(and(eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.generationStatus, "generating")));
+      await restoreToFailed(input);
       return { status: "not_yet_eligible" };
     }
     return await finalizeGeneratedBody(input, note);
@@ -148,15 +169,53 @@ async function finalizeGeneratedBody(input: GenInput, note: NoteRow): Promise<Ge
     .where(and(eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.generationStatus, "generating")))
     .returning();
   if (!done) { const rec = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "generation_commit_conflict"); return { status: rec ? "failed_retry_recorded" : "failed_retry_not_recorded" }; }
-  // Mirror generated status onto the exact reference (truthful; body never stored there).
-  await db.update(ancillaryDocumentReferences)
-    .set({ documentStatus: "pending_signature", updatedAt: new Date() })
-    .where(and(eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, input.noteId), eq(ancillaryDocumentReferences.documentKind, "procedure_note"), eq(ancillaryDocumentReferences.clinicId, input.clinicId)));
-  return { status: "generated", procedureNoteId: input.noteId };
+  // §6 — synchronize the EXACT reference TRUTHFULLY (clinic + case + source +
+  // kind, affected-row-checked via `.returning()`). The note stays `generated`
+  // regardless; a missing / zero-row / failed projection becomes a DISTINCT
+  // exact sync_procedure_note_signature retry rather than a false plain
+  // `generated`. An already-pending_signature exact reference is treated as
+  // synchronized (idempotent).
+  const sync = await syncProcedureNoteReferenceSignature({
+    clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, noteId: input.noteId,
+    documentStatus: "pending_signature", signedAt: null,
+  });
+  if (sync.status === "synced") return { status: "generated", procedureNoteId: input.noteId };
+  if (sync.status === "no_reference" || sync.status === "sync_failed") {
+    return { status: sync.retryRecorded ? "generated_reference_retry_recorded" : "generated_reference_retry_not_recorded", procedureNoteId: input.noteId };
+  }
+  // migration_missing / cross_clinic_denied / case_mismatch — projection could not
+  // complete; record a durable exact reference retry and report truthfully.
+  const rec = await recordGeneratedReferenceRetry(input);
+  return { status: rec ? "generated_reference_retry_recorded" : "generated_reference_retry_not_recorded", procedureNoteId: input.noteId };
+}
+
+/** §5 — restore a claimed note generating→failed with an exact affected-row
+ *  WHERE, so a post-claim non-success path never strands it `generating`. */
+async function restoreToFailed(input: GenInput): Promise<void> {
+  await db.update(procedureNotes).set({ generationStatus: "failed", updatedAt: new Date() })
+    .where(and(
+      eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId),
+      eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId), eq(procedureNotes.generationStatus, "generating"),
+    ));
+}
+
+/** §6 — record a DISTINCT exact reference-projection retry when the generated
+ *  reference could not be synchronized (kept separate from generation itself). */
+async function recordGeneratedReferenceRetry(input: GenInput): Promise<boolean> {
+  try {
+    await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: input.noteId, requestedAction: "sync_procedure_note_signature", sourceSystem: "procedure_note_generator", errorCode: "generated_reference_projection_incomplete" });
+    return true;
+  } catch { return false; }
 }
 
 async function catchToResult(input: GenInput, e: unknown): Promise<GenerateProcedureNoteResult> {
-  if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+  if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) {
+    // §5 — a migration error AFTER a claim must never leave the note `generating`.
+    // Restoring is idempotent (WHERE generationStatus=generating); if the note
+    // table itself is missing there is nothing claimed to restore.
+    try { await restoreToFailed(input); } catch { /* table missing — nothing claimed */ }
+    return { status: "migration_missing" };
+  }
   let recorded = false;
   try { recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, (e as { code?: string })?.code ?? "generation_failed"); } catch { recorded = false; }
   return { status: recorded ? "failed_retry_recorded" : "failed_retry_not_recorded" };

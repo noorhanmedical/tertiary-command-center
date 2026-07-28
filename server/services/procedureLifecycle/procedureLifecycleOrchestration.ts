@@ -83,7 +83,9 @@ async function recordProcedureRetry(args: {
       clinicId: args.clinicId,
       ancillaryCaseId: args.ancillaryCaseId ?? null,
       documentKind: "procedure_note",
-      sourceTable: PROCEDURE_EVENT_SOURCE_TABLE,
+      // Source-bearing ONLY when the procedure event id is present; a case-level
+      // failure is source-LESS (both NULL) — never procedure_events + null.
+      sourceTable: args.procedureEventId != null ? PROCEDURE_EVENT_SOURCE_TABLE : null,
       sourceId: args.procedureEventId ?? null,
       requestedAction: "link_procedure_note",
       sourceSystem: "procedure_lifecycle_hook",
@@ -107,6 +109,11 @@ export type EnsureProcedureNoteInput = {
   ancillaryCaseId: number;
   actorUserId?: string | null;
   source: string;
+  // Hard, code-enforced suppression of clinical-body generation. The backfill
+  // passes this so an APPLY run may create/adopt a pending note and queue exact
+  // generation work WITHOUT ever invoking the generator — even when
+  // FEATURE_PROCEDURE_NOTE_GENERATOR is ON. Never assumed operationally.
+  suppressGeneration?: boolean;
 };
 
 export async function ensureCanonicalProcedureNoteForAncillaryCase(
@@ -146,8 +153,10 @@ export async function ensureCanonicalProcedureNoteForAncillaryCase(
       case "created":
       case "reused": {
         // Trigger the clinical-body generator when its runtime is enabled
-        // (awaited, non-throwing). Default OFF ⇒ no-op; never auto-signs.
-        if (featureFlags.procedureNoteGenerator && r.procedureNoteId != null) {
+        // (awaited, non-throwing). Default OFF ⇒ no-op; never auto-signs. A
+        // caller that explicitly suppresses generation (the backfill) NEVER
+        // reaches the generator, regardless of the flag.
+        if (featureFlags.procedureNoteGenerator && !input.suppressGeneration && r.procedureNoteId != null) {
           try {
             const { generateProcedureNote } = await import("./procedureNoteGenerator");
             await generateProcedureNote({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, noteId: r.procedureNoteId });
@@ -220,6 +229,10 @@ export type OnProcedureCompletedInput = {
   expectedClinicId: number | null;
   // When present (event-source retry), the failure's case must match the event.
   expectedAncillaryCaseId?: number | null;
+  // Code-enforced generation suppression propagated to the note ensure — the
+  // backfill sets this so completion-hook linkage NEVER writes a body, even with
+  // FEATURE_PROCEDURE_NOTE_GENERATOR ON.
+  suppressGeneration?: boolean;
 };
 
 export async function onProcedureCompleted(input: OnProcedureCompletedInput): Promise<ProcedureNoteHookResult> {
@@ -295,10 +308,13 @@ export async function onProcedureCompleted(input: OnProcedureCompletedInput): Pr
 
     // Delegate the two-condition Procedure Note ensure. Full runtime gate OFF →
     // skipped_flag_off; the linkage is still written (linked, note pending runtime).
+    // The backfill propagates suppressGeneration so this completion-hook route can
+    // NEVER generate a body either (even with the generator flag ON).
     const noteResult = await ensureCanonicalProcedureNoteForAncillaryCase({
       clinicId: acase.clinicId,
       ancillaryCaseId: acase.id,
       source: "procedure_complete_hook",
+      suppressGeneration: input.suppressGeneration,
     });
     if (noteResult.status === "skipped_flag_off") {
       return { status: "linked_pending_note", ancillaryCaseId: acase.id, warnings: [] };
