@@ -63,7 +63,49 @@ reopen or redesign Phase 2F.
   path. Consider recording an explicit generate retry on generator
   `not_yet_eligible` in Phase 2K for self-healing without an external re-drive.
 
+## Phase 2G — canonical billing readiness + Billing Document (deferred)
+
+None block Phase 2G under the frozen gate: no tenant/cross-case exposure, no
+wrong-episode attachment, no destructive migration (0055 is additive/widening
+only), no Billing Document generated without exact evidence, no invented
+clinical/billing/payer data, no signed-document mutation, no unrecoverable
+retry, no false generated/ready success without durable reconciliation, no
+flags-OFF legacy regression, and check/tests are green.
+
+- **Backfill apply skips stale-but-existing readiness (completeness).**
+  `script/backfillCanonicalBillingReadiness.ts` `main()` runs `queueApplyWork`
+  only when the classifier emits `readiness_candidate` (no current readiness
+  yet) or `billing_document_candidate` (no current doc yet). A case whose
+  readiness/doc already exists but whose evidence has since changed is reported
+  `existing_current_readiness` / `existing_current_billing_document` and is NOT
+  re-evaluated by the backfill. This is a one-time seeding gap only — the live
+  orchestration hook and the explicit evaluate API supersede on evidence change,
+  so nothing goes stale silently in production; the backfill just under-reports
+  re-apply candidates. Consider having apply always re-evaluate (evaluator is
+  idempotent + supersedes) in Phase 2K. Not a correctness/boundary risk.
+
+- **Reference supersession in `supersedeStaleBillingDocument` is best-effort.**
+  `server/services/billingLifecycle/billingLifecycleOrchestration.ts` stamps the
+  Billing Document row `superseded` with an affected-row check (truthful), but
+  the follow-on `ancillary_document_references` supersede UPDATE is fire-and-
+  forget (no affected-row check, no `supersede_billing_document` retry queued on
+  miss). The packet ROW is correctly superseded (no false current/generated
+  state), and the next `evaluate` re-drives the supersede, so the reference
+  self-heals on the next canonical evaluation — but a dedicated durable
+  reference-supersede retry would close the window deterministically. The
+  `supersede_billing_document` retry action exists in the enum + handler
+  (`retrySupersede`) but is currently never queued by any writer (dead path).
+  Wire the writer to record it, or drop the unused action, in Phase 2K.
+
+- **`retrySupersede` resolves on a 0-row supersede.** The handler resolves its
+  exact failure even when `supersedeStaleBillingDocument` returns false due to a
+  0-row document UPDATE (another worker already superseded). The post-condition
+  (no stale current doc) holds either way, so this is truthful; noted for
+  symmetry with the stricter affected-row semantics elsewhere.
+
 ## Notes
 
-- All feature flags remain default OFF; migration 0054 remains additive and
-  unapplied; no migration 0055 exists. These items are safe to defer.
+- All feature flags remain default OFF; migrations 0054–0055 remain additive and
+  unapplied. Migration 0055 partial-unique current-row indexes key ONLY on
+  `ancillary_case_id IS NOT NULL` canonical rows (no screening+service merge of
+  separate episodes). These items are safe to defer.

@@ -155,6 +155,20 @@ export const featureFlags = {
    *  Procedure Note runtime (all three flags above) IN ADDITION to this flag —
    *  see procedureNoteGeneratorEnabled(). Default OFF. Never auto-signs. */
   procedureNoteGenerator: readBool("FEATURE_PROCEDURE_NOTE_GENERATOR", false),
+
+  // ── Phase 2G — canonical billing readiness + Billing Document (migration 0055) ──
+  /** Enables the canonical case-scoped billing-readiness evaluator + snapshot.
+   *  Requires the full upstream canonical chain (see billingReadinessRuntimeEnabled).
+   *  Default OFF ⇒ zero migration-0055 reads/writes; legacy billing untouched. */
+  canonicalBillingReadiness: readBool("FEATURE_CANONICAL_BILLING_READINESS", false),
+  /** Enables the canonical case-scoped Billing Document lifecycle (create/adopt +
+   *  reference projection + lineage). Requires canonical billing readiness.
+   *  Default OFF. Never a claim/invoice/payment. */
+  canonicalBillingDocument: readBool("FEATURE_CANONICAL_BILLING_DOCUMENT", false),
+  /** Enables the deterministic Billing Document GENERATOR (packet body from EXACT
+   *  facts only). Requires the full Billing Document runtime IN ADDITION to this
+   *  flag — see billingDocumentGeneratorEnabled(). Default OFF. generatedByAi=false. */
+  billingDocumentGenerator: readBool("FEATURE_BILLING_DOCUMENT_GENERATOR", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;
@@ -184,4 +198,33 @@ export function procedureNoteRuntimeEnabled(): boolean {
 /** The generator requires the full Procedure Note runtime AND its own flag. */
 export function procedureNoteGeneratorEnabled(): boolean {
   return procedureNoteRuntimeEnabled() && featureFlags.procedureNoteGenerator;
+}
+
+/**
+ * The SINGLE canonical billing-READINESS runtime gate (Phase 2G). Billing
+ * readiness sits at the END of the canonical chain, so it requires EVERY
+ * upstream canonical stage to be ON — canonical ancillary cases, canonical
+ * appointments, the full Procedure Note runtime (lifecycle + note + unified
+ * documents), and the canonical Order Note — PLUS its own flag. Any partial
+ * combination returns false so the legacy billing path is preserved unchanged
+ * and NO migration-0055 read/write occurs.
+ */
+export function billingReadinessRuntimeEnabled(): boolean {
+  return (
+    procedureNoteRuntimeEnabled() &&
+    featureFlags.ancillaryCaseWrite &&
+    featureFlags.canonicalAppointment &&
+    featureFlags.canonicalOrderNote &&
+    featureFlags.canonicalBillingReadiness
+  );
+}
+
+/** The canonical Billing Document runtime requires billing readiness AND its flag. */
+export function billingDocumentRuntimeEnabled(): boolean {
+  return billingReadinessRuntimeEnabled() && featureFlags.canonicalBillingDocument;
+}
+
+/** The Billing Document generator requires the full document runtime AND its flag. */
+export function billingDocumentGeneratorEnabled(): boolean {
+  return billingDocumentRuntimeEnabled() && featureFlags.billingDocumentGenerator;
 }

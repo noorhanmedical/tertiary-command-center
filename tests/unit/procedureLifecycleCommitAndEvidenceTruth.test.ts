@@ -499,13 +499,16 @@ async function testNoEscapingScheduleTask() {
   });
 }
 
-// (40) migration 0054 additive + no migration 0055
+// (40) migration 0054 additive; Phase 2G migration 0055 additive; no 0056
 async function testMigration() {
   const body = readFileSync(join(process.cwd(), "migrations/0054_add_canonical_procedure_lifecycle.sql"), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
   assert.ok(/uq_pe_canonical_ancillary_case/.test(body), "(40) canonical case uniqueness present");
   assert.ok(!/DROP TABLE/i.test(body.toUpperCase()) && !/TRUNCATE/i.test(body.toUpperCase()) && !/DROP COLUMN/i.test(body.toUpperCase()), "additive");
-  const has55 = readdirSync(join(process.cwd(), "migrations")).some((f) => f.startsWith("0055"));
-  assert.ok(!has55, "(40) no migration 0055 exists");
+  // Phase 2G adds migration 0055 (additive only). It exists now; no 0056 exists.
+  const body55 = readFileSync(join(process.cwd(), "migrations/0055_add_canonical_billing_readiness_documents.sql"), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  assert.ok(!/DROP TABLE/i.test(body55.toUpperCase()) && !/TRUNCATE/i.test(body55.toUpperCase()) && !/DROP COLUMN/i.test(body55.toUpperCase()), "(40) 0055 additive only");
+  const has56 = readdirSync(join(process.cwd(), "migrations")).some((f) => f.startsWith("0056"));
+  assert.ok(!has56, "(40) no migration 0056 exists");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [

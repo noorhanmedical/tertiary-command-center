@@ -17,6 +17,19 @@ export const BILLING_DOCUMENT_REQUEST_STATUSES = [
 ] as const;
 export type BillingDocumentRequestStatus = typeof BILLING_DOCUMENT_REQUEST_STATUSES[number];
 
+// Phase 2G — canonical Billing Document lifecycle statuses (stored in the
+// additive canonical_status column; legacy request_status is untouched).
+export const CANONICAL_BILLING_DOCUMENT_STATUSES = [
+  "pending",
+  "generating",
+  "generated",
+  "approved",
+  "failed",
+  "superseded",
+  "voided",
+] as const;
+export type CanonicalBillingDocumentStatus = typeof CANONICAL_BILLING_DOCUMENT_STATUSES[number];
+
 export const billingDocumentRequests = pgTable("billing_document_requests", {
   id: serial("id").primaryKey(),
   // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
@@ -34,6 +47,28 @@ export const billingDocumentRequests = pgTable("billing_document_requests", {
   generatedByAi: boolean("generated_by_ai").notNull().default(false),
   errorMessage: text("error_message"),
   metadata: jsonb("metadata").notNull().default({}),
+  // ── Phase 2G canonical additive columns (migration 0055; all NULLABLE) ──
+  ancillaryCaseId: integer("ancillary_case_id"),
+  globalPlexusPatientId: integer("global_plexus_patient_id"),
+  patientClinicMembershipId: integer("patient_clinic_membership_id"),
+  reportDocumentReferenceId: integer("report_document_reference_id"),
+  orderNoteDocumentReferenceId: integer("order_note_document_reference_id"),
+  procedureNoteDocumentReferenceId: integer("procedure_note_document_reference_id"),
+  canonicalStatus: text("canonical_status"),
+  // Deterministic packet body (structured; NEVER AI). No claim/invoice/payment.
+  generatedBody: text("generated_body"),
+  sourceData: jsonb("source_data").default({}),
+  generationVersion: text("generation_version"),
+  evidenceFingerprint: text("evidence_fingerprint"),
+  claimBlockers: jsonb("claim_blockers").default([]),
+  billingBlockers: jsonb("billing_blockers").default([]),
+  warnings: jsonb("warnings").default([]),
+  errorCode: text("error_code"),
+  supersedesBillingDocumentId: integer("supersedes_billing_document_id"),
+  supersededAt: timestamp("superseded_at"),
+  generatedAt: timestamp("generated_at"),
+  actorUserId: text("actor_user_id"),
+  sourceSystem: text("source_system"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -43,6 +78,8 @@ export const billingDocumentRequests = pgTable("billing_document_requests", {
   index("idx_bdr_billing_readiness_check_id").on(table.billingReadinessCheckId),
   index("idx_bdr_service_type").on(table.serviceType),
   index("idx_bdr_request_status").on(table.requestStatus),
+  index("idx_bdr_ancillary_case").on(table.ancillaryCaseId),
+  index("idx_bdr_clinic").on(table.clinicId),
 ]);
 
 export const insertBillingDocumentRequestSchema = createInsertSchema(billingDocumentRequests).omit({

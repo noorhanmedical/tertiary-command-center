@@ -64,8 +64,8 @@ async function testUniqueSourceConstraint() {
 }
 
 async function testAllowedKinds() {
-  // Shared union now includes the Phase 2F procedure_note kind.
-  assert.deepEqual([...ANCILLARY_DOCUMENT_KINDS], ["order_note", "report", "consent", "screening_form", "procedure_note"]);
+  // Shared union includes the Phase 2F procedure_note and Phase 2G billing_document kinds.
+  assert.deepEqual([...ANCILLARY_DOCUMENT_KINDS], ["order_note", "report", "consent", "screening_form", "procedure_note", "billing_document"]);
   // Migration 0053 (Phase 2E) CHECK stays scoped to the four 2E kinds; the
   // procedure_note kind is widened in by migration 0054, never by amending 0053.
   assert.ok(/document_kind IN \('order_note','report','consent','screening_form'\)/i.test(MIGRATION), "0053 kind CHECK must stay Phase-2E-scoped");
@@ -80,9 +80,11 @@ async function testNoProcedureNoteKind() {
 }
 
 async function testNoBillingDocumentKind() {
-  assert.ok(!(ANCILLARY_DOCUMENT_KINDS as readonly string[]).includes("billing_document"), "billing_document must not be a registry kind");
+  // billing_document IS a Phase 2G registry kind (shared union + migration 0055),
+  // and MUST NOT have been retro-added to the Phase 2E migration 0053 CHECK.
+  assert.ok((ANCILLARY_DOCUMENT_KINDS as readonly string[]).includes("billing_document"), "billing_document is a Phase 2G registry kind");
   const kindCheck = MIGRATION.match(/document_kind IN \([^)]*\)/i)?.[0] ?? "";
-  assert.ok(!/billing_document/.test(kindCheck), "billing_document must not appear in the kind CHECK");
+  assert.ok(!/billing_document/.test(kindCheck), "billing_document must not appear in the 0053 kind CHECK");
 }
 
 async function testNoDocumentBytesOrBody() {
@@ -107,6 +109,9 @@ async function testRetryLedgerNoPhi() {
     "link_order_note_evidence", "link_procedure_note", "link_procedure_note_evidence",
     "generate_procedure_note", "reconcile_procedure_note_lineage",
     "void_procedure_note", "sync_procedure_note_signature",
+    // Phase 2G — widened in by migration 0055 (never retro-added to 0053/0054).
+    "evaluate_billing_readiness", "generate_billing_document", "link_billing_document",
+    "supersede_billing_document", "sync_billing_document_reference",
   ]);
   // Phase 2E actions live in the 0053 CHECK; the two Phase 2F actions are
   // widened in by 0054 and MUST NOT have been retro-added to 0053.

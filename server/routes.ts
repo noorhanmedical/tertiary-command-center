@@ -359,6 +359,10 @@ export async function registerRoutes(
   // unconditionally; handlers return an explicit disabled contract when
   // FEATURE_UNIFIED_ANCILLARY_DOCUMENTS is OFF (zero migration-0053 reads).
   (await import("./routes/ancillaryDocuments")).registerAncillaryDocumentsRoutes(app);
+  // Phase 2G — canonical billing readiness + Billing Document APIs. Registered
+  // unconditionally; handlers return an explicit disabled contract when the
+  // Phase 2G flags are OFF (zero migration-0055 reads).
+  (await import("./routes/canonicalBilling")).registerCanonicalBillingRoutes(app);
   // Priority 4 — clinical intelligence backend deferred; UI runs on local
   // storage prototype. Enable route + seed when schema is approved.
   // registerClinicalIntelligenceRoutes(app, requireRole);
