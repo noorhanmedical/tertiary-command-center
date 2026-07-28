@@ -299,6 +299,25 @@ records the qualifying reference id as permanent evidence.
   `failure_not_verified` with no claim. All Phase 2F retry rows use valid
   source pairings (source-less ⇒ `sourceTable=null`; never
   `procedure_notes`/`procedure_events` with a null `sourceId`).
+- **Final truth closeout** — the ensure hook now PROPAGATES the generator's exact
+  outcome (`generatorOutcome` + `generationDeferred` + `generationRetryRecorded`
+  + explicit warnings) instead of discarding it; the committed parent note is
+  never reversed, but a deferred/failed/migration-missing generation is never
+  hidden behind a plain `created`/`reused`. A non-durable deferral
+  (`reconciliation_not_recorded`) keeps the driving link/lineage retry OPEN so a
+  later cycle re-drives generation. Void reconciliation enforces EXACT terminal
+  ownership through a fail-closed repository lookup
+  (`getProcedureEventForExactClinicCase`): a NULL clinic/case/service on the event
+  is not evidence (SQL `=` on NULL never matches), and no reference is mutated
+  before exact ownership + a terminal `cancelled`/`no_show`/`unable_to_complete`
+  status is proven. Failed-note regeneration requires an EXACT unresolved failure
+  on every dimension (id, clinic, case — no nullable exception —
+  `documentKind=procedure_note`, `generate_procedure_note`, `procedure_notes`,
+  `sourceId`, `resolvedAt IS NULL`) before any write. The backfill emits an
+  explicit `report="unresolved"` action for `exact_report_evidence_missing`, so a
+  report-missing case can never be reported `applied` even when other work
+  completes; no note is created and no generation is queued without exact report
+  evidence.
 - **Signature sync** (§8): after a canonical `post_procedure_note` sign/return,
   `syncProcedureNoteReferenceSignature` mirrors documentStatus + signedAt onto
   the exact reference (never throws; missing reference → exact retry). Order Note

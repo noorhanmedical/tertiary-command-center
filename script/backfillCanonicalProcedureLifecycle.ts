@@ -203,7 +203,12 @@ export async function queueApplyWork(
       if (set.has("signed_evidence_conflict")) actions.signed = ctx.noteId != null ? await queue("link_procedure_note_evidence", ctx.noteId, "backfill_signed_evidence_conflict") : "unresolved";
       if (set.has("voided_or_terminal_with_current_note")) actions.void = ctx.noteId != null ? await queue("void_procedure_note", ctx.noteId, "backfill_terminal_void") : "unresolved";
     }
-    // exact_report_evidence_missing → intentionally left unresolved (never fabricated).
+    // §7 — missing exact report evidence is an EXPLICIT unresolved action, so a
+    // deterministic link (or any other completed work) can NEVER report the case
+    // as fully `applied`. Report evidence is never fabricated; no generation
+    // candidate is executed and no generate retry is queued without it (classify
+    // only emits note_generation_candidate WHEN report evidence is present).
+    if (set.has("exact_report_evidence_missing")) actions.report = "unresolved";
     const vals = Object.values(actions);
     const overall = vals.some((v) => v === "unresolved" || v === "persistence_not_recorded" || v === "conflict") ? "apply_deferred" : "applied";
     return { overall, actions };

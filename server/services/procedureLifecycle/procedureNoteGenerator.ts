@@ -90,15 +90,20 @@ export async function generateProcedureNote(input: GenInput): Promise<GeneratePr
 export async function retryFailedProcedureNoteGeneration(input: RetryGenInput): Promise<GenerateProcedureNoteResult> {
   if (!procedureNoteGeneratorEnabled()) return { status: "skipped_flag_off" };
   try {
-    // §7 — VERIFY the exact unresolved failure before any state change.
+    // §6 — VERIFY the EXACT unresolved failure before any state change. EVERY
+    // dimension must match exactly (no nullable-case exception, documentKind
+    // required); the lookup itself enforces id + clinic + resolvedAt IS NULL.
     const failure = await getUnresolvedAncillaryDocumentFailureById({ id: input.failureId, clinicId: input.clinicId });
     if (
       !failure
+      || failure.id !== input.failureId
+      || failure.clinicId !== input.clinicId
+      || failure.ancillaryCaseId !== input.ancillaryCaseId
+      || failure.documentKind !== "procedure_note"
       || failure.requestedAction !== "generate_procedure_note"
       || failure.sourceTable !== PROCEDURE_NOTE_SOURCE_TABLE
       || failure.sourceId !== input.noteId
-      || failure.clinicId !== input.clinicId
-      || (failure.ancillaryCaseId != null && failure.ancillaryCaseId !== input.ancillaryCaseId)
+      || failure.resolvedAt != null
     ) {
       return { status: "failure_not_verified" };
     }

@@ -37,6 +37,7 @@ import {
 } from "../../repositories/ancillaryCases.repo";
 import { recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
 import { createOrReuseProcedureNote } from "./procedureNoteService";
+import type { GenerateProcedureNoteResult } from "./procedureNoteGenerator";
 
 const ACTIVE_LIFECYCLE = new Set(["new", "active", "on_hold"]);
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
@@ -63,6 +64,16 @@ export type ProcedureNoteHookResult = {
   ancillaryCaseId?: number;
   procedureNoteId?: number;
   warnings: string[];
+  // Truthful propagation of the clinical-body generator's exact outcome (§4).
+  // The committed parent note is NEVER reversed by generator work — these fields
+  // report what the generator did WITHOUT hiding a deferred/failed projection.
+  generatorOutcome?: GenerateProcedureNoteResult["status"];
+  generatorProcedureNoteId?: number;
+  // TRUE when the generator ran but did not fully generate + synchronize.
+  generationDeferred?: boolean;
+  // For a deferred generation: TRUE iff the deferral is durable (an exact retry
+  // is recorded); FALSE means reconciliation_not_recorded (non-durable).
+  generationRetryRecorded?: boolean;
 };
 
 /**
@@ -100,6 +111,53 @@ async function recordProcedureRetry(args: {
       code: (e as { code?: string })?.code ?? "ledger_write_failed",
     }));
     return false;
+  }
+}
+
+/**
+ * Classify a generator outcome into truthful hook fields (§4). Never reverses
+ * the committed parent note. `generationDeferred` is TRUE whenever the generator
+ * did not fully generate + synchronize; `generationRetryRecorded` distinguishes a
+ * DURABLE deferral (an exact retry exists) from a non-durable one
+ * (reconciliation_not_recorded). Pushes an explicit warning so a `created`/
+ * `reused` result is never returned silently when generation degraded.
+ */
+export function classifyGeneratorOutcome(
+  outcome: GenerateProcedureNoteResult["status"],
+  warnings: string[],
+): { generationDeferred: boolean | undefined; generationRetryRecorded: boolean | undefined } {
+  switch (outcome) {
+    case "generated":
+      return { generationDeferred: undefined, generationRetryRecorded: undefined };
+    // Generation completed but the exact reference projection is deferred.
+    case "generated_reference_retry_recorded":
+      warnings.push("generation_reference_deferred");
+      return { generationDeferred: true, generationRetryRecorded: true };
+    // Deferred generation with a DURABLE exact retry.
+    case "failed_retry_recorded":
+    case "report_content_unavailable_retry_recorded":
+      warnings.push(`generation_deferred_${outcome}`);
+      return { generationDeferred: true, generationRetryRecorded: true };
+    // Deferred generation whose retry could NOT be persisted → non-durable.
+    case "generated_reference_retry_not_recorded":
+    case "failed_retry_not_recorded":
+    case "report_content_unavailable_retry_not_recorded":
+      warnings.push("reconciliation_not_recorded");
+      return { generationDeferred: true, generationRetryRecorded: false };
+    // Concurrency / eligibility / migration / verification — visible, no new retry.
+    case "already_claimed":
+    case "not_yet_eligible":
+    case "migration_missing":
+    case "failure_not_verified":
+    case "skipped_flag_off":
+    case "note_not_found":
+    case "not_pending":
+    case "cross_clinic_denied":
+      warnings.push(`generation_${outcome}`);
+      return { generationDeferred: true, generationRetryRecorded: undefined };
+    default:
+      warnings.push("generation_unknown_outcome");
+      return { generationDeferred: true, generationRetryRecorded: undefined };
   }
 }
 
@@ -155,15 +213,35 @@ export async function ensureCanonicalProcedureNoteForAncillaryCase(
         // Trigger the clinical-body generator when its runtime is enabled
         // (awaited, non-throwing). Default OFF ⇒ no-op; never auto-signs. A
         // caller that explicitly suppresses generation (the backfill) NEVER
-        // reaches the generator, regardless of the flag.
+        // reaches the generator, regardless of the flag. The generator's EXACT
+        // outcome is propagated truthfully (§4) — never discarded — but the
+        // committed parent note is NEVER reversed by generator work.
+        const warnings = [...r.warnings];
+        let generatorOutcome: GenerateProcedureNoteResult["status"] | undefined;
+        let generationDeferred: boolean | undefined;
+        let generationRetryRecorded: boolean | undefined;
         if (featureFlags.procedureNoteGenerator && !input.suppressGeneration && r.procedureNoteId != null) {
           try {
             const { generateProcedureNote } = await import("./procedureNoteGenerator");
-            await generateProcedureNote({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, noteId: r.procedureNoteId });
-          } catch { /* generator is non-blocking; its own retry ledger covers failure */ }
+            const gr = await generateProcedureNote({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, noteId: r.procedureNoteId });
+            generatorOutcome = gr.status;
+            ({ generationDeferred, generationRetryRecorded } = classifyGeneratorOutcome(gr.status, warnings));
+          } catch {
+            // The generator threw despite its non-throwing contract — surface a
+            // deferred generation (its own ledger covers durability) without
+            // reversing the committed parent note.
+            generationDeferred = true;
+            warnings.push("generation_hook_threw");
+          }
         }
         const status: ProcedureNoteHookStatus = r.referenceDeferred ? "deferred_reference" : r.status;
-        return { status, procedureNoteId: r.procedureNoteId, ancillaryCaseId: input.ancillaryCaseId, warnings: r.warnings };
+        return {
+          status, procedureNoteId: r.procedureNoteId, ancillaryCaseId: input.ancillaryCaseId, warnings,
+          generatorOutcome,
+          generatorProcedureNoteId: r.procedureNoteId ?? undefined,
+          generationDeferred: generationDeferred || undefined,
+          generationRetryRecorded,
+        };
       }
       default: {
         const recorded = await recordProcedureRetry({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, errorCode: "procedure_note_unexpected_status" });

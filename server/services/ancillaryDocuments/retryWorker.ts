@@ -62,6 +62,18 @@ export type DocumentRetryOutcome = {
 const REFERENCE_ACTIONS = new Set(["link_report", "link_consent", "link_screening_form"]);
 
 /**
+ * A `created`/`reused` note whose clinical-body generator work deferred WITHOUT a
+ * durable retry (generationRetryRecorded === false ⇒ reconciliation_not_recorded)
+ * must NOT resolve the driving link/lineage failure — a later retry re-drives the
+ * ensure and re-attempts generation until it succeeds or records a durable retry.
+ * A fully-generated note, a durable deferral, or generation-suppressed/OFF is safe
+ * to resolve (the note lineage itself is complete; generation is its own concern).
+ */
+function noteWorkFullyDurable(r: { generationDeferred?: boolean; generationRetryRecorded?: boolean }): boolean {
+  return !(r.generationDeferred === true && r.generationRetryRecorded === false);
+}
+
+/**
  * Retry a source-bearing report/consent/screening_form reference link. Loads
  * the EXACT canonical source, validates ownership from the source's own
  * columns (never patient name/facility), re-drives the reference writer, and
@@ -286,7 +298,10 @@ async function retryProcedureNoteLink(
     });
     switch (r.status) {
       case "created": case "reused":
-        // Full work complete → resolve ONLY this exact failure id.
+        // Note lineage complete. Resolve ONLY this exact failure id — unless the
+        // generator deferred WITHOUT a durable retry (keep open so a later retry
+        // re-drives generation and records/succeeds; never silently lose it).
+        if (!noteWorkFullyDurable(r)) return { ...base, status: "still_deferred", message: "generation_reconciliation_not_recorded" };
         await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
         return { ...base, status: "resolved" };
       case "linked_pending_note":
@@ -447,7 +462,11 @@ async function retryProcedureNoteLineage(failure: AncillaryDocumentReconciliatio
   }
 
   const r = await ensureCanonicalProcedureNoteForAncillaryCase({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, source: "document_retry_worker" });
-  if (r.status === "created" || r.status === "reused") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  if (r.status === "created" || r.status === "reused") {
+    // Non-durable generator deferral → keep open so a later retry re-drives it.
+    if (!noteWorkFullyDurable(r)) return { ...base, status: "still_deferred", message: "generation_reconciliation_not_recorded" };
+    await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" };
+  }
   if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
   if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
   if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };

@@ -19,7 +19,7 @@ import { patientJourneyEvents } from "@shared/schema/executionCase";
 import { ancillaryDocumentReferences, PROCEDURE_NOTE_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { procedureNoteRuntimeEnabled } from "../../lib/featureFlags";
 import { createReference, recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
-import { getProcedureEventById } from "../../repositories/procedureEvents.repo";
+import { getProcedureEventById, getProcedureEventForExactClinicCase } from "../../repositories/procedureEvents.repo";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 // A void reconciliation is valid ONLY when the exact procedure was terminally
@@ -237,15 +237,29 @@ export async function reconcileVoidedProcedureNoteReference(input: {
     // The note MUST actually be superseded/voided for a void reconciliation.
     if (note.supersededAt == null && note.generationStatus !== "voided") return { status: "ownership_conflict" };
 
-    // §3 — require EXACT terminal procedure-invalidation evidence. This rejects
-    // amendment-superseded notes (procedure still `complete`) and cross-tenant /
-    // cross-service procedure events.
-    if (note.procedureEventId == null) return { status: "terminal_evidence_missing" };
-    const pe = await getProcedureEventById(note.procedureEventId);
-    if (!pe) return { status: "terminal_evidence_missing" };
-    if (pe.clinicId != null && pe.clinicId !== input.clinicId) return { status: "ownership_conflict" };
-    if (pe.ancillaryCaseId != null && pe.ancillaryCaseId !== input.ancillaryCaseId) return { status: "ownership_conflict" };
-    if (pe.serviceType != null && note.serviceType != null && pe.serviceType !== note.serviceType) return { status: "ownership_conflict" };
+    // §5 — require EXACT terminal procedure-invalidation evidence. The ownership
+    // boundary FAILS CLOSED via a dedicated exact-match repository lookup: a NULL
+    // clinic / case / service on the event is NOT evidence (SQL `=` against NULL
+    // is UNKNOWN, so it never matches). This rejects amendment-superseded notes
+    // (procedure still `complete`) and any cross-tenant / cross-case /
+    // cross-service event. NO reference is mutated before this passes.
+    if (note.procedureEventId == null || note.serviceType == null) return { status: "terminal_evidence_missing" };
+    const pe = await getProcedureEventForExactClinicCase({
+      procedureEventId: note.procedureEventId, clinicId: input.clinicId,
+      ancillaryCaseId: input.ancillaryCaseId, serviceType: note.serviceType,
+    });
+    if (!pe) {
+      // Not exactly owned — classify a genuine non-null mismatch as an ownership
+      // conflict; a missing event or any NULL ownership dimension is missing
+      // terminal evidence. Read-only classification (never mutates).
+      const raw = await getProcedureEventById(note.procedureEventId);
+      if (raw && (
+        (raw.clinicId != null && raw.clinicId !== input.clinicId)
+        || (raw.ancillaryCaseId != null && raw.ancillaryCaseId !== input.ancillaryCaseId)
+        || (raw.serviceType != null && raw.serviceType !== note.serviceType)
+      )) return { status: "ownership_conflict" };
+      return { status: "terminal_evidence_missing" };
+    }
     if (!TERMINAL_INVALIDATION_STATUSES.has(pe.procedureStatus)) return { status: "terminal_evidence_missing" };
 
     const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(

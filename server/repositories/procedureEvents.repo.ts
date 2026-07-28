@@ -86,6 +86,32 @@ export async function getProcedureEventById(id: number): Promise<ProcedureEvent 
   return result;
 }
 
+/**
+ * EXACT-ownership procedure-event lookup (§5). The WHERE requires the id AND a
+ * non-null clinic / ancillary case / service equal to the caller's — SQL `=`
+ * against a NULL column yields UNKNOWN, so a clinicless/caseless/serviceless
+ * event NEVER matches (fails closed). Returns the row only when every ownership
+ * dimension is exact; otherwise undefined. No mutation.
+ */
+export async function getProcedureEventForExactClinicCase(args: {
+  procedureEventId: number;
+  clinicId: number;
+  ancillaryCaseId: number;
+  serviceType: string;
+}): Promise<ProcedureEvent | undefined> {
+  const [result] = await db
+    .select()
+    .from(procedureEvents)
+    .where(and(
+      eq(procedureEvents.id, args.procedureEventId),
+      eq(procedureEvents.clinicId, args.clinicId),
+      eq(procedureEvents.ancillaryCaseId, args.ancillaryCaseId),
+      eq(procedureEvents.serviceType, args.serviceType),
+    ))
+    .limit(1);
+  return result;
+}
+
 export async function listProcedureEvents(
   filters: ListProcedureEventsFilters = {},
   limit = 100,
