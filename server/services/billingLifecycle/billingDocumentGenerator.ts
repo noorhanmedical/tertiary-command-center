@@ -18,8 +18,8 @@
 
 import { db } from "../../db";
 import { and, eq, isNull, desc } from "drizzle-orm";
-import { billingReadinessChecks } from "@shared/schema/billingReadiness";
-import { billingDocumentRequests } from "@shared/schema/billingDocuments";
+import { canonicalBillingReadinessChecks as billingReadinessChecks } from "@shared/schema/billingReadiness";
+import { canonicalBillingDocumentRequests as billingDocumentRequests } from "@shared/schema/billingDocuments";
 import { ancillaryDocumentReferences, BILLING_DOCUMENT_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { createReference, recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
@@ -199,16 +199,18 @@ async function finalizeBillingDocument(input: GenInput, readiness: ReadinessRow)
   if (!done) { const rec = await failDoc(input, "generation_commit_conflict"); return { status: rec ? "failed_retry_recorded" : "failed_retry_not_recorded" }; }
 
   // Project onto ONE exact unified reference (create/reuse; body NEVER stored there).
-  const projected = await projectBillingDocumentReference(input, done as DocRow, readiness);
-  if (projected === "projected") return { status: "generated", billingDocumentId: input.billingDocumentId };
-  return { status: projected === "retry_recorded" ? "generated_reference_retry_recorded" : "generated_reference_retry_not_recorded", billingDocumentId: input.billingDocumentId };
+  const created2 = await runBillingReferenceCreate(input, done as DocRow, readiness);
+  if (created2 === "created" || created2 === "reused") return { status: "generated", billingDocumentId: input.billingDocumentId };
+  // A missing/failed projection is recovered by link_billing_document (the CREATE path).
+  const rec = await recordBillingRefRetry({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, billingDocumentId: input.billingDocumentId, source: input.source }, "link_billing_document");
+  return { status: rec ? "generated_reference_retry_recorded" : "generated_reference_retry_not_recorded", billingDocumentId: input.billingDocumentId };
 }
 
-/** Create/synchronize the ONE exact billing_document reference (documentStatus
+/** Core create of the ONE exact billing_document reference (documentStatus
  *  generated; effectiveClinicalDate = persisted procedure completedAt;
- *  actualCreatedAt = source createdAt). Missing/failed projection → durable
- *  exact retry. Never stores packet bytes; exact-source ownership enforced. */
-async function projectBillingDocumentReference(input: GenInput, doc: DocRow, readiness: ReadinessRow): Promise<"projected" | "retry_recorded" | "retry_not_recorded"> {
+ *  actualCreatedAt = source createdAt). Returns the createReference category;
+ *  NEVER overwrites a different active source (conflicts surfaced). */
+async function runBillingReferenceCreate(input: GenInput, doc: DocRow, readiness: ReadinessRow): Promise<"created" | "reused" | "ownership_conflict" | "migration_missing" | "error"> {
   const snapshot = (readiness.evidenceSnapshot ?? {}) as Record<string, unknown>;
   const dos = snapshot.procedure_completed_at ? new Date(String(snapshot.procedure_completed_at)) : null;
   try {
@@ -219,11 +221,43 @@ async function projectBillingDocumentReference(input: GenInput, doc: DocRow, rea
       serviceType: doc.serviceType, documentStatus: "generated", effectiveClinicalDate: dos, actualCreatedAt: doc.createdAt ?? null,
       metadata: { billing_readiness_check_id: readiness.id, evidence_fingerprint: doc.evidenceFingerprint ?? null },
     });
-    if (ref.outcome === "created" || ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") return "projected";
-    return (await recordBillingRefRetry({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, billingDocumentId: input.billingDocumentId, source: input.source })) ? "retry_recorded" : "retry_not_recorded";
+    if (ref.outcome === "created") return "created";
+    if (ref.outcome === "reused_exact_source_unchanged" || ref.outcome === "reused_exact_source_updated") return "reused";
+    if (ref.outcome === "active_kind_conflict" || ref.outcome === "source_clinic_conflict" || ref.outcome === "source_case_conflict") return "ownership_conflict";
+    return "error";
   } catch (e) {
-    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return "retry_not_recorded";
-    return (await recordBillingRefRetry({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, billingDocumentId: input.billingDocumentId, source: input.source })) ? "retry_recorded" : "retry_not_recorded";
+    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return "migration_missing";
+    return "error";
+  }
+}
+
+/**
+ * §5 — EXECUTABLE exact billing_document reference projection (the
+ * link_billing_document recovery path). Loads the exact generated Billing
+ * Document + its exact current readiness/evidence, then CREATES the missing
+ * reference via createReference. Accepts only created / reused-exact-source;
+ * surfaces active-kind / source-ownership conflicts (never overwrites a different
+ * active source). This is a CREATE path — distinct from the sync-only updater.
+ */
+export async function projectExactBillingDocumentReference(input: GenInput): Promise<"projected" | "already_projected" | "ownership_conflict" | "not_projectable" | "source_not_found" | "migration_missing" | "retry_recorded" | "retry_not_recorded"> {
+  if (!billingDocumentRuntimeEnabled()) return "not_projectable";
+  try {
+    const [doc] = await db.select().from(billingDocumentRequests).where(eq(billingDocumentRequests.id, input.billingDocumentId)).limit(1);
+    if (!doc) return "source_not_found";
+    if (doc.clinicId !== input.clinicId || doc.ancillaryCaseId !== input.ancillaryCaseId) return "ownership_conflict";
+    if (doc.canonicalStatus !== "generated" && doc.canonicalStatus !== "approved") return "not_projectable";
+    if (doc.supersededAt != null) return "not_projectable";
+    const readiness = await currentReadiness(input.clinicId, input.ancillaryCaseId);
+    if (!readiness) return "not_projectable";
+    const outcome = await runBillingReferenceCreate(input, doc as DocRow, readiness);
+    if (outcome === "created") return "projected";
+    if (outcome === "reused") return "already_projected";
+    if (outcome === "ownership_conflict") return "ownership_conflict";
+    if (outcome === "migration_missing") return "migration_missing";
+    return (await recordBillingRefRetry(input, "link_billing_document")) ? "retry_recorded" : "retry_not_recorded";
+  } catch (e) {
+    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return "migration_missing";
+    return (await recordBillingRefRetry(input, "link_billing_document")) ? "retry_recorded" : "retry_not_recorded";
   }
 }
 
@@ -239,18 +273,23 @@ function renderPacket(d: Record<string, unknown>): string {
   ].join("\n");
 }
 
-/** Mirror a Billing Document status transition onto its EXACT unified reference
- *  (exact clinic+case+source+kind, affected-row checked). Missing/failed →
- *  durable exact sync retry. Returns synced / retry_recorded / retry_not_recorded. */
-export async function syncBillingDocumentReference(args: { clinicId: number; ancillaryCaseId: number; billingDocumentId: number; documentStatus: string; source: string }): Promise<"synced" | "retry_recorded" | "retry_not_recorded"> {
+/** §5 — SYNC-ONLY: mirror a Billing Document status transition onto its EXACT
+ *  EXISTING unified reference (exact clinic+case+source+kind, affected-row
+ *  checked). This is NOT a create path: a MISSING reference records a
+ *  link_billing_document retry (the create path) and returns reference_missing;
+ *  an existing-but-failed status update records a sync_billing_document_reference
+ *  retry. Returns synced / reference_missing / retry_recorded / retry_not_recorded. */
+export async function syncBillingDocumentReference(args: { clinicId: number; ancillaryCaseId: number; billingDocumentId: number; documentStatus: string; source: string }): Promise<"synced" | "reference_missing" | "retry_recorded" | "retry_not_recorded"> {
   try {
     const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
       eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE),
       eq(ancillaryDocumentReferences.sourceId, args.billingDocumentId),
       eq(ancillaryDocumentReferences.documentKind, "billing_document"),
     )).limit(1);
-    if (!ref) return (await recordBillingRefRetry(args)) ? "retry_recorded" : "retry_not_recorded";
-    if (ref.clinicId !== args.clinicId || ref.ancillaryCaseId !== args.ancillaryCaseId) return (await recordBillingRefRetry(args)) ? "retry_recorded" : "retry_not_recorded";
+    // No existing reference → NOT this handler's job to create it. Record the
+    // CREATE action (link_billing_document) and report missing (never resolves here).
+    if (!ref) { await recordBillingRefRetry(args, "link_billing_document"); return "reference_missing"; }
+    if (ref.clinicId !== args.clinicId || ref.ancillaryCaseId !== args.ancillaryCaseId) return (await recordBillingRefRetry(args, "sync_billing_document_reference")) ? "retry_recorded" : "retry_not_recorded";
     const rows = await db.update(ancillaryDocumentReferences)
       .set({ documentStatus: args.documentStatus, updatedAt: new Date() })
       .where(and(
@@ -259,14 +298,17 @@ export async function syncBillingDocumentReference(args: { clinicId: number; anc
         eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE),
         eq(ancillaryDocumentReferences.sourceId, args.billingDocumentId), eq(ancillaryDocumentReferences.documentKind, "billing_document"),
       )).returning();
-    if (rows.length !== 1) return (await recordBillingRefRetry(args)) ? "retry_recorded" : "retry_not_recorded";
+    if (rows.length !== 1) return (await recordBillingRefRetry(args, "sync_billing_document_reference")) ? "retry_recorded" : "retry_not_recorded";
     return "synced";
-  } catch { return (await recordBillingRefRetry(args)) ? "retry_recorded" : "retry_not_recorded"; }
+  } catch { return (await recordBillingRefRetry(args, "sync_billing_document_reference")) ? "retry_recorded" : "retry_not_recorded"; }
 }
 
-async function recordBillingRefRetry(args: { clinicId: number; ancillaryCaseId: number; billingDocumentId: number; source: string }): Promise<boolean> {
+/** Record an exact PHI-free billing reference retry under the CORRECT action:
+ *  link_billing_document for a missing reference (create path);
+ *  sync_billing_document_reference for a status-sync failure on an existing one. */
+async function recordBillingRefRetry(args: { clinicId: number; ancillaryCaseId: number; billingDocumentId: number; source: string }, action: "link_billing_document" | "sync_billing_document_reference"): Promise<boolean> {
   try {
-    await recordAncillaryDocumentFailure({ clinicId: args.clinicId, ancillaryCaseId: args.ancillaryCaseId, documentKind: "billing_document", sourceTable: BILLING_DOCUMENT_SOURCE_TABLE, sourceId: args.billingDocumentId, requestedAction: "sync_billing_document_reference", sourceSystem: "billing_document_generator", errorCode: "billing_reference_projection_incomplete" });
+    await recordAncillaryDocumentFailure({ clinicId: args.clinicId, ancillaryCaseId: args.ancillaryCaseId, documentKind: "billing_document", sourceTable: BILLING_DOCUMENT_SOURCE_TABLE, sourceId: args.billingDocumentId, requestedAction: action, sourceSystem: "billing_document_generator", errorCode: action === "link_billing_document" ? "billing_reference_missing" : "billing_reference_sync_failed" });
     return true;
   } catch { return false; }
 }

@@ -9,12 +9,12 @@
 
 import { db } from "../../db";
 import { and, eq } from "drizzle-orm";
-import { billingDocumentRequests } from "@shared/schema/billingDocuments";
+import { canonicalBillingDocumentRequests as billingDocumentRequests } from "@shared/schema/billingDocuments";
 import { BILLING_DOCUMENT_SOURCE_TABLE, type AncillaryDocumentReconciliationFailure } from "@shared/schema/ancillaryDocuments";
 import { resolveAncillaryDocumentFailureById } from "../../repositories/ancillaryDocuments.repo";
 import { procedureNoteRuntimeEnabled, billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled, billingDocumentGeneratorEnabled } from "../../lib/featureFlags";
 import { evaluateCanonicalBillingReadiness } from "./billingReadinessEvaluator";
-import { generateBillingDocument, retryFailedBillingDocumentGeneration, syncBillingDocumentReference, createOrAdoptCanonicalBillingDocument } from "./billingDocumentGenerator";
+import { generateBillingDocument, retryFailedBillingDocumentGeneration, syncBillingDocumentReference, projectExactBillingDocumentReference } from "./billingDocumentGenerator";
 import { supersedeStaleBillingDocument } from "./billingLifecycleOrchestration";
 
 // Mirror of the worker's outcome shape (kept structural to avoid a cross-import).
@@ -35,8 +35,8 @@ export async function retryBillingFailure(failure: AncillaryDocumentReconciliati
   switch (failure.requestedAction) {
     case "evaluate_billing_readiness": return retryEvaluateReadiness(failure);
     case "generate_billing_document": return retryGenerateDocument(failure);
-    case "link_billing_document": return retrySyncReference(failure, "link_billing_document");
-    case "sync_billing_document_reference": return retrySyncReference(failure, "sync_billing_document_reference");
+    case "link_billing_document": return retryLinkReference(failure);
+    case "sync_billing_document_reference": return retrySyncReference(failure);
     case "supersede_billing_document": return retrySupersede(failure);
     default: return { ...base, status: "skipped", message: "no_billing_retry_for_action" };
   }
@@ -71,22 +71,37 @@ async function retryGenerateDocument(failure: AncillaryDocumentReconciliationFai
   return { ...base, status: "still_deferred", message: r.status };
 }
 
-async function retrySyncReference(failure: AncillaryDocumentReconciliationFailure, action: string): Promise<BillingRetryOutcome> {
+/** §5B — link_billing_document CREATES the missing exact reference via the
+ *  executable projection. Resolves ONLY after projected/already_projected;
+ *  ownership_conflict / not_projectable / source_not_found / retry_not_recorded
+ *  remain unresolved. */
+async function retryLinkReference(failure: AncillaryDocumentReconciliationFailure): Promise<BillingRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+  if (!billingDocumentRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
+  if (failure.ancillaryCaseId == null || failure.sourceId == null || failure.sourceTable !== BILLING_DOCUMENT_SOURCE_TABLE) return { ...base, status: "still_deferred", message: "invalid_source" };
+  const r = await projectExactBillingDocumentReference({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, billingDocumentId: failure.sourceId, source: "billing_retry_worker" });
+  if (r === "projected" || r === "already_projected") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  if (r === "source_not_found") return { ...base, status: "source_not_found" };
+  if (r === "ownership_conflict") return { ...base, status: "ownership_conflict" };
+  if (r === "migration_missing") return { ...base, status: "migration_missing" };
+  // not_projectable / retry_recorded / retry_not_recorded → never resolve.
+  return { ...base, status: "still_deferred", message: r };
+}
+
+/** §5C — sync_billing_document_reference ONLY updates an EXISTING reference's
+ *  status. It never creates a missing reference (that stays link_billing_document).
+ *  Resolves only on synced. */
+async function retrySyncReference(failure: AncillaryDocumentReconciliationFailure): Promise<BillingRetryOutcome> {
   const base = { failureId: failure.id, requestedAction: failure.requestedAction };
   if (!billingDocumentRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
   if (failure.ancillaryCaseId == null || failure.sourceId == null || failure.sourceTable !== BILLING_DOCUMENT_SOURCE_TABLE) return { ...base, status: "still_deferred", message: "invalid_source" };
   const [doc] = await db.select().from(billingDocumentRequests).where(eq(billingDocumentRequests.id, failure.sourceId)).limit(1);
   if (!doc) return { ...base, status: "source_not_found" };
   if (doc.clinicId !== failure.clinicId || doc.ancillaryCaseId !== failure.ancillaryCaseId) return { ...base, status: "ownership_conflict" };
-  // link_billing_document (re)creates a missing reference via create/adopt then sync;
-  // sync_billing_document_reference only mirrors status onto the exact reference.
-  if (action === "link_billing_document" && doc.canonicalStatus === "generated") {
-    await createOrAdoptCanonicalBillingDocument({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, source: "billing_retry_worker" });
-  }
   const status = doc.canonicalStatus === "generated" ? "generated" : (doc.canonicalStatus ?? "pending");
   const r = await syncBillingDocumentReference({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, billingDocumentId: failure.sourceId, documentStatus: status, source: "billing_retry_worker" });
   if (r === "synced") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
-  // retry_recorded / retry_not_recorded (reference still missing) → never resolve.
+  // reference_missing (needs link) / retry_recorded / retry_not_recorded → never resolve.
   return { ...base, status: "reference_missing", message: r };
 }
 

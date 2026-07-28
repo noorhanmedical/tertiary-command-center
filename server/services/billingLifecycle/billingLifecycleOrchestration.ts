@@ -15,7 +15,7 @@
 
 import { db } from "../../db";
 import { and, eq, isNull } from "drizzle-orm";
-import { billingDocumentRequests } from "@shared/schema/billingDocuments";
+import { canonicalBillingDocumentRequests as billingDocumentRequests } from "@shared/schema/billingDocuments";
 import { ancillaryDocumentReferences, BILLING_DOCUMENT_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
 import { billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled, featureFlags } from "../../lib/featureFlags";
@@ -42,6 +42,23 @@ export type EnsureBillingDocumentResult = {
   generationRetryRecorded?: boolean;
   warnings?: string[];
 };
+
+/**
+ * §6 — the SINGLE live wiring entry invoked AFTER a committed upstream boundary
+ * (Procedure Note sign/return, report replacement, procedure completion, terminal
+ * procedure transition). Flag-gated FIRST (OFF ⇒ zero migration-0055 reads/writes;
+ * the committed parent is untouched), exact clinic + case only, awaited, and
+ * NON-THROWING — a billing-hook failure never reverses the parent clinical action
+ * (its own durable ledger covers reconciliation). No override is ever applied
+ * through this path (overrides are explicit-API only).
+ */
+export async function triggerBillingReadinessForCommittedCase(input: { clinicId: number | null; ancillaryCaseId: number | null; source: string }): Promise<EnsureBillingDocumentResult | null> {
+  if (!billingReadinessRuntimeEnabled()) return null;
+  if (input.clinicId == null || input.ancillaryCaseId == null) return null;
+  try {
+    return await ensureCanonicalBillingDocumentForAncillaryCase({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, actor: null, source: input.source });
+  } catch { return null; }
+}
 
 export async function ensureCanonicalBillingDocumentForAncillaryCase(input: EnsureBillingDocumentInput): Promise<EnsureBillingDocumentResult> {
   if (!billingReadinessRuntimeEnabled()) return { status: "skipped_flag_off" };

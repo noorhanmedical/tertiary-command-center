@@ -180,6 +180,14 @@ export async function signProcedureNote(args: {
   // Mirror signed state onto the canonical Order Note reference (best-effort).
   await syncNoteReference(updated, "signed");
 
+  // Phase 2G — a signed Procedure Note may make the case billing-ready. Awaited,
+  // flag-gated (OFF ⇒ zero migration-0055 access), non-throwing; never reverses
+  // the committed signature. Dynamic import avoids the note-service import cycle.
+  {
+    const { triggerBillingReadinessForCommittedCase } = await import("../billingLifecycle/billingLifecycleOrchestration");
+    await triggerBillingReadinessForCommittedCase({ clinicId: args.clinicId, ancillaryCaseId: updated.ancillaryCaseId ?? null, source: "procedure_note_signed" });
+  }
+
   return { ok: true, note: updated };
 }
 
@@ -229,5 +237,11 @@ export async function returnProcedureNoteForCorrection(args: {
   if (!updated) return { ok: false, code: 404, error: "Note not found" };
   // Mirror pending-signature state onto the canonical Order Note reference.
   await syncNoteReference(updated, "pending_signature");
+  // Phase 2G — returning a Procedure Note for correction invalidates billing
+  // eligibility; re-evaluate (which supersedes any stale current Billing Document).
+  {
+    const { triggerBillingReadinessForCommittedCase } = await import("../billingLifecycle/billingLifecycleOrchestration");
+    await triggerBillingReadinessForCommittedCase({ clinicId: args.clinicId, ancillaryCaseId: updated.ancillaryCaseId ?? null, source: "procedure_note_returned" });
+  }
   return { ok: true, note: updated };
 }

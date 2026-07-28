@@ -208,8 +208,12 @@ export async function loadCanonicalTables() {
     adminReviewEvents: adminRev.ancillaryCaseAdminReviewEvents,
     procedureEvents: procEvents.procedureEvents,
     prerequisiteConfig: prereq.ancillaryServicePrerequisiteConfig,
-    billingReadinessChecks: billingReadiness.billingReadinessChecks,
-    billingDocumentRequests: billingDocs.billingDocumentRequests,
+    // Phase 2G code reads/writes the CANONICAL objects (full migration-0055
+    // column set); tests spec against the same objects the code uses.
+    billingReadinessChecks: billingReadiness.canonicalBillingReadinessChecks,
+    billingDocumentRequests: billingDocs.canonicalBillingDocumentRequests,
+    legacyBillingReadinessChecks: billingReadiness.billingReadinessChecks,
+    legacyBillingDocumentRequests: billingDocs.billingDocumentRequests,
   };
 }
 

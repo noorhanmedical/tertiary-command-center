@@ -17,7 +17,8 @@ export const BILLING_READINESS_STATUSES = [
 export type BillingReadinessStatus = typeof BILLING_READINESS_STATUSES[number];
 
 // Phase 2G — canonical case-scoped readiness statuses (stored in the additive
-// canonical_status column; the legacy readiness_status column is untouched).
+// canonical_status column that migration 0055 adds; the legacy readiness_status
+// column is untouched).
 export const CANONICAL_BILLING_READINESS_STATUSES = [
   "missing_requirements",
   "ready_to_generate",
@@ -29,6 +30,12 @@ export const CANONICAL_BILLING_READINESS_STATUSES = [
 ] as const;
 export type CanonicalBillingReadinessStatus = typeof CANONICAL_BILLING_READINESS_STATUSES[number];
 
+// ─── LEGACY billing_readiness_checks (PRE-migration-0055 columns ONLY) ──────
+// This object MUST stay pre-0055 so legacy repositories/routes that do
+// `db.select().from(billingReadinessChecks)` and `.returning()` generate SQL
+// that references NO migration-0055 column — remaining executable while 0055 is
+// unapplied and every Phase 2G flag is OFF. New Phase 2G code uses the separate
+// canonicalBillingReadinessChecks object below (same physical table).
 export const billingReadinessChecks = pgTable("billing_readiness_checks", {
   id: serial("id").primaryKey(),
   // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
@@ -44,8 +51,46 @@ export const billingReadinessChecks = pgTable("billing_readiness_checks", {
   missingRequirements: jsonb("missing_requirements").notNull().default([]),
   readyAt: timestamp("ready_at"),
   metadata: jsonb("metadata").notNull().default({}),
-  // ── Phase 2G canonical additive columns (migration 0055; all NULLABLE so the
-  // legacy flags-OFF writer is never forced to populate them) ──
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_brc_execution_case_id").on(table.executionCaseId),
+  index("idx_brc_patient_screening_id").on(table.patientScreeningId),
+  index("idx_brc_procedure_event_id").on(table.procedureEventId),
+  index("idx_brc_service_type").on(table.serviceType),
+  index("idx_brc_readiness_status").on(table.readinessStatus),
+]);
+
+export const insertBillingReadinessCheckSchema = createInsertSchema(billingReadinessChecks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type BillingReadinessCheck = typeof billingReadinessChecks.$inferSelect;
+export type InsertBillingReadinessCheck = z.infer<typeof insertBillingReadinessCheckSchema>;
+
+// ─── CANONICAL billing_readiness_checks (PRE-0055 + migration-0055 columns) ──
+// Maps to the SAME physical table. Used ONLY by Phase 2G (evaluator / generator /
+// orchestration / retry handlers / backfill / routes / tests) — never by a legacy
+// writer. Read/written ONLY when the Phase 2G runtime flags are ON, by which time
+// migration 0055 is applied. No index definitions here (0055 is hand-written; the
+// legacy object owns the pre-0055 index names).
+export const canonicalBillingReadinessChecks = pgTable("billing_readiness_checks", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id"),
+  executionCaseId: integer("execution_case_id"),
+  patientScreeningId: integer("patient_screening_id"),
+  procedureEventId: integer("procedure_event_id"),
+  patientName: text("patient_name"),
+  patientDob: text("patient_dob"),
+  facilityId: text("facility_id"),
+  serviceType: text("service_type").notNull(),
+  readinessStatus: text("readiness_status").notNull().default("not_ready"),
+  missingRequirements: jsonb("missing_requirements").notNull().default([]),
+  readyAt: timestamp("ready_at"),
+  metadata: jsonb("metadata").notNull().default({}),
+  // migration-0055 additive columns.
   ancillaryCaseId: integer("ancillary_case_id"),
   globalPlexusPatientId: integer("global_plexus_patient_id"),
   patientClinicMembershipId: integer("patient_clinic_membership_id"),
@@ -53,7 +98,6 @@ export const billingReadinessChecks = pgTable("billing_readiness_checks", {
   orderNoteDocumentReferenceId: integer("order_note_document_reference_id"),
   procedureNoteDocumentReferenceId: integer("procedure_note_document_reference_id"),
   canonicalStatus: text("canonical_status"),
-  // Structured, PHI-free evidence + evaluation snapshot.
   billingBlockers: jsonb("billing_blockers").default([]),
   claimBlockers: jsonb("claim_blockers").default([]),
   warnings: jsonb("warnings").default([]),
@@ -68,21 +112,6 @@ export const billingReadinessChecks = pgTable("billing_readiness_checks", {
   sourceSystem: text("source_system"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-  index("idx_brc_execution_case_id").on(table.executionCaseId),
-  index("idx_brc_patient_screening_id").on(table.patientScreeningId),
-  index("idx_brc_procedure_event_id").on(table.procedureEventId),
-  index("idx_brc_service_type").on(table.serviceType),
-  index("idx_brc_readiness_status").on(table.readinessStatus),
-  index("idx_brc_ancillary_case").on(table.ancillaryCaseId),
-  index("idx_brc_clinic").on(table.clinicId),
-]);
-
-export const insertBillingReadinessCheckSchema = createInsertSchema(billingReadinessChecks).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
 });
 
-export type BillingReadinessCheck = typeof billingReadinessChecks.$inferSelect;
-export type InsertBillingReadinessCheck = z.infer<typeof insertBillingReadinessCheckSchema>;
+export type CanonicalBillingReadinessCheck = typeof canonicalBillingReadinessChecks.$inferSelect;

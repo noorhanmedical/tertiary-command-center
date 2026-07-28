@@ -11,8 +11,8 @@
 import type { Express, Request, Response } from "express";
 import { and, eq, isNull, desc } from "drizzle-orm";
 import { db } from "../db";
-import { billingReadinessChecks } from "@shared/schema/billingReadiness";
-import { billingDocumentRequests } from "@shared/schema/billingDocuments";
+import { canonicalBillingReadinessChecks as billingReadinessChecks } from "@shared/schema/billingReadiness";
+import { canonicalBillingDocumentRequests as billingDocumentRequests } from "@shared/schema/billingDocuments";
 import { billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled } from "../lib/featureFlags";
 import { getAncillaryCaseById } from "../repositories/ancillaryCases.repo";
 import { evaluateCanonicalBillingReadiness } from "../services/billingLifecycle/billingReadinessEvaluator";

@@ -109,3 +109,31 @@ flags-OFF legacy regression, and check/tests are green.
   unapplied. Migration 0055 partial-unique current-row indexes key ONLY on
   `ancillary_case_id IS NOT NULL` canonical rows (no screening+service merge of
   separate episodes). These items are safe to defer.
+
+## Phase 2G billing readiness / Billing Document (closeout review)
+
+Verified during the independent Phase 2G BLOCKER/MAJOR closeout review. None
+meets the frozen acceptance gate (no false ready/generated, no tenant/evidence
+acceptance, no unrecoverable retry, no destructive migration). Deferred:
+
+- **Report evidence does not re-load its underlying `case_document_readiness`
+  row.** `loadExactReportEvidence` validates the report *reference* exactly
+  (clinic/case/service ownership via `refOwnershipMismatch`, `sourceTable ===
+  case_document_readiness`, acceptable current status) but — unlike the
+  procedure/order note loaders — does not re-fetch the underlying source row to
+  re-assert its independent ownership. This is safe today because report uses a
+  dedicated source table (no cross-kind `procedure_notes` aliasing risk) and the
+  reference carries the authoritative clinic/case/service, so no false-ready path
+  exists. Consider adding a source-row ownership re-check for symmetry/defence-in
+  -depth in a later hardening pass.
+
+- **`retrySupersede` resolves after a non-committed re-evaluation.** The
+  `supersede_billing_document` retry handler re-evaluates, then supersedes any
+  current document whose fingerprint differs (passing `null` when the
+  re-evaluation returned a transient status such as
+  `requirements_unavailable_retry_recorded`) and resolves unconditionally.
+  Superseding is the fail-closed direction (never a false ready/generated), AND
+  no code path currently enqueues `supersede_billing_document`, so this handler
+  is unreachable in practice. Consider (a) deferring resolution unless the
+  re-evaluation status is a committed `ready_to_generate`/`missing_requirements`,
+  and (b) removing or exercising the handler once an enqueue site exists.

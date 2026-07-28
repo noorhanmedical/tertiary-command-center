@@ -15,13 +15,14 @@
 
 import { db } from "../../db";
 import { and, eq, isNull, desc } from "drizzle-orm";
-import { billingReadinessChecks } from "@shared/schema/billingReadiness";
-import { ancillaryDocumentReferences } from "@shared/schema/ancillaryDocuments";
+import { canonicalBillingReadinessChecks as billingReadinessChecks } from "@shared/schema/billingReadiness";
+import { ancillaryDocumentReferences, ORDER_NOTE_SOURCE_TABLE, PROCEDURE_NOTE_SOURCE_TABLE, REPORT_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { procedureEvents } from "@shared/schema/procedureEvents";
 import { procedureNotes } from "@shared/schema/generatedNotes";
 import { patientJourneyEvents } from "@shared/schema/executionCase";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { listActivePrerequisiteConfigs } from "../../repositories/procedurePrerequisites.repo";
+import { recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
 import { billingReadinessRuntimeEnabled } from "../../lib/featureFlags";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
@@ -51,7 +52,8 @@ export type BillingReadinessResult = {
     | "billing_document_pending" | "billing_document_generated"
     | "superseded" | "invalidated" | "migration_missing"
     | "skipped_flag_off" | "case_not_found" | "cross_clinic_denied"
-    | "not_active" | "not_admin_approved" | "override_not_recorded";
+    | "not_active" | "not_admin_approved" | "override_not_recorded"
+    | "requirements_unavailable_retry_recorded" | "requirements_unavailable_retry_not_recorded";
   readinessCheckId?: number;
   billingReady?: boolean;
   claimSubmissionReady?: boolean;
@@ -73,15 +75,90 @@ function fingerprint(parts: (string | number | null | undefined)[]): string {
   return `bef_${h.toString(16)}`;
 }
 
-/** Read the EXACT current (non-superseded) reference of a kind for the case. */
-async function currentRef(clinicId: number, ancillaryCaseId: number, kind: string): Promise<RefRow | null> {
-  const rows = await db.select().from(ancillaryDocumentReferences).where(and(
+type EvidenceLoad = { ref: RefRow | null; note?: NoteRow | null; blocker?: BillingBlocker; ambiguous?: boolean };
+
+/** ALL current (non-superseded) references of a kind for the exact case — no
+ *  limit, so >1 current candidate is surfaced as ambiguity (never ordered away). */
+async function currentRefs(clinicId: number, ancillaryCaseId: number, kind: string): Promise<RefRow[]> {
+  return db.select().from(ancillaryDocumentReferences).where(and(
     eq(ancillaryDocumentReferences.clinicId, clinicId),
     eq(ancillaryDocumentReferences.ancillaryCaseId, ancillaryCaseId),
     eq(ancillaryDocumentReferences.documentKind, kind),
     isNull(ancillaryDocumentReferences.supersededAt),
-  )).orderBy(desc(ancillaryDocumentReferences.actualCreatedAt)).limit(1);
+  )).orderBy(desc(ancillaryDocumentReferences.actualCreatedAt));
+}
+async function currentRef(clinicId: number, ancillaryCaseId: number, kind: string): Promise<RefRow | null> {
+  const rows = await currentRefs(clinicId, ancillaryCaseId, kind);
   return rows[0] ?? null;
+}
+
+/** Reject a reference whose exact tenant/case/service does not match the caller's. */
+function refOwnershipMismatch(ref: RefRow, clinicId: number, ancillaryCaseId: number, service: string): boolean {
+  return ref.clinicId !== clinicId || ref.ancillaryCaseId !== ancillaryCaseId || (ref.serviceType != null && ref.serviceType !== service);
+}
+
+/** §4 — EXACT report evidence: exactly one current report reference on the
+ *  allowed report source table, exact ownership, acceptable current status. */
+async function loadExactReportEvidence(clinicId: number, ancillaryCaseId: number, service: string): Promise<EvidenceLoad> {
+  const refs = await currentRefs(clinicId, ancillaryCaseId, "report");
+  if (refs.length === 0) return { ref: null, blocker: { code: "exact_current_report_missing", category: "hard_procedure_blocker", detail: "none" } };
+  if (refs.length > 1) return { ref: null, ambiguous: true, blocker: { code: "report_evidence_ambiguous", category: "hard_procedure_blocker", detail: String(refs.length) } };
+  const ref = refs[0];
+  if (refOwnershipMismatch(ref, clinicId, ancillaryCaseId, service)) return { ref: null, blocker: { code: "report_source_ownership_mismatch", category: "hard_procedure_blocker", detail: ref.serviceType ?? "none" } };
+  if (ref.sourceTable !== REPORT_SOURCE_TABLE) return { ref: null, blocker: { code: "report_source_table_mismatch", category: "hard_procedure_blocker", detail: ref.sourceTable } };
+  if (!ACCEPTABLE_REPORT_STATUSES.has(ref.documentStatus)) return { ref: null, blocker: { code: "exact_current_report_missing", category: "hard_procedure_blocker", detail: ref.documentStatus } };
+  return { ref };
+}
+
+/** §4 — EXACT Procedure Note evidence: exactly one current procedure_note
+ *  reference (sourceTable=procedure_notes), the exact underlying
+ *  post_procedure_note owned by the same clinic/case/service, current, signed +
+ *  signedAt, with a synchronized signed reference (signed ref → unsigned note blocks). */
+async function loadExactProcedureNoteEvidence(clinicId: number, ancillaryCaseId: number, service: string): Promise<EvidenceLoad> {
+  const refs = await currentRefs(clinicId, ancillaryCaseId, "procedure_note");
+  if (refs.length === 0) return { ref: null, blocker: { code: "exact_procedure_note_missing", category: "hard_procedure_blocker", detail: "none" } };
+  if (refs.length > 1) return { ref: null, ambiguous: true, blocker: { code: "procedure_note_evidence_ambiguous", category: "hard_procedure_blocker", detail: String(refs.length) } };
+  const ref = refs[0];
+  if (refOwnershipMismatch(ref, clinicId, ancillaryCaseId, service)) return { ref: null, blocker: { code: "procedure_note_source_ownership_mismatch", category: "hard_procedure_blocker", detail: ref.serviceType ?? "none" } };
+  if (ref.sourceTable !== PROCEDURE_NOTE_SOURCE_TABLE) return { ref: null, blocker: { code: "procedure_note_source_table_mismatch", category: "hard_procedure_blocker", detail: ref.sourceTable } };
+  const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, ref.sourceId)).limit(1);
+  if (!note) return { ref: null, blocker: { code: "procedure_note_source_missing", category: "hard_procedure_blocker", detail: "none" } };
+  if (note.noteType !== "post_procedure_note") return { ref: null, blocker: { code: "procedure_note_wrong_note_type", category: "hard_procedure_blocker", detail: note.noteType } };
+  if (note.clinicId !== clinicId || note.ancillaryCaseId !== ancillaryCaseId || note.serviceType !== service) return { ref: null, blocker: { code: "procedure_note_note_ownership_mismatch", category: "hard_procedure_blocker", detail: "mismatch" } };
+  if (note.supersededAt != null) return { ref: null, blocker: { code: "procedure_note_superseded", category: "hard_procedure_blocker", detail: "superseded" } };
+  if (ref.documentStatus === "signed" && (note.signatureStatus !== "signed" || note.signedAt == null)) return { ref: null, blocker: { code: "procedure_note_reference_signed_note_unsigned", category: "hard_procedure_blocker", detail: note.signatureStatus ?? "unsigned" } };
+  if (note.signatureStatus !== "signed" || note.signedAt == null) return { ref: null, blocker: { code: "procedure_note_unsigned", category: "hard_procedure_blocker", detail: note.signatureStatus ?? "unsigned" } };
+  if (ref.documentStatus !== "signed" || ref.signedAt == null) return { ref: null, blocker: { code: "procedure_note_reference_unsynchronized", category: "hard_procedure_blocker", detail: ref.documentStatus } };
+  return { ref, note };
+}
+
+/** §4 — EXACT Order Note evidence: exactly one current order_note reference
+ *  (sourceTable=procedure_notes), exact underlying order_note owned by the same
+ *  clinic/case/service, current, signature satisfying the configured requirement,
+ *  reference state agreeing with note state. */
+async function loadExactOrderNoteEvidence(clinicId: number, ancillaryCaseId: number, service: string, sigReq: "required" | "not_required" | "unresolved"): Promise<EvidenceLoad> {
+  const refs = await currentRefs(clinicId, ancillaryCaseId, "order_note");
+  if (refs.length === 0) return { ref: null, blocker: { code: "exact_order_note_missing", category: "hard_procedure_blocker", detail: "none" } };
+  if (refs.length > 1) return { ref: null, ambiguous: true, blocker: { code: "order_note_evidence_ambiguous", category: "hard_procedure_blocker", detail: String(refs.length) } };
+  const ref = refs[0];
+  if (refOwnershipMismatch(ref, clinicId, ancillaryCaseId, service)) return { ref: null, blocker: { code: "order_note_source_ownership_mismatch", category: "hard_procedure_blocker", detail: ref.serviceType ?? "none" } };
+  if (ref.sourceTable !== ORDER_NOTE_SOURCE_TABLE) return { ref: null, blocker: { code: "order_note_source_table_mismatch", category: "hard_procedure_blocker", detail: ref.sourceTable } };
+  const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, ref.sourceId)).limit(1);
+  if (!note) return { ref: null, blocker: { code: "order_note_source_missing", category: "hard_procedure_blocker", detail: "none" } };
+  if (note.noteType !== "order_note") return { ref: null, blocker: { code: "order_note_wrong_note_type", category: "hard_procedure_blocker", detail: note.noteType } };
+  if (note.clinicId !== clinicId || note.ancillaryCaseId !== ancillaryCaseId || note.serviceType !== service) return { ref: null, blocker: { code: "order_note_note_ownership_mismatch", category: "hard_procedure_blocker", detail: "mismatch" } };
+  if (note.supersededAt != null) return { ref: null, blocker: { code: "order_note_superseded", category: "hard_procedure_blocker", detail: "superseded" } };
+  // A signed reference must not point to an unsigned note.
+  if (ref.documentStatus === "signed" && (note.signatureStatus !== "signed" || note.signedAt == null)) return { ref: null, blocker: { code: "order_note_reference_signed_note_unsigned", category: "hard_procedure_blocker", detail: note.signatureStatus ?? "unsigned" } };
+  if (sigReq === "required") {
+    if (note.signatureStatus !== "signed" || note.signedAt == null || ref.documentStatus !== "signed" || ref.signedAt == null) return { ref: null, blocker: { code: "order_note_signature_required_unsigned", category: "hard_procedure_blocker", detail: ref.documentStatus } };
+  } else if (sigReq === "not_required") {
+    if (!["signed", "pending_signature", "uploaded"].includes(ref.documentStatus)) return { ref: null, blocker: { code: "order_note_not_current", category: "billing_blocker", detail: ref.documentStatus } };
+  } else {
+    // unresolved → billing blocker (NEVER assume signature is unnecessary).
+    return { ref: null, blocker: { code: "order_note_signature_unresolved", category: "billing_blocker", detail: "unresolved" } };
+  }
+  return { ref, note };
 }
 
 export async function evaluateCanonicalBillingReadiness(input: EvaluateBillingReadinessInput): Promise<BillingReadinessResult> {
@@ -94,6 +171,18 @@ export async function evaluateCanonicalBillingReadiness(input: EvaluateBillingRe
     // Frozen flow: never bypass Admin Review.
     if (acase.adminReviewStatus !== "approved") return { status: "not_admin_approved" };
     const service = acase.serviceType;
+
+    // §3 — FAIL CLOSED loading the billing requirement configuration. A read
+    // error must NEVER become an empty requirement set (which could silently drop
+    // billing/claim/signature/override restrictions and become ready_to_generate).
+    let configs: Awaited<ReturnType<typeof listActivePrerequisiteConfigs>>;
+    try {
+      configs = await listActivePrerequisiteConfigs(input.clinicId, service, BILLING_READINESS_STAGE);
+    } catch (e) {
+      if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+      const recorded = await recordEvalRetry(input, "billing_requirements_unavailable");
+      return { status: recorded ? "requirements_unavailable_retry_recorded" : "requirements_unavailable_retry_not_recorded" };
+    }
 
     const billingBlockers: BillingBlocker[] = [];
     const claimBlockers: BillingBlocker[] = [];
@@ -113,45 +202,25 @@ export async function evaluateCanonicalBillingReadiness(input: EvaluateBillingRe
     if (terminalInvalid && !pe) billingBlockers.push({ code: "procedure_terminally_invalidated", category: "hard_procedure_blocker", detail: terminalInvalid.procedureStatus });
     if (!pe) billingBlockers.push({ code: "exact_complete_procedure_missing", category: "hard_procedure_blocker", detail: "no complete procedure event with completedAt" });
 
-    // Exact current report reference.
-    const reportRef = await currentRef(input.clinicId, input.ancillaryCaseId, "report");
-    const reportOk = reportRef != null && reportRef.serviceType === service && ACCEPTABLE_REPORT_STATUSES.has(reportRef.documentStatus);
-    if (!reportOk) billingBlockers.push({ code: "exact_current_report_missing", category: "hard_procedure_blocker", detail: reportRef ? reportRef.documentStatus : "none" });
+    // §4 — EXACT report evidence (validated source table + ownership + status +
+    // ambiguity). Only a validated reference id is stored in the snapshot.
+    const report = await loadExactReportEvidence(input.clinicId, input.ancillaryCaseId, service);
+    if (report.blocker) billingBlockers.push(report.blocker);
+    const reportRef = report.blocker ? null : report.ref;
 
-    // Exact current Procedure Note reference + SIGNED note + synchronized reference.
-    const pnRef = await currentRef(input.clinicId, input.ancillaryCaseId, "procedure_note");
-    let pnNote: NoteRow | null = null;
-    if (pnRef) { const [n] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, pnRef.sourceId)).limit(1); pnNote = n ?? null; }
-    if (!pnRef || !pnNote) {
-      billingBlockers.push({ code: "exact_procedure_note_missing", category: "hard_procedure_blocker", detail: "none" });
-    } else if (pnNote.signatureStatus !== "signed" || pnNote.signedAt == null) {
-      billingBlockers.push({ code: "procedure_note_unsigned", category: "hard_procedure_blocker", detail: pnNote.signatureStatus ?? "unsigned" });
-    } else if (pnRef.documentStatus !== "signed" || pnRef.signedAt == null) {
-      // Note signed but its exact reference is not synchronized → block.
-      billingBlockers.push({ code: "procedure_note_reference_unsynchronized", category: "hard_procedure_blocker", detail: pnRef.documentStatus });
-    }
+    // §4 — EXACT Procedure Note evidence (exact note by source id, note type,
+    // ownership, current, signed+signedAt, synchronized signed reference).
+    const pn = await loadExactProcedureNoteEvidence(input.clinicId, input.ancillaryCaseId, service);
+    if (pn.blocker) billingBlockers.push(pn.blocker);
+    const pnRef = pn.blocker ? null : pn.ref;
 
-    // Exact current Order Note reference + configured signature requirement.
-    const onRef = await currentRef(input.clinicId, input.ancillaryCaseId, "order_note");
-    if (!onRef) {
-      billingBlockers.push({ code: "exact_order_note_missing", category: "hard_procedure_blocker", detail: "none" });
-    } else {
-      const sigReq = await resolveOrderNoteSignatureRequirement(input.clinicId, service);
-      if (sigReq === "required") {
-        if (onRef.documentStatus !== "signed" || onRef.signedAt == null) billingBlockers.push({ code: "order_note_signature_required_unsigned", category: "hard_procedure_blocker", detail: onRef.documentStatus });
-      } else if (sigReq === "not_required") {
-        // A current generated/approved/signed Order Note reference qualifies.
-        if (!["signed", "pending_signature", "uploaded"].includes(onRef.documentStatus)) billingBlockers.push({ code: "order_note_not_current", category: "billing_blocker", detail: onRef.documentStatus });
-      } else {
-        // unresolved → billing blocker (NEVER assume signature is unnecessary).
-        billingBlockers.push({ code: "order_note_signature_unresolved", category: "billing_blocker", detail: "unresolved" });
-      }
-    }
+    // §4 — EXACT Order Note evidence + configured signature requirement.
+    const on = await loadExactOrderNoteEvidence(input.clinicId, input.ancillaryCaseId, service, resolveOrderNoteSignatureRequirement(configs));
+    if (on.blocker) billingBlockers.push(on.blocker);
+    const onRef = on.blocker ? null : on.ref;
 
-    // ── Configured service-specific requirements (config-driven) ────────────
+    // ── Configured service-specific requirements (config-driven; loaded fail-closed above) ──
     const overrideCodes = new Set(input.override?.requirementCodes ?? []);
-    let configs: Awaited<ReturnType<typeof listActivePrerequisiteConfigs>> = [];
-    try { configs = await listActivePrerequisiteConfigs(input.clinicId, service, BILLING_READINESS_STAGE); } catch { configs = []; }
     for (const cfg of configs) {
       if (!cfg.active || !cfg.required) continue;
       const satisfied = await isRequirementSatisfied(input.clinicId, input.ancillaryCaseId, cfg.requirementCode);
@@ -242,16 +311,24 @@ export async function evaluateCanonicalBillingReadiness(input: EvaluateBillingRe
   }
 }
 
-/** Resolve the configured Order Note signature requirement for a service.
- *  A config row `order_note_signature` at stage billing_readiness with
+/** Resolve the configured Order Note signature requirement from the ALREADY
+ *  fail-closed-loaded configs. A config row `order_note_signature` with
  *  required=false ⇒ not_required; required=true ⇒ required; NO row ⇒ unresolved
- *  (billing blocker — never assume signature is unnecessary). */
-async function resolveOrderNoteSignatureRequirement(clinicId: number, service: string): Promise<"required" | "not_required" | "unresolved"> {
-  let configs: Awaited<ReturnType<typeof listActivePrerequisiteConfigs>> = [];
-  try { configs = await listActivePrerequisiteConfigs(clinicId, service, BILLING_READINESS_STAGE); } catch { return "unresolved"; }
+ *  (billing blocker — never assume signature is unnecessary). A config load
+ *  failure is handled by the caller (never silently becomes unresolved-then-ready). */
+function resolveOrderNoteSignatureRequirement(configs: Awaited<ReturnType<typeof listActivePrerequisiteConfigs>>): "required" | "not_required" | "unresolved" {
   const cfg = configs.find((c) => c.requirementCode === "order_note_signature" && c.active);
   if (!cfg) return "unresolved";
   return cfg.required ? "required" : "not_required";
+}
+
+/** Record an EXACT PHI-free evaluate_billing_readiness retry (source-less
+ *  case-level pairing). Returns whether the ledger row persisted. */
+async function recordEvalRetry(input: EvaluateBillingReadinessInput, code: string): Promise<boolean> {
+  try {
+    await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "billing_document", requestedAction: "evaluate_billing_readiness", sourceSystem: input.source, errorCode: code });
+    return true;
+  } catch { return false; }
 }
 
 /** EXACT evidence check for a configured requirement. Only requirement codes we
