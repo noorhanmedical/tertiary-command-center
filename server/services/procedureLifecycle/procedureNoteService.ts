@@ -323,7 +323,7 @@ export async function createOrReuseProcedureNote(
           sourceSystem: input.source,
           errorCode: ref.outcome,
         });
-      } catch { /* ledger guard downstream */ }
+      } catch { warnings.push("reference_retry_not_recorded"); }
     }
   } catch (e) {
     referenceDeferred = true;
@@ -340,7 +340,7 @@ export async function createOrReuseProcedureNote(
         sourceSystem: input.source,
         errorCode: (e as { code?: string })?.code ?? "reference_failed",
       });
-    } catch { /* ledger guard downstream */ }
+    } catch { warnings.push("reference_retry_not_recorded"); }
   }
 
   await appendAudit({

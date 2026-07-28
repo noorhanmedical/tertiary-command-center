@@ -21,8 +21,8 @@ import { createOrReuseOrderNote, linkOrderNoteAdminReviewEvidence } from "./orde
 import { ensureAncillaryDocumentReference } from "./documentReferenceWriter";
 import { createOrReuseProcedureNote, linkProcedureNoteEvidence, ensureProcedureNoteReferenceForNote, syncProcedureNoteReferenceSignature } from "../procedureLifecycle/procedureNoteService";
 import { onProcedureCompleted, ensureCanonicalProcedureNoteForAncillaryCase } from "../procedureLifecycle/procedureLifecycleOrchestration";
-import { generateProcedureNote } from "../procedureLifecycle/procedureNoteGenerator";
-import { voidProcedureNoteLineageForCase } from "../procedureLifecycle/procedureNoteLineage";
+import { generateProcedureNote, retryFailedProcedureNoteGeneration } from "../procedureLifecycle/procedureNoteGenerator";
+import { voidProcedureNoteLineageForCase, reconcileVoidedProcedureNoteReference } from "../procedureLifecycle/procedureNoteLineage";
 import { getProcedureNoteByIdForClinic } from "../../repositories/physicianPortal.repo";
 import { featureFlags as flags, procedureNoteRuntimeEnabled, procedureNoteGeneratorEnabled } from "../../lib/featureFlags";
 import {
@@ -379,12 +379,27 @@ async function retryGenerateProcedureNote(failure: AncillaryDocumentReconciliati
   const base = { failureId: failure.id, requestedAction: failure.requestedAction };
   if (!procedureNoteGeneratorEnabled()) return { ...base, status: "skipped_flag_off" };
   if (failure.ancillaryCaseId == null || failure.sourceId == null || failure.sourceTable !== PROCEDURE_NOTE_SOURCE_TABLE) return { ...base, status: "still_deferred", message: "invalid_source" };
-  const r = await generateProcedureNote({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, noteId: failure.sourceId });
+  // Load the EXACT named note to choose the right (pending vs failed) entry point.
+  const note = await getProcedureNoteByIdForClinic({ id: failure.sourceId, clinicId: failure.clinicId });
+  if (!note) return { ...base, status: "source_not_found" };
+  if (note.ancillaryCaseId !== failure.ancillaryCaseId) return { ...base, status: "case_mismatch" };
+  // Already generated (or superseded away) — the generation work is complete;
+  // resolve this exact failure rather than looping forever.
+  if (note.generationStatus === "generated" || note.generationStatus === "approved" || note.supersededAt != null) {
+    await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+    return { ...base, status: "resolved" };
+  }
+  const args = { clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, noteId: failure.sourceId };
+  const r = note.generationStatus === "failed"
+    ? await retryFailedProcedureNoteGeneration(args)
+    : await generateProcedureNote(args);
+  // Resolve ONLY after the exact note is genuinely generated.
   if (r.status === "generated") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
   if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
   if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
   if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
   if (r.status === "not_yet_eligible") return { ...base, status: "not_yet_eligible" };
+  // failed_retry_*, report_content_unavailable_*, already_claimed, not_pending → NEVER resolve.
   return { ...base, status: "still_deferred", message: r.status };
 }
 
@@ -402,14 +417,32 @@ async function retryProcedureNoteLineage(failure: AncillaryDocumentReconciliatio
   return { ...base, status: "still_deferred", message: r.status };
 }
 
-/** §9 — idempotent void of the current note lineage for a case. */
+/** §4/§9 — void reconciliation. A SOURCE-BEARING failure reconciles the EXACT
+ *  named (superseded/voided) note's reference and NEVER resolves on
+ *  reference_missing / source no_current_note. A SOURCE-LESS case-level failure
+ *  may idempotently resolve on no_current_note. */
 async function retryVoidProcedureNote(failure: AncillaryDocumentReconciliationFailure): Promise<DocumentRetryOutcome> {
   const base = { failureId: failure.id, requestedAction: failure.requestedAction };
   if (!procedureNoteRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
   if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
+
+  // Source-bearing → exact reference reconciliation on the named note.
+  if (failure.sourceTable === PROCEDURE_NOTE_SOURCE_TABLE && failure.sourceId != null) {
+    const r = await reconcileVoidedProcedureNoteReference({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, noteId: failure.sourceId });
+    if (r.status === "reconciled" || r.status === "already_reconciled") {
+      await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+      return { ...base, status: "resolved" };
+    }
+    if (r.status === "reference_missing") return { ...base, status: "reference_missing" };
+    if (r.status === "source_not_found") return { ...base, status: "source_not_found" };
+    if (r.status === "ownership_conflict") return { ...base, status: "ownership_conflict" };
+    if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
+    return { ...base, status: "still_deferred", message: r.status };
+  }
+
+  // Source-less case-level → idempotent lineage void.
   const r = await voidProcedureNoteLineageForCase({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, reason: "retry_void", actorUserId: null });
-  // Note void succeeded (with/without a reference) → resolve this exact failure.
-  if (r.status === "voided" || r.status === "voided_retry_recorded" || r.status === "reference_missing" || r.status === "no_current_note") {
+  if (r.status === "voided" || r.status === "voided_retry_recorded" || r.status === "no_current_note") {
     await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
     return { ...base, status: "resolved" };
   }

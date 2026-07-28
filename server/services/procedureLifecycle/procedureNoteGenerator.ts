@@ -44,9 +44,11 @@ export type GenerateProcedureNoteResult = {
   procedureNoteId?: number;
 };
 
-export async function generateProcedureNote(input: {
-  clinicId: number; ancillaryCaseId: number; noteId: number; actorUserId?: string | null;
-}): Promise<GenerateProcedureNoteResult> {
+type GenInput = { clinicId: number; ancillaryCaseId: number; noteId: number; actorUserId?: string | null };
+type NoteRow = typeof procedureNotes.$inferSelect;
+
+/** Normal generator — claims ONLY a pending note. */
+export async function generateProcedureNote(input: GenInput): Promise<GenerateProcedureNoteResult> {
   if (!procedureNoteGeneratorEnabled()) return { status: "skipped_flag_off" };
   try {
     const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, input.noteId)).limit(1);
@@ -54,61 +56,110 @@ export async function generateProcedureNote(input: {
     if (note.clinicId !== input.clinicId || note.ancillaryCaseId !== input.ancillaryCaseId) return { status: "cross_clinic_denied" };
     if (note.noteType !== "post_procedure_note" || note.supersededAt != null) return { status: "not_pending" };
     if (note.signatureStatus === "signed") return { status: "not_pending" };
+    if (note.generationStatus !== "pending") return { status: "not_pending" };
 
     // Two-condition eligibility must hold with EXACT evidence.
     const elig = await evaluateProcedureNoteEligibility({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
     if (!elig.eligible) return { status: "not_yet_eligible" };
 
     // Atomically CLAIM the pending note → generating (second worker gets 0 rows).
-    const claimed = await db.update(procedureNotes)
-      .set({ generationStatus: "generating", updatedAt: new Date() })
-      .where(and(
-        eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId),
-        eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId),
-        eq(procedureNotes.noteType, "post_procedure_note"),
-        eq(procedureNotes.generationStatus, "pending"),
-        isNull(procedureNotes.supersededAt),
-      ))
-      .returning();
-    if (claimed.length !== 1) return { status: "already_claimed" };
-
-    // Resolve the EXACT report + procedure evidence through internal repos only.
-    const acase = await getAncillaryCaseById(input.ancillaryCaseId);
-    const pe = elig.qualifyingProcedureEventId != null ? await getProcedureEventById(elig.qualifyingProcedureEventId) : undefined;
-    const report = await loadReportEvidence(input.clinicId, input.ancillaryCaseId, elig.qualifyingReportReferenceId ?? null);
-    if (!acase || !pe || !report) {
-      const recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "report_content_unavailable");
-      return { status: recorded ? "report_content_unavailable_retry_recorded" : "report_content_unavailable_retry_not_recorded" };
-    }
-
-    // Deterministic, evidence-anchored CERTIFICATION — NO invented findings, timeless.
-    const body = renderBody({ serviceType: note.serviceType, completedAt: pe.completedAt ?? null, reportReferenceId: report.referenceId, reportSourceId: report.sourceId });
-    const sourceData = {
-      document_kind: "procedure_completion_certification",
-      template: GENERATOR_TEMPLATE_VERSION,
-      procedure_event_id: pe.id, procedure_completed_at: pe.completedAt?.toISOString() ?? null,
-      report_document_reference_id: report.referenceId, report_source_table: REPORT_SOURCE_TABLE, report_source_id: report.sourceId,
-      report_document_status: report.documentStatus,
-      ancillary_case_id: input.ancillaryCaseId, service_type: note.serviceType,
-    };
-    const [done] = await db.update(procedureNotes)
-      .set({ generationStatus: "generated", generatedText: body, generatedByAi: false, sourceData: sourceData as never, errorMessage: null, updatedAt: new Date() })
-      .where(and(eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.generationStatus, "generating")))
-      .returning();
-    if (!done) { const rec = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "generation_commit_conflict"); return { status: rec ? "failed_retry_recorded" : "failed_retry_not_recorded" }; }
-
-    // Mirror generated status onto the exact reference (truthful; body never stored there).
-    await db.update(ancillaryDocumentReferences)
-      .set({ documentStatus: "pending_signature", updatedAt: new Date() })
-      .where(and(eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, input.noteId), eq(ancillaryDocumentReferences.documentKind, "procedure_note"), eq(ancillaryDocumentReferences.clinicId, input.clinicId)));
-
-    return { status: "generated", procedureNoteId: input.noteId };
+    const claimed = await claimForGeneration(input, "pending");
+    if (claimed !== 1) return { status: "already_claimed" };
+    return await finalizeGeneratedBody(input, note);
   } catch (e) {
-    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
-    let recorded = false;
-    try { recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, (e as { code?: string })?.code ?? "generation_failed"); } catch { recorded = false; }
-    return { status: recorded ? "failed_retry_recorded" : "failed_retry_not_recorded" };
+    return await catchToResult(input, e);
   }
+}
+
+/**
+ * Exact FAILED-note regeneration (§3). Reclaims ONLY the exact named note that
+ * is `failed` (never first/newest/current-by-case), atomically failed→generating,
+ * re-evaluates exact eligibility AFTER the claim, and never overwrites an
+ * already-generated body. Reverts generating→failed on ineligibility so a note
+ * is never stranded `generating`.
+ */
+export async function retryFailedProcedureNoteGeneration(input: GenInput): Promise<GenerateProcedureNoteResult> {
+  if (!procedureNoteGeneratorEnabled()) return { status: "skipped_flag_off" };
+  try {
+    const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, input.noteId)).limit(1);
+    if (!note) return { status: "note_not_found" };
+    if (note.clinicId !== input.clinicId || note.ancillaryCaseId !== input.ancillaryCaseId) return { status: "cross_clinic_denied" };
+    if (note.noteType !== "post_procedure_note" || note.supersededAt != null) return { status: "not_pending" };
+    if (note.signatureStatus === "signed") return { status: "not_pending" };
+    if (note.generationStatus !== "failed") return { status: "not_pending" };
+
+    // Atomically reclaim the EXACT failed note → generating (one worker wins).
+    const claimed = await claimForGeneration(input, "failed");
+    if (claimed !== 1) return { status: "already_claimed" };
+
+    // Re-evaluate exact eligibility AFTER the claim; revert on ineligibility.
+    const elig = await evaluateProcedureNoteEligibility({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
+    if (!elig.eligible) {
+      await db.update(procedureNotes).set({ generationStatus: "failed", updatedAt: new Date() })
+        .where(and(eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.generationStatus, "generating")));
+      return { status: "not_yet_eligible" };
+    }
+    return await finalizeGeneratedBody(input, note);
+  } catch (e) {
+    return await catchToResult(input, e);
+  }
+}
+
+/** Atomic claim (fromStatus → generating), exact clinic/case/type/current WHERE. */
+async function claimForGeneration(input: GenInput, fromStatus: "pending" | "failed"): Promise<number> {
+  const rows = await db.update(procedureNotes)
+    .set({ generationStatus: "generating", updatedAt: new Date() })
+    .where(and(
+      eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId),
+      eq(procedureNotes.ancillaryCaseId, input.ancillaryCaseId),
+      eq(procedureNotes.noteType, "post_procedure_note"),
+      eq(procedureNotes.generationStatus, fromStatus),
+      isNull(procedureNotes.supersededAt),
+    ))
+    .returning();
+  return rows.length;
+}
+
+/** After a successful claim (note is `generating`): resolve exact evidence,
+ *  preserve any pre-existing body, commit `generated`, mirror the reference. */
+async function finalizeGeneratedBody(input: GenInput, note: NoteRow): Promise<GenerateProcedureNoteResult> {
+  const elig = await evaluateProcedureNoteEligibility({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
+  const acase = await getAncillaryCaseById(input.ancillaryCaseId);
+  const pe = elig.qualifyingProcedureEventId != null ? await getProcedureEventById(elig.qualifyingProcedureEventId) : undefined;
+  const report = await loadReportEvidence(input.clinicId, input.ancillaryCaseId, elig.qualifyingReportReferenceId ?? null);
+  if (!acase || !pe || !report) {
+    const recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "report_content_unavailable");
+    return { status: recorded ? "report_content_unavailable_retry_recorded" : "report_content_unavailable_retry_not_recorded" };
+  }
+  // Preserve a pre-existing generated body; otherwise render the certification.
+  const body = (typeof note.generatedText === "string" && note.generatedText.length > 0)
+    ? note.generatedText
+    : renderBody({ serviceType: note.serviceType, completedAt: pe.completedAt ?? null, reportReferenceId: report.referenceId, reportSourceId: report.sourceId });
+  const sourceData = {
+    document_kind: "procedure_completion_certification",
+    template: GENERATOR_TEMPLATE_VERSION,
+    procedure_event_id: pe.id, procedure_completed_at: pe.completedAt?.toISOString() ?? null,
+    report_document_reference_id: report.referenceId, report_source_table: REPORT_SOURCE_TABLE, report_source_id: report.sourceId,
+    report_document_status: report.documentStatus,
+    ancillary_case_id: input.ancillaryCaseId, service_type: note.serviceType,
+  };
+  const [done] = await db.update(procedureNotes)
+    .set({ generationStatus: "generated", generatedText: body, generatedByAi: false, sourceData: sourceData as never, errorMessage: null, updatedAt: new Date() })
+    .where(and(eq(procedureNotes.id, input.noteId), eq(procedureNotes.clinicId, input.clinicId), eq(procedureNotes.generationStatus, "generating")))
+    .returning();
+  if (!done) { const rec = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "generation_commit_conflict"); return { status: rec ? "failed_retry_recorded" : "failed_retry_not_recorded" }; }
+  // Mirror generated status onto the exact reference (truthful; body never stored there).
+  await db.update(ancillaryDocumentReferences)
+    .set({ documentStatus: "pending_signature", updatedAt: new Date() })
+    .where(and(eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, input.noteId), eq(ancillaryDocumentReferences.documentKind, "procedure_note"), eq(ancillaryDocumentReferences.clinicId, input.clinicId)));
+  return { status: "generated", procedureNoteId: input.noteId };
+}
+
+async function catchToResult(input: GenInput, e: unknown): Promise<GenerateProcedureNoteResult> {
+  if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+  let recorded = false;
+  try { recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, (e as { code?: string })?.code ?? "generation_failed"); } catch { recorded = false; }
+  return { status: recorded ? "failed_retry_recorded" : "failed_retry_not_recorded" };
 }
 
 /**

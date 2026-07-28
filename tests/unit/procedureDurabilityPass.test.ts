@@ -136,7 +136,7 @@ async function testBackfillApplyQueues() {
     assert.equal(countOps(calls, "insert", t.procedureNotes), 0, "(14) backfill never generates note bodies");
     return res;
   });
-  assert.ok(["applied", "apply_deferred"].includes(r), r);
+  assert.ok(["applied", "apply_deferred"].includes(r.overall), JSON.stringify(r));
   const actions = new Set(queued.map((q) => q.requestedAction));
   for (const a of ["link_procedure_note", "generate_procedure_note", "reconcile_procedure_note_lineage", "link_procedure_note_evidence", "void_procedure_note"]) {
     assert.ok(actions.has(a), `(13) apply queues exact ${a} work`);

@@ -118,7 +118,8 @@ export async function voidProcedureNoteLineageForCase(input: {
 export type AmendLineageResult = {
   status:
     | "amended_reference_created" | "amended_reference_retry_recorded"
-    | "reconciliation_not_recorded" | "no_current_note" | "skipped_flag_off"
+    | "amendment_deferred_retry_recorded" | "reconciliation_not_recorded"
+    | "no_current_note" | "skipped_flag_off"
     | "zero_row_conflict" | "migration_missing";
   newNoteId?: number;
   // TRUE only when the new note's exact reference genuinely exists.
@@ -157,13 +158,14 @@ export async function amendProcedureNoteLineage(input: {
     if (e instanceof LineageTxError && e.kind === "note") return { status: "zero_row_conflict" };
     if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
     // A reference-conflict rollback (or any other error) — the amendment did NOT
-    // commit. Record durable reconcile work; surface persistence truthfully.
+    // commit. Record durable reconcile work; surface persistence truthfully and
+    // DISTINCTLY (deferred-retry-recorded vs never-persisted).
     let recorded = false;
     try {
       await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, requestedAction: "reconcile_procedure_note_lineage", sourceSystem: "procedure_note_lineage", errorCode: (e as { code?: string })?.code ?? "amend_failed" });
       recorded = true;
     } catch { recorded = false; }
-    return { status: recorded ? "reconciliation_not_recorded" : "reconciliation_not_recorded" };
+    return { status: recorded ? "amendment_deferred_retry_recorded" : "reconciliation_not_recorded" };
   }
 
   // Lineage is COMMITTED. Project the new note's EXACT reference; if that fails,
@@ -190,4 +192,59 @@ export async function amendProcedureNoteLineage(input: {
     retryRecorded = true;
   } catch { retryRecorded = false; }
   return { status: retryRecorded ? "amended_reference_retry_recorded" : "reconciliation_not_recorded", newNoteId: newNote.id, newReferenceCreated: false };
+}
+
+// ─── §4 — exact reconciliation of a voided/superseded note's reference ───────
+export type ReconcileVoidedReferenceResult = {
+  status: "reconciled" | "already_reconciled" | "reference_missing" | "source_not_found" | "ownership_conflict" | "migration_missing";
+};
+
+/**
+ * Source-BEARING void recovery. Loads the EXACT named note by id (including
+ * superseded/voided rows — NEVER currentCaseNote, never another note from the
+ * case), validates ownership + that it is actually superseded/voided, then
+ * reconciles its EXACT reference (clinic + case + procedure_notes + noteId +
+ * procedure_note). Never creates a new current reference for a voided note.
+ * `reference_missing` stays unresolved.
+ */
+export async function reconcileVoidedProcedureNoteReference(input: {
+  clinicId: number; ancillaryCaseId: number; noteId: number;
+}): Promise<ReconcileVoidedReferenceResult> {
+  if (!procedureNoteRuntimeEnabled()) return { status: "reference_missing" };
+  try {
+    const [note] = await db.select().from(procedureNotes).where(eq(procedureNotes.id, input.noteId)).limit(1);
+    if (!note) return { status: "source_not_found" };
+    if (note.clinicId !== input.clinicId || note.ancillaryCaseId !== input.ancillaryCaseId) return { status: "ownership_conflict" };
+    if (note.noteType !== "post_procedure_note") return { status: "ownership_conflict" };
+    // The note MUST actually be superseded/voided for a void reconciliation.
+    if (note.supersededAt == null && note.generationStatus !== "voided") return { status: "ownership_conflict" };
+
+    const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
+      eq(ancillaryDocumentReferences.clinicId, input.clinicId),
+      eq(ancillaryDocumentReferences.ancillaryCaseId, input.ancillaryCaseId),
+      eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE),
+      eq(ancillaryDocumentReferences.sourceId, input.noteId),
+      eq(ancillaryDocumentReferences.documentKind, "procedure_note"),
+    )).limit(1);
+    if (!ref) return { status: "reference_missing" };
+    if (ref.documentStatus === "voided" || ref.supersededAt != null) return { status: "already_reconciled" };
+
+    const now = new Date();
+    const rows = await db.update(ancillaryDocumentReferences)
+      .set({ documentStatus: "voided", supersededAt: now, updatedAt: now })
+      .where(and(
+        eq(ancillaryDocumentReferences.id, ref.id),
+        eq(ancillaryDocumentReferences.clinicId, input.clinicId),
+        eq(ancillaryDocumentReferences.ancillaryCaseId, input.ancillaryCaseId),
+        eq(ancillaryDocumentReferences.sourceTable, PROCEDURE_NOTE_SOURCE_TABLE),
+        eq(ancillaryDocumentReferences.sourceId, input.noteId),
+        eq(ancillaryDocumentReferences.documentKind, "procedure_note"),
+      ))
+      .returning();
+    if (rows.length !== 1) return { status: "reference_missing" };
+    return { status: "reconciled" };
+  } catch (e) {
+    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return { status: "migration_missing" };
+    return { status: "reference_missing" };
+  }
 }

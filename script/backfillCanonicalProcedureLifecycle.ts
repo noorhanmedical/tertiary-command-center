@@ -25,7 +25,7 @@ import { ancillaryDocumentReferences, PROCEDURE_NOTE_SOURCE_TABLE } from "@share
 import { patientAncillaryCases, ANCILLARY_ACTIVE_LIFECYCLE_STATUSES } from "@shared/schema/ancillaryCases";
 import { featureFlags } from "../server/lib/featureFlags";
 import { recordAncillaryDocumentFailure } from "../server/repositories/ancillaryDocuments.repo";
-import { onProcedureCompleted } from "../server/services/procedureLifecycle/procedureLifecycleOrchestration";
+import { onProcedureCompleted, ensureCanonicalProcedureNoteForAncillaryCase } from "../server/services/procedureLifecycle/procedureLifecycleOrchestration";
 
 const APPLY = process.env.BACKFILL_CANONICAL_PROCEDURE_LIFECYCLE_APPLY === "YES";
 const LIMIT = Math.min(Math.max(1, parseInt(process.env.BACKFILL_CANONICAL_PROCEDURE_LIFECYCLE_LIMIT ?? "200", 10) || 200), 1000);
@@ -153,32 +153,54 @@ export async function resolveApplyContext(pe: typeof procedureEvents.$inferSelec
  * the note/report/lineage/void/signature reconciliation. Idempotent (retry
  * dedupe + idempotent hook). Report-evidence-missing stays unresolved.
  */
+export type ApplyActionStatus = "completed" | "queued" | "unresolved" | "persistence_not_recorded" | "conflict";
+export type QueueApplyResult = { overall: "applied" | "apply_deferred" | "apply_error"; actions: Record<string, ApplyActionStatus> };
+
 export async function queueApplyWork(
   pe: typeof procedureEvents.$inferSelect,
   outcomes: Outcome[],
   ctx: { caseId: number | null; noteId: number | null },
-): Promise<"applied" | "apply_deferred" | "apply_error"> {
+): Promise<QueueApplyResult> {
   const set = new Set(outcomes);
   const clinicId = pe.clinicId;
-  const queue = (requestedAction: Parameters<typeof recordAncillaryDocumentFailure>[0]["requestedAction"], sourceId: number | null, errorCode: string) =>
-    recordAncillaryDocumentFailure({ clinicId: clinicId!, ancillaryCaseId: ctx.caseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId, requestedAction, sourceSystem: "procedure_lifecycle_backfill", errorCode });
+  const actions: Record<string, ApplyActionStatus> = {};
+  // Queue an exact source-specific retry; report persistence truthfully.
+  const queue = async (action: Parameters<typeof recordAncillaryDocumentFailure>[0]["requestedAction"], sourceId: number | null, errorCode: string): Promise<ApplyActionStatus> => {
+    try { await recordAncillaryDocumentFailure({ clinicId: clinicId!, ancillaryCaseId: ctx.caseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId, requestedAction: action, sourceSystem: "procedure_lifecycle_backfill", errorCode }); return "queued"; }
+    catch { return "persistence_not_recorded"; }
+  };
   try {
-    let deferred = false;
     // Deterministic link (+ deterministic legacy-note adoption) via the canonical hook.
     if (set.has("deterministic_link") || set.has("legacy_procedure_note_adoptable")) {
       const r = await onProcedureCompleted({ procedureEventId: pe.id, expectedClinicId: pe.clinicId ?? null });
-      if (!["created", "reused", "linked_pending_note", "not_yet_eligible"].includes(r.status)) deferred = true;
+      actions.link = ["created", "reused", "linked_pending_note"].includes(r.status) ? "completed" : (r.status === "not_yet_eligible" ? "unresolved" : "conflict");
+    }
+    // For work needing an EXACT note (generation / reference / adoption), ENSURE
+    // the canonical pending note exists (create/adopt), then RELOAD its exact id.
+    let noteId = ctx.noteId;
+    const needsNote = set.has("note_generation_candidate") || set.has("legacy_procedure_note_adoptable") || set.has("procedure_note_reference_create");
+    if (needsNote && clinicId != null && ctx.caseId != null && noteId == null) {
+      const ensure = await ensureCanonicalProcedureNoteForAncillaryCase({ clinicId, ancillaryCaseId: ctx.caseId, source: "procedure_lifecycle_backfill" });
+      if (!["created", "reused"].includes(ensure.status)) { actions.ensure_note = "unresolved"; }
+      else {
+        const n = await currentNote(clinicId, ctx.caseId);
+        noteId = n?.id ?? null;
+        actions.ensure_note = noteId != null ? "completed" : "unresolved";
+      }
     }
     if (clinicId != null) {
-      if (set.has("procedure_note_reference_create") && ctx.noteId != null) await queue("link_procedure_note", ctx.noteId, "backfill_reference_create");
-      if (set.has("note_generation_candidate") && ctx.noteId != null) await queue("generate_procedure_note", ctx.noteId, "backfill_generation_candidate");
-      if (set.has("generated_note_amendment_required")) await queue("reconcile_procedure_note_lineage", null, "backfill_amendment_required");
-      if (set.has("signed_evidence_conflict") && ctx.noteId != null) await queue("link_procedure_note_evidence", ctx.noteId, "backfill_signed_evidence_conflict");
-      if (set.has("voided_or_terminal_with_current_note") && ctx.noteId != null) await queue("void_procedure_note", ctx.noteId, "backfill_terminal_void");
+      // Generation is QUEUED against a NON-NULL exact note id only — never generated here.
+      if (set.has("note_generation_candidate")) actions.generation = noteId != null ? await queue("generate_procedure_note", noteId, "backfill_generation_candidate") : "unresolved";
+      if (set.has("procedure_note_reference_create")) actions.reference = noteId != null ? await queue("link_procedure_note", noteId, "backfill_reference_create") : "unresolved";
+      if (set.has("generated_note_amendment_required")) actions.amendment = await queue("reconcile_procedure_note_lineage", null, "backfill_amendment_required");
+      if (set.has("signed_evidence_conflict")) actions.signed = ctx.noteId != null ? await queue("link_procedure_note_evidence", ctx.noteId, "backfill_signed_evidence_conflict") : "unresolved";
+      if (set.has("voided_or_terminal_with_current_note")) actions.void = ctx.noteId != null ? await queue("void_procedure_note", ctx.noteId, "backfill_terminal_void") : "unresolved";
     }
     // exact_report_evidence_missing → intentionally left unresolved (never fabricated).
-    return deferred ? "apply_deferred" : "applied";
-  } catch { return "apply_error"; }
+    const vals = Object.values(actions);
+    const overall = vals.some((v) => v === "unresolved" || v === "persistence_not_recorded" || v === "conflict") ? "apply_deferred" : "applied";
+    return { overall, actions };
+  } catch { return { overall: "apply_error", actions }; }
 }
 
 async function main(): Promise<void> {
@@ -194,7 +216,8 @@ async function main(): Promise<void> {
     for (const o of outcomes.slice(1)) bump(o);
     if (canApply() && outcomes.some((o) => ["deterministic_link", "legacy_procedure_note_adoptable", "procedure_note_reference_create", "note_generation_candidate", "generated_note_amendment_required", "signed_evidence_conflict", "voided_or_terminal_with_current_note"].includes(o))) {
       const ctx = await resolveApplyContext(pe);
-      outcome = await queueApplyWork(pe, outcomes, ctx);
+      const applied = await queueApplyWork(pe, outcomes, ctx);
+      outcome = applied.overall;
     }
     bump(outcome);
     // eslint-disable-next-line no-console

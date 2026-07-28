@@ -264,6 +264,20 @@ records the qualifying reference id as permanent evidence.
   `reconcile_procedure_note_lineage`, `link_procedure_note_evidence`,
   `void_procedure_note`) — never generating bodies; report-evidence-missing stays
   unresolved.
+- **Executable exact recovery** — `generate_procedure_note` routes a `failed`
+  note to `retryFailedProcedureNoteGeneration` (reclaims ONLY that exact failed
+  note `failed→generating` with an affected-row check, re-evaluates exact
+  eligibility, never overwrites a generated body, reverts on ineligibility);
+  resolves only after the exact note is `generated` (an already-generated note
+  resolves immediately). A source-bearing `void_procedure_note` uses
+  `reconcileVoidedProcedureNoteReference` on the EXACT named superseded/voided
+  note (never `currentCaseNote`) and resolves only on `reconciled`/`already_reconciled`
+  — never on `reference_missing` or a source no_current_note; a source-less void
+  may idempotently resolve on `no_current_note`. The backfill's generation
+  candidates ensure/adopt the exact pending note, reload its non-null id, and
+  queue `generate_procedure_note` against it (never `sourceId=null`, never
+  `applied` when no note exists). Amendment distinguishes
+  `amendment_deferred_retry_recorded` from `reconciliation_not_recorded`.
 - **Signature sync** (§8): after a canonical `post_procedure_note` sign/return,
   `syncProcedureNoteReferenceSignature` mirrors documentStatus + signedAt onto
   the exact reference (never throws; missing reference → exact retry). Order Note

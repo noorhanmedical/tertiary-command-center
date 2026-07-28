@@ -105,7 +105,7 @@ async function testAmendmentReferenceRollback() {
   ]);
   const r = await runWithDb(spec, ALL, async () => l.amendProcedureNoteLineage({ clinicId: 1, ancillaryCaseId: 5, newReportReferenceId: 99, procedureEventId: 300, effectiveDate: OLD, actorUserId: "u1" }));
   assert.ok(r.status !== "amended_reference_created" && r.status !== "amended_reference_retry_recorded", "(18) partial reference failure never returns amended");
-  assert.equal(r.status, "reconciliation_not_recorded");
+  assert.equal(r.status, "amendment_deferred_retry_recorded");
 }
 
 // (19/20) void: reference zero-row rolls back the note void (deferred, not voided)
