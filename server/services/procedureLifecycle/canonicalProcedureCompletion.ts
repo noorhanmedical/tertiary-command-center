@@ -315,6 +315,13 @@ export async function completeCanonicalProcedure(
     actorUserId: input.actorUserId ?? input.completedByUserId ?? null,
     source: "procedure_complete",
   });
+  // Phase 2G — procedure completion is a billing-eligibility boundary. Awaited,
+  // flag-gated (OFF ⇒ zero migration-0055 access), non-throwing; never reverses
+  // the committed completion.
+  {
+    const { triggerBillingReadinessForCommittedCase } = await import("../billingLifecycle/billingLifecycleOrchestration");
+    await triggerBillingReadinessForCommittedCase({ clinicId: input.clinicId, ancillaryCaseId: acase.id, source: "procedure_completed" });
+  }
   return {
     ...mapNoteOutcome(note.status),
     completionCommitted: true,

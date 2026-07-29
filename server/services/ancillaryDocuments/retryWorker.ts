@@ -31,6 +31,7 @@ import {
   resolveCaseForSource,
   ACTION_TO_KIND,
 } from "./sourceAdapters";
+import { isBillingRetryAction, retryBillingFailure } from "../billingLifecycle/billingRetryHandlers";
 
 export type DocumentRetryStatus =
   | "resolved"
@@ -249,6 +250,11 @@ export async function retryAncillaryDocumentFailure(
     }
     if (REFERENCE_ACTIONS.has(failure.requestedAction)) {
       return await retryReferenceLink(failure);
+    }
+    // ── Phase 2G canonical billing reconciliation actions ──
+    if (isBillingRetryAction(failure.requestedAction)) {
+      const r = await retryBillingFailure(failure);
+      return { failureId: r.failureId, requestedAction: r.requestedAction, status: r.status as DocumentRetryStatus, message: r.message };
     }
     // create_reference / refresh_projection / supersede_reference are driven by
     // their originating source path — nothing safe to blindly re-drive here.

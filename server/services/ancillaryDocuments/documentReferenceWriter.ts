@@ -153,6 +153,11 @@ async function fireProcedureNoteHookForReport(
       actorUserId: input.actorUserId ?? null,
       source: "report_associated_hook",
     });
+    // Phase 2G — a report (re)association/replacement changes billing evidence;
+    // re-evaluate (which supersedes a Billing Document whose report changed).
+    // Flag-gated (OFF ⇒ zero migration-0055 access), awaited, non-throwing.
+    const { triggerBillingReadinessForCommittedCase } = await import("../billingLifecycle/billingLifecycleOrchestration");
+    await triggerBillingReadinessForCommittedCase({ clinicId, ancillaryCaseId, source: "report_replaced" });
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(JSON.stringify({

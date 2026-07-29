@@ -100,6 +100,12 @@ async function runTransition(
   if (spec.voidsNote && updated.ancillaryCaseId != null && updated.clinicId != null) {
     const v = await voidProcedureNoteLineageForCase({ clinicId: updated.clinicId, ancillaryCaseId: updated.ancillaryCaseId, reason: spec.eventType, actorUserId });
     noteReconciliation = mapVoidToReconciliation(v.status);
+    // Phase 2G — a terminal (cancel/no_show/unable_to_complete) transition
+    // invalidates billing; re-evaluate so any stale current Billing Document is
+    // superseded. Awaited, flag-gated (OFF ⇒ zero migration-0055 access),
+    // non-throwing; the transition stays committed regardless.
+    const { triggerBillingReadinessForCommittedCase } = await import("../billingLifecycle/billingLifecycleOrchestration");
+    await triggerBillingReadinessForCommittedCase({ clinicId: updated.clinicId, ancillaryCaseId: updated.ancillaryCaseId, source: `procedure_${updated.procedureStatus}` });
   }
   return { status: "transitioned", procedureEvent: updated, noteReconciliation };
 }

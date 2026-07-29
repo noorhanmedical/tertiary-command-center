@@ -109,6 +109,9 @@ export type FlagOverrides = {
   canonicalProcedureLifecycle?: boolean;
   canonicalProcedureNote?: boolean;
   procedureNoteGenerator?: boolean;
+  canonicalBillingReadiness?: boolean;
+  canonicalBillingDocument?: boolean;
+  billingDocumentGenerator?: boolean;
 };
 
 export async function runWithDb<T>(
@@ -133,6 +136,9 @@ export async function runWithDb<T>(
     canonicalProcedureLifecycle: ff.canonicalProcedureLifecycle,
     canonicalProcedureNote: ff.canonicalProcedureNote,
     procedureNoteGenerator: ff.procedureNoteGenerator,
+    canonicalBillingReadiness: ff.canonicalBillingReadiness,
+    canonicalBillingDocument: ff.canonicalBillingDocument,
+    billingDocumentGenerator: ff.billingDocumentGenerator,
   };
   const { db: fake, calls } = buildFakeDb(spec);
   for (const k of Object.keys(savedDb)) dbObj[k] = (fake as unknown as Record<string, unknown>)[k];
@@ -144,6 +150,9 @@ export async function runWithDb<T>(
   if (flags.canonicalProcedureLifecycle !== undefined) ff.canonicalProcedureLifecycle = flags.canonicalProcedureLifecycle;
   if (flags.canonicalProcedureNote !== undefined) ff.canonicalProcedureNote = flags.canonicalProcedureNote;
   if (flags.procedureNoteGenerator !== undefined) ff.procedureNoteGenerator = flags.procedureNoteGenerator;
+  if (flags.canonicalBillingReadiness !== undefined) ff.canonicalBillingReadiness = flags.canonicalBillingReadiness;
+  if (flags.canonicalBillingDocument !== undefined) ff.canonicalBillingDocument = flags.canonicalBillingDocument;
+  if (flags.billingDocumentGenerator !== undefined) ff.billingDocumentGenerator = flags.billingDocumentGenerator;
   try {
     return await fn(calls);
   } finally {
@@ -156,6 +165,9 @@ export async function runWithDb<T>(
     ff.canonicalProcedureLifecycle = savedFlags.canonicalProcedureLifecycle!;
     ff.canonicalProcedureNote = savedFlags.canonicalProcedureNote!;
     ff.procedureNoteGenerator = savedFlags.procedureNoteGenerator!;
+    ff.canonicalBillingReadiness = savedFlags.canonicalBillingReadiness!;
+    ff.canonicalBillingDocument = savedFlags.canonicalBillingDocument!;
+    ff.billingDocumentGenerator = savedFlags.billingDocumentGenerator!;
   }
 }
 
@@ -174,6 +186,8 @@ export async function loadCanonicalTables() {
   const adminRev = await import("../../shared/schema/adminReviewEvents");
   const procEvents = await import("../../shared/schema/procedureEvents");
   const prereq = await import("../../shared/schema/procedurePrerequisites");
+  const billingReadiness = await import("../../shared/schema/billingReadiness");
+  const billingDocs = await import("../../shared/schema/billingDocuments");
   return {
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
@@ -194,6 +208,12 @@ export async function loadCanonicalTables() {
     adminReviewEvents: adminRev.ancillaryCaseAdminReviewEvents,
     procedureEvents: procEvents.procedureEvents,
     prerequisiteConfig: prereq.ancillaryServicePrerequisiteConfig,
+    // Phase 2G code reads/writes the CANONICAL objects (full migration-0055
+    // column set); tests spec against the same objects the code uses.
+    billingReadinessChecks: billingReadiness.canonicalBillingReadinessChecks,
+    billingDocumentRequests: billingDocs.canonicalBillingDocumentRequests,
+    legacyBillingReadinessChecks: billingReadiness.billingReadinessChecks,
+    legacyBillingDocumentRequests: billingDocs.billingDocumentRequests,
   };
 }
 

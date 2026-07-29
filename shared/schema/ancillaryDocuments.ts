@@ -40,6 +40,9 @@ export const ANCILLARY_DOCUMENT_KINDS = [
   "consent",
   "screening_form",
   "procedure_note",
+  // Phase 2G — canonical Billing Document (operational billing packet; NOT a
+  // claim/invoice/payment). Source is billing_document_requests.
+  "billing_document",
 ] as const;
 export type AncillaryDocumentKind = (typeof ANCILLARY_DOCUMENT_KINDS)[number];
 
@@ -140,6 +143,12 @@ export const ANCILLARY_DOCUMENT_FAILURE_ACTIONS = [
   "reconcile_procedure_note_lineage", // supersede + create amendment on report replacement
   "void_procedure_note",             // void a note whose procedure became invalid
   "sync_procedure_note_signature",   // mirror a signature transition onto the exact reference
+  // ── Phase 2G canonical billing readiness + Billing Document (migration 0055) ──
+  "evaluate_billing_readiness",      // (re)evaluate the exact case's canonical readiness snapshot
+  "generate_billing_document",       // run the generator for an exact ready billing_document_requests row
+  "link_billing_document",           // (re)create/reuse the exact Billing Document unified reference
+  "supersede_billing_document",      // supersede/void a Billing Document whose evidence is no longer valid
+  "sync_billing_document_reference", // mirror a Billing Document status transition onto its exact reference
 ] as const;
 export type AncillaryDocumentFailureAction =
   (typeof ANCILLARY_DOCUMENT_FAILURE_ACTIONS)[number];
@@ -233,6 +242,12 @@ export const PROCEDURE_EVENT_SOURCE_TABLE = "procedure_events";
 export const REPORT_SOURCE_TABLE = "case_document_readiness";
 export const CONSENT_SOURCE_TABLE = "case_document_readiness";
 export const SCREENING_FORM_SOURCE_TABLE = "case_document_readiness";
+
+// Phase 2G — the canonical Billing Document source lives in the existing
+// billing_document_requests table (extended additively by migration 0055). The
+// unified reference kind is 'billing_document'; the reference NEVER stores the
+// packet body — only (billing_document_requests, id) + status.
+export const BILLING_DOCUMENT_SOURCE_TABLE = "billing_document_requests";
 
 // ─── Shared, serializable Ancillary Documents API contract ──────────
 // The single item shape every portal surface renders (/ancillary-documents,
