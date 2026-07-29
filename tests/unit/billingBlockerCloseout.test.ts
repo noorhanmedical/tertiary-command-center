@@ -252,7 +252,143 @@ async function testHooksWired() {
   }
 }
 
+// ── Durability closeout §2/§3/§4 ─────────────────────────────────────────────
+function reportSourceRow(o: Record<string, unknown> = {}) { return { id: 1000, clinicId: 1, serviceType: "BrainWave", documentType: "report", documentStatus: "uploaded", executionCaseId: 900, patientScreeningId: 77, ...o }; }
+
+/** Drive the worker over a single generate_billing_document failure for a
+ *  GENERATED document, with the given reference + ledger behavior. */
+async function generatedDocWorker(o: { refSelect: unknown[]; docFailInsert?: (v: any) => unknown[] }) {
+  const t = await loadCanonicalTables(); const w = await worker();
+  const failure = { id: 50, clinicId: 1, ancillaryCaseId: 5, documentKind: "billing_document", sourceTable: "billing_document_requests", sourceId: 70, requestedAction: "generate_billing_document", resolvedAt: null, attemptCount: 1 };
+  let resolves = 0; const recorded: Record<string, unknown>[] = [];
+  const spec = new Map<unknown, TableSpec>([
+    // listUnresolved sees the generate failure; the link-retry dedupe finds NONE
+    // (so it INSERTs — the down-ledger case throws; otherwise a link row is written).
+    [t.documentFailures, { select: qsel([[failure], []]), onUpdate: (v) => { if ("resolvedAt" in v) resolves++; return [{ id: 50 }]; }, onInsert: o.docFailInsert ?? ((v) => { recorded.push(v); return [{ ...v, id: 51 }]; }) }],
+    [t.billingDocumentRequests, { select: () => [docRow({ canonicalStatus: "generated" })] }],
+    [t.documentReferences, { select: () => o.refSelect }],
+  ]);
+  const res = await runWithDb(spec, GEN, async () => w.retryUnresolvedAncillaryDocumentFailures({ limit: 5 }));
+  return { status: res.outcomes[0].status, resolves, recorded };
+}
+
+// §2(1) generated doc + exact reference → generation failure resolves
+async function testGeneratedWithReferenceResolves() {
+  const r = await generatedDocWorker({ refSelect: [ref("billing_document", { sourceId: 70 })] });
+  assert.equal(r.status, "resolved", "(§2-1) present reference → resolve");
+  assert.equal(r.resolves, 1);
+}
+// §2(2) generated doc + missing reference + link retry recorded → resolves, link failure opened
+async function testGeneratedMissingRefLinkRecordedResolves() {
+  const r = await generatedDocWorker({ refSelect: [] });
+  assert.equal(r.status, "resolved", "(§2-2) missing ref but durable link retry → resolve");
+  assert.ok(r.recorded.some((x) => x.requestedAction === "link_billing_document"), "(§2-2) distinct link recovery recorded");
+}
+// §2(3) generated doc + missing reference + link persistence failure → generation stays OPEN
+async function testGeneratedMissingRefLinkNotRecordedStaysOpen() {
+  const r = await generatedDocWorker({ refSelect: [], docFailInsert: () => { throw new Error("ledger down"); } });
+  assert.notEqual(r.status, "resolved", "(§2-3) no durable recovery → generation stays open");
+  assert.equal(r.resolves, 0);
+}
+// §2(4) generated doc + ownership-conflicting reference remains unresolved
+async function testGeneratedOwnershipConflictStaysOpen() {
+  const r = await generatedDocWorker({ refSelect: [ref("billing_document", { sourceId: 70, ancillaryCaseId: 6 })] });
+  assert.notEqual(r.status, "resolved", "(§2-4) wrong-case reference → unresolved");
+  assert.equal(r.resolves, 0);
+}
+
+// §3(7/8/9) stale fingerprint / wrong readinessCheckId / wrong evidence ids cannot be projected
+async function testStaleEvidenceCannotProject() {
+  const t = await loadCanonicalTables(); const w = await worker();
+  const mk = (docOver: Record<string, unknown>, readyOver: Record<string, unknown> = {}) => new Map<unknown, TableSpec>([
+    [t.documentFailures, { select: () => [{ id: 60, clinicId: 1, ancillaryCaseId: 5, documentKind: "billing_document", sourceTable: "billing_document_requests", sourceId: 70, requestedAction: "link_billing_document", resolvedAt: null, attemptCount: 1 }], onUpdate: () => { throw new Error("must not resolve stale"); }, onInsert: (v) => [{ ...v, id: 61 }] }],
+    [t.billingDocumentRequests, { select: () => [docRow({ canonicalStatus: "generated", billingReadinessCheckId: 100, procedureEventId: 300, reportDocumentReferenceId: 41, orderNoteDocumentReferenceId: 43, procedureNoteDocumentReferenceId: 42, ...docOver })] }],
+    [t.billingReadinessChecks, { select: () => [readinessRow({ id: 100, procedureEventId: 300, reportDocumentReferenceId: 41, orderNoteDocumentReferenceId: 43, procedureNoteDocumentReferenceId: 42, ...readyOver })] }],
+    [t.documentReferences, { select: () => [], onInsert: () => { throw new Error("must not project stale"); } }],
+  ]);
+  for (const [label, spec] of [
+    ["stale fingerprint", mk({ evidenceFingerprint: "bef_OLD" }, { evidenceFingerprint: "bef_x" })],
+    ["wrong readinessCheckId", mk({ billingReadinessCheckId: 999 })],
+    ["wrong procedureEventId", mk({ procedureEventId: 301 })],
+    ["wrong reportDocumentReferenceId", mk({ reportDocumentReferenceId: 999 })],
+  ] as const) {
+    const res = await runWithDb(spec, GEN, async () => w.retryUnresolvedAncillaryDocumentFailures({ limit: 5 }));
+    assert.notEqual(res.outcomes[0].status, "resolved", `(§3) ${label} cannot project/resolve`);
+  }
+}
+// §3(10) exact current version projects successfully
+async function testExactVersionProjects() {
+  const t = await loadCanonicalTables(); const w = await worker();
+  let refInserted = 0; let resolves = 0;
+  const spec = new Map<unknown, TableSpec>([
+    [t.documentFailures, { select: () => [{ id: 62, clinicId: 1, ancillaryCaseId: 5, documentKind: "billing_document", sourceTable: "billing_document_requests", sourceId: 70, requestedAction: "link_billing_document", resolvedAt: null, attemptCount: 1 }], onUpdate: (v) => { if ("resolvedAt" in v) resolves++; return [{ id: 62 }]; }, onInsert: (v) => [{ ...v, id: 63 }] }],
+    [t.billingDocumentRequests, { select: () => [docRow({ canonicalStatus: "generated", billingReadinessCheckId: 100, procedureEventId: 300, reportDocumentReferenceId: 41, orderNoteDocumentReferenceId: 43, procedureNoteDocumentReferenceId: 42 })] }],
+    [t.billingReadinessChecks, { select: () => [readinessRow({ id: 100, procedureEventId: 300, reportDocumentReferenceId: 41, orderNoteDocumentReferenceId: 43, procedureNoteDocumentReferenceId: 42 })] }],
+    [t.documentReferences, { select: () => [], onInsert: (v) => { refInserted++; return [{ ...v, id: 71 }]; } }],
+  ]);
+  const res = await runWithDb(spec, GEN, async () => w.retryUnresolvedAncillaryDocumentFailures({ limit: 5 }));
+  assert.equal(res.outcomes[0].status, "resolved", "(§3-10) exact current version projects + resolves");
+  assert.ok(refInserted >= 1); assert.equal(resolves, 1);
+}
+
+// §4 report source-row validation
+async function testReportSourceValidation() {
+  const base = { report: [reportRef()], pnNote: [pnNote()], onNote: [onNote()] };
+  // serviceType NULL on the reference is rejected
+  await expectBlockSrc({ ...base, report: [reportRef({ serviceType: null })] }, () => [reportSourceRow()], "report_source_service_missing", "(§4) reference service NULL");
+  // missing underlying source row
+  await expectBlockSrc(base, () => [], "report_source_missing", "(§4) missing source row");
+  // wrong-clinic source row
+  await expectBlockSrc(base, () => [reportSourceRow({ clinicId: 2 })], "report_source_ownership_mismatch", "(§4) wrong-clinic source");
+  // wrong-service source row
+  await expectBlockSrc(base, () => [reportSourceRow({ serviceType: "Cardio" })], "report_source_ownership_mismatch", "(§4) wrong-service source");
+  // wrong-case source (execution case conflict)
+  await expectBlockSrc(base, () => [reportSourceRow({ executionCaseId: 999, patientScreeningId: 999 })], "report_source_ownership_mismatch", "(§4) wrong-case source");
+  // source status mismatch (non-acceptable)
+  await expectBlockSrc(base, () => [reportSourceRow({ documentStatus: "missing" })], "report_source_status_mismatch", "(§4) source status mismatch");
+}
+async function expectBlockSrc(refs: { report: unknown[]; pnNote: unknown[]; onNote: unknown[] }, srcSelect: () => unknown[], code: string, label: string) {
+  const t = await loadCanonicalTables(); const e = await evaluator();
+  const spec = new Map<unknown, TableSpec>([
+    [t.ancillaryCases, { select: () => [caseRow()] }],
+    [t.procedureEvents, { select: () => [peRow()] }],
+    [t.documentReferences, { select: qsel([refs.report, [pnRef()], [onRef()]]) }],
+    [t.procedureNotes, { select: qsel([refs.pnNote, refs.onNote]) }],
+    [t.caseDocumentReadiness, { select: srcSelect }],
+    [t.prerequisiteConfig, { select: () => [cfg()] }],
+    [t.billingReadinessChecks, { onUpdate: () => [], onInsert: (v) => [{ ...v, id: 100 }] }],
+    [t.journeyEvents, { onInsert: () => [] }],
+  ]);
+  const r = await runWithDb(spec, READY, async () => e.evaluateCanonicalBillingReadiness({ clinicId: 1, ancillaryCaseId: 5, source: "test" }));
+  assert.equal(r.status, "missing_requirements", `${label}: not ready`);
+  assert.ok(r.billingBlockers!.some((b) => b.code === code), `${label}: expected ${code}, got ${r.billingBlockers!.map((b) => b.code).join(",")}`);
+}
+// §4(18) exact report source + reference qualify (no report blocker)
+async function testReportSourceQualifies() {
+  const t = await loadCanonicalTables(); const e = await evaluator();
+  const spec = new Map<unknown, TableSpec>([
+    [t.ancillaryCases, { select: () => [caseRow()] }],
+    [t.procedureEvents, { select: () => [peRow()] }],
+    [t.documentReferences, { select: qsel([[reportRef()], [pnRef()], [onRef()]]) }],
+    [t.procedureNotes, { select: qsel([[pnNote()], [onNote()]]) }],
+    [t.caseDocumentReadiness, { select: () => [reportSourceRow()] }],
+    [t.prerequisiteConfig, { select: () => [cfg()] }],
+    [t.billingReadinessChecks, { onUpdate: () => [], onInsert: (v) => [{ ...v, id: 100 }] }],
+    [t.journeyEvents, { onInsert: () => [] }],
+  ]);
+  const r = await runWithDb(spec, READY, async () => e.evaluateCanonicalBillingReadiness({ clinicId: 1, ancillaryCaseId: 5, source: "test" }));
+  assert.equal(r.status, "ready_to_generate", `(§4-18) exact report qualifies: ${JSON.stringify(r.billingBlockers)}`);
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["§2(1) generated + exact reference resolves", testGeneratedWithReferenceResolves],
+  ["§2(2) missing ref + link recorded resolves", testGeneratedMissingRefLinkRecordedResolves],
+  ["§2(3) missing ref + link not recorded stays open", testGeneratedMissingRefLinkNotRecordedStaysOpen],
+  ["§2(4) ownership-conflicting reference stays open", testGeneratedOwnershipConflictStaysOpen],
+  ["§3(7/8/9) stale/wrong evidence cannot project", testStaleEvidenceCannotProject],
+  ["§3(10) exact current version projects", testExactVersionProjects],
+  ["§4(12-17) report source validation", testReportSourceValidation],
+  ["§4(18) exact report source qualifies", testReportSourceQualifies],
   ["§6 trigger flags OFF → zero canonical access", testTriggerFlagsOffZeroAccess],
   ["§6 trigger null clinic/case no-op", testTriggerNullOwnershipNoop],
   ["§6 terminal transition supersedes via trigger", testTerminalSupersedesViaTrigger],

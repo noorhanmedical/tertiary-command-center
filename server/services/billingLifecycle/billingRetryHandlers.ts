@@ -14,7 +14,7 @@ import { BILLING_DOCUMENT_SOURCE_TABLE, type AncillaryDocumentReconciliationFail
 import { resolveAncillaryDocumentFailureById } from "../../repositories/ancillaryDocuments.repo";
 import { procedureNoteRuntimeEnabled, billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled, billingDocumentGeneratorEnabled } from "../../lib/featureFlags";
 import { evaluateCanonicalBillingReadiness } from "./billingReadinessEvaluator";
-import { generateBillingDocument, retryFailedBillingDocumentGeneration, syncBillingDocumentReference, projectExactBillingDocumentReference } from "./billingDocumentGenerator";
+import { generateBillingDocument, retryFailedBillingDocumentGeneration, syncBillingDocumentReference, projectExactBillingDocumentReference, ensureBillingReferenceDurability } from "./billingDocumentGenerator";
 import { supersedeStaleBillingDocument } from "./billingLifecycleOrchestration";
 
 // Mirror of the worker's outcome shape (kept structural to avoid a cross-import).
@@ -61,14 +61,37 @@ async function retryGenerateDocument(failure: AncillaryDocumentReconciliationFai
   const [doc] = await db.select().from(billingDocumentRequests).where(eq(billingDocumentRequests.id, failure.sourceId)).limit(1);
   if (!doc) return { ...base, status: "source_not_found" };
   if (doc.clinicId !== failure.clinicId || doc.ancillaryCaseId !== failure.ancillaryCaseId) return { ...base, status: "ownership_conflict" };
-  if (doc.canonicalStatus === "generated" || doc.canonicalStatus === "approved") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  // Superseded/voided → generation is moot; no reference is needed for a
+  // superseded document. Resolve the exact failure.
   if (doc.supersededAt != null || doc.canonicalStatus === "superseded" || doc.canonicalStatus === "voided") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  // §2 — a generated/approved document may resolve ONLY after an EXACT
+  // reference-durability check (reference present OR a durable link retry).
+  if (doc.canonicalStatus === "generated" || doc.canonicalStatus === "approved") return resolveIfReferenceDurable(failure);
   const args = { clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, billingDocumentId: failure.sourceId, source: "billing_retry_worker" };
   const r = doc.canonicalStatus === "failed" ? await retryFailedBillingDocumentGeneration({ ...args, failureId: failure.id }) : await generateBillingDocument(args);
-  if (r.status === "generated" || r.status === "generated_reference_retry_recorded" || r.status === "already_generated") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  // A fresh finalize established durability (reference created, or a link retry
+  // recorded) — safe to resolve.
+  if (r.status === "generated" || r.status === "generated_reference_retry_recorded") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  // A concurrently-generated document must go through the same durability check.
+  if (r.status === "already_generated") return resolveIfReferenceDurable(failure);
   if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
-  // stale_readiness / not_ready / already_claimed / failed_retry_* / failure_not_verified → NEVER resolve.
+  // generated_reference_retry_not_recorded / stale_readiness / not_ready /
+  // already_claimed / failed_retry_* / failure_not_verified → NEVER resolve.
   return { ...base, status: "still_deferred", message: r.status };
+}
+
+/** §2 — resolve the exact generate failure ONLY when the reference is durably
+ *  recoverable: the exact reference is present, OR a distinct link_billing_document
+ *  recovery failure is durably recorded. Otherwise keep it OPEN. */
+async function resolveIfReferenceDurable(failure: AncillaryDocumentReconciliationFailure): Promise<BillingRetryOutcome> {
+  const base = { failureId: failure.id, requestedAction: failure.requestedAction };
+  // ancillaryCaseId + sourceId are guaranteed non-null by retryGenerateDocument's guard.
+  const d = await ensureBillingReferenceDurability({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId!, billingDocumentId: failure.sourceId!, source: "billing_retry_worker" });
+  if (d === "reference_present" || d === "link_retry_recorded") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+  if (d === "ownership_conflict") return { ...base, status: "ownership_conflict" };
+  if (d === "migration_missing") return { ...base, status: "migration_missing" };
+  // link_retry_not_recorded — missing reference AND no durable recovery → keep open.
+  return { ...base, status: "reference_missing", message: "reference_retry_not_recorded" };
 }
 
 /** §5B — link_billing_document CREATES the missing exact reference via the
@@ -84,7 +107,7 @@ async function retryLinkReference(failure: AncillaryDocumentReconciliationFailur
   if (r === "source_not_found") return { ...base, status: "source_not_found" };
   if (r === "ownership_conflict") return { ...base, status: "ownership_conflict" };
   if (r === "migration_missing") return { ...base, status: "migration_missing" };
-  // not_projectable / retry_recorded / retry_not_recorded → never resolve.
+  // stale_readiness / not_projectable / retry_recorded / retry_not_recorded → never resolve.
   return { ...base, status: "still_deferred", message: r };
 }
 

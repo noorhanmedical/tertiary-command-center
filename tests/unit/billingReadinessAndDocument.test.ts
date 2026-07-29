@@ -28,6 +28,7 @@ function pnRef(o: Record<string, unknown> = {}) { return ref("procedure_note", {
 function onRef(o: Record<string, unknown> = {}) { return ref("order_note", { id: 43, documentStatus: "signed", signedAt: OLD, sourceTable: "procedure_notes", sourceId: 800, ...o }); }
 function signedNote(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", noteType: "post_procedure_note", signatureStatus: "signed", signedAt: OLD, supersededAt: null, ...o }; }
 function orderNoteRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", noteType: "order_note", signatureStatus: "signed", signedAt: OLD, supersededAt: null, ...o }; }
+function reportSourceRow(o: Record<string, unknown> = {}) { return { id: 1000, clinicId: 1, serviceType: "BrainWave", documentType: "report", documentStatus: "uploaded", executionCaseId: 900, patientScreeningId: 77, ...o }; }
 function cfg(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, serviceType: "BrainWave", requirementCode: "order_note_signature", blockerCategory: "billing_blocker", blocksStage: "billing_readiness", required: false, overrideAllowed: false, overrideRoles: null, overrideAuditRequired: true, active: true, ...o }; }
 function readinessRow(o: Record<string, unknown> = {}) { return { id: 100, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", procedureEventId: 300, reportDocumentReferenceId: 41, orderNoteDocumentReferenceId: 43, procedureNoteDocumentReferenceId: 42, billingBlockers: [], claimBlockers: [], warnings: [], evidenceFingerprint: "bef_x", evidenceSnapshot: { procedure_completed_at: OLD.toISOString(), procedure_event_id: 300, report_reference_id: 41, order_note_reference_id: 43, procedure_note_reference_id: 42 }, evaluatedAt: OLD, supersededAt: null, ...o }; }
 function docRow(o: Record<string, unknown> = {}) { return { id: 70, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "pending", evidenceFingerprint: "bef_x", billingReadinessCheckId: 100, procedureEventId: 300, reportDocumentReferenceId: 41, orderNoteDocumentReferenceId: 43, procedureNoteDocumentReferenceId: 42, claimBlockers: [], warnings: [], generatedByAi: false, globalPlexusPatientId: 10, patientClinicMembershipId: 20, executionCaseId: 900, patientScreeningId: 77, createdAt: CREATED_AT, ...o }; }
@@ -42,6 +43,8 @@ function evalSpec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { case?
     [t.documentReferences, { select: qsel([[o.report ?? reportRef()].filter(Boolean), [o.pn ?? pnRef()].filter(Boolean), [o.on ?? onRef()].filter(Boolean)]) }],
     // Note read order: procedure_note underlying note, then order_note underlying note.
     [t.procedureNotes, { select: qsel([o.note ?? [signedNote()], o.onNote ?? [orderNoteRow()]]) }],
+    // Underlying report source row (case_document_readiness) for §4 validation.
+    [t.caseDocumentReadiness, { select: () => [reportSourceRow()] }],
     [t.prerequisiteConfig, { select: () => o.configs ?? [cfg()] }],
     [t.billingReadinessChecks, { onUpdate: () => [], onInsert: o.onInsertRead ?? ((v) => [{ ...v, id: 100 }]) }],
     [t.journeyEvents, { onInsert: o.journeyInsert ?? (() => []) }],

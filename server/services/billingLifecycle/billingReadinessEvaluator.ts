@@ -19,6 +19,7 @@ import { canonicalBillingReadinessChecks as billingReadinessChecks } from "@shar
 import { ancillaryDocumentReferences, ORDER_NOTE_SOURCE_TABLE, PROCEDURE_NOTE_SOURCE_TABLE, REPORT_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { procedureEvents } from "@shared/schema/procedureEvents";
 import { procedureNotes } from "@shared/schema/generatedNotes";
+import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import { patientJourneyEvents } from "@shared/schema/executionCase";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { listActivePrerequisiteConfigs } from "../../repositories/procedurePrerequisites.repo";
@@ -98,15 +99,37 @@ function refOwnershipMismatch(ref: RefRow, clinicId: number, ancillaryCaseId: nu
 }
 
 /** §4 — EXACT report evidence: exactly one current report reference on the
- *  allowed report source table, exact ownership, acceptable current status. */
-async function loadExactReportEvidence(clinicId: number, ancillaryCaseId: number, service: string): Promise<EvidenceLoad> {
+ *  allowed report source table, exact ownership (service NULL rejected), AND the
+ *  named case_document_readiness SOURCE ROW proven to exist and own the exact
+ *  clinic/case/service (via the deterministic execution-case / screening linkage
+ *  — never name/facility/first/newest), with an agreeing acceptable status. A
+ *  report reference id enters a ready snapshot ONLY when both pass. */
+async function loadExactReportEvidence(clinicId: number, ancillaryCaseId: number, service: string, acase: { executionCaseId: number | null; originatingScreeningId: number | null }): Promise<EvidenceLoad> {
   const refs = await currentRefs(clinicId, ancillaryCaseId, "report");
   if (refs.length === 0) return { ref: null, blocker: { code: "exact_current_report_missing", category: "hard_procedure_blocker", detail: "none" } };
   if (refs.length > 1) return { ref: null, ambiguous: true, blocker: { code: "report_evidence_ambiguous", category: "hard_procedure_blocker", detail: String(refs.length) } };
   const ref = refs[0];
-  if (refOwnershipMismatch(ref, clinicId, ancillaryCaseId, service)) return { ref: null, blocker: { code: "report_source_ownership_mismatch", category: "hard_procedure_blocker", detail: ref.serviceType ?? "none" } };
+  // ── Reference validation (serviceType NULL rejected) ──
+  if (ref.serviceType == null) return { ref: null, blocker: { code: "report_source_service_missing", category: "hard_procedure_blocker", detail: "reference_service_null" } };
+  if (ref.clinicId !== clinicId || ref.ancillaryCaseId !== ancillaryCaseId || ref.serviceType !== service) return { ref: null, blocker: { code: "report_source_ownership_mismatch", category: "hard_procedure_blocker", detail: ref.serviceType } };
   if (ref.sourceTable !== REPORT_SOURCE_TABLE) return { ref: null, blocker: { code: "report_source_table_mismatch", category: "hard_procedure_blocker", detail: ref.sourceTable } };
+  if (ref.sourceId == null) return { ref: null, blocker: { code: "report_source_missing", category: "hard_procedure_blocker", detail: "null_source_id" } };
   if (!ACCEPTABLE_REPORT_STATUSES.has(ref.documentStatus)) return { ref: null, blocker: { code: "exact_current_report_missing", category: "hard_procedure_blocker", detail: ref.documentStatus } };
+  // ── Underlying case_document_readiness source-row validation ──
+  const [src] = await db.select().from(caseDocumentReadiness).where(eq(caseDocumentReadiness.id, ref.sourceId)).limit(1);
+  if (!src) return { ref: null, blocker: { code: "report_source_missing", category: "hard_procedure_blocker", detail: "source_row_missing" } };
+  if (src.clinicId != null && src.clinicId !== clinicId) return { ref: null, blocker: { code: "report_source_ownership_mismatch", category: "hard_procedure_blocker", detail: "source_clinic" } };
+  if (src.serviceType == null) return { ref: null, blocker: { code: "report_source_service_missing", category: "hard_procedure_blocker", detail: "source_service_null" } };
+  if (src.serviceType !== service) return { ref: null, blocker: { code: "report_source_ownership_mismatch", category: "hard_procedure_blocker", detail: "source_service" } };
+  if (src.documentType !== "report") return { ref: null, blocker: { code: "report_source_ownership_mismatch", category: "hard_procedure_blocker", detail: "source_document_type" } };
+  // Deterministic EXACT-case linkage — a conflicting non-null identity is rejected,
+  // and the exact case must be provable (execution case OR originating screening).
+  const execConflict = src.executionCaseId != null && acase.executionCaseId != null && src.executionCaseId !== acase.executionCaseId;
+  const scrConflict = src.patientScreeningId != null && acase.originatingScreeningId != null && src.patientScreeningId !== acase.originatingScreeningId;
+  const execMatch = src.executionCaseId != null && acase.executionCaseId != null && src.executionCaseId === acase.executionCaseId;
+  const scrMatch = src.patientScreeningId != null && acase.originatingScreeningId != null && src.patientScreeningId === acase.originatingScreeningId;
+  if (execConflict || scrConflict || (!execMatch && !scrMatch)) return { ref: null, blocker: { code: "report_source_ownership_mismatch", category: "hard_procedure_blocker", detail: "source_case_linkage" } };
+  if (!ACCEPTABLE_REPORT_STATUSES.has(src.documentStatus)) return { ref: null, blocker: { code: "report_source_status_mismatch", category: "hard_procedure_blocker", detail: src.documentStatus } };
   return { ref };
 }
 
@@ -204,7 +227,7 @@ export async function evaluateCanonicalBillingReadiness(input: EvaluateBillingRe
 
     // §4 — EXACT report evidence (validated source table + ownership + status +
     // ambiguity). Only a validated reference id is stored in the snapshot.
-    const report = await loadExactReportEvidence(input.clinicId, input.ancillaryCaseId, service);
+    const report = await loadExactReportEvidence(input.clinicId, input.ancillaryCaseId, service, acase);
     if (report.blocker) billingBlockers.push(report.blocker);
     const reportRef = report.blocker ? null : report.ref;
 

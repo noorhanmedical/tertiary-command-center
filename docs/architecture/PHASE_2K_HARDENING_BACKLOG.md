@@ -116,16 +116,25 @@ Verified during the independent Phase 2G BLOCKER/MAJOR closeout review. None
 meets the frozen acceptance gate (no false ready/generated, no tenant/evidence
 acceptance, no unrecoverable retry, no destructive migration). Deferred:
 
-- **Report evidence does not re-load its underlying `case_document_readiness`
-  row.** `loadExactReportEvidence` validates the report *reference* exactly
-  (clinic/case/service ownership via `refOwnershipMismatch`, `sourceTable ===
-  case_document_readiness`, acceptable current status) but — unlike the
-  procedure/order note loaders — does not re-fetch the underlying source row to
-  re-assert its independent ownership. This is safe today because report uses a
-  dedicated source table (no cross-kind `procedure_notes` aliasing risk) and the
-  reference carries the authoritative clinic/case/service, so no false-ready path
-  exists. Consider adding a source-row ownership re-check for symmetry/defence-in
-  -depth in a later hardening pass.
+- **Report source-row validation now implemented (durability closeout).**
+  `loadExactReportEvidence` re-loads the underlying `case_document_readiness`
+  row at `ref.sourceId` and independently re-asserts clinic/service/documentType
+  ownership plus deterministic execution-case/screening linkage and an acceptable
+  source status (distinct `report_source_*` blocker codes). No further work
+  required; noted here only to supersede the prior deferral.
+
+- **`ensureBillingReferenceDurability` does not filter superseded references.**
+  The §2 durability lookup keys on `(sourceTable, sourceId=billingDocumentId,
+  documentKind=billing_document)` and returns `reference_present` for any owned
+  row, including a `supersededAt != null` one. For a still-generated/approved doc
+  a superseded reference is anomalous and, even if resolved, the sync/link paths
+  reconcile via separate failures — so no false durable success arises. Consider
+  adding `isNull(supersededAt)` (and preferring a current row) for defence in
+  depth in a later pass.
+
+- **Report `documentType` rejection is untested.** The `src.documentType !==
+  "report"` guard is present and correct but not exercised by a dedicated test.
+  Add a case in the report source-validation suite.
 
 - **`retrySupersede` resolves after a non-committed re-evaluation.** The
   `supersede_billing_document` retry handler re-evaluates, then supersedes any

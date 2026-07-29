@@ -239,7 +239,7 @@ async function runBillingReferenceCreate(input: GenInput, doc: DocRow, readiness
  * surfaces active-kind / source-ownership conflicts (never overwrites a different
  * active source). This is a CREATE path — distinct from the sync-only updater.
  */
-export async function projectExactBillingDocumentReference(input: GenInput): Promise<"projected" | "already_projected" | "ownership_conflict" | "not_projectable" | "source_not_found" | "migration_missing" | "retry_recorded" | "retry_not_recorded"> {
+export async function projectExactBillingDocumentReference(input: GenInput): Promise<"projected" | "already_projected" | "ownership_conflict" | "not_projectable" | "stale_readiness" | "source_not_found" | "migration_missing" | "retry_recorded" | "retry_not_recorded"> {
   if (!billingDocumentRuntimeEnabled()) return "not_projectable";
   try {
     const [doc] = await db.select().from(billingDocumentRequests).where(eq(billingDocumentRequests.id, input.billingDocumentId)).limit(1);
@@ -249,6 +249,22 @@ export async function projectExactBillingDocumentReference(input: GenInput): Pro
     if (doc.supersededAt != null) return "not_projectable";
     const readiness = await currentReadiness(input.clinicId, input.ancillaryCaseId);
     if (!readiness) return "not_projectable";
+    // §3 — the Billing Document MUST belong to the EXACT current readiness evidence
+    // version before any reference is created/reused. A superseded/older/mismatched
+    // evidence version is NEVER projected merely because the doc is still generated.
+    if (readiness.clinicId !== input.clinicId || readiness.ancillaryCaseId !== input.ancillaryCaseId) return "ownership_conflict";
+    if (
+      readiness.canonicalStatus !== "ready_to_generate"
+      || readiness.supersededAt != null
+      || readiness.evidenceFingerprint == null
+      || doc.evidenceFingerprint !== readiness.evidenceFingerprint
+      || doc.billingReadinessCheckId !== readiness.id
+      || doc.procedureEventId !== readiness.procedureEventId
+      || doc.reportDocumentReferenceId !== readiness.reportDocumentReferenceId
+      || doc.orderNoteDocumentReferenceId !== readiness.orderNoteDocumentReferenceId
+      || doc.procedureNoteDocumentReferenceId !== readiness.procedureNoteDocumentReferenceId
+      || doc.serviceType !== readiness.serviceType
+    ) return "stale_readiness";
     const outcome = await runBillingReferenceCreate(input, doc as DocRow, readiness);
     if (outcome === "created") return "projected";
     if (outcome === "reused") return "already_projected";
@@ -301,6 +317,33 @@ export async function syncBillingDocumentReference(args: { clinicId: number; anc
     if (rows.length !== 1) return (await recordBillingRefRetry(args, "sync_billing_document_reference")) ? "retry_recorded" : "retry_not_recorded";
     return "synced";
   } catch { return (await recordBillingRefRetry(args, "sync_billing_document_reference")) ? "retry_recorded" : "retry_not_recorded"; }
+}
+
+/**
+ * §2 — EXACT reference-durability check for a generated/approved Billing
+ * Document. A generation failure may resolve ONLY when at least one durable
+ * recovery guarantee exists: the exact billing_document reference is PRESENT
+ * (correct ownership), OR a distinct exact link_billing_document recovery failure
+ * is durably recorded. A missing reference whose link retry cannot be persisted
+ * keeps the generation failure OPEN (never erases the only recovery path).
+ */
+export async function ensureBillingReferenceDurability(args: { clinicId: number; ancillaryCaseId: number; billingDocumentId: number; source: string }): Promise<"reference_present" | "link_retry_recorded" | "link_retry_not_recorded" | "ownership_conflict" | "migration_missing"> {
+  try {
+    const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
+      eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE),
+      eq(ancillaryDocumentReferences.sourceId, args.billingDocumentId),
+      eq(ancillaryDocumentReferences.documentKind, "billing_document"),
+    )).limit(1);
+    if (ref) {
+      if (ref.clinicId !== args.clinicId || ref.ancillaryCaseId !== args.ancillaryCaseId) return "ownership_conflict";
+      return "reference_present";
+    }
+    // No reference → the only recovery is a durable link_billing_document failure.
+    return (await recordBillingRefRetry(args, "link_billing_document")) ? "link_retry_recorded" : "link_retry_not_recorded";
+  } catch (e) {
+    if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return "migration_missing";
+    return (await recordBillingRefRetry(args, "link_billing_document")) ? "link_retry_recorded" : "link_retry_not_recorded";
+  }
 }
 
 /** Record an exact PHI-free billing reference retry under the CORRECT action:
