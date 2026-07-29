@@ -125,8 +125,12 @@ async function buildOrdersNotes(clinicId: number): Promise<OrdersNotesOverview> 
     const currentRefs = refs.filter((r) => r.clinicId === clinicId && r.supersededAt == null && ["order_note", "procedure_note", "report"].includes(r.documentKind));
     for (const r of currentRefs) {
       if (r.documentKind === "order_note") counts.currentOrderNotes++;
-      else if (r.documentKind === "procedure_note") { counts.currentProcedureNotes++; if (r.documentStatus === "pending_signature") counts.pendingSignatures++; }
+      else if (r.documentKind === "procedure_note") counts.currentProcedureNotes++;
       else if (r.documentKind === "report") counts.currentReports++;
+      // Pending signature is an operational action on ANY signable document
+      // (order_note AND procedure_note) — counted from the exact current
+      // reference documentStatus so the clinician sees every unsigned item.
+      if (r.documentStatus === "pending_signature" && (r.documentKind === "order_note" || r.documentKind === "procedure_note")) counts.pendingSignatures++;
       const s = kindByCase.get(r.ancillaryCaseId) ?? new Set<string>(); s.add(r.documentKind); kindByCase.set(r.ancillaryCaseId, s);
     }
     // missing required evidence: a procedure_note present but no current report.

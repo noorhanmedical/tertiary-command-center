@@ -107,6 +107,21 @@ async function testOrdersNotesCounts() {
   assert.equal(r.ordersNotes.counts.returnedForCorrection, 1, "(26) returned-for-correction counted");
 }
 
+// (25b) pending signature counts BOTH order_note and procedure_note (operational
+// action on any signable document); a superseded pending ref is excluded.
+async function testPendingSignatureIncludesOrderNotes() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, {
+    refs: [
+      ref({ id: 1, documentKind: "order_note", documentStatus: "pending_signature" }),
+      ref({ id: 2, documentKind: "procedure_note", documentStatus: "pending_signature" }),
+      ref({ id: 3, documentKind: "report", documentStatus: "pending_signature" }), // reports are not signed → not pending-signature
+      ref({ id: 4, documentKind: "order_note", documentStatus: "pending_signature", supersededAt: OLD }), // superseded → excluded
+    ],
+  }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.pendingSignatures, 2, "(25b) order_note + procedure_note pending signatures both counted; report + superseded excluded");
+}
+
 // (29) engagement service-specific Admin Review counts + (9/33) null outreach
 async function testEngagementCounts() {
   const t = await loadCanonicalTables(); const o = await overview();
@@ -221,6 +236,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(19) partial failure unavailable not zero", testPartialFailureUnavailable],
   ["(upstream) sections report upstream_flag_off", testUpstreamFlagOff],
   ["(20-26) orders & notes counts", testOrdersNotesCounts],
+  ["(25b) pending signature includes order notes", testPendingSignatureIncludesOrderNotes],
   ["(29/33) engagement counts + null outreach", testEngagementCounts],
   ["(9/12) episodes separate + deterministic order", testEpisodesSeparateAndOrdered],
   ["(18) DTO has no financial fields", testDtoNoFinancialFields],
