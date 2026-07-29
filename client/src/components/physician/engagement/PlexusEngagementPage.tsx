@@ -19,6 +19,7 @@ import {
   type Qualification, type EngagementActivity, type Escalation,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+import { CanonicalOverviewPanel } from "../CanonicalOverviewPanel";
 
 type CallOverlay = { status: CallStatus; lastOutcome: CallOutcome | "—"; history: CallTask["history"] };
 type EngagementStateResponse = {
@@ -155,6 +156,9 @@ export function PlexusEngagementPage() {
   return (
     <div className="space-y-6">
       <BackToDashboard />
+      {/* Phase 2H — canonical Engagement live data (flag-gated; no new outreach
+          actions, no Twilio/SMS). */}
+      <CanonicalOverviewPanel section="engagement" />
       <div>
         <h1 className="text-2xl font-semibold text-finance-text">Plexus Engagement</h1>
         <p className="text-sm text-finance-text-muted">Patient outreach call list and conversion pipeline.</p>

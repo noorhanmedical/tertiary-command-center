@@ -16,6 +16,7 @@ import {
   type Claim, type Invoice, type ClaimStatus, type ProviderFinancial,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+import { CanonicalOverviewPanel } from "../CanonicalOverviewPanel";
 
 const CLAIM_TONE: Record<ClaimStatus, "green" | "amber" | "blue" | "gray"> = {
   Paid: "green", Pending: "amber", "In Review": "blue", Submitted: "gray",
@@ -103,6 +104,11 @@ export function FinancePage() {
         <BackToDashboard />
         <span className="text-xs text-finance-text-muted">Role: {role} · Full financial access</span>
       </div>
+
+      {/* Phase 2H — canonical operational billing-readiness live data (flag-gated;
+          renders nothing when the flag is OFF). Operational readiness ONLY — no
+          revenue/claim/payment figures. */}
+      <CanonicalOverviewPanel section="finance" />
 
       <div>
         <h1 className="text-2xl font-semibold text-finance-text">Finance</h1>

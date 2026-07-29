@@ -112,6 +112,7 @@ export type FlagOverrides = {
   canonicalBillingReadiness?: boolean;
   canonicalBillingDocument?: boolean;
   billingDocumentGenerator?: boolean;
+  clinicianPortalCanonicalData?: boolean;
 };
 
 export async function runWithDb<T>(
@@ -139,6 +140,7 @@ export async function runWithDb<T>(
     canonicalBillingReadiness: ff.canonicalBillingReadiness,
     canonicalBillingDocument: ff.canonicalBillingDocument,
     billingDocumentGenerator: ff.billingDocumentGenerator,
+    clinicianPortalCanonicalData: ff.clinicianPortalCanonicalData,
   };
   const { db: fake, calls } = buildFakeDb(spec);
   for (const k of Object.keys(savedDb)) dbObj[k] = (fake as unknown as Record<string, unknown>)[k];
@@ -153,6 +155,7 @@ export async function runWithDb<T>(
   if (flags.canonicalBillingReadiness !== undefined) ff.canonicalBillingReadiness = flags.canonicalBillingReadiness;
   if (flags.canonicalBillingDocument !== undefined) ff.canonicalBillingDocument = flags.canonicalBillingDocument;
   if (flags.billingDocumentGenerator !== undefined) ff.billingDocumentGenerator = flags.billingDocumentGenerator;
+  if (flags.clinicianPortalCanonicalData !== undefined) ff.clinicianPortalCanonicalData = flags.clinicianPortalCanonicalData;
   try {
     return await fn(calls);
   } finally {
@@ -168,6 +171,7 @@ export async function runWithDb<T>(
     ff.canonicalBillingReadiness = savedFlags.canonicalBillingReadiness!;
     ff.canonicalBillingDocument = savedFlags.canonicalBillingDocument!;
     ff.billingDocumentGenerator = savedFlags.billingDocumentGenerator!;
+    ff.clinicianPortalCanonicalData = savedFlags.clinicianPortalCanonicalData!;
   }
 }
 

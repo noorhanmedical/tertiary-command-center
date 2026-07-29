@@ -19,6 +19,7 @@ import {
   type EncounterNote, type Order, type NoteStatus, type LinkedDocument, type AuditEvent,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+import { CanonicalOverviewPanel } from "../CanonicalOverviewPanel";
 
 type NoteOverlay = { status: NoteStatus; version: number; soap: EncounterNote["soap"] | null };
 type PersistedAudit = { id: string; recordId: string; type: string; actor: string; timestamp: string };
@@ -199,6 +200,9 @@ export function OrdersNotesPage() {
   return (
     <div className="space-y-6">
       <BackToDashboard />
+      {/* Phase 2H — canonical Orders & Notes live data (flag-gated; existing sign/
+          return workflow endpoints are unchanged). */}
+      <CanonicalOverviewPanel section="ordersNotes" />
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-finance-text">Orders & Notes</h1>
