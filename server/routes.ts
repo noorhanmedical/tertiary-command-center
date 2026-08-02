@@ -349,6 +349,10 @@ export async function registerRoutes(
   // registerClinicianPortalRoutes(app);
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
+  // Phase 2H — canonical Clinician Portal overview (read-only). Registered
+  // unconditionally; returns an explicit disabled contract when
+  // FEATURE_CLINICIAN_PORTAL_CANONICAL_DATA is OFF (zero canonical reads).
+  (await import("./routes/clinicianPortalCanonical")).registerClinicianPortalCanonicalRoutes(app);
   // Phase 2C — Engagement Repository + service-specific Admin Review.
   // Both route files are registered unconditionally. Each handler
   // returns 404 when its feature flag is OFF, preserving previous

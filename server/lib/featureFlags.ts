@@ -23,6 +23,12 @@ export const featureFlags = {
   clinicalIntelligenceLive: readBool("FEATURE_CLINICAL_INTELLIGENCE_LIVE", false),
   /** Clinician Portal alt backend — Phase 4 kept disabled pending shell canonical decision. */
   clinicianPortalBackend: readBool("FEATURE_CLINICIAN_PORTAL_BACKEND", false),
+  /** Phase 2H — serves the canonical clinician-portal overview read model. Default
+   *  OFF ⇒ the endpoint returns an explicit disabled contract before any canonical
+   *  read; the existing Clinician Portal renders exactly as before. This flag does
+   *  NOT auto-enable upstream canonical flags; each overview section checks its own
+   *  upstream runtime gate and is marked unavailable (never zero) when that is OFF. */
+  clinicianPortalCanonicalData: readBool("FEATURE_CLINICIAN_PORTAL_CANONICAL_DATA", false),
 
   // ─── Phase 2A — Global Plexus patient identity ─────────────────
   // Both flags default OFF. The corresponding SQL migration

@@ -19,6 +19,8 @@ import {
   type EncounterNote, type Order, type NoteStatus, type LinkedDocument, type AuditEvent,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+import { isClinicianPortalCanonicalDataEnabled } from "@/lib/clinicianPortalCanonicalFlag";
+import { CanonicalOrdersNotesPage } from "../canonical/CanonicalOrdersNotesPage";
 
 type NoteOverlay = { status: NoteStatus; version: number; soap: EncounterNote["soap"] | null };
 type PersistedAudit = { id: string; recordId: string; type: string; actor: string; timestamp: string };
@@ -35,6 +37,16 @@ const TABS = ["All", "Needs Signature", "Draft", "Pending Order Review", "Comple
 type Tab = typeof TABS[number];
 
 export function OrdersNotesPage() {
+  // Phase 2H — flag ON replaces the entire mock-backed body with canonical
+  // document rows (no mock orders/notes; no second signing workflow). Flag OFF
+  // renders the exact pre-Phase-2H legacy body below (real endpoints unchanged).
+  if (isClinicianPortalCanonicalDataEnabled()) {
+    return <CanonicalOrdersNotesPage />;
+  }
+  return <LegacyOrdersNotesPage />;
+}
+
+function LegacyOrdersNotesPage() {
   const { incrementSignedToday } = usePortal();
   const { toast } = useToast();
   const { data, isLoading } = usePortalData();

@@ -20,8 +20,9 @@
 //   • Auth: global requireAuth is already applied at /api. This file
 //     enforces the additional clinician/admin role gate.
 
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response } from "express";
 import { logAudit } from "../services/auditService";
+import { requireClinicianOrAdmin, requireClinicScope } from "./clinicianPortalGuard";
 import {
   listSignatureItems,
   signProcedureNote,
@@ -37,39 +38,13 @@ import {
   ancillaryMetrics,
 } from "../services/physicianPortal/reportsService";
 
-function requireClinicianOrAdmin(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) {
-  if (!req.session?.userId) {
-    return res.status(401).json({ error: "Not authenticated" });
-  }
-  const role = req.session.role ?? "clinician";
-  if (role !== "clinician" && role !== "admin") {
-    return res.status(403).json({ error: "Forbidden — clinician role required" });
-  }
-  return next();
-}
+// Auth boundary (role gate + clinic scope) is the SHARED Clinician Portal
+// guard — see server/routes/clinicianPortalGuard.ts. A missing/unknown role
+// now fails closed (403) rather than defaulting to clinician.
 
 function parseIntSafe(v: unknown): number | null {
   const n = parseInt(String(v ?? ""), 10);
   return Number.isFinite(n) ? n : null;
-}
-
-/**
- * Derive the authenticated clinic scope from request context (populated by
- * the clinicContext middleware from the session — never from body, params,
- * or query). Fails closed with 403 when absent so no signature read/write
- * can run unscoped.
- */
-function requireClinicScope(req: Request, res: Response): number | null {
-  const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
-  if (clinicId == null) {
-    res.status(403).json({ error: "Clinic scope required" });
-    return null;
-  }
-  return clinicId;
 }
 
 export function registerPhysicianPortalRoutes(app: Express) {

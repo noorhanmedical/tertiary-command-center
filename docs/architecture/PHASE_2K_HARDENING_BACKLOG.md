@@ -146,3 +146,55 @@ acceptance, no unrecoverable retry, no destructive migration). Deferred:
   is unreachable in practice. Consider (a) deferring resolution unless the
   re-evaluation status is a committed `ready_to_generate`/`missing_requirements`,
   and (b) removing or exercising the handler once an enqueue site exists.
+
+## Phase 2H — Clinician Portal canonical overview (read model)
+
+- **Finance `evaluated` count assumes one current readiness row per case.**
+  `buildFinance` increments `evaluated` once per non-superseded
+  `billing_readiness_checks` row rather than deduping by `ancillaryCaseId`. This
+  is correct given the Phase 2G evaluator's supersede-on-write invariant (at most
+  one current snapshot per case), but if two current rows for one case ever
+  coexist (evaluator race/bug), finance would double-count. Consider deduping to
+  the newest `evaluatedAt` per `ancillaryCaseId` as defense-in-depth so the read
+  model is robust to an upstream invariant violation. `readyToGenerate`,
+  `missingRequirements`, and the row list share the same assumption.
+
+- **`counts_truncated` warning basis is the post-filter list.** In `buildFinance`
+  the warning uses `current.length >= SCAN_LIMIT` (after the in-memory
+  clinic/superseded filter), and orders/notes uses `refs.length` (pre-filter).
+  If the raw fetch returns exactly `SCAN_LIMIT` rows and a few are dropped by the
+  in-memory filter, finance could under-report truncation. Base every section's
+  truncation warning on the raw fetched length (`readiness.length`,
+  `refs.length`, `notes.length`, `casesRaw.length`) for consistency. Cosmetic
+  only — 2000 current rows per clinic/section is far beyond realistic volume and
+  there is no correctness or tenancy impact.
+
+- **Admin users cannot use the canonical overview endpoint.** `clinicContext`
+  sets `req.clinicId = null` for `admin`, and `requireClinicScope` returns 403
+  when clinicId is null, so admins (who are otherwise authorized by
+  `requireClinicianOrAdmin`) always get 403. This is fail-closed and matches the
+  existing `physicianPortal` pattern, so it is safe — but if admins should see a
+  clinic-scoped overview, a clinic selector / explicit clinic param would be
+  needed (never body-supplied). The intended contract is now pinned by a test
+  (admin + `clinicId: null` → 403) and documented in `clinicianPortalGuard.ts`;
+  broadening to an all-clinics portal read remains deferred to Phase 2K.
+
+- **Report reference case-linkage is best-effort (schema-limited).**
+  `case_document_readiness` has no `ancillary_case_id` column, so
+  `validateReportRef` binds a report reference to a case only via
+  `executionCaseId`, and only when the reference carries a non-null
+  `executionCaseId`. A report reference with a null `executionCaseId` is
+  validated by clinic + service + `documentType=report` + current status, but not
+  by a per-case identity — the strongest linkage the current schema allows. The
+  `missingEvidence` heuristic (procedure_note present, no report for the same
+  case) therefore relies on the reference's own `ancillaryCaseId`, which is
+  exact. Consider adding an `ancillary_case_id` to `case_document_readiness` (or a
+  deterministic join) in a later pass for a fully exact report↔case binding.
+
+- **Client migration-vs-generic error uses message inspection.** The SERVER
+  contract is typed (`MigrationMissingError` → 503 `code`), but
+  `useCanonicalOverview.isMigrationMissingError` distinguishes the migration
+  banner from the generic-error banner by inspecting the React Query error
+  message (`getQueryFn` throws `"<status>: <body>"`). Both branches are truthful
+  non-zero error states (never a zero-count render), so this is cosmetic; a
+  structured error surfaced by a custom `queryFn` would be cleaner.

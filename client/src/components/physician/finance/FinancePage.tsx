@@ -16,12 +16,24 @@ import {
   type Claim, type Invoice, type ClaimStatus, type ProviderFinancial,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+import { isClinicianPortalCanonicalDataEnabled } from "@/lib/clinicianPortalCanonicalFlag";
+import { CanonicalFinancePage } from "../canonical/CanonicalFinancePage";
 
 const CLAIM_TONE: Record<ClaimStatus, "green" | "amber" | "blue" | "gray"> = {
   Paid: "green", Pending: "amber", "In Review": "blue", Submitted: "gray",
 };
 
 export function FinancePage() {
+  // Phase 2H — flag ON replaces the entire mock-backed body with the canonical
+  // operational-readiness page (no revenue/claims/invoices/payments/splits, no
+  // mock rows). Flag OFF renders the exact pre-Phase-2H legacy body below.
+  if (isClinicianPortalCanonicalDataEnabled()) {
+    return <CanonicalFinancePage />;
+  }
+  return <LegacyFinancePage />;
+}
+
+function LegacyFinancePage() {
   const { role } = usePortal();
   const { data, isLoading } = usePortalData();
   const [range, setRange] = useState("MTD");
