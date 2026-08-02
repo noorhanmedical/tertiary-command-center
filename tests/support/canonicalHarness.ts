@@ -113,7 +113,20 @@ export type FlagOverrides = {
   canonicalBillingDocument?: boolean;
   billingDocumentGenerator?: boolean;
   clinicianPortalCanonicalData?: boolean;
+  // Phase 2C engagement + 2I surface flags (read by the 2I stage-vector builder / routes).
+  serviceSpecificAdminReview?: boolean;
+  engagementAdminReviewSync?: boolean;
+  engagementMultiListRepository?: boolean;
+  engagementRecentLists?: boolean;
+  pcsCanonicalView?: boolean;
+  acsCanonicalView?: boolean;
 };
+
+// Additive Phase 2I flags toggled through the same save/restore mechanism.
+const EXTRA_FLAG_KEYS = [
+  "serviceSpecificAdminReview", "engagementAdminReviewSync", "engagementMultiListRepository",
+  "engagementRecentLists", "pcsCanonicalView", "acsCanonicalView",
+] as const;
 
 export async function runWithDb<T>(
   spec: Map<unknown, TableSpec>,
@@ -142,6 +155,7 @@ export async function runWithDb<T>(
     billingDocumentGenerator: ff.billingDocumentGenerator,
     clinicianPortalCanonicalData: ff.clinicianPortalCanonicalData,
   };
+  for (const k of EXTRA_FLAG_KEYS) (savedFlags as Record<string, boolean | undefined>)[k] = ff[k];
   const { db: fake, calls } = buildFakeDb(spec);
   for (const k of Object.keys(savedDb)) dbObj[k] = (fake as unknown as Record<string, unknown>)[k];
   if (flags.canonicalAppointment !== undefined) ff.canonicalAppointment = flags.canonicalAppointment;
@@ -156,6 +170,7 @@ export async function runWithDb<T>(
   if (flags.canonicalBillingDocument !== undefined) ff.canonicalBillingDocument = flags.canonicalBillingDocument;
   if (flags.billingDocumentGenerator !== undefined) ff.billingDocumentGenerator = flags.billingDocumentGenerator;
   if (flags.clinicianPortalCanonicalData !== undefined) ff.clinicianPortalCanonicalData = flags.clinicianPortalCanonicalData;
+  for (const k of EXTRA_FLAG_KEYS) if (flags[k] !== undefined) ff[k] = flags[k] as boolean;
   try {
     return await fn(calls);
   } finally {
@@ -172,6 +187,7 @@ export async function runWithDb<T>(
     ff.canonicalBillingDocument = savedFlags.canonicalBillingDocument!;
     ff.billingDocumentGenerator = savedFlags.billingDocumentGenerator!;
     ff.clinicianPortalCanonicalData = savedFlags.clinicianPortalCanonicalData!;
+    for (const k of EXTRA_FLAG_KEYS) ff[k] = (savedFlags as Record<string, boolean>)[k];
   }
 }
 

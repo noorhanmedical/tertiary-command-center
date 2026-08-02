@@ -12,8 +12,16 @@
 // visual experimentation only. Any visual experiment must live on a
 // separate preview route, not here.
 
+// Phase 2I — when VITE_FEATURE_PCS_CANONICAL_VIEW is ON, render the canonical
+// PCS stage-vector view instead of the legacy shell. Flag OFF (the default)
+// renders the exact legacy workspace and issues ZERO canonical requests.
 import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
+import { isPcsCanonicalViewEnabled } from "@/lib/pcsCanonicalViewFlag";
+import { CanonicalPcsPage } from "@/components/careSpecialist/CanonicalPcsPage";
 
 export default function PatientCareSpecialistPortalPage() {
+  if (isPcsCanonicalViewEnabled()) {
+    return <CanonicalPcsPage />;
+  }
   return <ClinicWorkflowPortal role="patientCareSpecialist" />;
 }

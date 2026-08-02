@@ -198,3 +198,31 @@ acceptance, no unrecoverable retry, no destructive migration). Deferred:
   message (`getQueryFn` throws `"<status>: <body>"`). Both branches are truthful
   non-zero error states (never a zero-count render), so this is cosmetic; a
   structured error surfaced by a custom `queryFn` would be cleaner.
+
+## Phase 2I — PCS/ACS canonical views (closeout review)
+
+None block Phase 2I under the frozen gate (no cross-clinic disclosure, no identity
+collision/demographic fallback, no episode merging, no false current stage, no
+superseded-as-current, no mock in canonical mode, no claims/invoice/payment, no
+unauthorized access, no unbounded/N+1, migration-missing → 503, no failed-section-
+as-zero, no unrelated redesign; check/tests/build/manifest green).
+
+- **Admin roles are allow-listed but scope-denied in production.** `/api/pcs`
+  and `/api/acs/canonical-view` include `admin` in their role sets, but
+  `clinicContext` sets `req.clinicId = null` for admins, so `requireClinicScope`
+  returns 403. This is the deliberate 2H fail-closed pattern (prevents any
+  cross-clinic admin read); a clinic-selector / explicit server-context clinic
+  for admins would be needed to actually serve admins. Pinned by the intended
+  contract (missing clinic scope → 403). Not a boundary risk.
+
+- **PCS identity-display reads are not migration-wrapped.** In
+  `pcsCanonicalView.ts`, the `global_plexus_patients` / `patient_clinic_memberships`
+  display-name reads run outside `loadOrNull`; a missing 0049 table still yields a
+  truthful 503 (the raw pg `42P01` propagates and the route's migration set catches
+  it), but an ordinary read failure there fails the whole request rather than
+  degrading to "display unavailable". Consider wrapping them so display-only
+  failures degrade gracefully. Not a correctness/boundary risk (identity is never
+  inferred from demographics; only the authorized display name is affected).
+
+- **`iso()` double-wraps already-Date values** (`caseStageVector.ts`) — harmless
+  `new Date(existingDate)`; noted for symmetry only.

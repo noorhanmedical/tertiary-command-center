@@ -353,6 +353,11 @@ export async function registerRoutes(
   // unconditionally; returns an explicit disabled contract when
   // FEATURE_CLINICIAN_PORTAL_CANONICAL_DATA is OFF (zero canonical reads).
   (await import("./routes/clinicianPortalCanonical")).registerClinicianPortalCanonicalRoutes(app);
+  // Phase 2I — canonical PCS/ACS stage-vector read models. Registered
+  // unconditionally; each returns an explicit disabled contract when its own
+  // FEATURE_PCS_CANONICAL_VIEW / FEATURE_ACS_CANONICAL_VIEW flag is OFF (zero
+  // canonical reads).
+  (await import("./routes/pcsAcsCanonical")).registerPcsAcsCanonicalRoutes(app);
   // Phase 2C — Engagement Repository + service-specific Admin Review.
   // Both route files are registered unconditionally. Each handler
   // returns 404 when its feature flag is OFF, preserving previous
