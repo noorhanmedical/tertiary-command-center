@@ -46,6 +46,20 @@ const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", MIGRATION_MISSING_COD
 const SCAN_LIMIT = 2000;               // bounded aggregation scan (per section)
 const ROW_LIMIT = CLINICIAN_PORTAL_OVERVIEW_ROW_LIMIT;
 
+// ── Explicit reference/source status mappings (no permissive fallthrough) ──
+// A current signable-note reference is only ever produced by the canonical
+// signing writers in exactly two operational states: `signed` (the note is
+// signed) or `pending_signature` (the note is awaiting/returned for signature).
+// Any other reference status (pending, uploaded, voided, superseded, unknown) is
+// NOT a current signable-note state and is rejected explicitly.
+const NOTE_UNSIGNED_CURRENT_SIGNATURE_STATUSES = new Set(["needs_signature", "ready_to_sign", "returned_for_correction"]);
+// The canonical report writer copies the case_document_readiness.document_status
+// straight onto the report reference (and re-syncs it), so a report
+// reference/source pair is "current" only when BOTH carry the same present-report
+// status. Non-current statuses (missing/pending/blocked/voided/superseded/…) on
+// EITHER side are rejected.
+const REPORT_CURRENT_STATUSES = new Set(["uploaded", "generated", "approved", "completed"]);
+
 /** Typed migration-missing signal (§6). A required canonical table/column does
  *  not exist ⇒ the endpoint must answer 503, never a section-level state. */
 export class MigrationMissingError extends Error {
@@ -242,10 +256,11 @@ async function buildOrdersNotes(clinicId: number): Promise<OrdersNotesOverview> 
 }
 
 /** Validate an order_note / procedure_note reference against its EXACT
- *  procedure_notes source. Returns "" when valid, else a PHI-free reason code. */
+ *  procedure_notes source. Returns "" when valid, else a PHI-free reason code.
+ *  Status agreement is EXHAUSTIVE — no reference status falls through as valid. */
 function validateNoteRef(
-  r: { clinicId: number; ancillaryCaseId: number | null; serviceType: string | null; sourceTable: string; sourceId: number | null; documentStatus: string },
-  note: { clinicId: number | null; ancillaryCaseId: number | null; serviceType: string | null; noteType: string | null; signatureStatus: string | null; signedAt: unknown; supersededAt: unknown } | undefined,
+  r: { clinicId: number; ancillaryCaseId: number | null; serviceType: string | null; sourceTable: string; sourceId: number | null; documentStatus: string; signedAt: unknown },
+  note: { clinicId: number | null; ancillaryCaseId: number | null; serviceType: string | null; noteType: string | null; signatureStatus: string | null; generationStatus: string | null; signedAt: unknown; supersededAt: unknown } | undefined,
   expectedNoteType: "order_note" | "post_procedure_note",
 ): string {
   const prefix = expectedNoteType === "order_note" ? "order_note" : "procedure_note";
@@ -257,33 +272,66 @@ function validateNoteRef(
   if (note.clinicId !== r.clinicId) return `${prefix}_cross_clinic_source`;
   if (note.ancillaryCaseId !== r.ancillaryCaseId) return `${prefix}_cross_case_source`;
   if (note.serviceType !== r.serviceType) return `${prefix}_wrong_service_source`;
+  // A superseded or voided source is never a current note (terminal states).
   if (note.supersededAt != null) return `${prefix}_superseded_source`;
-  // Status agreement between the reference and its exact source.
+  if (note.generationStatus === "voided") return `${prefix}_voided_source`;
+  // Exhaustive reference/source status agreement. Only the two operational
+  // signable-note reference states are supported; everything else is rejected.
   if (r.documentStatus === "signed") {
-    if (note.signatureStatus !== "signed" || note.signedAt == null) return `${prefix}_signed_ref_unsigned_source`;
+    if (note.signatureStatus !== "signed") return `${prefix}_signed_ref_unsigned_source`;
+    // Signature truth requires a signed instant on BOTH the source and the ref.
+    if (note.signedAt == null || r.signedAt == null) return `${prefix}_signed_at_disagreement`;
   } else if (r.documentStatus === "pending_signature") {
     if (note.signatureStatus === "signed") return `${prefix}_pending_ref_signed_source`;
+    // The source must be in an explicitly current/unsigned signature state.
+    if (!NOTE_UNSIGNED_CURRENT_SIGNATURE_STATUSES.has(note.signatureStatus ?? "")) return `${prefix}_pending_ref_unsupported_source_status`;
+  } else {
+    // pending / uploaded / voided / superseded / null / unknown reference status
+    // is NOT a current signable-note state — never counted as current truth.
+    return `${prefix}_unsupported_ref_status`;
   }
   return "";
 }
 
-/** Validate a report reference against its EXACT case_document_readiness source. */
+/** Validate a report reference against its EXACT case_document_readiness source.
+ *  Requires deterministically-proven episode ownership (exact executionCase OR
+ *  exact screening) plus explicit reference/source status agreement. */
 function validateReportRef(
-  r: { clinicId: number; ancillaryCaseId: number | null; serviceType: string | null; executionCaseId: number | null; sourceTable: string; sourceId: number | null },
-  cdr: { clinicId: number | null; serviceType: string; documentType: string; documentStatus: string; executionCaseId: number | null } | undefined,
+  r: { clinicId: number; ancillaryCaseId: number | null; serviceType: string | null; executionCaseId: number | null; patientScreeningId: number | null; sourceTable: string; sourceId: number | null; documentStatus: string },
+  cdr: { clinicId: number | null; serviceType: string; documentType: string; documentStatus: string; executionCaseId: number | null; patientScreeningId: number | null } | undefined,
 ): string {
   if (r.sourceTable !== REPORT_SOURCE_TABLE) return "report_wrong_source_table";
+  // (D) the reference's own case identity is always required and exact to the row.
   if (r.ancillaryCaseId == null) return "report_missing_case";
+  // (A) exact clinic + service are always required and non-null.
   if (r.serviceType == null) return "report_missing_service";
   if (r.sourceId == null || !cdr) return "report_source_missing";
   if (cdr.documentType !== "report") return "report_wrong_document_type";
   if (cdr.clinicId !== r.clinicId) return "report_cross_clinic_source";
   if (cdr.serviceType !== r.serviceType) return "report_wrong_service_source";
-  // Deterministic case linkage: when the reference carries an execution case,
-  // the source must name the SAME execution case (never an arbitrary match).
-  if (r.executionCaseId != null && cdr.executionCaseId !== r.executionCaseId) return "report_cross_case_source";
-  // Only a genuinely present report satisfies evidence (missing/blocked/pending do not).
-  if (!["uploaded", "generated", "approved", "completed"].includes(cdr.documentStatus)) return "report_status_not_current";
+
+  // (B/C) Exact episode ownership. For EACH episode key the reference supplies,
+  // the source must carry the SAME key (a supplied key the source lacks, or a
+  // key that conflicts, is rejected). At least one exact key must be proven.
+  if (r.executionCaseId != null) {
+    if (cdr.executionCaseId == null) return "report_source_missing_execution_case";
+    if (cdr.executionCaseId !== r.executionCaseId) return "report_execution_case_conflict";
+  }
+  if (r.patientScreeningId != null) {
+    if (cdr.patientScreeningId == null) return "report_source_missing_screening";
+    if (cdr.patientScreeningId !== r.patientScreeningId) return "report_screening_conflict";
+  }
+  const execProven = r.executionCaseId != null && cdr.executionCaseId === r.executionCaseId;
+  const screeningProven = r.patientScreeningId != null && cdr.patientScreeningId === r.patientScreeningId;
+  // No service-only / name / DOB / facility / date fallback — an unproven
+  // episode is rejected outright.
+  if (!execProven && !screeningProven) return "report_episode_unresolved";
+
+  // (§3 Report) Explicit reference/source status agreement — both must be a
+  // canonical present-report status, and (writer mirrors source) they must match.
+  if (!REPORT_CURRENT_STATUSES.has(r.documentStatus)) return "report_unsupported_ref_status";
+  if (!REPORT_CURRENT_STATUSES.has(cdr.documentStatus)) return "report_status_not_current";
+  if (r.documentStatus !== cdr.documentStatus) return "report_status_disagreement";
   return "";
 }
 

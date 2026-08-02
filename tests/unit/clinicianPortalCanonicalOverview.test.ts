@@ -24,9 +24,12 @@ const ALL = { ancillaryCaseWrite: true, canonicalAppointment: true, unifiedAncil
 function readiness(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, billingBlockers: [], claimBlockers: [], evaluatedAt: OLD, ...o }; }
 function billingDoc(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, canonicalStatus: "generated", supersededAt: null, ...o }; }
 // An order_note reference + its exact procedure_notes source (note_type order_note).
-function ref(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, documentKind: "order_note", documentStatus: "signed", serviceType: "BrainWave", sourceTable: "procedure_notes", sourceId: 1, executionCaseId: null, signedAt: OLD, effectiveClinicalDate: OLD, actualCreatedAt: OLD, supersededAt: null, ...o }; }
+function ref(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, documentKind: "order_note", documentStatus: "signed", serviceType: "BrainWave", sourceTable: "procedure_notes", sourceId: 1, executionCaseId: null, patientScreeningId: null, signedAt: OLD, effectiveClinicalDate: OLD, actualCreatedAt: OLD, supersededAt: null, ...o }; }
 function note(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", noteType: "order_note", signatureStatus: "signed", signedAt: OLD, generationStatus: "generated", supersededAt: null, ...o }; }
-function cdr(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, serviceType: "BrainWave", documentType: "report", documentStatus: "uploaded", executionCaseId: null, ...o }; }
+// A report reference (documentStatus mirrors its case_document_readiness source)
+// with an exact execution-case episode linkage by default.
+function reportRef(o: Record<string, unknown> = {}) { return ref({ documentKind: "report", documentStatus: "uploaded", sourceTable: "case_document_readiness", sourceId: 3, executionCaseId: 50, patientScreeningId: null, ...o }); }
+function cdr(o: Record<string, unknown> = {}) { return { id: 3, clinicId: 1, serviceType: "BrainWave", documentType: "report", documentStatus: "uploaded", executionCaseId: 50, patientScreeningId: null, ...o }; }
 function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", lifecycleStatus: "active", adminReviewStatus: "approved" as string | null, ...o }; }
 function list(o: Record<string, unknown> = {}) { return { id: 100, clinicId: 1, sourceType: "admin_review", sourceId: "src-100", label: "Batch A", sentToEngagementAt: OLD, ...o }; }
 function membership(o: Record<string, unknown> = {}) { return { id: 200, engagementListId: 100, ancillaryCaseId: 5, serviceType: "BrainWave", status: "active", ...o }; }
@@ -114,7 +117,7 @@ async function testOrdersNotesCounts() {
     refs: [
       ref({ id: 1, documentKind: "order_note", sourceId: 1 }),
       ref({ id: 2, documentKind: "procedure_note", documentStatus: "pending_signature", sourceId: 2 }),
-      ref({ id: 3, documentKind: "report", sourceId: 3, sourceTable: "case_document_readiness" }),
+      reportRef({ id: 3, sourceId: 3 }),
       ref({ id: 4, documentKind: "order_note", sourceId: 1, supersededAt: OLD }),
     ],
     notes: [note({ id: 1, noteType: "order_note", signatureStatus: "signed" }), note({ id: 2, noteType: "post_procedure_note", signatureStatus: "needs_signature", generationStatus: "generated" })],
@@ -216,15 +219,112 @@ async function testReturnedAndGeneratedFromExactSource() {
   assert.equal(r.ordersNotes.counts.generatedNotes, 2, "(18) generated count from referenced sources only");
 }
 
-// (19) report source validation is exact
+// (19) report source validation is exact (document type + status)
 async function testReportSourceExact() {
   const t = await loadCanonicalTables(); const o = await overview();
-  const good = await runWithDb(spec(t, { refs: [ref({ documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3 })], cdr: [cdr({ id: 3, documentType: "report", documentStatus: "uploaded" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  const good = await runWithDb(spec(t, { refs: [reportRef({ id: 3, sourceId: 3 })], cdr: [cdr({ id: 3, documentType: "report", documentStatus: "uploaded" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
   assert.equal(good.ordersNotes.counts.currentReports, 1, "exact report source qualifies");
-  const badType = await runWithDb(spec(t, { refs: [ref({ documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3 })], cdr: [cdr({ id: 3, documentType: "informed_consent" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  const badType = await runWithDb(spec(t, { refs: [reportRef({ id: 3, sourceId: 3 })], cdr: [cdr({ id: 3, documentType: "informed_consent" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
   assert.equal(badType.ordersNotes.counts.currentReports, 0, "(19) wrong documentType report rejected");
-  const badStatus = await runWithDb(spec(t, { refs: [ref({ documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3 })], cdr: [cdr({ id: 3, documentStatus: "missing" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  const badStatus = await runWithDb(spec(t, { refs: [reportRef({ id: 3, sourceId: 3 })], cdr: [cdr({ id: 3, documentStatus: "missing" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
   assert.equal(badStatus.ordersNotes.counts.currentReports, 0, "(19) non-current report status rejected");
+}
+
+// ── Exact report EPISODE linkage (§2, tests 1-10) ──
+async function orders(specOpts: Parameters<typeof spec>[1]) {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, specOpts), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  return r.ordersNotes;
+}
+async function testReportEpisodeLinkage() {
+  // (1) exact executionCaseId match qualifies
+  assert.equal((await orders({ refs: [reportRef({ executionCaseId: 50, patientScreeningId: null })], cdr: [cdr({ executionCaseId: 50, patientScreeningId: null })] })).counts.currentReports, 1, "(1) exact execution case qualifies");
+  // (2) exact screening match qualifies when executionCaseId is absent
+  assert.equal((await orders({ refs: [reportRef({ executionCaseId: null, patientScreeningId: 77 })], cdr: [cdr({ executionCaseId: null, patientScreeningId: 77 })] })).counts.currentReports, 1, "(2) exact screening qualifies when exec absent");
+  // (3) both episode keys absent → rejected
+  const r3 = await orders({ refs: [reportRef({ executionCaseId: null, patientScreeningId: null })], cdr: [cdr({ executionCaseId: null, patientScreeningId: null })] });
+  assert.equal(r3.counts.currentReports, 0, "(3) both keys absent rejected");
+  assert.ok(r3.warnings.some((w) => w.startsWith("report_episode_unresolved")), "(3) report_episode_unresolved surfaced");
+  // (4) reference executionCaseId supplied but source missing it → rejected
+  const r4 = await orders({ refs: [reportRef({ executionCaseId: 50, patientScreeningId: null })], cdr: [cdr({ executionCaseId: null, patientScreeningId: null })] });
+  assert.equal(r4.counts.currentReports, 0, "(4) source missing supplied exec rejected");
+  assert.ok(r4.warnings.some((w) => w.startsWith("report_source_missing_execution_case")));
+  // (5) reference patientScreeningId supplied but source missing it → rejected
+  const r5 = await orders({ refs: [reportRef({ executionCaseId: null, patientScreeningId: 77 })], cdr: [cdr({ executionCaseId: null, patientScreeningId: null })] });
+  assert.equal(r5.counts.currentReports, 0, "(5) source missing supplied screening rejected");
+  assert.ok(r5.warnings.some((w) => w.startsWith("report_source_missing_screening")));
+  // (6) matching executionCaseId + conflicting screening → rejected
+  const r6 = await orders({ refs: [reportRef({ executionCaseId: 50, patientScreeningId: 77 })], cdr: [cdr({ executionCaseId: 50, patientScreeningId: 88 })] });
+  assert.equal(r6.counts.currentReports, 0, "(6) exec match but screening conflict rejected");
+  assert.ok(r6.warnings.some((w) => w.startsWith("report_screening_conflict")));
+  // (7) matching screening + conflicting executionCase → rejected
+  const r7 = await orders({ refs: [reportRef({ executionCaseId: 50, patientScreeningId: 77 })], cdr: [cdr({ executionCaseId: 60, patientScreeningId: 77 })] });
+  assert.equal(r7.counts.currentReports, 0, "(7) screening match but exec conflict rejected");
+  assert.ok(r7.warnings.some((w) => w.startsWith("report_execution_case_conflict")));
+  // (8) wrong execution case rejected
+  assert.equal((await orders({ refs: [reportRef({ executionCaseId: 50, patientScreeningId: null })], cdr: [cdr({ executionCaseId: 60, patientScreeningId: null })] })).counts.currentReports, 0, "(8) wrong exec rejected");
+  // (9) wrong screening rejected
+  assert.equal((await orders({ refs: [reportRef({ executionCaseId: null, patientScreeningId: 77 })], cdr: [cdr({ executionCaseId: null, patientScreeningId: 88 })] })).counts.currentReports, 0, "(9) wrong screening rejected");
+  // (10) no service-only episode qualification (service matches, no episode key)
+  assert.equal((await orders({ refs: [reportRef({ executionCaseId: null, patientScreeningId: null, serviceType: "BrainWave" })], cdr: [cdr({ executionCaseId: null, patientScreeningId: null, serviceType: "BrainWave" })] })).counts.currentReports, 0, "(10) service-only never qualifies");
+}
+
+// ── Note reference/source status truth (§3, tests 11-22) ──
+async function testNoteStatusTruth() {
+  // (11) signed Order Note ref + exact signed source qualifies
+  assert.equal((await orders({ refs: [ref({ documentKind: "order_note", documentStatus: "signed", sourceId: 1, signedAt: OLD })], notes: [note({ id: 1, noteType: "order_note", signatureStatus: "signed", signedAt: OLD })] })).counts.currentOrderNotes, 1, "(11) signed order note qualifies");
+  // (12) signed Procedure Note ref + exact signed source qualifies
+  assert.equal((await orders({ refs: [ref({ documentKind: "procedure_note", documentStatus: "signed", sourceId: 2, signedAt: OLD })], notes: [note({ id: 2, noteType: "post_procedure_note", signatureStatus: "signed", signedAt: OLD })] })).counts.currentProcedureNotes, 1, "(12) signed procedure note qualifies");
+  // (13) signed ref + unsigned source rejected
+  assert.equal((await orders({ refs: [ref({ documentStatus: "signed", sourceId: 1 })], notes: [note({ id: 1, noteType: "order_note", signatureStatus: "needs_signature", signedAt: null })] })).counts.currentOrderNotes, 0, "(13) signed ref + unsigned source rejected");
+  // (14) pending-signature ref + signed source rejected
+  const r14 = await orders({ refs: [ref({ documentStatus: "pending_signature", sourceId: 1 })], notes: [note({ id: 1, noteType: "order_note", signatureStatus: "signed", signedAt: OLD })] });
+  assert.equal(r14.counts.currentOrderNotes, 0, "(14) pending ref + signed source rejected");
+  assert.ok(r14.warnings.some((w) => w.startsWith("order_note_pending_ref_signed_source")));
+  // (15) pending-signature ref + needs-signature source qualifies
+  assert.equal((await orders({ refs: [ref({ documentStatus: "pending_signature", sourceId: 1 })], notes: [note({ id: 1, noteType: "order_note", signatureStatus: "needs_signature", signedAt: null })] })).counts.currentOrderNotes, 1, "(15) pending ref + needs_signature qualifies");
+  // (16) pending-signature ref + returned-for-correction source qualifies
+  assert.equal((await orders({ refs: [ref({ documentKind: "procedure_note", documentStatus: "pending_signature", sourceId: 2 })], notes: [note({ id: 2, noteType: "post_procedure_note", signatureStatus: "returned_for_correction", signedAt: null })] })).counts.currentProcedureNotes, 1, "(16) pending ref + returned_for_correction qualifies");
+  // (17) uploaded Order Note reference rejected
+  const r17 = await orders({ refs: [ref({ documentStatus: "uploaded", sourceId: 1 })], notes: [note({ id: 1, noteType: "order_note" })] });
+  assert.equal(r17.counts.currentOrderNotes, 0, "(17) uploaded order-note ref rejected");
+  assert.ok(r17.warnings.some((w) => w.startsWith("order_note_unsupported_ref_status")));
+  // (18) voided Order Note reference rejected
+  assert.equal((await orders({ refs: [ref({ documentStatus: "voided", sourceId: 1 })], notes: [note({ id: 1, noteType: "order_note" })] })).counts.currentOrderNotes, 0, "(18) voided order-note ref rejected");
+  // (19) uploaded Procedure Note reference rejected
+  assert.equal((await orders({ refs: [ref({ documentKind: "procedure_note", documentStatus: "uploaded", sourceId: 2 })], notes: [note({ id: 2, noteType: "post_procedure_note" })] })).counts.currentProcedureNotes, 0, "(19) uploaded procedure-note ref rejected");
+  // (20) voided Procedure Note reference rejected
+  assert.equal((await orders({ refs: [ref({ documentKind: "procedure_note", documentStatus: "voided", sourceId: 2 })], notes: [note({ id: 2, noteType: "post_procedure_note" })] })).counts.currentProcedureNotes, 0, "(20) voided procedure-note ref rejected");
+  // (21) voided source rejected (generationStatus voided) — signature still current
+  const r21 = await orders({ refs: [ref({ documentStatus: "pending_signature", sourceId: 1 })], notes: [note({ id: 1, noteType: "order_note", signatureStatus: "needs_signature", generationStatus: "voided" })] });
+  assert.equal(r21.counts.currentOrderNotes, 0, "(21) voided source rejected");
+  assert.ok(r21.warnings.some((w) => w.startsWith("order_note_voided_source")));
+  // (22) an unsupported reference status never falls through as valid
+  assert.equal((await orders({ refs: [ref({ documentStatus: "pending", sourceId: 1 })], notes: [note({ id: 1, noteType: "order_note" })] })).counts.currentOrderNotes, 0, "(22) unsupported ref status never valid");
+}
+
+// ── Report reference/source status truth (§3 Report, tests 23-28) ──
+async function testReportStatusTruth() {
+  // (23) exact current reference/source status pair qualifies
+  assert.equal((await orders({ refs: [reportRef({ documentStatus: "uploaded" })], cdr: [cdr({ documentStatus: "uploaded" })] })).counts.currentReports, 1, "(23) exact current pair qualifies");
+  // (24) voided report reference + uploaded source rejected
+  const r24 = await orders({ refs: [reportRef({ documentStatus: "voided" })], cdr: [cdr({ documentStatus: "uploaded" })] });
+  assert.equal(r24.counts.currentReports, 0, "(24) voided report ref rejected");
+  assert.ok(r24.warnings.some((w) => w.startsWith("report_unsupported_ref_status")));
+  // (25) pending report reference + uploaded source rejected
+  assert.equal((await orders({ refs: [reportRef({ documentStatus: "pending" })], cdr: [cdr({ documentStatus: "uploaded" })] })).counts.currentReports, 0, "(25) pending report ref rejected");
+  // (26) current report reference + missing/blocked source rejected
+  const r26 = await orders({ refs: [reportRef({ documentStatus: "uploaded" })], cdr: [cdr({ documentStatus: "blocked" })] });
+  assert.equal(r26.counts.currentReports, 0, "(26) current ref + blocked source rejected");
+  assert.ok(r26.warnings.some((w) => w.startsWith("report_status_not_current")));
+  // (27) incompatible current reference/source statuses rejected
+  const r27 = await orders({ refs: [reportRef({ documentStatus: "uploaded" })], cdr: [cdr({ documentStatus: "approved" })] });
+  assert.equal(r27.counts.currentReports, 0, "(27) incompatible current statuses rejected");
+  assert.ok(r27.warnings.some((w) => w.startsWith("report_status_disagreement")));
+  // (28) invalid reports contribute zero count AND no DTO row
+  const r28 = await orders({ refs: [reportRef({ id: 9, sourceId: 3, documentStatus: "uploaded" })], cdr: [cdr({ id: 3, documentStatus: "approved" })] });
+  assert.equal(r28.counts.currentReports, 0, "(28) invalid report → zero count");
+  assert.ok(!r28.rows.some((row) => row.documentKind === "report"), "(28) invalid report → no DTO row");
 }
 
 // (20) source reads are BATCHED, not N+1
@@ -233,13 +333,13 @@ async function testSourceReadsBatched() {
   await runWithDb(spec(t, {
     refs: [
       ref({ id: 1, documentKind: "order_note", sourceId: 1 }),
-      ref({ id: 2, documentKind: "procedure_note", sourceId: 2 }),
+      ref({ id: 2, documentKind: "procedure_note", documentStatus: "pending_signature", sourceId: 2 }),
       ref({ id: 3, documentKind: "order_note", sourceId: 3 }),
-      ref({ id: 4, documentKind: "report", sourceTable: "case_document_readiness", sourceId: 4 }),
-      ref({ id: 5, documentKind: "report", sourceTable: "case_document_readiness", sourceId: 5 }),
+      reportRef({ id: 4, sourceId: 4, executionCaseId: 54 }),
+      reportRef({ id: 5, sourceId: 5, executionCaseId: 55 }),
     ],
-    notes: [note({ id: 1, noteType: "order_note" }), note({ id: 2, noteType: "post_procedure_note" }), note({ id: 3, noteType: "order_note" })],
-    cdr: [cdr({ id: 4 }), cdr({ id: 5 })],
+    notes: [note({ id: 1, noteType: "order_note" }), note({ id: 2, noteType: "post_procedure_note", signatureStatus: "needs_signature" }), note({ id: 3, noteType: "order_note" })],
+    cdr: [cdr({ id: 4, executionCaseId: 54 }), cdr({ id: 5, executionCaseId: 55 })],
   }), ALL, async (calls: Call[]) => {
     await o.getClinicianPortalCanonicalOverview({ clinicId: 1 });
     assert.equal(countOps(calls, "select", t.procedureNotes), 1, "(20) one batched procedure_notes read for many refs");
@@ -484,6 +584,9 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(16) signed ref → unsigned source rejected", testSignedRefUnsignedSourceRejected],
   ["(17/18) returned+generated from exact source", testReturnedAndGeneratedFromExactSource],
   ["(19) report source validation exact", testReportSourceExact],
+  ["(§2 1-10) exact report episode linkage", testReportEpisodeLinkage],
+  ["(§3 11-22) note reference/source status truth", testNoteStatusTruth],
+  ["(§3 23-28) report reference/source status truth", testReportStatusTruth],
   ["(20) source reads batched not N+1", testSourceReadsBatched],
   ["engagement counts + null outreach", testEngagementCounts],
   ["(21) exact active membership displayed", testActiveMembershipDisplayed],
