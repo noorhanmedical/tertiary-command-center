@@ -784,14 +784,14 @@
     },
     {
       "path": "client/src/components/physician/engagement/PlexusEngagementPage.tsx",
-      "blob": "77605d0e03ad76df827c1c638703fb3055894dc1",
+      "blob": "9aab1f833040a38cd2d9f73dfae59cf5bc7e88fc",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/physician/finance/FinancePage.tsx",
-      "blob": "387c027e2d7b6dc00c8b5b9fb59b8554d7c80dd7",
+      "blob": "bbd65257555563d7890bdbc1b73431fb1a360dd9",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -805,7 +805,7 @@
     },
     {
       "path": "client/src/components/physician/orders/OrdersNotesPage.tsx",
-      "blob": "d160689817c76793bf3b5e6b104ec12382943a02",
+      "blob": "c3059d7863fbcd545b787aa0cdad8757df8ae32f",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

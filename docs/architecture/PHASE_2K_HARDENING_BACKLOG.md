@@ -175,4 +175,26 @@ acceptance, no unrecoverable retry, no destructive migration). Deferred:
   `requireClinicianOrAdmin`) always get 403. This is fail-closed and matches the
   existing `physicianPortal` pattern, so it is safe — but if admins should see a
   clinic-scoped overview, a clinic selector / explicit clinic param would be
-  needed (never body-supplied).
+  needed (never body-supplied). The intended contract is now pinned by a test
+  (admin + `clinicId: null` → 403) and documented in `clinicianPortalGuard.ts`;
+  broadening to an all-clinics portal read remains deferred to Phase 2K.
+
+- **Report reference case-linkage is best-effort (schema-limited).**
+  `case_document_readiness` has no `ancillary_case_id` column, so
+  `validateReportRef` binds a report reference to a case only via
+  `executionCaseId`, and only when the reference carries a non-null
+  `executionCaseId`. A report reference with a null `executionCaseId` is
+  validated by clinic + service + `documentType=report` + current status, but not
+  by a per-case identity — the strongest linkage the current schema allows. The
+  `missingEvidence` heuristic (procedure_note present, no report for the same
+  case) therefore relies on the reference's own `ancillaryCaseId`, which is
+  exact. Consider adding an `ancillary_case_id` to `case_document_readiness` (or a
+  deterministic join) in a later pass for a fully exact report↔case binding.
+
+- **Client migration-vs-generic error uses message inspection.** The SERVER
+  contract is typed (`MigrationMissingError` → 503 `code`), but
+  `useCanonicalOverview.isMigrationMissingError` distinguishes the migration
+  banner from the generic-error banner by inspecting the React Query error
+  message (`getQueryFn` throws `"<status>: <body>"`). Both branches are truthful
+  non-zero error states (never a zero-count render), so this is cosmetic; a
+  structured error surfaced by a custom `queryFn` would be cleaner.

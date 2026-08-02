@@ -76,14 +76,36 @@ export type OrdersNotesOverview = {
 };
 
 // ─── Engagement tile — service-specific ancillary case + Admin Review ─────────
+// One distinct Engagement-list membership for a case. Multiple memberships are
+// preserved as distinct entries (never flattened into one arbitrary list): the
+// identity is (engagementMembershipId, engagementListId) — same-date lists stay
+// separate because they carry distinct list ids / source identity. Every field
+// is canonically persisted; nothing is inferred.
+export type EngagementMembershipRow = {
+  engagementMembershipId: number;
+  engagementListId: number;
+  engagementListDisplayName: string | null;   // engagement_lists.label
+  engagementListSourceType: string | null;    // engagement_lists.source_type
+  engagementListSourceId: string | null;       // engagement_lists.source_id (opaque)
+  serviceType: string | null;                   // membership service (episode-specific)
+  // Persisted send instant of the list — the ONLY basis for "most recently sent".
+  sentToEngagementAt: string | null;
+};
 export type EngagementRow = {
   ancillaryCaseId: number;
   serviceType: string;
   patientDisplay: string | null;
   adminReviewStatus: string | null;
   lifecycleStatus: string | null;
+  // Convenience fields derived ONLY from the most-recently-sent distinct
+  // membership (by persisted sentToEngagementAt). Null when the case has no
+  // active, exact, in-clinic membership — never inferred, never a first/newest
+  // fallback across mismatched lists.
+  engagementListId: number | null;
   engagementListName: string | null;
   lastSentAt: string | null;
+  // Every distinct valid membership, preserved separately with stable identity.
+  memberships: EngagementMembershipRow[];
 };
 export type EngagementOverview = {
   availability: SectionAvailability;

@@ -1,4 +1,5 @@
-// Phase 2H — canonical Clinician Portal overview: read model, route, DTO, client.
+// Phase 2H — canonical Clinician Portal overview: read model, exact-source
+// validation, Engagement list/membership wiring, route auth, migration-503.
 //
 //   npx tsx tests/unit/clinicianPortalCanonicalOverview.test.ts
 
@@ -15,26 +16,40 @@ const dto = () => import("../../shared/clinicianPortalOverview");
 const clientFlag = () => import("../../client/src/lib/clinicianPortalCanonicalFlag");
 
 const OLD = new Date("2027-06-10T09:00:00Z");
+const NEWER = new Date("2027-07-20T09:00:00Z");
 // Upstream chain that enables ALL three sections.
 const ALL = { ancillaryCaseWrite: true, canonicalAppointment: true, unifiedAncillaryDocuments: true, canonicalOrderNote: true, canonicalProcedureLifecycle: true, canonicalProcedureNote: true, canonicalBillingReadiness: true } as const;
 
+// ─── Row builders — refs are matched to EXACT sources by (sourceTable, sourceId) ─
 function readiness(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, billingBlockers: [], claimBlockers: [], evaluatedAt: OLD, ...o }; }
 function billingDoc(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, canonicalStatus: "generated", supersededAt: null, ...o }; }
-function ref(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, documentKind: "order_note", documentStatus: "signed", serviceType: "BrainWave", signedAt: OLD, effectiveClinicalDate: OLD, actualCreatedAt: OLD, supersededAt: null, ...o }; }
-function note(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, noteType: "post_procedure_note", signatureStatus: "signed", generationStatus: "generated", supersededAt: null, ...o }; }
-function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", lifecycleStatus: "active", adminReviewStatus: "approved", ...o }; }
+// An order_note reference + its exact procedure_notes source (note_type order_note).
+function ref(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, documentKind: "order_note", documentStatus: "signed", serviceType: "BrainWave", sourceTable: "procedure_notes", sourceId: 1, executionCaseId: null, signedAt: OLD, effectiveClinicalDate: OLD, actualCreatedAt: OLD, supersededAt: null, ...o }; }
+function note(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", noteType: "order_note", signatureStatus: "signed", signedAt: OLD, generationStatus: "generated", supersededAt: null, ...o }; }
+function cdr(o: Record<string, unknown> = {}) { return { id: 1, clinicId: 1, serviceType: "BrainWave", documentType: "report", documentStatus: "uploaded", executionCaseId: null, ...o }; }
+function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", lifecycleStatus: "active", adminReviewStatus: "approved" as string | null, ...o }; }
+function list(o: Record<string, unknown> = {}) { return { id: 100, clinicId: 1, sourceType: "admin_review", sourceId: "src-100", label: "Batch A", sentToEngagementAt: OLD, ...o }; }
+function membership(o: Record<string, unknown> = {}) { return { id: 200, engagementListId: 100, ancillaryCaseId: 5, serviceType: "BrainWave", status: "active", ...o }; }
 
-function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { readiness?: unknown[]; docs?: unknown[]; refs?: unknown[]; notes?: unknown[]; cases?: unknown[]; readinessErr?: boolean } = {}) {
+function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: {
+  readiness?: unknown[]; docs?: unknown[]; refs?: unknown[]; notes?: unknown[]; cdr?: unknown[];
+  cases?: unknown[]; lists?: unknown[]; memberships?: unknown[];
+  readinessErr?: boolean; readinessMigration?: boolean; refsMigration?: boolean; casesMigration?: boolean;
+} = {}) {
+  const migErr = () => { throw Object.assign(new Error("relation does not exist"), { code: "42P01" }); };
   return new Map<unknown, TableSpec>([
-    [t.billingReadinessChecks, { select: () => { if (o.readinessErr) throw new Error("finance down"); return o.readiness ?? []; } }],
+    [t.billingReadinessChecks, { select: () => { if (o.readinessErr) throw new Error("finance down"); if (o.readinessMigration) return migErr(); return o.readiness ?? []; } }],
     [t.billingDocumentRequests, { select: () => o.docs ?? [] }],
-    [t.documentReferences, { select: () => o.refs ?? [] }],
+    [t.documentReferences, { select: () => { if (o.refsMigration) return migErr(); return o.refs ?? []; } }],
     [t.procedureNotes, { select: () => o.notes ?? [] }],
-    [t.ancillaryCases, { select: () => o.cases ?? [] }],
+    [t.caseDocumentReadiness, { select: () => o.cdr ?? [] }],
+    [t.ancillaryCases, { select: () => { if (o.casesMigration) return migErr(); return o.cases ?? []; } }],
+    [t.engagementLists, { select: () => o.lists ?? [] }],
+    [t.engagementMemberships, { select: () => o.memberships ?? [] }],
   ]);
 }
 
-// (13) finance counts current readiness once per case + docs truthfully
+// ─── Finance ──────────────────────────────────────────────────────
 async function testFinanceCounts() {
   const t = await loadCanonicalTables(); const o = await overview();
   const r = await runWithDb(spec(t, {
@@ -45,40 +60,39 @@ async function testFinanceCounts() {
   assert.equal(r.finance.counts.evaluated, 2);
   assert.equal(r.finance.counts.readyToGenerate, 1);
   assert.equal(r.finance.counts.missingRequirements, 1);
-  assert.equal(r.finance.counts.claimBlockedOnly, 1, "ready + claim blocker → claim-blocked-only");
+  assert.equal(r.finance.counts.claimBlockedOnly, 1);
   assert.equal(r.finance.counts.billingDocumentGenerated, 1);
-  assert.ok(r.finance.claimBlockersByCode.some((c) => c.code === "prior_auth"), "claim blockers preserved");
+  assert.ok(r.finance.claimBlockersByCode.some((c) => c.code === "prior_auth"));
   assert.ok(r.finance.billingBlockersByCode.some((c) => c.code === "order_note_signature_unresolved"));
+  assert.equal(r.finance.rows.length, 2, "bounded finance rows rendered");
 }
 
-// (14) superseded readiness excluded from current counts
 async function testSupersededExcluded() {
   const t = await loadCanonicalTables(); const o = await overview();
   const r = await runWithDb(spec(t, { readiness: [readiness({ supersededAt: OLD }), readiness({ id: 2, ancillaryCaseId: 6, canonicalStatus: "superseded" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
-  assert.equal(r.finance.counts.evaluated, 1, "superseded snapshot excluded from evaluated");
+  assert.equal(r.finance.counts.evaluated, 1);
 }
 
-// (7/8) cross-clinic rows never counted (in-memory tenancy defense)
+// (11/12/13) cross-clinic rows never counted (in-memory tenancy defense)
 async function testCrossClinicExcluded() {
   const t = await loadCanonicalTables(); const o = await overview();
   const r = await runWithDb(spec(t, {
-    readiness: [readiness({ clinicId: 2 })], refs: [ref({ clinicId: 2 })], cases: [acase({ clinicId: 2 })],
+    readiness: [readiness({ clinicId: 2 })], refs: [ref({ clinicId: 2 })], notes: [note({ clinicId: 2 })], cases: [acase({ clinicId: 2 })],
   }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
   assert.equal(r.finance.counts.evaluated, 0, "no cross-clinic finance leakage");
   assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "no cross-clinic document leakage");
   assert.equal(r.engagement.counts.activeCases, 0, "no cross-clinic engagement leakage");
 }
 
-// (19) partial finance failure is unavailable, NOT zero (other sections still available)
+// (33) partial finance failure is unavailable, NOT zero (other sections available)
 async function testPartialFailureUnavailable() {
   const t = await loadCanonicalTables(); const o = await overview();
-  const r = await runWithDb(spec(t, { readinessErr: true, refs: [ref()], cases: [acase()] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
-  assert.equal(r.finance.availability, "unavailable", "(19) failed finance section → unavailable, not zero");
+  const r = await runWithDb(spec(t, { readinessErr: true, refs: [ref()], notes: [note()], cases: [acase()] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.finance.availability, "unavailable", "(33) failed finance → unavailable, not zero");
   assert.equal(r.ordersNotes.availability, "available", "other sections unaffected");
   assert.equal(r.engagement.availability, "available");
 }
 
-// (3/upstream) each section reports upstream_flag_off when its flag is OFF
 async function testUpstreamFlagOff() {
   const t = await loadCanonicalTables(); const o = await overview();
   const financeOff = await runWithDb(spec(t, { readiness: [readiness()] }), { ...ALL, canonicalBillingReadiness: false }, async (calls: Call[]) => {
@@ -93,159 +107,401 @@ async function testUpstreamFlagOff() {
   assert.equal(engOff.engagement.availability, "upstream_flag_off");
 }
 
-// (20/21/22/23/25/26) orders & notes counts truthfully; kinds distinct; superseded excluded
+// ─── Orders & Notes — exact-source validation (§3) ────────────────
 async function testOrdersNotesCounts() {
   const t = await loadCanonicalTables(); const o = await overview();
   const r = await runWithDb(spec(t, {
-    refs: [ref({ id: 1, documentKind: "order_note" }), ref({ id: 2, documentKind: "procedure_note", documentStatus: "pending_signature" }), ref({ id: 3, documentKind: "report" }), ref({ id: 4, documentKind: "order_note", supersededAt: OLD })],
-    notes: [note({ id: 1, signatureStatus: "returned_for_correction" }), note({ id: 2, generationStatus: "generated" })],
+    refs: [
+      ref({ id: 1, documentKind: "order_note", sourceId: 1 }),
+      ref({ id: 2, documentKind: "procedure_note", documentStatus: "pending_signature", sourceId: 2 }),
+      ref({ id: 3, documentKind: "report", sourceId: 3, sourceTable: "case_document_readiness" }),
+      ref({ id: 4, documentKind: "order_note", sourceId: 1, supersededAt: OLD }),
+    ],
+    notes: [note({ id: 1, noteType: "order_note", signatureStatus: "signed" }), note({ id: 2, noteType: "post_procedure_note", signatureStatus: "needs_signature", generationStatus: "generated" })],
+    cdr: [cdr({ id: 3 })],
   }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
-  assert.equal(r.ordersNotes.counts.currentOrderNotes, 1, "(20/23) superseded order_note excluded, kinds distinct");
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 1, "(8/15) superseded order_note excluded, kinds distinct");
   assert.equal(r.ordersNotes.counts.currentProcedureNotes, 1);
-  assert.equal(r.ordersNotes.counts.currentReports, 1, "(22) report counted separately");
-  assert.equal(r.ordersNotes.counts.pendingSignatures, 1, "(25) pending signature counted");
-  assert.equal(r.ordersNotes.counts.returnedForCorrection, 1, "(26) returned-for-correction counted");
+  assert.equal(r.ordersNotes.counts.currentReports, 1, "(19) report counted separately");
+  assert.equal(r.ordersNotes.counts.pendingSignatures, 1);
+  assert.equal(r.ordersNotes.rows.length, 3, "only validated refs render as rows");
 }
 
-// (25b) pending signature counts BOTH order_note and procedure_note (operational
-// action on any signable document); a superseded pending ref is excluded.
-async function testPendingSignatureIncludesOrderNotes() {
+// (8) exact order-note source qualifies
+async function testExactOrderNoteQualifies() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref()], notes: [note()] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 1);
+}
+
+// (9) wrong sourceTable rejected
+async function testWrongSourceTableRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref({ sourceTable: "documents" })], notes: [note()] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(9) wrong sourceTable rejected");
+  assert.ok(r.ordersNotes.warnings.some((w) => w.startsWith("order_note_wrong_source_table")), "integrity warning surfaced");
+}
+
+// (10) missing source rejected
+async function testMissingSourceRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref({ sourceId: 999 })], notes: [note({ id: 1 })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(10) missing source rejected");
+  assert.ok(r.ordersNotes.warnings.some((w) => w.startsWith("order_note_source_missing")));
+}
+
+// (11) wrong clinic source rejected — the source note belongs to another clinic
+async function testWrongClinicSourceRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  // The note has clinicId 2; the batched load is clinic-scoped, so it never
+  // enters the map for clinic 1 → treated as missing source (rejected).
+  const r = await runWithDb(spec(t, { refs: [ref({ clinicId: 1 })], notes: [note({ clinicId: 2 })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(11) wrong-clinic source rejected");
+}
+
+// (12) wrong case source rejected
+async function testWrongCaseSourceRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref({ ancillaryCaseId: 5 })], notes: [note({ ancillaryCaseId: 6 })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(12) cross-case source rejected");
+  assert.ok(r.ordersNotes.warnings.some((w) => w.startsWith("order_note_cross_case_source")));
+}
+
+// (13) wrong service source rejected
+async function testWrongServiceSourceRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref({ serviceType: "BrainWave" })], notes: [note({ serviceType: "VitalWave" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(13) wrong-service source rejected");
+}
+
+// (14) wrong noteType rejected
+async function testWrongNoteTypeRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref({ documentKind: "order_note", sourceId: 1 })], notes: [note({ id: 1, noteType: "post_procedure_note" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(14) wrong noteType rejected");
+  assert.ok(r.ordersNotes.warnings.some((w) => w.startsWith("order_note_wrong_note_type")));
+}
+
+// (15) superseded source rejected
+async function testSupersededSourceRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref()], notes: [note({ supersededAt: OLD })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(15) superseded source rejected");
+}
+
+// (16) signed reference pointing to unsigned source rejected
+async function testSignedRefUnsignedSourceRejected() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, { refs: [ref({ documentStatus: "signed" })], notes: [note({ signatureStatus: "needs_signature", signedAt: null })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.ordersNotes.counts.currentOrderNotes, 0, "(16) signed ref + unsigned source rejected");
+  assert.ok(r.ordersNotes.warnings.some((w) => w.startsWith("order_note_signed_ref_unsigned_source")));
+}
+
+// (17/18) returned + generated counts come from the EXACT referenced note only
+async function testReturnedAndGeneratedFromExactSource() {
   const t = await loadCanonicalTables(); const o = await overview();
   const r = await runWithDb(spec(t, {
     refs: [
-      ref({ id: 1, documentKind: "order_note", documentStatus: "pending_signature" }),
-      ref({ id: 2, documentKind: "procedure_note", documentStatus: "pending_signature" }),
-      ref({ id: 3, documentKind: "report", documentStatus: "pending_signature" }), // reports are not signed → not pending-signature
-      ref({ id: 4, documentKind: "order_note", documentStatus: "pending_signature", supersededAt: OLD }), // superseded → excluded
+      ref({ id: 1, documentKind: "procedure_note", documentStatus: "pending_signature", sourceId: 10 }),
+      ref({ id: 2, documentKind: "procedure_note", documentStatus: "pending_signature", sourceId: 11, ancillaryCaseId: 6 }),
+    ],
+    notes: [
+      note({ id: 10, noteType: "post_procedure_note", signatureStatus: "returned_for_correction", generationStatus: "generated" }),
+      note({ id: 11, noteType: "post_procedure_note", ancillaryCaseId: 6, signatureStatus: "needs_signature", generationStatus: "approved" }),
+      // An UNREFERENCED returned note — must NOT be counted (no current reference).
+      note({ id: 99, noteType: "post_procedure_note", ancillaryCaseId: 7, signatureStatus: "returned_for_correction", generationStatus: "generated" }),
     ],
   }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
-  assert.equal(r.ordersNotes.counts.pendingSignatures, 2, "(25b) order_note + procedure_note pending signatures both counted; report + superseded excluded");
+  assert.equal(r.ordersNotes.counts.returnedForCorrection, 1, "(17) returned count from referenced source only (unreferenced note excluded)");
+  assert.equal(r.ordersNotes.counts.generatedNotes, 2, "(18) generated count from referenced sources only");
 }
 
-// (29) engagement service-specific Admin Review counts + (9/33) null outreach
+// (19) report source validation is exact
+async function testReportSourceExact() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const good = await runWithDb(spec(t, { refs: [ref({ documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3 })], cdr: [cdr({ id: 3, documentType: "report", documentStatus: "uploaded" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(good.ordersNotes.counts.currentReports, 1, "exact report source qualifies");
+  const badType = await runWithDb(spec(t, { refs: [ref({ documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3 })], cdr: [cdr({ id: 3, documentType: "informed_consent" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(badType.ordersNotes.counts.currentReports, 0, "(19) wrong documentType report rejected");
+  const badStatus = await runWithDb(spec(t, { refs: [ref({ documentKind: "report", sourceTable: "case_document_readiness", sourceId: 3 })], cdr: [cdr({ id: 3, documentStatus: "missing" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(badStatus.ordersNotes.counts.currentReports, 0, "(19) non-current report status rejected");
+}
+
+// (20) source reads are BATCHED, not N+1
+async function testSourceReadsBatched() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  await runWithDb(spec(t, {
+    refs: [
+      ref({ id: 1, documentKind: "order_note", sourceId: 1 }),
+      ref({ id: 2, documentKind: "procedure_note", sourceId: 2 }),
+      ref({ id: 3, documentKind: "order_note", sourceId: 3 }),
+      ref({ id: 4, documentKind: "report", sourceTable: "case_document_readiness", sourceId: 4 }),
+      ref({ id: 5, documentKind: "report", sourceTable: "case_document_readiness", sourceId: 5 }),
+    ],
+    notes: [note({ id: 1, noteType: "order_note" }), note({ id: 2, noteType: "post_procedure_note" }), note({ id: 3, noteType: "order_note" })],
+    cdr: [cdr({ id: 4 }), cdr({ id: 5 })],
+  }), ALL, async (calls: Call[]) => {
+    await o.getClinicianPortalCanonicalOverview({ clinicId: 1 });
+    assert.equal(countOps(calls, "select", t.procedureNotes), 1, "(20) one batched procedure_notes read for many refs");
+    assert.equal(countOps(calls, "select", t.caseDocumentReadiness), 1, "(20) one batched case_document_readiness read for many refs");
+  });
+}
+
+// ─── Engagement — list/membership wiring (§4) ─────────────────────
 async function testEngagementCounts() {
   const t = await loadCanonicalTables(); const o = await overview();
   const r = await runWithDb(spec(t, {
     cases: [acase({ id: 5, adminReviewStatus: "approved" }), acase({ id: 6, adminReviewStatus: "needs_information" }), acase({ id: 7, adminReviewStatus: "pending" }), acase({ id: 8, lifecycleStatus: "closed", adminReviewStatus: "approved" })],
   }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
-  assert.equal(r.engagement.counts.activeCases, 3, "closed case excluded from active");
+  assert.equal(r.engagement.counts.activeCases, 3, "closed case excluded");
   assert.equal(r.engagement.counts.approved, 1);
   assert.equal(r.engagement.counts.needsInformation, 1);
   assert.equal(r.engagement.counts.pending, 1);
-  assert.equal(r.engagement.rows[0].lastSentAt, null, "(33) missing outreach data stays null");
+  assert.equal(r.engagement.rows[0].lastSentAt, null, "(25) missing outreach stays null");
   assert.equal(r.engagement.rows[0].engagementListName, null);
+  assert.deepEqual(r.engagement.rows[0].memberships, []);
 }
 
-// (9/12) repeated same-service episodes remain separate + deterministic bounded ordering
-async function testEpisodesSeparateAndOrdered() {
+// (21) exact active membership displayed
+async function testActiveMembershipDisplayed() {
   const t = await loadCanonicalTables(); const o = await overview();
   const r = await runWithDb(spec(t, {
-    // two DISTINCT ancillary cases, same service — must remain two rows, ordered by id.
-    readiness: [readiness({ id: 2, ancillaryCaseId: 9 }), readiness({ id: 1, ancillaryCaseId: 6 })],
+    cases: [acase({ id: 5, serviceType: "BrainWave" })],
+    lists: [list({ id: 100, label: "Batch A", sourceType: "admin_review", sourceId: "s-100", sentToEngagementAt: OLD })],
+    memberships: [membership({ id: 200, engagementListId: 100, ancillaryCaseId: 5, serviceType: "BrainWave", status: "active" }), membership({ id: 201, engagementListId: 100, ancillaryCaseId: 5, serviceType: "BrainWave", status: "removed" })],
   }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
-  assert.equal(r.finance.counts.evaluated, 2, "same-service episodes remain separate");
-  assert.deepEqual(r.finance.rows.map((x) => x.ancillaryCaseId), [6, 9], "deterministic ascending order by ancillaryCaseId");
+  const row = r.engagement.rows[0];
+  assert.equal(row.memberships.length, 1, "(21) only ACTIVE membership displayed");
+  assert.equal(row.memberships[0].engagementMembershipId, 200);
+  assert.equal(row.memberships[0].engagementListDisplayName, "Batch A");
+  assert.equal(row.engagementListName, "Batch A");
+  assert.equal(row.lastSentAt, OLD.toISOString());
 }
 
-// (18) DTO carries NO revenue/claim/payment fields
+// (22) same-date lists remain distinct by ID/source identity
+async function testSameDateListsDistinct() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, {
+    cases: [acase({ id: 5, serviceType: "BrainWave" })],
+    lists: [list({ id: 100, label: "Batch A", sourceId: "s-100", sentToEngagementAt: OLD }), list({ id: 101, label: "Batch B", sourceId: "s-101", sentToEngagementAt: OLD })],
+    memberships: [membership({ id: 200, engagementListId: 100, ancillaryCaseId: 5 }), membership({ id: 201, engagementListId: 101, ancillaryCaseId: 5 })],
+  }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  const row = r.engagement.rows[0];
+  assert.equal(row.memberships.length, 2, "(22) same-date lists preserved as distinct memberships");
+  assert.deepEqual(row.memberships.map((m) => m.engagementListId), [100, 101]);
+  assert.notEqual(row.memberships[0].engagementListSourceId, row.memberships[1].engagementListSourceId);
+}
+
+// (23) repeated same-service cases remain separate
+async function testRepeatedSameServiceSeparate() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, {
+    cases: [acase({ id: 5, serviceType: "BrainWave" }), acase({ id: 9, serviceType: "BrainWave" })],
+  }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(r.engagement.rows.length, 2, "(23) repeated same-service episodes remain separate rows");
+  assert.deepEqual(r.engagement.rows.map((x) => x.ancillaryCaseId), [5, 9], "(27) deterministic bounded ordering");
+}
+
+// (24) most-recently-sent uses persisted sentToEngagementAt (no first/newest fallback)
+async function testMostRecentSentPersisted() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, {
+    cases: [acase({ id: 5, serviceType: "BrainWave" })],
+    lists: [list({ id: 100, label: "Older", sourceId: "s-100", sentToEngagementAt: OLD }), list({ id: 101, label: "Newer", sourceId: "s-101", sentToEngagementAt: NEWER })],
+    memberships: [membership({ id: 200, engagementListId: 100, ancillaryCaseId: 5 }), membership({ id: 201, engagementListId: 101, ancillaryCaseId: 5 })],
+  }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  const row = r.engagement.rows[0];
+  assert.equal(row.lastSentAt, NEWER.toISOString(), "(24) most-recent from persisted sentToEngagementAt");
+  assert.equal(row.engagementListName, "Newer");
+}
+
+// (26) cross-clinic membership/list excluded
+async function testCrossClinicMembershipExcluded() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const r = await runWithDb(spec(t, {
+    cases: [acase({ id: 5, serviceType: "BrainWave" })],
+    lists: [list({ id: 100, clinicId: 2, label: "Other clinic" })],   // list belongs to clinic 2
+    memberships: [membership({ id: 200, engagementListId: 100, ancillaryCaseId: 5 })],
+  }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  const row = r.engagement.rows[0];
+  assert.equal(row.memberships.length, 0, "(26) cross-clinic list excluded");
+  assert.equal(row.lastSentAt, null);
+}
+
+// ─── DTO regression ───────────────────────────────────────────────
 async function testDtoNoFinancialFields() {
   const d = await dto();
   const o = d.disabledClinicianPortalOverview(new Date().toISOString());
   const keys = Object.keys(o.finance.counts).join(",").toLowerCase();
   for (const bad of ["revenue", "amount", "paid", "balance", "collection", "invoice", "remittance", "payer", "income", "claimtotal"]) {
-    assert.ok(!keys.includes(bad), `(18) Finance DTO must not carry financial field: ${bad}`);
+    assert.ok(!keys.includes(bad), `(34) Finance DTO must not carry financial field: ${bad}`);
   }
   assert.equal(o.disabled, true);
 }
 
-// ─── Route ────────────────────────────────────────────────────────
+// ─── Route: auth (§5) ─────────────────────────────────────────────
 function fakeApp() { const map: Record<string, Function[]> = {}; return { app: { get: (p: string, ...h: Function[]) => { map[`GET ${p}`] = h; } } as never, map }; }
 function mockRes() { return { statusCode: 200, body: null as unknown, status(c: number) { this.statusCode = c; return this; }, json(b: unknown) { this.body = b; return this; } }; }
 async function invoke(handlers: Function[], req: unknown, res: unknown) { for (const h of handlers) { let nexted = false; await h(req, res, () => { nexted = true; }); if (!nexted) return; } }
 
-// (1/3) flag OFF → explicit disabled contract BEFORE any canonical read
+async function handlers() { const { app, map } = fakeApp(); (await routes()).registerClinicianPortalCanonicalRoutes(app); return map["GET /api/clinician-portal/canonical-overview"]; }
+
 async function testRouteFlagOffDisabled() {
-  const t = await loadCanonicalTables(); const { app, map } = fakeApp(); (await routes()).registerClinicianPortalCanonicalRoutes(app);
-  const handlers = map["GET /api/clinician-portal/canonical-overview"];
-  const res = mockRes();
+  const t = await loadCanonicalTables(); const h = await handlers(); const res = mockRes();
   await runWithDb(new Map<unknown, TableSpec>([
     [t.billingReadinessChecks, { select: () => { throw new Error("must not read when flag off"); } }],
     [t.ancillaryCases, { select: () => { throw new Error("must not read"); } }],
   ]), { clinicianPortalCanonicalData: false }, async (calls: Call[]) => {
-    await invoke(handlers, { session: { userId: "u1", role: "clinician" }, clinicId: 1 }, res);
-    assert.equal(countOps(calls, "select"), 0, "(3) zero canonical reads when flag OFF");
+    await invoke(h, { session: { userId: "u1", role: "clinician" }, clinicId: 1 }, res);
+    assert.equal(countOps(calls, "select"), 0, "(1/2) zero canonical reads when flag OFF");
   });
-  assert.equal((res.body as { disabled: boolean }).disabled, true, "(1) disabled contract");
+  assert.equal((res.body as { disabled: boolean }).disabled, true, "flag OFF disabled contract");
 }
 
-// (11) role guard: non-clinician/admin → 403; unauthenticated → 401
+// (28/29/30/31) role guard — unauth 401; missing/unknown/wrong role 403; clinician/admin allowed
 async function testRouteRoleGuard() {
-  const { app, map } = fakeApp(); (await routes()).registerClinicianPortalCanonicalRoutes(app);
-  const handlers = map["GET /api/clinician-portal/canonical-overview"];
-  const r401 = mockRes(); await invoke(handlers, { session: {} }, r401);
+  const h = await handlers();
+  const r401 = mockRes(); await invoke(h, { session: {} }, r401);
   assert.equal(r401.statusCode, 401, "unauthenticated → 401");
-  const r403 = mockRes(); await invoke(handlers, { session: { userId: "u", role: "biller" } }, r403);
-  assert.equal(r403.statusCode, 403, "wrong role → 403");
+  const rMissing = mockRes(); await invoke(h, { session: { userId: "u" } }, rMissing);
+  assert.equal(rMissing.statusCode, 403, "(28) missing role → 403 (no clinician default)");
+  const rUnknown = mockRes(); await invoke(h, { session: { userId: "u", role: "wizard" } }, rUnknown);
+  assert.equal(rUnknown.statusCode, 403, "(29) unknown role → 403");
+  for (const role of ["scheduler", "biller", "technician"]) {
+    const res = mockRes(); await invoke(h, { session: { userId: "u", role } }, res);
+    assert.equal(res.statusCode, 403, `(29) ${role} → 403`);
+  }
 }
 
-// (11) clinic scope required (server context) → 403 when absent
+async function testRouteAllowedRoles() {
+  const t = await loadCanonicalTables(); const h = await handlers();
+  for (const role of ["clinician", "admin"]) {
+    const res = mockRes();
+    await runWithDb(spec(t, {}), { ...ALL, clinicianPortalCanonicalData: true }, async () => {
+      await invoke(h, { session: { userId: "u", role }, clinicId: 1 }, res);
+    });
+    assert.equal(res.statusCode, 200, `(30) ${role} allowed`);
+    assert.equal((res.body as { disabled: boolean }).disabled, false);
+  }
+}
+
 async function testRouteClinicScope() {
-  const { app, map } = fakeApp(); (await routes()).registerClinicianPortalCanonicalRoutes(app);
-  const handlers = map["GET /api/clinician-portal/canonical-overview"];
-  const res = mockRes();
+  const h = await handlers(); const res = mockRes();
   await runWithDb(new Map(), { clinicianPortalCanonicalData: true }, async () => {
-    await invoke(handlers, { session: { userId: "u", role: "clinician" }, clinicId: null }, res);
+    await invoke(h, { session: { userId: "u", role: "clinician" }, clinicId: null }, res);
   });
-  assert.equal(res.statusCode, 403, "no clinic scope → 403 (never body-supplied)");
+  assert.equal(res.statusCode, 403, "(31) no clinic scope → 403 (never body-supplied)");
 }
 
-// ─── Client (static behavioral guards) ────────────────────────────
-// (2) client flag defaults OFF
+// (31b) Intentional contract: an admin WITHOUT a session clinic scope
+// (clinicContext sets req.clinicId=null for admins) is fail-closed 403 — the
+// Clinician Portal is strictly per-clinic and never inferred to all-clinics.
+async function testRouteAdminNullClinic() {
+  const h = await handlers(); const res = mockRes();
+  await runWithDb(new Map(), { clinicianPortalCanonicalData: true }, async () => {
+    await invoke(h, { session: { userId: "u", role: "admin" }, clinicId: null }, res);
+  });
+  assert.equal(res.statusCode, 403, "(31b) admin without a clinic scope → 403 (fail-closed, intentional)");
+}
+
+// ─── Route: migration-missing → 503 (§6) ──────────────────────────
+async function testMigration503() {
+  const t = await loadCanonicalTables(); const h = await handlers();
+  const cases: Array<[string, ReturnType<typeof spec>]> = [
+    ["finance table missing", spec(t, { readinessMigration: true })],
+    ["unified-document table missing", spec(t, { refsMigration: true })],
+    ["ancillary-case/Engagement table missing", spec(t, { casesMigration: true })],
+  ];
+  for (const [label, s] of cases) {
+    const res = mockRes();
+    await runWithDb(s, { ...ALL, clinicianPortalCanonicalData: true }, async () => {
+      await invoke(h, { session: { userId: "u", role: "clinician" }, clinicId: 1 }, res);
+    });
+    assert.equal(res.statusCode, 503, `(32) ${label} → 503`);
+    assert.equal((res.body as { code: string }).code, "ANCILLARY_DOCUMENT_MIGRATION_MISSING", `${label} → migration code`);
+  }
+}
+
+// (33) ordinary one-section failure → 200 with that section unavailable, others intact
+async function testOrdinarySectionFailure200() {
+  const t = await loadCanonicalTables(); const h = await handlers(); const res = mockRes();
+  await runWithDb(spec(t, { readinessErr: true, refs: [ref()], notes: [note()], cases: [acase()] }), { ...ALL, clinicianPortalCanonicalData: true }, async () => {
+    await invoke(h, { session: { userId: "u", role: "clinician" }, clinicId: 1 }, res);
+  });
+  assert.equal(res.statusCode, 200, "(33) ordinary section failure stays 200");
+  const body = res.body as { finance: { availability: string }; ordersNotes: { availability: string } };
+  assert.equal(body.finance.availability, "unavailable");
+  assert.equal(body.ordersNotes.availability, "available");
+}
+
+// ─── Client static guards ─────────────────────────────────────────
 async function testClientFlagDefaultOff() {
   const f = await clientFlag();
-  assert.equal(f.isClinicianPortalCanonicalDataEnabled(), false, "(2) client flag defaults OFF");
+  assert.equal(f.isClinicianPortalCanonicalDataEnabled(), false, "(client) flag defaults OFF");
 }
 
-// (35/40) one query, no localStorage as a data source
 async function testClientNoLocalStorageSingleQuery() {
   const hook = readFileSync(join(process.cwd(), "client/src/components/physician/useCanonicalOverview.ts"), "utf8");
   const panel = readFileSync(join(process.cwd(), "client/src/components/physician/CanonicalOverviewPanel.tsx"), "utf8");
   for (const [name, src] of [["hook", hook], ["panel", panel]] as const) {
-    assert.ok(!src.includes("localStorage") && !src.includes("sessionStorage"), `(40) ${name} must not use browser storage as a data source`);
+    assert.ok(!src.includes("localStorage") && !src.includes("sessionStorage"), `(37) ${name} must not use browser storage`);
   }
-  assert.equal((hook.match(/useQuery</g) ?? []).length, 1, "(35) exactly one canonical overview query call (no N+1)");
-  assert.ok(hook.includes("enabled"), "(3) query gated by the flag (no request when OFF)");
+  assert.equal((hook.match(/useQuery</g) ?? []).length, 1, "(36) exactly one canonical overview query call");
+  assert.ok(hook.includes("enabled"), "query gated by the flag");
 }
 
-// (42) the three protected tiles render the panel (no layout redesign — one panel each)
-async function testTilesWirePanel() {
-  for (const f of [
-    "client/src/components/physician/finance/FinancePage.tsx",
-    "client/src/components/physician/orders/OrdersNotesPage.tsx",
-    "client/src/components/physician/engagement/PlexusEngagementPage.tsx",
-  ]) {
+// Each page branches on the flag: flag ON returns the canonical page, and the
+// legacy body no longer renders the canonical panel beside mock content.
+async function testPagesBranchOnFlag() {
+  const pages: Array<[string, string]> = [
+    ["client/src/components/physician/finance/FinancePage.tsx", "CanonicalFinancePage"],
+    ["client/src/components/physician/orders/OrdersNotesPage.tsx", "CanonicalOrdersNotesPage"],
+    ["client/src/components/physician/engagement/PlexusEngagementPage.tsx", "CanonicalEngagementPage"],
+  ];
+  for (const [f, canon] of pages) {
     const src = readFileSync(join(process.cwd(), f), "utf8");
-    assert.ok(src.includes("CanonicalOverviewPanel"), `(42) ${f} wires the canonical panel`);
+    assert.ok(src.includes("isClinicianPortalCanonicalDataEnabled()"), `${f} checks the flag`);
+    assert.ok(new RegExp(`return <${canon}`).test(src), `${f} returns <${canon}/> when flag ON`);
+    assert.ok(!src.includes("CanonicalOverviewPanel"), `${f} legacy body must not render the panel beside mock content`);
   }
 }
 
 const tests: Array<[string, () => Promise<void>]> = [
-  ["(13/17) finance counts + claim blockers preserved", testFinanceCounts],
-  ["(14) superseded readiness excluded", testSupersededExcluded],
-  ["(7/8) cross-clinic excluded", testCrossClinicExcluded],
-  ["(19) partial failure unavailable not zero", testPartialFailureUnavailable],
-  ["(upstream) sections report upstream_flag_off", testUpstreamFlagOff],
-  ["(20-26) orders & notes counts", testOrdersNotesCounts],
-  ["(25b) pending signature includes order notes", testPendingSignatureIncludesOrderNotes],
-  ["(29/33) engagement counts + null outreach", testEngagementCounts],
-  ["(9/12) episodes separate + deterministic order", testEpisodesSeparateAndOrdered],
-  ["(18) DTO has no financial fields", testDtoNoFinancialFields],
-  ["(1/3) route flag OFF disabled before reads", testRouteFlagOffDisabled],
-  ["(11) route role guard", testRouteRoleGuard],
-  ["(11) route clinic scope", testRouteClinicScope],
-  ["(2) client flag defaults OFF", testClientFlagDefaultOff],
-  ["(35/40) client single query, no storage", testClientNoLocalStorageSingleQuery],
-  ["(42) tiles wire the panel", testTilesWirePanel],
+  ["finance counts + claim blockers + rows", testFinanceCounts],
+  ["superseded readiness excluded", testSupersededExcluded],
+  ["(11-13) cross-clinic excluded", testCrossClinicExcluded],
+  ["(33) partial failure unavailable not zero", testPartialFailureUnavailable],
+  ["upstream sections report upstream_flag_off", testUpstreamFlagOff],
+  ["orders & notes exact-source counts", testOrdersNotesCounts],
+  ["(8) exact order-note source qualifies", testExactOrderNoteQualifies],
+  ["(9) wrong sourceTable rejected", testWrongSourceTableRejected],
+  ["(10) missing source rejected", testMissingSourceRejected],
+  ["(11) wrong clinic source rejected", testWrongClinicSourceRejected],
+  ["(12) wrong case source rejected", testWrongCaseSourceRejected],
+  ["(13) wrong service source rejected", testWrongServiceSourceRejected],
+  ["(14) wrong noteType rejected", testWrongNoteTypeRejected],
+  ["(15) superseded source rejected", testSupersededSourceRejected],
+  ["(16) signed ref → unsigned source rejected", testSignedRefUnsignedSourceRejected],
+  ["(17/18) returned+generated from exact source", testReturnedAndGeneratedFromExactSource],
+  ["(19) report source validation exact", testReportSourceExact],
+  ["(20) source reads batched not N+1", testSourceReadsBatched],
+  ["engagement counts + null outreach", testEngagementCounts],
+  ["(21) exact active membership displayed", testActiveMembershipDisplayed],
+  ["(22) same-date lists distinct", testSameDateListsDistinct],
+  ["(23/27) repeated same-service separate + ordered", testRepeatedSameServiceSeparate],
+  ["(24) most-recent sent persisted", testMostRecentSentPersisted],
+  ["(26) cross-clinic membership excluded", testCrossClinicMembershipExcluded],
+  ["(34) DTO has no financial fields", testDtoNoFinancialFields],
+  ["route flag OFF disabled before reads", testRouteFlagOffDisabled],
+  ["(28-30) route role guard", testRouteRoleGuard],
+  ["(30) clinician/admin allowed", testRouteAllowedRoles],
+  ["(31) route clinic scope", testRouteClinicScope],
+  ["(31b) admin without clinic scope → 403", testRouteAdminNullClinic],
+  ["(32) migration missing → 503", testMigration503],
+  ["(33) ordinary section failure → 200", testOrdinarySectionFailure200],
+  ["client flag defaults OFF", testClientFlagDefaultOff],
+  ["(36/37) client single query, no storage", testClientNoLocalStorageSingleQuery],
+  ["pages branch on flag, no panel beside mock", testPagesBranchOnFlag],
 ];
 
 async function run() {

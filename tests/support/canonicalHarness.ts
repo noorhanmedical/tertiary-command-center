@@ -192,7 +192,11 @@ export async function loadCanonicalTables() {
   const prereq = await import("../../shared/schema/procedurePrerequisites");
   const billingReadiness = await import("../../shared/schema/billingReadiness");
   const billingDocs = await import("../../shared/schema/billingDocuments");
+  const engagementLists = await import("../../shared/schema/engagementLists");
   return {
+    // Phase 2C engagement identity (Phase 2H list/membership wiring reads these).
+    engagementLists: engagementLists.engagementLists,
+    engagementMemberships: engagementLists.engagementListMemberships,
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
     screenings: scr.patientScreenings,
