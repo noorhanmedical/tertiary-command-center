@@ -60,7 +60,16 @@ export function registerPcsAcsCanonicalRoutes(app: Express): void {
     const clinicId = requireClinicScope(req, res);
     if (clinicId == null) return;
     try {
-      const view = await getPcsCanonicalView({ clinicId, cursor: typeof req.query.cursor === "string" ? req.query.cursor : null, limit: parseLimit(req.query.limit), filters: filtersFrom(req.query) });
+      const q = req.query;
+      const view = await getPcsCanonicalView({
+        clinicId,
+        cursor: typeof q.cursor === "string" ? q.cursor : null,
+        limit: parseLimit(q.limit),
+        filters: filtersFrom(q),
+        unresolvedCursor: typeof q.unresolvedCursor === "string" ? q.unresolvedCursor : null,
+        episodeMembershipId: typeof q.episodeMembershipId === "string" && Number.isFinite(parseInt(q.episodeMembershipId, 10)) ? parseInt(q.episodeMembershipId, 10) : null,
+        episodeCursor: typeof q.episodeCursor === "string" ? q.episodeCursor : null,
+      });
       return res.json(view);
     } catch (e) {
       if (migration(res, e)) return;

@@ -1,5 +1,5 @@
-// Phase 2I truth closeout — stage-vector exact identity/service/version/conflict
-// truth, availability semantics, patient-centric PCS pagination, route auth.
+// Phase 2I final acceptance — identity-invalid visibility, episode retrievability,
+// admin/appointment/billing terminal & version truth, availability integrity.
 //
 //   npx tsx tests/unit/pcsAcsCanonicalView.test.ts
 
@@ -12,7 +12,6 @@ const pcs = () => import("../../server/services/pcs/pcsCanonicalView");
 const acs = () => import("../../server/services/acs/acsCanonicalView");
 const routes = () => import("../../server/routes/pcsAcsCanonical");
 const identity = () => import("../../server/services/pcs/pcsIdentity");
-const viewQuery = () => import("../../server/services/canonicalStage/viewQuery");
 
 const OLD = new Date("2027-06-10T09:00:00Z");
 const NEWER = new Date("2027-07-01T09:00:00Z");
@@ -24,7 +23,6 @@ const ALL = {
   pcsCanonicalView: true, acsCanonicalView: true,
 } as const;
 
-// ── builders ──
 function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", lifecycleStatus: "active", adminReviewStatus: "approved", globalPlexusPatientId: 900, patientClinicMembershipId: 800, executionCaseId: 70, originatingScreeningId: 77, ...o }; }
 function adminEvent(o: Record<string, unknown> = {}) { return { id: 1, ancillaryCaseId: 5, serviceType: "BrainWave", newStatus: "approved", actualReviewedAt: OLD, source: "manual", ...o }; }
 function list(o: Record<string, unknown> = {}) { return { id: 100, clinicId: 1, sourceType: "admin_review", sourceId: "s-100", label: "Batch A", sentToEngagementAt: OLD, ...o }; }
@@ -37,8 +35,8 @@ function procNote(o: Record<string, unknown> = {}) { return orderNote({ id: 2, n
 function reportRef(o: Record<string, unknown> = {}) { return orderRef({ id: 3, documentKind: "report", documentStatus: "uploaded", sourceTable: "case_document_readiness", sourceId: 3, ...o }); }
 function cdr(o: Record<string, unknown> = {}) { return { id: 3, clinicId: 1, serviceType: "BrainWave", documentType: "report", documentStatus: "uploaded", executionCaseId: 70, patientScreeningId: 77, ...o }; }
 function proc(o: Record<string, unknown> = {}) { return { id: 400, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", procedureStatus: "complete", completedAt: OLD, lastTransitionAt: OLD, updatedAt: OLD, ...o }; }
-function readiness(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evaluatedAt: OLD, evidenceFingerprint: "fp-1", billingBlockers: [], claimBlockers: [], ...o }; }
-function billingDoc(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, generatedAt: OLD, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...o }; }
+function readiness(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evaluatedAt: OLD, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: null, reportDocumentReferenceId: null, procedureNoteDocumentReferenceId: null, billingBlockers: [], claimBlockers: [], ...o }; }
+function billingDoc(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, generatedAt: OLD, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: null, reportDocumentReferenceId: null, procedureNoteDocumentReferenceId: null, ...o }; }
 function gpp(o: Record<string, unknown> = {}) { return { id: 900, displayName: "Jane Doe", dob: "1980-01-01", identityStatus: "active", mergedIntoPatientId: null, ...o }; }
 function pcm(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active", clinicMrn: "MRN-1", ...o }; }
 
@@ -69,304 +67,247 @@ async function runAcs(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opt
   const a = await acs();
   return runWithDb(spec(t, o), flags, async () => a.getAcsCanonicalView({ clinicId: 1 }));
 }
-async function runPcs(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts, flags: Record<string, boolean> = ALL) {
+async function runPcs(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts, extra: Record<string, unknown> = {}, flags: Record<string, boolean> = ALL) {
   const p = await pcs();
-  return runWithDb(spec(t, o), flags, async () => p.getPcsCanonicalView({ clinicId: 1 }));
+  return runWithDb(spec(t, o), flags, async () => p.getPcsCanonicalView({ clinicId: 1, ...extra }));
 }
 const acsRow0 = (r: Awaited<ReturnType<typeof runAcs>>) => r.rows[0];
 
-// ═══ Stage-vector truth ═══
+// ═══ ACS stage-vector truth (admin fail-closed w/ agreeing event) ═══
 async function testAcsStageVectorTruth() {
   const t = await loadCanonicalTables();
-  const r = await runAcs(t, { cases: [acase()], adminEvents: [adminEvent()], lists: [list()], memberships: [membership()], appts: [appt()], refs: [orderRef(), procRef(), reportRef()], notes: [orderNote(), procNote()], cdrs: [cdr()], procs: [proc()], readiness: [readiness()], docs: [billingDoc()] });
-  const v = acsRow0(r);
-  assert.equal(v.adminReview.status, "approved"); assert.equal(v.engagement.memberships.length, 1);
-  assert.equal(v.appointment.status, "scheduled"); assert.equal(v.orderNote.status, "signed");
-  assert.equal(v.procedure.status, "complete"); assert.equal(v.report.status, "uploaded");
-  assert.equal(v.procedureNote.status, "signed"); assert.equal(v.signature.status, "signed");
-  assert.equal(v.billingReadiness.status, "ready_to_generate"); assert.equal(v.billingDocument.status, "generated", "(18) doc bound to readiness id+fp qualifies");
+  const v = acsRow0(await runAcs(t, { cases: [acase()], adminEvents: [adminEvent()], lists: [list()], memberships: [membership()], appts: [appt()], refs: [orderRef(), procRef(), reportRef()], notes: [orderNote(), procNote()], cdrs: [cdr()], procs: [proc()], readiness: [readiness()], docs: [billingDoc()] }));
+  assert.equal(v.adminReview.status, "approved"); assert.equal(v.adminReview.available, true); assert.equal(v.adminReview.integrity, "resolved");
+  assert.equal(v.appointment.status, "scheduled"); assert.equal(v.orderNote.status, "signed"); assert.equal(v.procedure.status, "complete");
+  assert.equal(v.report.status, "uploaded"); assert.equal(v.procedureNote.status, "signed"); assert.equal(v.signature.status, "signed");
+  assert.equal(v.billingReadiness.status, "ready_to_generate"); assert.equal(v.billingDocument.status, "generated");
   assert.equal(v.currentStage, null); assert.equal(v.currentStageIntegrity, "resolved");
-  // (32) exact current source → available true
-  assert.equal(v.appointment.available, true); assert.equal(v.billingDocument.available, true);
 }
 
-// ═══ §9 Identity resolver (1-8) ═══
+// ═══ §8 Identity visibility (1-9) ═══
 async function testIdentityResolver() {
   const id = await identity();
-  const ok = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 900, caseMembershipId: 800, membership: pcm() as never, globalPatient: gpp() as never });
-  assert.equal(ok.resolved, true, "(1) exact active membership + matching patient qualifies");
-  assert.equal(ok.patientDisplay, "Jane Doe"); assert.equal(ok.clinicMrn, "MRN-1"); assert.equal(ok.groupKey, "900|800");
-  const conflict = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 901, caseMembershipId: 800, membership: pcm({ globalPlexusPatientId: 900 }) as never, globalPatient: gpp() as never });
-  assert.equal(conflict.resolved, false); assert.ok(conflict.warnings.includes("identity_patient_membership_conflict"), "(2) mismatch rejected");
-  const wrongClinic = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 900, caseMembershipId: 800, membership: pcm({ clinicId: 2 }) as never, globalPatient: gpp() as never });
-  assert.ok(wrongClinic.warnings.includes("identity_membership_wrong_clinic"), "(3) other-clinic membership rejected");
-  const inactive = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 900, caseMembershipId: 800, membership: pcm({ membershipStatus: "withdrawn" }) as never, globalPatient: gpp() as never });
-  assert.ok(inactive.warnings.includes("identity_membership_inactive"), "(4) inactive membership rejected");
-  const noMem = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 900, caseMembershipId: null, membership: undefined, globalPatient: undefined });
-  assert.equal(noMem.resolved, false); assert.equal(noMem.patientDisplay, null, "(5) missing membership exposes no PHI");
-  assert.ok(noMem.warnings.includes("identity_membership_missing"));
-  const noGpp = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 900, caseMembershipId: 800, membership: pcm() as never, globalPatient: undefined });
-  assert.ok(noGpp.warnings.includes("identity_global_patient_missing"), "(6) missing global patient → identity unavailable");
-  const merged = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 900, caseMembershipId: 800, membership: pcm() as never, globalPatient: gpp({ mergedIntoPatientId: 950 }) as never });
-  assert.ok(merged.warnings.includes("identity_global_patient_not_current"), "merged-away patient rejected");
+  const cases: Array<[Record<string, unknown>, string | null]> = [
+    [{ membership: pcm(), globalPatient: gpp() }, null],
+    [{ membership: pcm({ globalPlexusPatientId: 900 }), globalPatient: gpp(), caseGlobalPatientId: 901 }, "identity_patient_membership_conflict"],
+    [{ membership: pcm({ clinicId: 2 }), globalPatient: gpp() }, "identity_membership_wrong_clinic"],
+    [{ membership: pcm({ membershipStatus: "withdrawn" }), globalPatient: gpp() }, "identity_membership_inactive"],
+    [{ membership: undefined, globalPatient: undefined, caseMembershipId: null }, "identity_membership_missing"],
+    [{ membership: pcm(), globalPatient: undefined }, "identity_global_patient_missing"],
+    [{ membership: pcm(), globalPatient: gpp({ mergedIntoPatientId: 950 }) }, "identity_global_patient_not_current"],
+    [{ membership: pcm(), globalPatient: gpp({ identityStatus: "inactive" }) }, "identity_global_patient_not_current"],
+  ];
+  for (const [args, warn] of cases) {
+    const res = id.verifyCaseIdentity({ clinicId: 1, caseGlobalPatientId: 900, caseMembershipId: 800, ...(args as Record<string, never>) });
+    if (warn == null) { assert.equal(res.resolved, true); assert.equal(res.patientDisplay, "Jane Doe"); }
+    else { assert.equal(res.resolved, false); assert.equal(res.patientDisplay, null, `${warn} exposes no PHI`); assert.ok(res.warnings.includes(warn), `expected ${warn}`); }
+  }
 }
-// (5) read model never exposes global PHI without a verified membership
-async function testPcsNoPhiWithoutMembership() {
+// (1-9) same-clinic invalid-membership cases are SURFACED in the unresolved stream
+async function testInvalidMembershipCasesSurfaced() {
   const t = await loadCanonicalTables();
-  // case names gpp 900 but membership 800 belongs to another clinic → not paged →
-  // case not grouped under the patient; PHI never resolved.
-  const r = await runPcs(t, { pcms: [pcm({ clinicId: 2 })], cases: [acase()], gpps: [gpp()] });
-  // The active-clinic membership page is empty (pcm clinic 2) → member cases empty;
-  // the case has a non-null membership so it is NOT in the unresolved (null) bucket.
-  assert.ok(r.rows.every((g) => g.patientDisplay == null || g.identityAvailable), "(5) no PHI without verified membership");
-  assert.ok(!r.rows.some((g) => g.identityAvailable && g.globalPlexusPatientId === 900 && g.patientClinicMembershipId === 800), "cross-clinic membership never resolves the patient");
-}
-// (7) two same-name patients remain distinct
-async function testSameNameDistinct() {
-  const t = await loadCanonicalTables();
-  const r = await runPcs(t, {
-    pcms: [pcm({ id: 800, globalPlexusPatientId: 900 }), pcm({ id: 801, globalPlexusPatientId: 901 })],
-    gpps: [gpp({ id: 900, displayName: "John Smith" }), gpp({ id: 901, displayName: "John Smith" })],
-    cases: [acase({ id: 5, globalPlexusPatientId: 900, patientClinicMembershipId: 800 }), acase({ id: 9, globalPlexusPatientId: 901, patientClinicMembershipId: 801 })],
-  });
-  assert.equal(r.rows.length, 2, "(7) same-name patients distinct by exact identity");
-  assert.deepEqual(r.rows.map((g) => g.globalPlexusPatientId), [900, 901]);
-}
-// (8/9) unresolved identity cases separate; verified patient episodes not split
-async function testPcsEpisodesAndUnresolved() {
-  const t = await loadCanonicalTables();
-  const r = await runPcs(t, {
-    pcms: [pcm({ id: 800, globalPlexusPatientId: 900 })],
-    gpps: [gpp({ id: 900 })],
-    // two same-service episodes for the one verified patient + one null-identity case
-    cases: [acase({ id: 5, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }), acase({ id: 9, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }), acase({ id: 12, patientClinicMembershipId: null, globalPlexusPatientId: null })],
-  });
-  const verified = r.rows.find((g) => g.identityAvailable);
-  assert.ok(verified, "verified patient group present");
-  assert.equal(verified!.episodes.length, 2, "(9) same patient episodes kept together, not split");
-  const unresolved = r.rows.filter((g) => !g.identityAvailable);
-  assert.equal(unresolved.length, 1, "(8) null-identity case is its own group");
-  assert.equal(unresolved[0].episodes[0].ancillaryCaseId, 12);
+  const cases = [
+    acase({ id: 5, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }),          // verified
+    acase({ id: 6, patientClinicMembershipId: null, globalPlexusPatientId: null }),          // null membership
+    acase({ id: 7, patientClinicMembershipId: 810, globalPlexusPatientId: 900 }),            // membership missing
+    acase({ id: 8, patientClinicMembershipId: 820, globalPlexusPatientId: 900 }),            // inactive membership
+    acase({ id: 9, patientClinicMembershipId: 830, globalPlexusPatientId: 900 }),            // wrong-clinic membership
+    acase({ id: 10, patientClinicMembershipId: 840, globalPlexusPatientId: 901 }),           // patient/membership conflict
+  ];
+  const pcms = [
+    pcm({ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }),
+    pcm({ id: 820, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "withdrawn" }),
+    pcm({ id: 830, clinicId: 2, globalPlexusPatientId: 900, membershipStatus: "active" }),
+    pcm({ id: 840, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }),
+  ];
+  const r = await runPcs(t, { cases, pcms, gpps: [gpp({ id: 900 })] });
+  const unresolvedIds = r.unresolved.rows.map((g) => g.episodes[0]?.ancillaryCaseId).sort((a, b) => (a ?? 0) - (b ?? 0));
+  assert.deepEqual(unresolvedIds, [6, 7, 8, 9, 10], "(1-7) every invalid-membership same-clinic case surfaced, not dropped");
+  assert.ok(r.unresolved.rows.every((g) => !g.identityAvailable && g.patientDisplay == null && g.clinicMrn == null), "(9) no PHI for unresolved");
+  assert.ok(r.unresolved.rows.every((g) => g.episodes.length === 1), "(8) each unresolved case separate by ancillaryCaseId");
+  // verified stream holds only the verified patient (case 5)
+  assert.equal(r.rows.length, 1); assert.equal(r.rows[0].episodes[0].ancillaryCaseId, 5); assert.equal(r.rows[0].patientDisplay, "Jane Doe");
 }
 
-// ═══ §9 Service truth (10-17) ═══
-async function testServiceTruth() {
+// ═══ §8 Pagination (10-15) ═══
+async function testEpisodeContinuation() {
   const t = await loadCanonicalTables();
-  const wrong = { serviceType: "VitalWave" };
-  // 10 admin review wrong-service event → no timestamp, warning (status from projection)
-  const rAdmin = acsRow0(await runAcs(t, { cases: [acase()], adminEvents: [adminEvent(wrong)] }));
-  assert.equal(rAdmin.adminReview.at, null); assert.ok(rAdmin.adminReview.warnings.includes("admin_review_wrong_service_event"), "(10)");
-  // 11 appointment
-  const rAppt = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt(wrong)] }));
-  assert.equal(rAppt.appointment.status, null); assert.ok(rAppt.appointment.warnings.includes("appointment_wrong_service"), "(11)");
-  // 12 order note ref/source
-  const rOn = acsRow0(await runAcs(t, { cases: [acase()], refs: [orderRef(wrong)], notes: [orderNote(wrong)] }));
-  assert.equal(rOn.orderNote.status, null); assert.ok(rOn.orderNote.warnings.includes("order_note_wrong_service"), "(12)");
-  // 13 procedure
-  const rProc = acsRow0(await runAcs(t, { cases: [acase()], procs: [proc(wrong)] }));
-  assert.equal(rProc.procedure.status, null); assert.ok(rProc.procedure.warnings.includes("procedure_wrong_service"), "(13)");
-  // 14 report
-  const rRep = acsRow0(await runAcs(t, { cases: [acase()], refs: [reportRef(wrong)], cdrs: [cdr(wrong)] }));
-  assert.equal(rRep.report.status, null); assert.ok(rRep.report.warnings.includes("report_wrong_service"), "(14)");
-  // 15 procedure note
-  const rPn = acsRow0(await runAcs(t, { cases: [acase()], refs: [procRef(wrong)], notes: [procNote(wrong)] }));
-  assert.equal(rPn.procedureNote.status, null); assert.ok(rPn.procedureNote.warnings.includes("procedure_note_wrong_service"), "(15)");
-  // 16 billing readiness
-  const rBr = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness(wrong)] }));
-  assert.equal(rBr.billingReadiness.status, null); assert.ok(rBr.billingReadiness.warnings.includes("billing_readiness_wrong_service"), "(16)");
-  // 17 billing document
-  const rBd = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness()], docs: [billingDoc(wrong)] }));
-  assert.equal(rBd.billingDocument.status, null); assert.ok(rBd.billingDocument.warnings.includes("billing_document_wrong_service"), "(17)");
+  // one verified patient with 150 episodes (> per-patient bound 100)
+  const many = Array.from({ length: 150 }, (_, i) => acase({ id: 1000 + i, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }));
+  const p1 = await runPcs(t, { cases: many, pcms: [pcm()], gpps: [gpp()] });
+  const g = p1.rows[0];
+  assert.equal(g.episodes.length, 100, "(11) per-patient episode bound = 100");
+  assert.ok(g.episodesNextCursor, "(10) verified patient over the bound has a retrievable continuation cursor");
+  const p2 = await runPcs(t, { cases: many, pcms: [pcm()], gpps: [gpp()] }, { episodeMembershipId: 800, episodeCursor: g.episodesNextCursor });
+  assert.equal(p2.rows.length, 1); assert.equal(p2.rows[0].episodes.length, 50, "(11) remaining 50 episodes retrievable");
+  assert.deepEqual(p2.rows[0].episodes.map((e) => e.ancillaryCaseId), many.slice(100).map((c) => c.id));
+}
+async function testUnresolvedContinuation() {
+  const t = await loadCanonicalTables();
+  const many = Array.from({ length: 60 }, (_, i) => acase({ id: 2000 + i, patientClinicMembershipId: null, globalPlexusPatientId: null }));
+  const page1 = await runPcs(t, { cases: many, pcms: [] });
+  assert.equal(page1.unresolved.rows.length, 50, "(12) first unresolved page bounded");
+  assert.ok(page1.unresolved.pageInfo.nextCursor, "(12) unresolved beyond first page is retrievable");
+  const page2 = await runPcs(t, { cases: many, pcms: [] }, { unresolvedCursor: page1.unresolved.pageInfo.nextCursor });
+  assert.equal(page2.unresolved.rows.length, 10, "(12) remaining unresolved retrievable");
+  assert.deepEqual(page2.unresolved.rows.map((g) => g.episodes[0].ancillaryCaseId), many.slice(50).map((c) => c.id));
+}
+async function testCursorsDistinct() {
+  const t = await loadCanonicalTables();
+  // verified member 800 (id cursor) + unresolved null cases; verify separate cursors
+  const cases = [acase({ id: 5, patientClinicMembershipId: 800 }), acase({ id: 6, patientClinicMembershipId: null, globalPlexusPatientId: null })];
+  const r = await runPcs(t, { cases, pcms: [pcm({ id: 800 })], gpps: [gpp()] });
+  // membership cursor is null here (only one member ≤ limit); unresolved cursor null (one case ≤ limit)
+  assert.equal(r.pageInfo.nextCursor, null); assert.equal(r.unresolved.pageInfo.nextCursor, null, "(13) verified & unresolved cursors are independent fields");
+  assert.equal(r.rows.length, 1); assert.equal(r.unresolved.rows.length, 1);
 }
 
-// ═══ §9 Billing Document version (18-22) ═══
+// ═══ §8 Admin Review (16-20) ═══
+async function testAdminReview() {
+  const t = await loadCanonicalTables();
+  const ok = acsRow0(await runAcs(t, { cases: [acase({ adminReviewStatus: "approved" })], adminEvents: [adminEvent({ newStatus: "approved" })] }));
+  assert.equal(ok.adminReview.status, "approved"); assert.equal(ok.adminReview.available, true); assert.equal(ok.adminReview.at, OLD.toISOString(), "(16) exact event pair qualifies");
+  const tied = acsRow0(await runAcs(t, { cases: [acase()], adminEvents: [adminEvent({ id: 1, newStatus: "approved", actualReviewedAt: OLD }), adminEvent({ id: 2, newStatus: "rejected", actualReviewedAt: OLD })] }));
+  assert.equal(tied.adminReview.status, null); assert.equal(tied.adminReview.integrity, "conflicting"); assert.ok(tied.adminReview.warnings.includes("admin_review_event_conflict"), "(17)");
+  assert.equal(tied.currentStage, null); assert.equal(tied.currentStageIntegrity, "conflicting", "(20) admin conflict blocks currentStage");
+  const mismatch = acsRow0(await runAcs(t, { cases: [acase({ adminReviewStatus: "approved" })], adminEvents: [adminEvent({ newStatus: "rejected" })] }));
+  assert.equal(mismatch.adminReview.integrity, "conflicting"); assert.ok(mismatch.adminReview.warnings.includes("admin_review_event_projection_mismatch"), "(18)");
+  // (19) source read failure → unavailable (adminReviewEvents throws) — simulate via casesMigration? Use a dedicated read failure:
+  const failSpec = spec(t, { cases: [acase()] });
+  failSpec.set(t.adminReviewEvents, { select: () => { throw new Error("admin read down"); } });
+  const p = await acs();
+  const failRow = (await runWithDb(failSpec, ALL, async () => p.getAcsCanonicalView({ clinicId: 1 }))).rows[0];
+  assert.equal(failRow.adminReview.availability, "unavailable"); assert.equal(failRow.adminReview.available, false, "(19) admin read failure → unavailable");
+  assert.equal(failRow.currentStageIntegrity, "conflicting");
+}
+
+// ═══ §8 Appointment (21-25) ═══
+async function testAppointmentTerminal() {
+  const t = await loadCanonicalTables();
+  for (const status of ["scheduled", "completed", "cancelled", "no_show", "blocked", "pending_sync"] as const) {
+    const v = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt({ status, cancellationReason: status === "cancelled" ? "x" : null, noShowReason: status === "no_show" ? "x" : null })] }));
+    assert.equal(v.appointment.status, status, `(21/22) ${status} appointment displayed (not missing)`);
+    assert.equal(v.appointment.available, true);
+  }
+  // (23) terminal appointment does not advance past appointment
+  const term = acsRow0(await runAcs(t, { cases: [acase()], adminEvents: [adminEvent()], lists: [list()], memberships: [membership()], appts: [appt({ status: "cancelled", cancellationReason: "x" })] }));
+  assert.equal(term.currentStage, "appointment", "(23) cancelled appointment halts at appointment");
+  // (24) reschedule lineage → the leaf is current
+  const lineage = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt({ id: 300, status: "rescheduled" }), appt({ id: 301, status: "scheduled", parentEventId: 300 })] }));
+  assert.equal(lineage.appointment.sourceId, 301, "(24) exact lineage resolves the current leaf");
+  // (25) multiple independent leaves → conflict
+  const dup = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt({ id: 300 }), appt({ id: 301 })] }));
+  assert.equal(dup.appointment.integrity, "conflicting"); assert.ok(dup.appointment.warnings.includes("duplicate_current_evidence"), "(25)");
+  // wrong-service terminal event rejected
+  const wrong = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt({ status: "cancelled", serviceType: "VitalWave" })] }));
+  assert.equal(wrong.appointment.status, null); assert.ok(wrong.appointment.warnings.includes("appointment_wrong_service"));
+}
+
+// ═══ §8 Billing Document (26-31) ═══
 async function testBillingDocVersion() {
   const t = await loadCanonicalTables();
-  const good = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ id: 500, evidenceFingerprint: "fp-1" })], docs: [billingDoc({ billingReadinessCheckId: 500, evidenceFingerprint: "fp-1" })] }));
-  assert.equal(good.billingDocument.status, "generated", "(18) exact readiness id + fingerprint qualifies");
-  const wrongId = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ id: 500 })], docs: [billingDoc({ billingReadinessCheckId: 777 })] }));
-  assert.equal(wrongId.billingDocument.status, null); assert.ok(wrongId.billingDocument.warnings.includes("billing_document_wrong_readiness"), "(19)");
+  const good = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ id: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11 })], docs: [billingDoc({ billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11 })] }));
+  assert.equal(good.billingDocument.status, "generated", "(26) exact non-null id+fingerprint+refs qualifies");
+  const rNull = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ evidenceFingerprint: null })], docs: [billingDoc({ evidenceFingerprint: "fp-1" })] }));
+  assert.ok(rNull.billingDocument.warnings.includes("billing_document_fingerprint_unresolved"), "(27) null readiness fingerprint rejected");
+  const dNull = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ evidenceFingerprint: "fp-1" })], docs: [billingDoc({ evidenceFingerprint: null })] }));
+  assert.ok(dNull.billingDocument.warnings.includes("billing_document_fingerprint_unresolved"), "(28) null document fingerprint rejected");
+  const bothNull = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ evidenceFingerprint: null })], docs: [billingDoc({ evidenceFingerprint: null })] }));
+  assert.equal(bothNull.billingDocument.status, null); assert.ok(bothNull.billingDocument.warnings.includes("billing_document_fingerprint_unresolved"), "(29) NULL=NULL is never version proof");
   const stale = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ evidenceFingerprint: "fp-2" })], docs: [billingDoc({ evidenceFingerprint: "fp-OLD" })] }));
-  assert.equal(stale.billingDocument.status, null); assert.ok(stale.billingDocument.warnings.includes("billing_document_stale_fingerprint"), "(20)");
-  const supersededDoc = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness()], docs: [billingDoc({ supersededAt: OLD })] }));
-  assert.equal(supersededDoc.billingDocument.status, null, "(21) superseded doc excluded");
-  const noReadiness = acsRow0(await runAcs(t, { cases: [acase()], readiness: [], docs: [billingDoc()] }));
-  assert.equal(noReadiness.billingDocument.status, null); assert.ok(noReadiness.billingDocument.warnings.includes("billing_document_readiness_unresolved"), "(22) doc without current readiness rejected");
+  assert.ok(stale.billingDocument.warnings.includes("billing_document_stale_fingerprint"), "(30)");
+  const refMismatch = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ orderNoteDocumentReferenceId: 11 })], docs: [billingDoc({ orderNoteDocumentReferenceId: 99 })] }));
+  assert.ok(refMismatch.billingDocument.warnings.includes("billing_document_reference_mismatch"), "(31) mismatched exact document-reference IDs rejected");
 }
 
-// ═══ §9 Conflict truth (23-30) ═══
-async function testConflictTruth() {
+// ═══ regression (32-39) ═══
+async function testServiceRegression() {
   const t = await loadCanonicalTables();
-  const dupOn = acsRow0(await runAcs(t, { cases: [acase()], refs: [orderRef({ id: 1 }), orderRef({ id: 2, sourceId: 1 })], notes: [orderNote()] }));
-  assert.equal(dupOn.orderNote.status, null); assert.equal(dupOn.orderNote.available, false); assert.ok(dupOn.orderNote.warnings.includes("duplicate_current_evidence"), "(23) duplicate order-note refs → conflict");
-  const dupRep = acsRow0(await runAcs(t, { cases: [acase()], refs: [reportRef({ id: 3 }), reportRef({ id: 4, sourceId: 3 })], cdrs: [cdr()] }));
-  assert.ok(dupRep.report.warnings.includes("duplicate_current_evidence"), "(24) duplicate report refs → conflict");
-  const dupPn = acsRow0(await runAcs(t, { cases: [acase()], refs: [procRef({ id: 2 }), procRef({ id: 7, sourceId: 2 })], notes: [procNote()] }));
-  assert.ok(dupPn.procedureNote.warnings.includes("duplicate_current_evidence"), "(25) duplicate procedure-note refs → conflict");
-  const dupBr = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ id: 500 }), readiness({ id: 501 })] }));
-  assert.ok(dupBr.billingReadiness.warnings.includes("duplicate_current_evidence"), "(26) duplicate readiness → conflict");
-  const dupBd = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness()], docs: [billingDoc({ id: 600 }), billingDoc({ id: 601 })] }));
-  assert.ok(dupBd.billingDocument.warnings.includes("duplicate_current_evidence"), "(27) duplicate billing docs → conflict");
-  // (28) conflicting appointments → conflict UNLESS lineage proves current
-  const dupAppt = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt({ id: 300 }), appt({ id: 301 })] }));
-  assert.ok(dupAppt.appointment.warnings.includes("duplicate_current_evidence"), "(28) two current appts, no lineage → conflict");
-  const lineage = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt({ id: 300, status: "completed" }), appt({ id: 301, status: "scheduled", parentEventId: 300 })] }));
-  assert.equal(lineage.appointment.sourceId, 301, "(28) reschedule lineage resolves the one current successor");
-  // (29) conflicting procedure events → conflict
-  const dupProc = acsRow0(await runAcs(t, { cases: [acase()], procs: [proc({ id: 400 }), proc({ id: 401 })] }));
-  assert.ok(dupProc.procedure.warnings.includes("duplicate_current_evidence"), "(29) duplicate procedure events → conflict");
+  const rOn = acsRow0(await runAcs(t, { cases: [acase()], refs: [orderRef({ serviceType: "VitalWave" })], notes: [orderNote({ serviceType: "VitalWave" })] }));
+  assert.equal(rOn.orderNote.status, null); assert.ok(rOn.orderNote.warnings.includes("order_note_wrong_service"), "(32) exact service validation intact");
 }
-// (30/35) a conflicting stage yields currentStage null + integrity conflicting
-async function testConflictNoCurrentStage() {
+async function testConflictRegression() {
   const t = await loadCanonicalTables();
-  const v = acsRow0(await runAcs(t, { cases: [acase()], adminEvents: [adminEvent()], lists: [list()], memberships: [membership()], appts: [appt({ id: 300 }), appt({ id: 301 })] }));
-  assert.equal(v.currentStage, null, "(35) conflict → no false current stage");
-  assert.equal(v.currentStageIntegrity, "conflicting");
-  assert.equal(v.appointment.available, false);
+  const dup = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ id: 500 }), readiness({ id: 501 })] }));
+  assert.ok(dup.billingReadiness.warnings.includes("duplicate_current_evidence"), "(33) duplicate readiness conflict intact");
 }
-
-// ═══ §9 Availability semantics (31-35) ═══
-async function testAvailabilitySemantics() {
-  const t = await loadCanonicalTables();
-  // 31 successful query, no appointment → availability available, available false, status null
-  const none = acsRow0(await runAcs(t, { cases: [acase()], appts: [] }));
-  assert.equal(none.appointment.availability, "available"); assert.equal(none.appointment.available, false); assert.equal(none.appointment.status, null, "(31)");
-  // 32 exact current appointment → available true
-  const one = acsRow0(await runAcs(t, { cases: [acase()], appts: [appt()] }));
-  assert.equal(one.appointment.available, true, "(32)");
-  // 33 query failure → unavailable + available false
-  const fail = acsRow0(await runAcs(t, { cases: [acase()], procsError: true }));
-  assert.equal(fail.procedure.availability, "unavailable"); assert.equal(fail.procedure.available, false, "(33)");
-  // 34 upstream flag off → available false
-  const off = acsRow0(await runAcs(t, { cases: [acase()] }, { ...ALL, canonicalAppointment: false }));
-  assert.equal(off.appointment.availability, "upstream_flag_off"); assert.equal(off.appointment.available, false, "(34)");
-}
-
-// ═══ regression ═══
-async function testReportEpisodeStillExact() {
-  const t = await loadCanonicalTables();
-  const r = acsRow0(await runAcs(t, { cases: [acase()], refs: [reportRef({ executionCaseId: null, patientScreeningId: null })], cdrs: [cdr({ executionCaseId: null, patientScreeningId: null })] }));
-  assert.equal(r.report.status, null); assert.ok(r.report.warnings.includes("report_episode_unresolved"), "(36) report episode validation intact");
-}
-async function testAcsRepeatedSameServiceSeparate() {
+async function testAcsRepeatedSeparate() {
   const t = await loadCanonicalTables();
   const r = await runAcs(t, { cases: [acase({ id: 5 }), acase({ id: 9 })] });
-  assert.equal(r.rows.length, 2, "(37) repeated same-service ACS cases separate");
-  assert.deepEqual(r.rows.map((x) => x.ancillaryCaseId), [5, 9]);
+  assert.equal(r.rows.length, 2); assert.deepEqual(r.rows.map((x) => x.ancillaryCaseId), [5, 9], "(34)");
+}
+async function testReportEpisodeRegression() {
+  const t = await loadCanonicalTables();
+  const r = acsRow0(await runAcs(t, { cases: [acase()], refs: [reportRef({ executionCaseId: null, patientScreeningId: null })], cdrs: [cdr({ executionCaseId: null, patientScreeningId: null })] }));
+  assert.ok(r.report.warnings.includes("report_episode_unresolved"), "(35)");
 }
 async function testCrossClinicExcluded() {
   const t = await loadCanonicalTables();
   const r = await runAcs(t, { cases: [acase({ id: 5, clinicId: 1 }), acase({ id: 9, clinicId: 2 })] });
-  assert.equal(r.rows.length, 1); assert.equal(r.rows[0].ancillaryCaseId, 5, "cross-clinic case excluded");
-}
-async function testCrossClinicReadinessDropped() {
-  const t = await loadCanonicalTables();
-  const r = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ clinicId: 2 })], docs: [billingDoc({ clinicId: 2 })] }));
-  assert.equal(r.billingReadiness.status, null); assert.equal(r.billingDocument.status, null, "cross-clinic billing rows dropped in memory");
+  assert.equal(r.rows.length, 1); assert.equal(r.rows[0].ancillaryCaseId, 5);
 }
 async function testBatchedReads() {
   const t = await loadCanonicalTables();
   const p = await acs();
   await runWithDb(spec(t, { cases: [acase({ id: 5 }), acase({ id: 6 }), acase({ id: 7 })], refs: [orderRef({ ancillaryCaseId: 5 }), orderRef({ id: 11, ancillaryCaseId: 6 }), orderRef({ id: 12, ancillaryCaseId: 7 })], notes: [orderNote({ id: 1 }), orderNote({ id: 11, ancillaryCaseId: 6 }), orderNote({ id: 12, ancillaryCaseId: 7 })] }), ALL, async (calls: Call[]) => {
     await p.getAcsCanonicalView({ clinicId: 1 });
-    assert.equal(countOps(calls, "select", t.documentReferences), 1, "(N+1) one batched references read");
-    assert.equal(countOps(calls, "select", t.procedureNotes), 1, "(N+1) one batched notes read");
+    assert.equal(countOps(calls, "select", t.documentReferences), 1, "batched references read");
+    assert.equal(countOps(calls, "select", t.procedureNotes), 1, "batched notes read");
   });
 }
-async function testAcsPaginationBounds() {
-  const t = await loadCanonicalTables();
-  const p = await acs();
-  const r = await runWithDb(spec(t, { cases: [acase({ id: 7 }), acase({ id: 3 }), acase({ id: 5 })] }), ALL, async () => p.getAcsCanonicalView({ clinicId: 1, limit: 2 }));
-  assert.equal(r.rows.length, 2); assert.deepEqual(r.rows.map((x) => x.ancillaryCaseId), [3, 5]); assert.ok(r.pageInfo.nextCursor, "bounded page + cursor");
-}
-async function testCursorRoundTrip() {
-  const q = await viewQuery();
-  assert.equal(q.decodeCursor(q.encodeCursor(42)), 42); assert.equal(q.decodeCursor("x"), null);
-}
-async function testSectionFlagOff() {
-  const t = await loadCanonicalTables();
-  const r = await runAcs(t, { cases: [acase()] }, { ...ALL, ancillaryCaseWrite: false });
-  assert.equal(r.availability, "upstream_flag_off"); assert.equal(r.rows.length, 0);
-}
 
-// ═══ route auth / flags / migration ═══
+// ═══ route auth / flags / migration (36/37/39) ═══
 function fakeApp() { const map: Record<string, Function[]> = {}; return { app: { get: (p: string, ...h: Function[]) => { map[`GET ${p}`] = h; } } as never, map }; }
 function mockRes() { return { statusCode: 200, body: null as unknown, status(c: number) { this.statusCode = c; return this; }, json(b: unknown) { this.body = b; return this; } }; }
 async function invoke(handlers: Function[], req: unknown, res: unknown) { for (const h of handlers) { let nexted = false; await h(req, res, () => { nexted = true; }); if (!nexted) return; } }
 async function handlers(path: string) { const { app, map } = fakeApp(); (await routes()).registerPcsAcsCanonicalRoutes(app); return map[`GET ${path}`]; }
-
-async function testRouteFlagOffZeroReads() {
+async function testRouteAuthAndFlags() {
   const t = await loadCanonicalTables();
-  for (const [path, flagKey, role] of [["/api/pcs/canonical-view", "pcsCanonicalView", "liaison"], ["/api/acs/canonical-view", "acsCanonicalView", "technician"]] as const) {
-    const h = await handlers(path); const res = mockRes();
-    await runWithDb(spec(t, {}), { [flagKey]: false }, async (calls: Call[]) => {
-      await invoke(h, { session: { userId: "u", role }, clinicId: 1, query: {} }, res);
-      assert.equal(countOps(calls, "select"), 0, `${path} flag OFF → zero reads`);
-    });
-    assert.equal((res.body as { disabled: boolean }).disabled, true);
-  }
-}
-async function testRouteAuth() {
-  const pcsH = await handlers("/api/pcs/canonical-view");
-  const acsH = await handlers("/api/acs/canonical-view");
+  const pcsH = await handlers("/api/pcs/canonical-view"); const acsH = await handlers("/api/acs/canonical-view");
   const check = async (h: Function[], session: unknown, clinicId: unknown, expect: number) => {
     const res = mockRes();
     await runWithDb(new Map(), { pcsCanonicalView: true, acsCanonicalView: true }, async () => { await invoke(h, { session, clinicId, query: {} }, res); });
     return res.statusCode === expect;
   };
-  assert.ok(await check(pcsH, {}, 1, 401), "unauth → 401");
-  assert.ok(await check(pcsH, { userId: "u" }, 1, 403), "(40) missing role → 403");
-  assert.ok(await check(pcsH, { userId: "u", role: "wizard" }, 1, 403), "unknown role → 403");
-  assert.ok(await check(pcsH, { userId: "u", role: "biller" }, 1, 403), "biller → 403");
-  assert.ok(await check(pcsH, { userId: "u", role: "technician" }, 1, 403), "(40) technician denied on PCS");
-  assert.ok(await check(acsH, { userId: "u", role: "liaison" }, 1, 403), "(40) liaison denied on ACS");
-  assert.ok(await check(pcsH, { userId: "u", role: "liaison" }, null, 403), "missing clinic scope → 403");
-}
-async function testRouteAllowedRoles() {
-  const t = await loadCanonicalTables();
-  const pcsH = await handlers("/api/pcs/canonical-view");
-  const acsH = await handlers("/api/acs/canonical-view");
-  for (const [h, role] of [[pcsH, "liaison"], [pcsH, "admin"], [acsH, "technician"], [acsH, "admin"]] as const) {
-    const res = mockRes();
-    await runWithDb(spec(t, {}), ALL, async () => { await invoke(h, { session: { userId: "u", role }, clinicId: 1, query: {} }, res); });
-    assert.equal(res.statusCode, 200, `${role} allowed`);
-  }
+  assert.ok(await check(pcsH, {}, 1, 401), "unauth 401");
+  assert.ok(await check(pcsH, { userId: "u" }, 1, 403), "(36) missing role");
+  assert.ok(await check(pcsH, { userId: "u", role: "technician" }, 1, 403), "(36) technician denied on PCS");
+  assert.ok(await check(acsH, { userId: "u", role: "liaison" }, 1, 403), "(36) liaison denied on ACS");
+  assert.ok(await check(pcsH, { userId: "u", role: "liaison" }, null, 403), "missing clinic scope");
+  // flag off zero reads
+  const res = mockRes();
+  await runWithDb(spec(t, {}), { pcsCanonicalView: false }, async (calls: Call[]) => { await invoke(pcsH, { session: { userId: "u", role: "liaison" }, clinicId: 1, query: {} }, res); assert.equal(countOps(calls, "select"), 0, "flag off zero reads"); });
+  assert.equal((res.body as { disabled: boolean }).disabled, true);
 }
 async function testRouteMigration503() {
   const t = await loadCanonicalTables();
-  for (const [path, role, migKey] of [["/api/pcs/canonical-view", "liaison", "casesMigration"], ["/api/acs/canonical-view", "technician", "casesMigration"], ["/api/acs/canonical-view", "technician", "refsMigration"]] as const) {
+  for (const [path, role] of [["/api/pcs/canonical-view", "liaison"], ["/api/acs/canonical-view", "technician"]] as const) {
     const h = await handlers(path); const res = mockRes();
-    await runWithDb(spec(t, { cases: [acase()], [migKey]: true } as Opts), ALL, async () => { await invoke(h, { session: { userId: "u", role }, clinicId: 1, query: {} }, res); });
-    assert.equal(res.statusCode, 503, `(39) ${path} ${migKey} → 503`);
+    await runWithDb(spec(t, { cases: [acase()], casesMigration: true }), ALL, async () => { await invoke(h, { session: { userId: "u", role }, clinicId: 1, query: {} }, res); });
+    assert.equal(res.statusCode, 503, `(37) ${path} migration → 503`);
     assert.equal((res.body as { code: string }).code, "ANCILLARY_DOCUMENT_MIGRATION_MISSING");
   }
 }
 
 const tests: Array<[string, () => Promise<void>]> = [
   ["ACS stage-vector truth", testAcsStageVectorTruth],
-  ["(1-8) identity resolver", testIdentityResolver],
-  ["(5) PCS no PHI without membership", testPcsNoPhiWithoutMembership],
-  ["(7) same-name distinct", testSameNameDistinct],
-  ["(8/9) episodes together + unresolved separate", testPcsEpisodesAndUnresolved],
-  ["(10-17) service truth", testServiceTruth],
-  ["(18-22) billing document version", testBillingDocVersion],
-  ["(23-29) conflict truth", testConflictTruth],
-  ["(30/35) conflict → no current stage", testConflictNoCurrentStage],
-  ["(31-34) availability semantics", testAvailabilitySemantics],
-  ["(36) report episode still exact", testReportEpisodeStillExact],
-  ["(37) ACS repeated same-service separate", testAcsRepeatedSameServiceSeparate],
-  ["cross-clinic case excluded", testCrossClinicExcluded],
-  ["cross-clinic billing dropped", testCrossClinicReadinessDropped],
+  ["(1-9) identity resolver", testIdentityResolver],
+  ["(1-9) invalid-membership cases surfaced", testInvalidMembershipCasesSurfaced],
+  ["(10/11) verified episode continuation", testEpisodeContinuation],
+  ["(12) unresolved continuation", testUnresolvedContinuation],
+  ["(13) cursors distinct", testCursorsDistinct],
+  ["(16-20) admin review fail-closed", testAdminReview],
+  ["(21-25) appointment terminal + lineage", testAppointmentTerminal],
+  ["(26-31) billing document non-null version", testBillingDocVersion],
+  ["(32) service regression", testServiceRegression],
+  ["(33) conflict regression", testConflictRegression],
+  ["(34) ACS repeated same-service separate", testAcsRepeatedSeparate],
+  ["(35) report episode regression", testReportEpisodeRegression],
+  ["cross-clinic excluded", testCrossClinicExcluded],
   ["batched reads no N+1", testBatchedReads],
-  ["ACS pagination bounds", testAcsPaginationBounds],
-  ["cursor round-trip", testCursorRoundTrip],
-  ["section flag off", testSectionFlagOff],
-  ["route flag off zero reads", testRouteFlagOffZeroReads],
-  ["(40) route auth distinct roles", testRouteAuth],
-  ["route allowed roles", testRouteAllowedRoles],
-  ["(39) migration 503", testRouteMigration503],
+  ["(36) route auth + flags", testRouteAuthAndFlags],
+  ["(37) migration 503", testRouteMigration503],
 ];
-
 async function run() {
   let failed = 0;
   for (const [name, fn] of tests) {

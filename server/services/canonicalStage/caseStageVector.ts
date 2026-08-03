@@ -57,7 +57,6 @@ const SCAN_LIMIT = 5000; // bounded across the (already bounded) case page
 
 const NOTE_UNSIGNED_CURRENT = new Set(["needs_signature", "ready_to_sign", "returned_for_correction"]);
 const REPORT_CURRENT = new Set(["uploaded", "generated", "approved", "completed"]);
-const APPT_CURRENT = new Set(["scheduled", "completed"]);
 
 export class MigrationMissingError extends Error {
   readonly code = MIGRATION_MISSING_CODE;
@@ -74,16 +73,23 @@ async function loadOrNull<T>(fn: () => Promise<T>): Promise<{ ok: true; rows: T 
 }
 
 /** Build a stage. `available` is TRUE only when a single exact current source was
- *  proven (default: availability available AND a non-null status), per §6. */
+ *  proven (default: availability available AND a non-null status), per §6. The
+ *  normalized `integrity` field (resolved/missing/conflicting) is derived so
+ *  deriveCurrentStage never keys on warning strings (§4). */
 const stage = (o: Partial<StageStatus> & { availability: StageAvailability }): StageStatus => {
   const availability = o.availability;
   const status = o.status ?? null;
   const available = o.available ?? (availability === "available" && status != null);
-  return { status, availability, available, sourceId: o.sourceId ?? null, at: o.at ?? null, warnings: o.warnings ?? [] };
+  const integrity: StageStatus["integrity"] = o.integrity ?? (
+    availability === "available" ? (available ? "resolved" : "missing")
+    : availability === "upstream_flag_off" ? "missing"
+    : "conflicting" // unavailable / migration_missing
+  );
+  return { status, availability, available, integrity, sourceId: o.sourceId ?? null, at: o.at ?? null, warnings: o.warnings ?? [] };
 };
 const upstreamOff = (code: string): StageStatus => stage({ availability: "upstream_flag_off", warnings: [code] });
 const unavailable = (code: string): StageStatus => stage({ availability: "unavailable", warnings: [code] });
-const conflictStage = (code = "duplicate_current_evidence"): StageStatus => stage({ availability: "available", status: null, available: false, warnings: [code] });
+const conflictStage = (code = "duplicate_current_evidence"): StageStatus => stage({ availability: "available", status: null, available: false, integrity: "conflicting", warnings: [code] });
 
 function tally(list: { code: string }[]): CodeCount[] {
   const m = new Map<string, number>();
@@ -182,26 +188,26 @@ type Ctx = {
 function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
   const svc = c.serviceType;
 
-  // ── Admin Review — status from the case projection (always). A single latest
-  // event whose service + status agree supplies the timestamp; a conflict/wrong
-  // service supplies only a warning (status stays the authoritative projection).
+  // ── Admin Review — FAILS CLOSED against the exact event stream (§4). The event
+  // stream OFF → the source system is not enabled (upstream_flag_off). ON: exactly
+  // one latest service-matching event that AGREES with the projection → resolved;
+  // a read failure → unavailable; tied conflicting latest → conflict; a latest
+  // event that disagrees with the projection → conflict; no event → missing (the
+  // case projection is derived from events, never independent, so it alone cannot
+  // resolve the stage). currentStage never advances past a conflicting Admin Review.
   const adminReview = (() => {
-    if (!ctx.adminGate) return stage({ status: c.adminReviewStatus ?? null, availability: "available", available: c.adminReviewStatus != null });
-    if (!ctx.adminOk) return stage({ status: c.adminReviewStatus ?? null, availability: "available", available: c.adminReviewStatus != null, warnings: ["admin_review_event_read_failed"] });
+    if (!ctx.adminGate) return upstreamOff("admin_review_event_flag_off");
+    if (!ctx.adminOk) return stage({ availability: "unavailable", integrity: "conflicting", warnings: ["admin_review_event_read_failed"] });
     const all = ctx.adminByCase.get(c.id) ?? [];
-    const warnings: string[] = [];
-    if (all.some((e) => e.serviceType !== svc)) warnings.push("admin_review_wrong_service_event");
+    const wrongSvc = all.some((e) => e.serviceType !== svc);
     const svcEvents = all.filter((e) => e.serviceType === svc);
-    let at: string | null = null;
-    if (svcEvents.length) {
-      let maxAt = -Infinity; for (const e of svcEvents) { const ts = new Date(e.actualReviewedAt as unknown as Date).getTime(); if (ts > maxAt) maxAt = ts; }
-      const latest = svcEvents.filter((e) => new Date(e.actualReviewedAt as unknown as Date).getTime() === maxAt);
-      const statuses = new Set(latest.map((e) => e.newStatus));
-      if (latest.length > 1 && statuses.size > 1) warnings.push("admin_review_event_conflict");
-      else if (latest[0].newStatus !== c.adminReviewStatus) warnings.push("admin_review_event_projection_mismatch");
-      else at = iso(latest[0].actualReviewedAt);
-    }
-    return stage({ status: c.adminReviewStatus ?? null, availability: "available", available: c.adminReviewStatus != null, at, warnings });
+    if (svcEvents.length === 0) return stage({ status: null, availability: "available", available: false, integrity: "missing", warnings: wrongSvc ? ["admin_review_wrong_service_event"] : ["admin_review_event_missing"] });
+    let maxAt = -Infinity; for (const e of svcEvents) { const ts = new Date(e.actualReviewedAt as unknown as Date).getTime(); if (ts > maxAt) maxAt = ts; }
+    const latest = svcEvents.filter((e) => new Date(e.actualReviewedAt as unknown as Date).getTime() === maxAt);
+    const statuses = new Set(latest.map((e) => e.newStatus));
+    if (latest.length > 1 && statuses.size > 1) return stage({ status: null, availability: "available", available: false, integrity: "conflicting", warnings: ["admin_review_event_conflict"] });
+    if (latest[0].newStatus !== c.adminReviewStatus) return stage({ status: null, availability: "available", available: false, integrity: "conflicting", warnings: ["admin_review_event_projection_mismatch"] });
+    return stage({ status: c.adminReviewStatus ?? null, availability: "available", available: c.adminReviewStatus != null, at: iso(latest[0].actualReviewedAt) });
   })();
 
   // ── Engagement ──
@@ -211,15 +217,18 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     ? { ...upstreamOff("engagement_flag_off"), memberships: [] as EngagementMembershipRow[], lastSentAt: null }
     : { ...stage({ status: mships.length ? "member" : null, availability: "available", available: mships.length > 0, at: lastSentAt }), memberships: mships, lastSentAt };
 
-  // ── Appointment — current = qualifying event not superseded by a rescheduled
-  // child. >1 current with no lineage successor → conflict. ──
+  // ── Appointment — the current canonical appointment is the exact lineage LEAF.
+  // Terminal outcomes (cancelled/no_show/blocked/pending_sync) are preserved as-is
+  // (never turned into "missing"); a terminal leaf halts progression truthfully.
+  // >1 independent current leaf → conflict (no first/newest/most-advanced pick). ──
   const appointment = resolveSourceStage(ctx.apptGate, ctx.apptOk, "canonical_appointment_flag_off", "appointment_read_failed", () => {
     const all = ctx.apptByCase.get(c.id) ?? [];
-    const wrongSvc = all.some((e) => e.serviceType !== svc && APPT_CURRENT.has(e.status));
-    const qualifying = all.filter((e) => e.serviceType === svc && APPT_CURRENT.has(e.status));
-    const supersededIds = new Set(qualifying.map((e) => e.parentEventId).filter((x): x is number => x != null));
-    const current = qualifying.filter((e) => !supersededIds.has(e.id)); // drop reschedule predecessors
-    return { pick: pickSingle(current), toStage: (e: typeof current[number]) => stage({ status: e.status, availability: "available", sourceId: e.id, at: iso(e.startsAt) }), wrongSvc, wrongCode: "appointment_wrong_service" };
+    const wrongSvc = all.some((e) => e.serviceType !== svc);
+    const validated = all.filter((e) => e.serviceType === svc);
+    // A predecessor is any event referenced as another validated event's parent.
+    const supersededIds = new Set(validated.map((e) => e.parentEventId).filter((x): x is number => x != null));
+    const leaves = validated.filter((e) => !supersededIds.has(e.id));
+    return { pick: pickSingle(leaves), toStage: (e: typeof leaves[number]) => stage({ status: e.status, availability: "available", available: true, sourceId: e.id, at: iso(e.startsAt) }), wrongSvc, wrongCode: "appointment_wrong_service" };
   });
 
   // ── Order Note (exact-source validated + single current) ──
@@ -344,13 +353,22 @@ function resolveBillingDocStage(ctx: Ctx, c: PatientAncillaryCase, svc: string, 
   if (pick.kind === "conflict") return conflictStage();
   if (pick.kind === "missing") return stage({ status: null, availability: "available", warnings: wrongSvc ? ["billing_document_wrong_service"] : [] });
   const d = pick.row;
-  // (§13) the current Billing Document must be bound to the CURRENT readiness by
-  // id + evidence fingerprint — never a stale/other evidence version.
+  // (§6) the current Billing Document must be bound to the CURRENT readiness by id
+  // AND a NON-NULL evidence fingerprint — NULL is never accepted as version proof.
   if (!readiness) return stage({ status: null, availability: "available", warnings: ["billing_document_readiness_unresolved"] });
   if (d.billingReadinessCheckId !== readiness.id) return stage({ status: null, availability: "available", warnings: ["billing_document_wrong_readiness"] });
-  if ((d.evidenceFingerprint ?? null) !== (readiness.evidenceFingerprint ?? null)) return stage({ status: null, availability: "available", warnings: ["billing_document_stale_fingerprint"] });
+  const rfp = nonEmpty(readiness.evidenceFingerprint), dfp = nonEmpty(d.evidenceFingerprint);
+  if (rfp == null || dfp == null) return stage({ status: null, availability: "available", warnings: ["billing_document_fingerprint_unresolved"] });
+  if (rfp !== dfp) return stage({ status: null, availability: "available", warnings: ["billing_document_stale_fingerprint"] });
+  // Where the writers persist exact document-reference IDs, they must agree with
+  // the selected readiness snapshot's exact reference IDs.
+  for (const k of ["orderNoteDocumentReferenceId", "reportDocumentReferenceId", "procedureNoteDocumentReferenceId"] as const) {
+    const rr = readiness[k] as number | null, dd = d[k] as number | null;
+    if (rr != null && dd !== rr) return stage({ status: null, availability: "available", warnings: ["billing_document_reference_mismatch"] });
+  }
   return stage({ status: d.canonicalStatus ?? null, availability: "available", sourceId: d.id, at: iso(d.generatedAt), available: d.canonicalStatus != null });
 }
+function nonEmpty(v: unknown): string | null { return typeof v === "string" && v.trim().length > 0 ? v : null; }
 
 // ─── deterministic currentStage ──────────────────────────────────────────────
 function isComplete(key: CanonicalStageKey, s: StageStatus): boolean {
@@ -376,9 +394,9 @@ function deriveCurrentStage(stages: Record<CanonicalStageKey, StageStatus>): { c
   for (const key of CANONICAL_STAGE_ORDER) {
     const s = stages[key];
     if (s.availability === "upstream_flag_off") continue;                 // not tracked → not blocking
-    if (s.availability !== "available") return { currentStage: null, currentStageIntegrity: "conflicting" };
-    // A conflict (duplicate current evidence) is an integrity conflict, not a stage.
-    if (s.warnings.includes("duplicate_current_evidence")) return { currentStage: null, currentStageIntegrity: "conflicting" };
+    // ANY explicit integrity conflict (duplicate current evidence, admin-review
+    // conflict/mismatch, or a failed read) prevents a false current stage (§4).
+    if (s.integrity === "conflicting") return { currentStage: null, currentStageIntegrity: "conflicting" };
     if (isTerminalHalt(key, s)) return { currentStage: key, currentStageIntegrity: "resolved" };
     if (!isComplete(key, s)) return { currentStage: key, currentStageIntegrity: "resolved" };
   }

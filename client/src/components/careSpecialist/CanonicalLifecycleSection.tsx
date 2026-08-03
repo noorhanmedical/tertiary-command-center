@@ -20,9 +20,9 @@ function isPcs(role: WorkspaceRoleLike): boolean {
 }
 
 /** PCS variant — mounted only when the PCS flag is ON (hook gates the request). */
-function PcsSection() {
+function PcsSection({ enabledOverride }: { enabledOverride?: boolean }) {
   const [cursor, setCursor] = useState<string | null>(null);
-  const { enabled, data, isLoading, isError, isMigrationMissing } = usePcsCanonicalView(cursor);
+  const { enabled, data, isLoading, isError, isMigrationMissing } = usePcsCanonicalView(cursor, enabledOverride);
   if (!enabled) return null;
   return (
     <Panel testId="canonical-lifecycle-pcs" title="Canonical patient lifecycle">
@@ -38,9 +38,9 @@ function PcsSection() {
 }
 
 /** ACS variant — mounted only when the ACS flag is ON. */
-function AcsSection() {
+function AcsSection({ enabledOverride }: { enabledOverride?: boolean }) {
   const [cursor, setCursor] = useState<string | null>(null);
-  const { enabled, data, isLoading, isError, isMigrationMissing } = useAcsCanonicalView(cursor);
+  const { enabled, data, isLoading, isError, isMigrationMissing } = useAcsCanonicalView(cursor, enabledOverride);
   if (!enabled) return null;
   return (
     <Panel testId="canonical-lifecycle-acs" title="Canonical case lifecycle">
@@ -56,9 +56,10 @@ function AcsSection() {
 }
 
 /** The single canonical section the shell mounts. Chooses PCS/ACS by workspace
- *  role; each variant self-gates on its own flag (nothing renders when OFF). */
-export function CanonicalLifecycleSection({ workspaceRole }: { workspaceRole?: WorkspaceRoleLike }) {
-  return isPcs(workspaceRole) ? <PcsSection /> : <AcsSection />;
+ *  role; each variant self-gates on its own flag (nothing renders when OFF).
+ *  `enabledOverride` is a test-only seam (production never passes it). */
+export function CanonicalLifecycleSection({ workspaceRole, enabledOverride }: { workspaceRole?: WorkspaceRoleLike; enabledOverride?: boolean }) {
+  return isPcs(workspaceRole) ? <PcsSection enabledOverride={enabledOverride} /> : <AcsSection enabledOverride={enabledOverride} />;
 }
 
 function Panel({ children, title, testId }: { children: React.ReactNode; title: string; testId: string }) {

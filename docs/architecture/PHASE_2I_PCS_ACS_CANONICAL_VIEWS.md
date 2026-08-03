@@ -198,3 +198,52 @@ Corrections applied while preserving the frozen 2I scope:
 Intentionally changed protected UI: `client/src/components/portal/TeamPortalShell.tsx`
 (narrow in-shell section mount + import) plus the two `approvedException` portal
 pages (reverted to always mount the shell). No other protected UI changed.
+
+## Final acceptance closeout (post-#325-2nd-review)
+
+- **Every identity-invalid same-clinic case is surfaced (§2).** PCS now returns two
+  independently-cursored streams: a VERIFIED-patient stream (active-membership
+  cursor) and an IDENTITY-UNRESOLVED stream (exact ancillaryCaseId cursor). The
+  unresolved stream scans same-clinic cases and surfaces EVERY case whose membership
+  is null / missing / inactive / withdrawn / wrong-clinic / merged / conflicting-
+  patient / non-current-global-patient — never silently dropped — with all PHI null,
+  the exact PHI-free warning, kept separate by ancillaryCaseId. Membership rows are
+  resolved internally by the exact ids the bounded case page carries; cross-clinic
+  membership PHI is never returned.
+- **All episodes retrievable (§3).** A verified patient with more episodes than the
+  per-patient bound (100) carries an `episodesNextCursor`; the same endpoint serves
+  the continuation via `episodeMembershipId` + `episodeCursor` (server-validated
+  active this-clinic membership, opaque case-id cursor). The unresolved stream has
+  its own `unresolved.pageInfo.nextCursor`. Nothing is permanently truncated; the
+  verified and unresolved cursors are distinct fields (never confused).
+- **Admin Review fails closed (§4).** When the event stream is enabled: exactly one
+  latest service-matching event that agrees with the projection → resolved (status +
+  exact timestamp); tied conflicting latest → conflict; latest disagrees with the
+  projection → conflict; no event → missing; read failure → unavailable. Each
+  conflict/failure sets `available=false` and `integrity="conflicting"` and blocks
+  currentStage. When the event stream is OFF → `upstream_flag_off`. A normalized
+  `integrity` (resolved/missing/conflicting) field now drives deriveCurrentStage
+  (never warning strings).
+- **Appointment terminal truth (§5).** The current appointment is the exact lineage
+  LEAF (predecessors excluded via `parentEventId`); its exact status — including
+  cancelled / no_show / blocked / pending_sync — is preserved (never turned into
+  "missing"). A terminal leaf halts progression at the appointment stage. Multiple
+  independent leaves → conflict (no first/newest/most-advanced pick).
+- **Billing Document non-null version proof (§6).** A Billing Document qualifies only
+  when the readiness AND document evidence fingerprints are BOTH non-null/non-empty
+  and exactly equal (`billing_document_fingerprint_unresolved` when either is
+  absent; NULL=NULL is never accepted), the `billingReadinessCheckId` matches the
+  current readiness, and the persisted exact document-reference ids
+  (order/report/procedure-note) agree with the readiness snapshot
+  (`billing_document_reference_mismatch` otherwise).
+- **Real shell-composition behavioral coverage (§7).** The mode strip + flag-gated
+  canonical section is composed by a real production `WorkspaceCanonicalHeader`
+  used by TeamPortalShell; the behavioral test renders it (real WorkspaceModeSwitcher
+  + CanonicalLifecycleSection + mode-body children) with a seeded query cache and
+  proves the mode switcher/modes render, the canonical section renders inside the
+  same composition when ON (nothing when OFF), the mode body stays mounted, and no
+  standalone/min-h-screen page appears.
+
+TeamPortalShell (protected UI) manifest blob updated again for the
+WorkspaceCanonicalHeader mount (narrow, additive). The canonical `available` field
+is joined by a normalized `integrity` field on every StageStatus.

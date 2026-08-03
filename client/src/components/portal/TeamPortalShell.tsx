@@ -22,12 +22,11 @@ import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
 import type { AncillaryServiceContext } from "@/components/portal/AncillaryDocModals";
 import {
-  WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
 } from "@/components/portal/WorkspaceModeSwitcher";
-// Phase 2I — flag-gated canonical lifecycle stage-vector section, wired INSIDE
-// this shell (renders nothing / zero requests when its flag is OFF).
-import { CanonicalLifecycleSection } from "@/components/careSpecialist/CanonicalLifecycleSection";
+// Phase 2I — the mode strip + flag-gated canonical lifecycle section, composed
+// INSIDE this shell (the section renders nothing / zero requests when OFF).
+import { WorkspaceCanonicalHeader } from "@/components/careSpecialist/WorkspaceCanonicalHeader";
 import {
   fetchWorkspaceCallList,
   fetchWorkspaceClinicSchedule,
@@ -3249,7 +3248,11 @@ export function TeamPortalShell({
                       </button>
                     </div>
                   </div>
-                  <WorkspaceModeSwitcher
+                  {/* Phase 2I — mode strip + flag-gated canonical lifecycle section,
+                      composed by WorkspaceCanonicalHeader INSIDE the shell (the
+                      section renders nothing / zero requests when the flag is OFF;
+                      the modes/tabs/actions are never replaced). */}
+                  <WorkspaceCanonicalHeader
                     activeMode={activeWorkspaceMode}
                     onModeChange={setActiveWorkspaceMode}
                     compact={rightRailSize === "small"}
@@ -3261,13 +3264,10 @@ export function TeamPortalShell({
                           : patients.length,
                       ancillarySchedule: filteredAncillarySchedule.length,
                     }}
+                    workspaceRole={workspaceRole}
                   />
                 </div>
                 <div className="p-3">
-                {/* Phase 2I — canonical lifecycle stage vectors, inside the shell.
-                    Renders nothing (and issues zero requests) when the PCS/ACS
-                    canonical-view flag is OFF; never replaces the shell/modes. */}
-                <CanonicalLifecycleSection workspaceRole={workspaceRole} />
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
                 <div className="mb-3 flex items-center justify-between">

@@ -1,17 +1,28 @@
 /**
  * Phase 2I — PCS (Patient Care Specialist) canonical read model.
  *
- * PATIENT-CENTRIC pagination (§7): pages EXACT active clinic memberships by a
- * stable membership-id cursor, resolves each patient THROUGH the verified
- * membership (§3), then batch-loads that patient's bounded ancillary-case
- * episodes — so one patient's episodes are NEVER split across pages. Every
- * ancillaryCaseId stays a distinct child episode (repeated same-service episodes
- * never merged). Identity-unresolved cases go to a separate bounded exact-case
- * bucket, never grouped by demographics. READ-ONLY, clinic-scoped, bounded.
+ * Two independently-paginated streams over EXACT clinic data (§2/§3):
+ *
+ *  1. VERIFIED patients — page exact ACTIVE clinic memberships by a stable
+ *     membership-id cursor; resolve each patient THROUGH the verified membership
+ *     (§3 identity boundary); batch-load that patient's episodes. A patient's
+ *     episodes are never split across pages; a patient with more episodes than the
+ *     per-patient bound carries an `episodesNextCursor` (bounded nested episode
+ *     continuation via `episodeMembershipId` + `episodeCursor`).
+ *
+ *  2. IDENTITY-UNRESOLVED — page same-clinic cases by an exact ancillaryCaseId
+ *     cursor and surface EVERY case whose membership is invalid (null / missing /
+ *     inactive / wrong-clinic / merged / conflicting patient / non-current global
+ *     patient). No same-clinic case is ever silently dropped; PHI is null; each
+ *     unresolved case stays separate by ancillaryCaseId. Membership rows are
+ *     resolved internally by the exact ids the bounded case page carries; cross-
+ *     clinic membership PHI is never returned.
+ *
+ * READ-ONLY, clinic-scoped in SQL AND re-filtered in memory, bounded.
  */
 
 import { db } from "../../db";
-import { and, eq, gt, inArray, asc, isNull } from "drizzle-orm";
+import { and, eq, gt, inArray, asc } from "drizzle-orm";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { globalPlexusPatients, patientClinicMemberships } from "@shared/schema/plexusIdentity";
 import type { PatientAncillaryCase } from "@shared/schema/ancillaryCases";
@@ -19,119 +30,181 @@ import { featureFlags } from "../../lib/featureFlags";
 import { buildStageVectors, MigrationMissingError } from "../canonicalStage/caseStageVector";
 import { verifyCaseIdentity } from "./pcsIdentity";
 import {
-  PCS_CANONICAL_VIEW_VERSION, PCS_DEFAULT_LIMIT, PCS_MAX_LIMIT,
+  PCS_CANONICAL_VIEW_VERSION, PCS_DEFAULT_LIMIT, PCS_MAX_LIMIT, PCS_MAX_EPISODES_PER_PATIENT,
+  PCS_UNRESOLVED_DEFAULT_LIMIT, PCS_UNRESOLVED_MAX_LIMIT,
   type PcsCanonicalView, type PcsPatientGroup,
 } from "@shared/pcsCanonicalView";
-import { loadCaseFilters, decodeCursor, encodeCursor, type CanonicalViewFilters } from "../canonicalStage/viewQuery";
+import { decodeCursor, encodeCursor, loadCaseFilters, type CanonicalViewFilters } from "../canonicalStage/viewQuery";
 
 export { MigrationMissingError };
 
-// Hard bound on episodes materialized per page (across all returned patients +
-// the unresolved bucket) so a single request can never load an unbounded set.
-const PCS_MAX_EPISODES_PER_PAGE = 500;
-// Bounded identity-unresolved bucket (null-membership cases), surfaced on the
-// first page only so it appears once.
-const PCS_UNRESOLVED_BUCKET_LIMIT = 100;
+const SCAN = 5000; // bounded per-membership episode scan
 
-export type PcsViewInput = { clinicId: number; cursor?: string | null; limit?: number; filters?: CanonicalViewFilters };
+export type PcsViewInput = {
+  clinicId: number; cursor?: string | null; limit?: number; filters?: CanonicalViewFilters;
+  unresolvedCursor?: string | null;
+  // Nested episode continuation for ONE verified patient.
+  episodeMembershipId?: number | null; episodeCursor?: string | null;
+};
 
 export async function getPcsCanonicalView(input: PcsViewInput): Promise<PcsCanonicalView> {
   const generatedAt = new Date().toISOString();
-  const limit = clampLimit(input.limit);
-  const base: Omit<PcsCanonicalView, "availability" | "warnings" | "rows" | "pageInfo"> = {
-    disabled: false, generatedAt, dataVersion: PCS_CANONICAL_VIEW_VERSION, clinicScoped: true,
-  };
+  const limit = clampLimit(input.limit, PCS_DEFAULT_LIMIT, PCS_MAX_LIMIT);
+  const base = { disabled: false, generatedAt, dataVersion: PCS_CANONICAL_VIEW_VERSION, clinicScoped: true as const };
   if (!featureFlags.ancillaryCaseWrite) {
-    return { ...base, availability: "upstream_flag_off", warnings: ["ancillary_case_flag_off"], rows: [], pageInfo: { limit, nextCursor: null, returned: 0 } };
+    return { ...base, availability: "upstream_flag_off", warnings: ["ancillary_case_flag_off"], rows: [], pageInfo: { limit, nextCursor: null, returned: 0 }, unresolved: { rows: [], pageInfo: { limit: PCS_UNRESOLVED_DEFAULT_LIMIT, nextCursor: null, returned: 0 } } };
   }
   const filters = loadCaseFilters(input.filters);
-  const afterId = decodeCursor(input.cursor);
 
-  // 1) Page EXACT active clinic memberships (the patient axis), by membership id.
-  const memConds = [eq(patientClinicMemberships.clinicId, input.clinicId), eq(patientClinicMemberships.membershipStatus, "active")];
-  if (afterId != null) memConds.push(gt(patientClinicMemberships.id, afterId));
-  const memPageRaw = await db.select().from(patientClinicMemberships).where(and(...memConds)).orderBy(asc(patientClinicMemberships.id)).limit(limit + 1);
-  const memPage = memPageRaw.filter((m) => m.clinicId === input.clinicId && m.membershipStatus === "active").sort((a, b) => a.id - b.id);
-  const hasMore = memPage.length > limit;
-  const members = memPage.slice(0, limit);
-  const nextCursor = hasMore && members.length ? encodeCursor(members[members.length - 1].id) : null;
-  const memberById = new Map(members.map((m) => [m.id, m]));
-  const memberIds = members.map((m) => m.id);
-
-  // 2) Resolve the global patient THROUGH each verified membership.
-  const gppIds = [...new Set(members.map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))];
-  const gppRows = gppIds.length ? await db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gppIds)).limit(PCS_MAX_LIMIT * 2) : [];
-  const gppById = new Map(gppRows.map((r) => [r.id, r]));
-
-  // 3) Batch-load bounded ancillary-case episodes for the paged memberships.
-  const warnings: string[] = [];
-  const caseConds = [eq(patientAncillaryCases.clinicId, input.clinicId)];
-  if (memberIds.length) caseConds.push(inArray(patientAncillaryCases.patientClinicMembershipId, memberIds));
-  applyCaseFilters(caseConds, filters);
-  const memberCasesRaw = memberIds.length
-    ? await db.select().from(patientAncillaryCases).where(and(...caseConds)).orderBy(asc(patientAncillaryCases.id)).limit(PCS_MAX_EPISODES_PER_PAGE + 1)
-    : [];
-  let cases = memberCasesRaw.filter((c) => c.clinicId === input.clinicId && c.patientClinicMembershipId != null && memberIds.includes(c.patientClinicMembershipId)).sort((a, b) => a.id - b.id);
-  if (cases.length > PCS_MAX_EPISODES_PER_PAGE) { cases = cases.slice(0, PCS_MAX_EPISODES_PER_PAGE); warnings.push("episodes_truncated"); }
-
-  // 4) Identity-unresolved bucket (cases with NO clinic membership) — first page
-  //    only, bounded; each kept as its OWN group by ancillaryCaseId (no merge).
-  let unresolvedCases: PatientAncillaryCase[] = [];
-  if (afterId == null) {
-    const uConds = [eq(patientAncillaryCases.clinicId, input.clinicId), isNull(patientAncillaryCases.patientClinicMembershipId)];
-    applyCaseFilters(uConds, filters);
-    const uRaw = await db.select().from(patientAncillaryCases).where(and(...uConds)).orderBy(asc(patientAncillaryCases.id)).limit(PCS_UNRESOLVED_BUCKET_LIMIT + 1);
-    unresolvedCases = uRaw.filter((c) => c.clinicId === input.clinicId && c.patientClinicMembershipId == null).sort((a, b) => a.id - b.id);
-    if (unresolvedCases.length > PCS_UNRESOLVED_BUCKET_LIMIT) { unresolvedCases = unresolvedCases.slice(0, PCS_UNRESOLVED_BUCKET_LIMIT); warnings.push("unresolved_identity_truncated"); }
+  // ── Mode: nested episode continuation for a single verified patient ──
+  if (input.episodeMembershipId != null) {
+    const group = await loadPatientEpisodeContinuation(input.clinicId, input.episodeMembershipId, decodeCursor(input.episodeCursor), filters);
+    return { ...base, availability: "available", warnings: [], rows: group ? [group] : [], pageInfo: { limit, nextCursor: null, returned: group ? 1 : 0 }, unresolved: { rows: [], pageInfo: { limit: PCS_UNRESOLVED_DEFAULT_LIMIT, nextCursor: null, returned: 0 } } };
   }
 
-  const allCases = [...cases, ...unresolvedCases];
-  const vectors = await buildStageVectors({ clinicId: input.clinicId, cases: allCases });
-  const vectorByCase = new Map(vectors.map((v) => [v.ancillaryCaseId, v]));
-
-  // 5) Group by VERIFIED identity; unresolved cases stay separate by case id.
-  const groups = new Map<string, PcsPatientGroup>();
-  const order: string[] = [];
-  for (const c of allCases) {
-    const membership = c.patientClinicMembershipId != null ? memberById.get(c.patientClinicMembershipId) : undefined;
-    const globalPatient = membership?.globalPlexusPatientId != null ? gppById.get(membership.globalPlexusPatientId) : undefined;
-    const idres = verifyCaseIdentity({ clinicId: input.clinicId, caseGlobalPatientId: c.globalPlexusPatientId ?? null, caseMembershipId: c.patientClinicMembershipId ?? null, membership, globalPatient });
-    const key = idres.resolved && idres.groupKey ? idres.groupKey : `unresolved|${c.id}`;
-    let g = groups.get(key);
-    if (!g) {
-      g = {
-        globalPlexusPatientId: idres.resolved ? (c.globalPlexusPatientId ?? null) : null,
-        patientClinicMembershipId: idres.resolved ? (c.patientClinicMembershipId ?? null) : null,
-        patientDisplay: idres.patientDisplay, patientDob: idres.patientDob, clinicMrn: idres.clinicMrn,
-        identityAvailable: idres.resolved, identityWarnings: idres.warnings, episodes: [],
-      };
-      groups.set(key, g); order.push(key);
-    }
-    const v = vectorByCase.get(c.id);
-    if (v) {
-      v.identity.patientDisplay = idres.patientDisplay; v.identity.patientDob = idres.patientDob; v.identity.clinicMrn = idres.clinicMrn;
-      v.identity.available = idres.resolved; v.identity.warnings = idres.resolved ? [] : idres.warnings;
-      g.episodes.push(v);
-    }
-  }
-  const rows = order.map((k) => groups.get(k)!).sort(groupSort);
-
-  return { ...base, availability: "available", warnings, rows, pageInfo: { limit, nextCursor, returned: members.length } };
+  const verified = await loadVerifiedStream(input.clinicId, decodeCursor(input.cursor), limit, filters);
+  const unresolved = await loadUnresolvedStream(input.clinicId, decodeCursor(input.unresolvedCursor), clampLimit(undefined, PCS_UNRESOLVED_DEFAULT_LIMIT, PCS_UNRESOLVED_MAX_LIMIT), filters);
+  return { ...base, availability: "available", warnings: [], rows: verified.rows, pageInfo: verified.pageInfo, unresolved };
 }
 
-function applyCaseFilters(conds: unknown[], filters: Required<CanonicalViewFilters>): void {
+// ─── verified patient stream ─────────────────────────────────────────────────
+async function loadVerifiedStream(clinicId: number, afterMemberId: number | null, limit: number, filters: ReturnType<typeof loadCaseFilters>) {
+  const memConds = [eq(patientClinicMemberships.clinicId, clinicId), eq(patientClinicMemberships.membershipStatus, "active")];
+  if (afterMemberId != null) memConds.push(gt(patientClinicMemberships.id, afterMemberId));
+  const raw = await db.select().from(patientClinicMemberships).where(and(...memConds)).orderBy(asc(patientClinicMemberships.id)).limit(limit + 1);
+  // Defense + testability (the fake db ignores WHERE/limit): re-apply clinic +
+  // active + cursor in memory, then order + bound.
+  const filtered = raw.filter((m) => m.clinicId === clinicId && m.membershipStatus === "active" && (afterMemberId == null || m.id > afterMemberId)).sort((a, b) => a.id - b.id);
+  const hasMore = filtered.length > limit;
+  const members = filtered.slice(0, limit);
+  const nextCursor = hasMore && members.length ? encodeCursor(members[members.length - 1].id) : null;
+  const memberIds = members.map((m) => m.id);
+  const gppIds = [...new Set(members.map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))];
+  const gppById = await loadGpps(gppIds);
+
+  // Episodes for the paged memberships (bounded scan; grouped per membership).
+  const caseConds = [eq(patientAncillaryCases.clinicId, clinicId)];
+  if (memberIds.length) caseConds.push(inArray(patientAncillaryCases.patientClinicMembershipId, memberIds));
+  applyCaseFilters(caseConds, filters);
+  const casesRaw = memberIds.length ? await db.select().from(patientAncillaryCases).where(and(...caseConds)).orderBy(asc(patientAncillaryCases.id)).limit(SCAN) : [];
+  const cases = casesRaw.filter((c) => c.clinicId === clinicId && c.patientClinicMembershipId != null && memberIds.includes(c.patientClinicMembershipId) && matchesFilters(c, filters)).sort((a, b) => a.id - b.id);
+  const byMember = new Map<number, PatientAncillaryCase[]>();
+  for (const c of cases) { const arr = byMember.get(c.patientClinicMembershipId!) ?? []; arr.push(c); byMember.set(c.patientClinicMembershipId!, arr); }
+
+  const rows: PcsPatientGroup[] = [];
+  for (const m of members) {
+    const gpp = m.globalPlexusPatientId != null ? gppById.get(m.globalPlexusPatientId) : undefined;
+    const all = (byMember.get(m.id) ?? []);
+    const pageCases = all.slice(0, PCS_MAX_EPISODES_PER_PATIENT);
+    const episodesNextCursor = all.length > PCS_MAX_EPISODES_PER_PATIENT ? encodeCursor(pageCases[pageCases.length - 1].id) : null;
+    const g = await groupForMember(clinicId, m, gpp, pageCases, episodesNextCursor);
+    if (g) rows.push(g);
+  }
+  return { rows, pageInfo: { limit, nextCursor, returned: members.length } };
+}
+
+async function loadPatientEpisodeContinuation(clinicId: number, membershipId: number, afterCaseId: number | null, filters: ReturnType<typeof loadCaseFilters>): Promise<PcsPatientGroup | null> {
+  // Validate the membership is an exact active THIS-clinic membership.
+  const memRaw = await db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), eq(patientClinicMemberships.id, membershipId))).limit(2);
+  const m = memRaw.find((x) => x.id === membershipId && x.clinicId === clinicId && x.membershipStatus === "active");
+  if (!m) return null;
+  const gpp = m.globalPlexusPatientId != null ? (await loadGpps([m.globalPlexusPatientId])).get(m.globalPlexusPatientId) : undefined;
+  const conds = [eq(patientAncillaryCases.clinicId, clinicId), eq(patientAncillaryCases.patientClinicMembershipId, membershipId)];
+  if (afterCaseId != null) conds.push(gt(patientAncillaryCases.id, afterCaseId));
+  applyCaseFilters(conds, filters);
+  const raw = await db.select().from(patientAncillaryCases).where(and(...conds)).orderBy(asc(patientAncillaryCases.id)).limit(SCAN);
+  const all = raw.filter((c) => c.clinicId === clinicId && c.patientClinicMembershipId === membershipId && (afterCaseId == null || c.id > afterCaseId) && matchesFilters(c, filters)).sort((a, b) => a.id - b.id);
+  const pageCases = all.slice(0, PCS_MAX_EPISODES_PER_PATIENT);
+  const next = all.length > PCS_MAX_EPISODES_PER_PATIENT ? encodeCursor(pageCases[pageCases.length - 1].id) : null;
+  return groupForMember(clinicId, m, gpp, pageCases, next);
+}
+
+async function groupForMember(clinicId: number, m: typeof patientClinicMemberships.$inferSelect, gpp: typeof globalPlexusPatients.$inferSelect | undefined, pageCases: PatientAncillaryCase[], episodesNextCursor: string | null): Promise<PcsPatientGroup | null> {
+  const vectors = await buildStageVectors({ clinicId, cases: pageCases });
+  const byId = new Map(vectors.map((v) => [v.ancillaryCaseId, v]));
+  const episodes: PcsPatientGroup["episodes"] = [];
+  let resolvedIdentity: ReturnType<typeof verifyCaseIdentity> | null = null;
+  for (const c of pageCases) {
+    const idres = verifyCaseIdentity({ clinicId, caseGlobalPatientId: c.globalPlexusPatientId ?? null, caseMembershipId: c.patientClinicMembershipId ?? null, membership: m, globalPatient: gpp });
+    // A verified member's case whose case↔patient pair conflicts must NOT be
+    // grouped under the patient — it belongs to the unresolved stream instead.
+    if (!idres.resolved) continue;
+    resolvedIdentity = idres;
+    const v = byId.get(c.id);
+    if (v) { v.identity.patientDisplay = idres.patientDisplay; v.identity.patientDob = idres.patientDob; v.identity.clinicMrn = idres.clinicMrn; v.identity.available = true; v.identity.warnings = []; episodes.push(v); }
+  }
+  if (!resolvedIdentity || episodes.length === 0) return null;
+  return {
+    globalPlexusPatientId: m.globalPlexusPatientId, patientClinicMembershipId: m.id,
+    patientDisplay: resolvedIdentity.patientDisplay, patientDob: resolvedIdentity.patientDob, clinicMrn: resolvedIdentity.clinicMrn,
+    identityAvailable: true, identityWarnings: [], episodes, episodesNextCursor,
+  };
+}
+
+// ─── identity-unresolved stream ──────────────────────────────────────────────
+async function loadUnresolvedStream(clinicId: number, afterCaseId: number | null, limit: number, filters: ReturnType<typeof loadCaseFilters>) {
+  // Scan same-clinic cases by exact case-id cursor; a case that resolves to a
+  // verified patient belongs to the verified stream and is skipped here (leaving
+  // the cursor to advance past it so nothing is unretrievable).
+  const conds = [eq(patientAncillaryCases.clinicId, clinicId)];
+  if (afterCaseId != null) conds.push(gt(patientAncillaryCases.id, afterCaseId));
+  applyCaseFilters(conds, filters);
+  const raw = await db.select().from(patientAncillaryCases).where(and(...conds)).orderBy(asc(patientAncillaryCases.id)).limit(limit + 1);
+  const scanned = raw.filter((c) => c.clinicId === clinicId && (afterCaseId == null || c.id > afterCaseId) && matchesFilters(c, filters)).sort((a, b) => a.id - b.id).slice(0, limit + 1);
+  const hasMore = scanned.length > limit;
+  const page = scanned.slice(0, limit);
+  const nextCursor = hasMore && page.length ? encodeCursor(page[page.length - 1].id) : null;
+
+  // Resolve membership rows for the page's non-null membership ids (by id). gpp is
+  // loaded only for THIS-clinic ACTIVE memberships (never cross-clinic PHI).
+  const memIds = [...new Set(page.map((c) => c.patientClinicMembershipId).filter((x): x is number => x != null))];
+  const memRows = memIds.length ? await db.select().from(patientClinicMemberships).where(inArray(patientClinicMemberships.id, memIds)).limit(PCS_UNRESOLVED_MAX_LIMIT * 2) : [];
+  const memById = new Map(memRows.map((m) => [m.id, m]));
+  const gppIds = [...new Set(memRows.filter((m) => m.clinicId === clinicId && m.membershipStatus === "active").map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))];
+  const gppById = await loadGpps(gppIds);
+
+  // Classify: keep only cases that do NOT resolve to a verified patient.
+  const unresolvedCases: PatientAncillaryCase[] = [];
+  const idresByCase = new Map<number, ReturnType<typeof verifyCaseIdentity>>();
+  for (const c of page) {
+    const membership = c.patientClinicMembershipId != null ? memById.get(c.patientClinicMembershipId) : undefined;
+    const globalPatient = membership?.clinicId === clinicId && membership?.membershipStatus === "active" && membership?.globalPlexusPatientId != null ? gppById.get(membership.globalPlexusPatientId) : undefined;
+    const idres = verifyCaseIdentity({ clinicId, caseGlobalPatientId: c.globalPlexusPatientId ?? null, caseMembershipId: c.patientClinicMembershipId ?? null, membership, globalPatient });
+    if (idres.resolved) continue; // belongs to the verified stream
+    unresolvedCases.push(c); idresByCase.set(c.id, idres);
+  }
+  const vectors = await buildStageVectors({ clinicId, cases: unresolvedCases });
+  const byId = new Map(vectors.map((v) => [v.ancillaryCaseId, v]));
+  const rows: PcsPatientGroup[] = unresolvedCases.map((c) => {
+    const idres = idresByCase.get(c.id)!;
+    const v = byId.get(c.id);
+    if (v) { v.identity.patientDisplay = null; v.identity.patientDob = null; v.identity.clinicMrn = null; v.identity.available = false; v.identity.warnings = idres.warnings; }
+    return {
+      globalPlexusPatientId: null, patientClinicMembershipId: null, patientDisplay: null, patientDob: null, clinicMrn: null,
+      identityAvailable: false, identityWarnings: idres.warnings, episodes: v ? [v] : [], episodesNextCursor: null,
+    };
+  });
+  return { rows, pageInfo: { limit, nextCursor, returned: page.length } };
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+async function loadGpps(ids: number[]): Promise<Map<number, typeof globalPlexusPatients.$inferSelect>> {
+  if (!ids.length) return new Map();
+  const rows = await db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, ids)).limit(PCS_MAX_LIMIT * 4);
+  return new Map(rows.map((r) => [r.id, r]));
+}
+function matchesFilters(c: PatientAncillaryCase, f: ReturnType<typeof loadCaseFilters>): boolean {
+  if (f.serviceType && c.serviceType !== f.serviceType) return false;
+  if (f.lifecycleStatus && c.lifecycleStatus !== f.lifecycleStatus) return false;
+  if (f.adminReviewStatus && c.adminReviewStatus !== f.adminReviewStatus) return false;
+  return true;
+}
+function applyCaseFilters(conds: unknown[], filters: ReturnType<typeof loadCaseFilters>): void {
   if (filters.serviceType) (conds as ReturnType<typeof eq>[]).push(eq(patientAncillaryCases.serviceType, filters.serviceType));
   if (filters.lifecycleStatus) (conds as ReturnType<typeof eq>[]).push(eq(patientAncillaryCases.lifecycleStatus, filters.lifecycleStatus));
   if (filters.adminReviewStatus) (conds as ReturnType<typeof eq>[]).push(eq(patientAncillaryCases.adminReviewStatus, filters.adminReviewStatus));
 }
-function clampLimit(n?: number): number {
-  if (!Number.isFinite(n) || n == null) return PCS_DEFAULT_LIMIT;
-  return Math.max(1, Math.min(PCS_MAX_LIMIT, Math.floor(n)));
-}
-function groupSort(a: PcsPatientGroup, b: PcsPatientGroup): number {
-  const ag = a.globalPlexusPatientId ?? Number.MAX_SAFE_INTEGER, bg = b.globalPlexusPatientId ?? Number.MAX_SAFE_INTEGER;
-  if (ag !== bg) return ag - bg;
-  const am = a.patientClinicMembershipId ?? Number.MAX_SAFE_INTEGER, bm = b.patientClinicMembershipId ?? Number.MAX_SAFE_INTEGER;
-  if (am !== bm) return am - bm;
-  return (a.episodes[0]?.ancillaryCaseId ?? 0) - (b.episodes[0]?.ancillaryCaseId ?? 0);
+function clampLimit(n: number | undefined, def: number, max: number): number {
+  if (!Number.isFinite(n) || n == null) return def;
+  return Math.max(1, Math.min(max, Math.floor(n)));
 }

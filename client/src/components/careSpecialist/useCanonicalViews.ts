@@ -27,8 +27,11 @@ async function fetchPage<T>(base: string, cursor?: string | null): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function usePcsCanonicalView(cursor?: string | null) {
-  const enabled = isPcsCanonicalViewEnabled();
+// `enabledOverride` exists ONLY so the real shell-composition can be behaviorally
+// rendered in tests (the flag reads build-time import.meta.env). Production never
+// passes it — the flag remains the sole gate.
+export function usePcsCanonicalView(cursor?: string | null, enabledOverride?: boolean) {
+  const enabled = enabledOverride ?? isPcsCanonicalViewEnabled();
   const query = useQuery<PcsCanonicalView>({
     queryKey: ["/api/pcs/canonical-view", cursor ?? ""] as const,
     queryFn: () => fetchPage<PcsCanonicalView>("/api/pcs/canonical-view", cursor),
@@ -37,8 +40,8 @@ export function usePcsCanonicalView(cursor?: string | null) {
   return { enabled, ...query, isMigrationMissing: query.isError && isMigrationMissingError(query.error) };
 }
 
-export function useAcsCanonicalView(cursor?: string | null) {
-  const enabled = isAcsCanonicalViewEnabled();
+export function useAcsCanonicalView(cursor?: string | null, enabledOverride?: boolean) {
+  const enabled = enabledOverride ?? isAcsCanonicalViewEnabled();
   const query = useQuery<AcsCanonicalView>({
     queryKey: ["/api/acs/canonical-view", cursor ?? ""] as const,
     queryFn: () => fetchPage<AcsCanonicalView>("/api/acs/canonical-view", cursor),

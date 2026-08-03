@@ -32,6 +32,11 @@ export type StageStatus = {
   status: string | null;           // canonical stage status, or null when unresolved/conflicting
   availability: StageAvailability;  // whether the stage query/source system is usable
   available: boolean;               // TRUE only when one exact current source was proven
+  // Normalized stage-integrity (independent of warning strings): `resolved` (one
+  // exact current source), `missing` (query ok, no source / upstream off), or
+  // `conflicting` (duplicate current evidence, admin-review conflict, or a failed
+  // read). deriveCurrentStage keys on THIS field, never on warning text.
+  integrity: "resolved" | "missing" | "conflicting";
   sourceId: number | null;          // exact source id for a same-clinic/case navigation, when safe
   at: string | null;                // ISO timestamp where applicable
   warnings: string[];               // PHI-free reason codes

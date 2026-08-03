@@ -245,3 +245,17 @@ Zero blockers, zero majors. Deferred MINOR/HARDENING:
   there so no PHI leaks, PCS overwrites the whole identity block via
   `verifyCaseIdentity`, ACS never renders display), but defaulting `available:false`
   would be symmetric so the flag can never read "available" without proof.
+
+## Phase 2I final acceptance (independent review)
+
+Zero blockers, zero majors — ACCEPT. Deferred MINOR/HARDENING:
+
+- **`isTerminalHalt` lists only `procedure`.** A cancelled/no_show *appointment*
+  halts progression correctly because `isComplete("appointment")` excludes those
+  statuses (deriveCurrentStage stops there), but the halt is implicit for
+  appointments rather than explicit in `isTerminalHalt`. Cosmetic — behavior is
+  correct and tested.
+- **Appointment `blocked`/`pending_sync` coverage.** The current-leaf status is
+  preserved status-agnostically (never coerced to "missing"); `cancelled`/`no_show`
+  are asserted and `blocked`/`pending_sync` are now covered by the terminal-status
+  loop. Noted for completeness.
