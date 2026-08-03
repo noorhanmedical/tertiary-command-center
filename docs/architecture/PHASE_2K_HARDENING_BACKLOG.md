@@ -259,3 +259,16 @@ Zero blockers, zero majors — ACCEPT. Deferred MINOR/HARDENING:
   preserved status-agnostically (never coerced to "missing"); `cancelled`/`no_show`
   are asserted and `blocked`/`pending_sync` are now covered by the terminal-status
   loop. Noted for completeness.
+
+## Phase 2I retrievability closeout (independent review)
+
+Zero blockers, zero majors — all eight bounded areas satisfied. Deferred MINOR:
+
+- **Verified-window lossless guarantee is ordering-contingent.** `loadVerifiedStream`
+  relies on Postgres honoring `ORDER BY (patient_clinic_membership_id, id) LIMIT
+  window+1` so the completeness boundary is deterministic; the in-memory re-sort
+  mirrors it. A now-added comment flags that no non-deterministic scan may reshape
+  the window; a covering index would make the ordering guaranteed cheap.
+- **`loadUnresolvedStream` membership fetch bound.** Memberships are loaded with
+  `.limit(PCS_UNRESOLVED_MAX_LIMIT * 2)`, safe under the ≤1-membership-per-case-id
+  invariant. Noted for completeness.

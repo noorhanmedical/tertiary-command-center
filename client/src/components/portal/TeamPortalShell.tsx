@@ -22,11 +22,14 @@ import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
 import type { AncillaryServiceContext } from "@/components/portal/AncillaryDocModals";
 import {
+  WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
 } from "@/components/portal/WorkspaceModeSwitcher";
-// Phase 2I — the mode strip + flag-gated canonical lifecycle section, composed
-// INSIDE this shell (the section renders nothing / zero requests when OFF).
-import { WorkspaceCanonicalHeader } from "@/components/careSpecialist/WorkspaceCanonicalHeader";
+// Phase 2I — real production work-queue composition (sticky mode-switcher header
+// + flag-gated canonical lifecycle section in the scrollable body + existing mode
+// body). The canonical section renders nothing / zero requests when OFF.
+import { WorkspaceWorkQueueComposition } from "@/components/careSpecialist/WorkspaceWorkQueueComposition";
+import { CanonicalLifecycleSection } from "@/components/careSpecialist/CanonicalLifecycleSection";
 import {
   fetchWorkspaceCallList,
   fetchWorkspaceClinicSchedule,
@@ -3227,10 +3230,14 @@ export function TeamPortalShell({
           >
             <div className="flex h-full flex-col">
               <div className="flex-1 overflow-y-auto">
-                {/* Pinned header + mode switcher. Stays fixed to the top of
-                    the scroll region so it's reachable while the patient
-                    list below scrolls. Selection is UI-only; the body
-                    renders the same canonical content per mode. */}
+                {/* Phase 2I — the work-queue is composed by the real production
+                    WorkspaceWorkQueueComposition: the sticky mode-switcher header
+                    stays sticky; the flag-gated canonical lifecycle section renders
+                    in the scrollable body ABOVE the existing mode body (never in the
+                    sticky header, so it cannot obscure the queue). */}
+                <WorkspaceWorkQueueComposition
+                  canonicalSection={<CanonicalLifecycleSection workspaceRole={workspaceRole} />}
+                  header={
                 <div className="sticky top-0 z-10 border-b border-white/10 bg-[#4863A0] px-3 pb-1.5 pt-1.5 backdrop-blur-xl">
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
@@ -3248,11 +3255,10 @@ export function TeamPortalShell({
                       </button>
                     </div>
                   </div>
-                  {/* Phase 2I — mode strip + flag-gated canonical lifecycle section,
-                      composed by WorkspaceCanonicalHeader INSIDE the shell (the
-                      section renders nothing / zero requests when the flag is OFF;
-                      the modes/tabs/actions are never replaced). */}
-                  <WorkspaceCanonicalHeader
+                  {/* Sticky mode strip (unchanged, still sticky). The canonical
+                      lifecycle section is rendered by the composition in the
+                      scrollable body below, not here. */}
+                  <WorkspaceModeSwitcher
                     activeMode={activeWorkspaceMode}
                     onModeChange={setActiveWorkspaceMode}
                     compact={rightRailSize === "small"}
@@ -3264,10 +3270,10 @@ export function TeamPortalShell({
                           : patients.length,
                       ancillarySchedule: filteredAncillarySchedule.length,
                     }}
-                    workspaceRole={workspaceRole}
                   />
                 </div>
-                <div className="p-3">
+                  }
+                >
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
                 <div className="mb-3 flex items-center justify-between">
@@ -3660,7 +3666,7 @@ export function TeamPortalShell({
                       Loading clinic schedule…
                     </div>
                   )}
-                </div>
+                </WorkspaceWorkQueueComposition>
               </div>
             </div>
           </div>

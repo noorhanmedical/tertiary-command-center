@@ -360,11 +360,12 @@ function resolveBillingDocStage(ctx: Ctx, c: PatientAncillaryCase, svc: string, 
   const rfp = nonEmpty(readiness.evidenceFingerprint), dfp = nonEmpty(d.evidenceFingerprint);
   if (rfp == null || dfp == null) return stage({ status: null, availability: "available", warnings: ["billing_document_fingerprint_unresolved"] });
   if (rfp !== dfp) return stage({ status: null, availability: "available", warnings: ["billing_document_stale_fingerprint"] });
-  // Where the writers persist exact document-reference IDs, they must agree with
-  // the selected readiness snapshot's exact reference IDs.
+  // Persisted exact document-reference IDs must agree SYMMETRICALLY — normalize
+  // both sides to null and require exact equality whenever EITHER side is non-null
+  // (a document may never introduce an evidence reference absent from the readiness).
   for (const k of ["orderNoteDocumentReferenceId", "reportDocumentReferenceId", "procedureNoteDocumentReferenceId"] as const) {
-    const rr = readiness[k] as number | null, dd = d[k] as number | null;
-    if (rr != null && dd !== rr) return stage({ status: null, availability: "available", warnings: ["billing_document_reference_mismatch"] });
+    const rr = (readiness[k] as number | null) ?? null, dd = (d[k] as number | null) ?? null;
+    if (rr !== dd) return stage({ status: null, availability: "available", warnings: ["billing_document_reference_mismatch"] });
   }
   return stage({ status: d.canonicalStatus ?? null, availability: "available", sourceId: d.id, at: iso(d.generatedAt), available: d.canonicalStatus != null });
 }

@@ -10,6 +10,7 @@ import { isPcsCanonicalViewEnabled } from "@/lib/pcsCanonicalViewFlag";
 import { isAcsCanonicalViewEnabled } from "@/lib/acsCanonicalViewFlag";
 import type { PcsCanonicalView } from "@shared/pcsCanonicalView";
 import type { AcsCanonicalView } from "@shared/acsCanonicalView";
+import { pcsQueryKey, pcsQueryString, type PcsRequestParams } from "./pcsPagination";
 
 const MIGRATION_MISSING_CODE = "ANCILLARY_DOCUMENT_MIGRATION_MISSING";
 
@@ -29,12 +30,19 @@ async function fetchPage<T>(base: string, cursor?: string | null): Promise<T> {
 
 // `enabledOverride` exists ONLY so the real shell-composition can be behaviorally
 // rendered in tests (the flag reads build-time import.meta.env). Production never
-// passes it — the flag remains the sole gate.
-export function usePcsCanonicalView(cursor?: string | null, enabledOverride?: boolean) {
+// passes it — the flag remains the sole gate. All three continuation contracts
+// (verified cursor / unresolved cursor / episode continuation) flow through the
+// typed `params` — every param is in the query key so distinct states = distinct
+// requests, and a request fires ONLY after the enabling action changes params.
+export function usePcsCanonicalView(params: PcsRequestParams, enabledOverride?: boolean) {
   const enabled = enabledOverride ?? isPcsCanonicalViewEnabled();
   const query = useQuery<PcsCanonicalView>({
-    queryKey: ["/api/pcs/canonical-view", cursor ?? ""] as const,
-    queryFn: () => fetchPage<PcsCanonicalView>("/api/pcs/canonical-view", cursor),
+    queryKey: pcsQueryKey(params),
+    queryFn: async () => {
+      const res = await fetch(`/api/pcs/canonical-view${pcsQueryString(params)}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${(await res.text()) || res.statusText}`);
+      return (await res.json()) as PcsCanonicalView;
+    },
     enabled,
   });
   return { enabled, ...query, isMigrationMissing: query.isError && isMigrationMissingError(query.error) };

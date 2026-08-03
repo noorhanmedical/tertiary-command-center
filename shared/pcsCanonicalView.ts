@@ -29,7 +29,11 @@ export const PCS_MAX_EPISODES_PER_PATIENT = 100;
 export const PCS_UNRESOLVED_DEFAULT_LIMIT = 50;
 export const PCS_UNRESOLVED_MAX_LIMIT = 200;
 
-export type PcsPageInfo = { limit: number; nextCursor: string | null; returned: number };
+// `returned` = rows actually returned in this page. `scanned` (optional) = rows
+// examined to build the page (the unresolved stream scans over verified cases it
+// skips, so scanned ≥ returned there). The cursor may advance over scanned-but-
+// not-returned rows; the UI must describe `returned`, never `scanned`.
+export type PcsPageInfo = { limit: number; nextCursor: string | null; returned: number; scanned?: number };
 
 /** One PCS patient group. Identity is opaque canonical ids; display fields are
  *  authorized display only, and are non-null ONLY for a verified patient. */

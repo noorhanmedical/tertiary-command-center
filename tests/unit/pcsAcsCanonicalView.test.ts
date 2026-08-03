@@ -162,6 +162,65 @@ async function testCursorsDistinct() {
   assert.equal(r.rows.length, 1); assert.equal(r.unresolved.rows.length, 1);
 }
 
+// ═══ §3 multi-membership >window retrievability (1-8) ═══
+async function testMultiMembershipWindow() {
+  const t = await loadCanonicalTables();
+  // Member 800 alone exceeds the verified episode window; member 801 is beyond it.
+  const WINDOW = 5000;
+  const aCases = Array.from({ length: WINDOW + 1 }, (_, i) => acase({ id: 1000 + i, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }));
+  const bCases = [acase({ id: 90000, patientClinicMembershipId: 801, globalPlexusPatientId: 901 }), acase({ id: 90001, patientClinicMembershipId: 801, globalPlexusPatientId: 901 })];
+  const pcms = [pcm({ id: 800, globalPlexusPatientId: 900 }), pcm({ id: 801, globalPlexusPatientId: 901 })];
+  const gpps = [gpp({ id: 900 }), gpp({ id: 901 })];
+  const page1 = await runPcs(t, { cases: [...aCases, ...bCases], pcms, gpps });
+  const m800 = page1.rows.find((g) => g.patientClinicMembershipId === 800);
+  assert.ok(m800 && m800.episodes.length === 100, "(1/2) first membership's first episode page returned despite window");
+  assert.ok(m800!.episodesNextCursor, "(3) oversized membership has a retrievable continuation");
+  assert.ok(!page1.rows.some((g) => g.patientClinicMembershipId === 801), "(2) later membership NOT lost to a shared window (deferred, not dropped)");
+  assert.ok(page1.pageInfo.nextCursor, "membership cursor stops before the deferred membership");
+  const page2 = await runPcs(t, { cases: [...aCases, ...bCases], pcms, gpps }, { cursor: page1.pageInfo.nextCursor });
+  assert.ok(page2.rows.some((g) => g.patientClinicMembershipId === 801), "(2/3) later membership receives its first episode page on the next page");
+}
+// (4/5) first 100 cases identity-invalid but later cases valid → valid retrievable
+async function testValidLaterCasesPreserved() {
+  const t = await loadCanonicalTables();
+  const invalidEarly = Array.from({ length: 100 }, (_, i) => acase({ id: 1 + i, patientClinicMembershipId: 800, globalPlexusPatientId: 999 })); // conflict
+  const validLater = Array.from({ length: 50 }, (_, i) => acase({ id: 101 + i, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }));
+  const r = await runPcs(t, { cases: [...invalidEarly, ...validLater], pcms: [pcm({ id: 800, globalPlexusPatientId: 900 })], gpps: [gpp({ id: 900 })] });
+  const verified = r.rows.find((g) => g.patientClinicMembershipId === 800);
+  assert.ok(verified && verified.episodes.length === 50, "(5) valid later cases retrievable (not discarded by invalid early cases)");
+  assert.deepEqual(verified!.episodes.map((e) => e.ancillaryCaseId), validLater.map((c) => c.id));
+  // The 100 invalid early cases surface in the (bounded) unresolved stream, the
+  // remainder retrievable via its own cursor.
+  assert.equal(r.unresolved.pageInfo.returned, 50, "(4) invalid early cases surfaced in the bounded unresolved page");
+  assert.ok(r.unresolved.pageInfo.nextCursor, "(4) remaining invalid cases retrievable via the unresolved cursor");
+}
+// (6/7) every case in exactly one stream (none in neither, none in both)
+async function testStreamExclusivity() {
+  const t = await loadCanonicalTables();
+  const cases = [
+    acase({ id: 5, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }),  // verified
+    acase({ id: 6, patientClinicMembershipId: 800, globalPlexusPatientId: 999 }),  // conflict → unresolved
+    acase({ id: 7, patientClinicMembershipId: null, globalPlexusPatientId: null }), // unresolved
+    acase({ id: 8, patientClinicMembershipId: 810, globalPlexusPatientId: 900 }),   // missing membership → unresolved
+  ];
+  const r = await runPcs(t, { cases, pcms: [pcm({ id: 800, globalPlexusPatientId: 900 })], gpps: [gpp({ id: 900 })] });
+  const verifiedIds = r.rows.flatMap((g) => g.episodes.map((e) => e.ancillaryCaseId));
+  const unresolvedIds = r.unresolved.rows.flatMap((g) => g.episodes.map((e) => e.ancillaryCaseId));
+  assert.deepEqual(verifiedIds.sort(), [5], "(7) verified stream holds only exact valid episodes");
+  assert.deepEqual(unresolvedIds.sort((a, b) => a - b), [6, 7, 8], "(6) every invalid case surfaced in unresolved");
+  const all = [...verifiedIds, ...unresolvedIds];
+  assert.equal(new Set(all).size, all.length, "(7) no case in BOTH streams");
+  assert.equal(all.length, 4, "(6) no case in NEITHER stream");
+}
+// (6/§6) unresolved metadata: returned = rows returned, not scanned
+async function testUnresolvedMetadata() {
+  const t = await loadCanonicalTables();
+  const cases = [acase({ id: 5, patientClinicMembershipId: 800, globalPlexusPatientId: 900 }), acase({ id: 6, patientClinicMembershipId: null, globalPlexusPatientId: null }), acase({ id: 7, patientClinicMembershipId: null, globalPlexusPatientId: null })];
+  const r = await runPcs(t, { cases, pcms: [pcm({ id: 800 })], gpps: [gpp({ id: 900 })] });
+  assert.equal(r.unresolved.pageInfo.returned, 2, "(§6) returned = unresolved rows actually returned");
+  assert.equal(r.unresolved.pageInfo.scanned, 3, "(§6) scanned includes the skipped verified case");
+}
+
 // ═══ §8 Admin Review (16-20) ═══
 async function testAdminReview() {
   const t = await loadCanonicalTables();
@@ -216,8 +275,15 @@ async function testBillingDocVersion() {
   assert.equal(bothNull.billingDocument.status, null); assert.ok(bothNull.billingDocument.warnings.includes("billing_document_fingerprint_unresolved"), "(29) NULL=NULL is never version proof");
   const stale = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ evidenceFingerprint: "fp-2" })], docs: [billingDoc({ evidenceFingerprint: "fp-OLD" })] }));
   assert.ok(stale.billingDocument.warnings.includes("billing_document_stale_fingerprint"), "(30)");
+  // (§5) symmetric agreement — reject whenever either side is non-null and unequal.
   const refMismatch = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ orderNoteDocumentReferenceId: 11 })], docs: [billingDoc({ orderNoteDocumentReferenceId: 99 })] }));
-  assert.ok(refMismatch.billingDocument.warnings.includes("billing_document_reference_mismatch"), "(31) mismatched exact document-reference IDs rejected");
+  assert.ok(refMismatch.billingDocument.warnings.includes("billing_document_reference_mismatch"), "(31) readiness 11 / doc 99 rejected");
+  const readinessNull = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ orderNoteDocumentReferenceId: null })], docs: [billingDoc({ orderNoteDocumentReferenceId: 11 })] }));
+  assert.ok(readinessNull.billingDocument.warnings.includes("billing_document_reference_mismatch"), "(§5) readiness null / doc 11 rejected (doc may not introduce a reference)");
+  const docNull = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ orderNoteDocumentReferenceId: 11 })], docs: [billingDoc({ orderNoteDocumentReferenceId: null })] }));
+  assert.ok(docNull.billingDocument.warnings.includes("billing_document_reference_mismatch"), "(§5) readiness 11 / doc null rejected");
+  const bothNullRef = acsRow0(await runAcs(t, { cases: [acase()], readiness: [readiness({ orderNoteDocumentReferenceId: null })], docs: [billingDoc({ orderNoteDocumentReferenceId: null })] }));
+  assert.equal(bothNullRef.billingDocument.status, "generated", "(§5) null / null is no mismatch");
 }
 
 // ═══ regression (32-39) ═══
@@ -296,6 +362,10 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(10/11) verified episode continuation", testEpisodeContinuation],
   ["(12) unresolved continuation", testUnresolvedContinuation],
   ["(13) cursors distinct", testCursorsDistinct],
+  ["(§3 1-3) multi-membership >window retrievable", testMultiMembershipWindow],
+  ["(§3 4/5) valid later cases preserved", testValidLaterCasesPreserved],
+  ["(§3 6/7) stream exclusivity + completeness", testStreamExclusivity],
+  ["(§6) unresolved metadata returned≠scanned", testUnresolvedMetadata],
   ["(16-20) admin review fail-closed", testAdminReview],
   ["(21-25) appointment terminal + lineage", testAppointmentTerminal],
   ["(26-31) billing document non-null version", testBillingDocVersion],

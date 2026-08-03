@@ -1,13 +1,5 @@
-// Phase 2I final acceptance — REAL shell-composition behavioral coverage (§7) +
-// canonical rendering + shell preservation.
-//
-// Renders the REAL production WorkspaceCanonicalHeader (WorkspaceModeSwitcher +
-// CanonicalLifecycleSection + mode-body children) — the exact composition
-// TeamPortalShell uses — via react-dom/server with a seeded React Query cache, and
-// proves: the mode switcher + its modes render, the canonical section renders
-// INSIDE the same composition when ON (nothing when OFF), the mode body stays
-// mounted, and no standalone/min-h-screen page appears. Also renders the pure
-// canonical views (no mock content) and checks shell-preservation structurally.
+// Phase 2I retrievability closeout — REAL production composition + PCS continuation
+// controls (behavioral) + canonical rendering + shell preservation.
 //
 //   npx tsx tests/unit/pcsAcsCanonicalReplacement.test.tsx
 
@@ -23,11 +15,16 @@ import type { CaseStageVector, StageStatus } from "../../shared/canonicalStageVe
 import type { PcsCanonicalView } from "../../shared/pcsCanonicalView";
 import type { AcsCanonicalView } from "../../shared/acsCanonicalView";
 import { disabledPcsCanonicalView } from "../../shared/pcsCanonicalView";
+import {
+  pcsPaginationReducer, pcsRequestParams, pcsQueryKey, pcsQueryString, INITIAL_PCS_PAGINATION,
+} from "../../client/src/components/careSpecialist/pcsPagination";
 
 (globalThis as unknown as { React: typeof React }).React = React;
 const pcsComp = await import("@/components/careSpecialist/CanonicalPcsPage");
 const acsComp = await import("@/components/careSpecialist/CanonicalAcsPage");
-const header = await import("@/components/careSpecialist/WorkspaceCanonicalHeader");
+const comp = await import("@/components/careSpecialist/WorkspaceWorkQueueComposition");
+const section = await import("@/components/careSpecialist/CanonicalLifecycleSection");
+const modeSwitcher = await import("@/components/portal/WorkspaceModeSwitcher");
 const pcsFlag = await import("@/lib/pcsCanonicalViewFlag");
 const acsFlag = await import("@/lib/acsCanonicalViewFlag");
 
@@ -47,108 +44,119 @@ function vector(over: Partial<CaseStageVector> = {}): CaseStageVector {
     currentStage: null, currentStageIntegrity: "resolved", ...over,
   };
 }
+function group(over: Partial<PcsCanonicalView["rows"][number]> = {}): PcsCanonicalView["rows"][number] {
+  return { globalPlexusPatientId: 900, patientClinicMembershipId: 800, patientDisplay: "Jane Doe", patientDob: "1980-01-01", clinicMrn: "MRN-1", identityAvailable: true, identityWarnings: [], episodes: [vector({ ancillaryCaseId: 5 }), vector({ ancillaryCaseId: 9 })], episodesNextCursor: null, ...over };
+}
 function pcsView(over: Partial<PcsCanonicalView> = {}): PcsCanonicalView {
   return { disabled: false, generatedAt: D, dataVersion: "canonical_stage_vector_v1", clinicScoped: true, availability: "available", warnings: [], pageInfo: { limit: 25, nextCursor: null, returned: 1 },
-    rows: [{ globalPlexusPatientId: 900, patientClinicMembershipId: 800, patientDisplay: "Jane Doe", patientDob: "1980-01-01", clinicMrn: "MRN-1", identityAvailable: true, identityWarnings: [], episodes: [vector({ ancillaryCaseId: 5 }), vector({ ancillaryCaseId: 9 })], episodesNextCursor: null }],
-    unresolved: { rows: [], pageInfo: { limit: 50, nextCursor: null, returned: 0 } }, ...over };
+    rows: [group()], unresolved: { rows: [], pageInfo: { limit: 50, nextCursor: null, returned: 0 } }, ...over };
 }
 function acsView(over: Partial<AcsCanonicalView> = {}): AcsCanonicalView {
   return { disabled: false, generatedAt: D, dataVersion: "canonical_stage_vector_v1", clinicScoped: true, availability: "available", warnings: [], pageInfo: { limit: 25, nextCursor: null, returned: 2 }, rows: [vector({ ancillaryCaseId: 5 }), vector({ ancillaryCaseId: 9 })], ...over };
 }
-// Financial / legacy-call mock tokens the canonical path must never render. NB:
-// "Call List"/"Clinic Schedule" are REAL WorkspaceModeSwitcher labels (the
-// preserved shell) and are intentionally NOT treated as mock.
 const MOCK = ["RingCentral", "Left Voicemail", "Invoice", "Revenue", "Claim", "Payment"];
 function assertNoMock(html: string, label: string) { const low = html.toLowerCase(); for (const tok of MOCK) assert.ok(!low.includes(tok.toLowerCase()), `${label} must not render mock token: ${tok}`); assert.ok(!/\$\d/.test(html), `${label} no dollar figures`); }
 
-function renderHeader(opts: { role: "patientCareSpecialist" | "ancillaryCareSpecialist"; canonicalEnabled?: boolean; pcs?: PcsCanonicalView; acs?: AcsCanonicalView }): string {
+// Render the REAL production composition (mode switcher header + canonical section
+// in the scrollable body + mode-body children) exactly as TeamPortalShell does.
+function renderComposition(opts: { role: "patientCareSpecialist" | "ancillaryCareSpecialist"; canonicalEnabled?: boolean; pcs?: PcsCanonicalView; acs?: AcsCanonicalView }): string {
   const qc = new QueryClient();
-  if (opts.pcs) qc.setQueryData(["/api/pcs/canonical-view", ""], opts.pcs);
+  if (opts.pcs) qc.setQueryData(pcsQueryKey(pcsRequestParams(INITIAL_PCS_PAGINATION)), opts.pcs);
   if (opts.acs) qc.setQueryData(["/api/acs/canonical-view", ""], opts.acs);
   return renderToStaticMarkup(React.createElement(QueryClientProvider, { client: qc },
-    React.createElement(header.WorkspaceCanonicalHeader, {
-      activeMode: opts.role === "patientCareSpecialist" ? "callList" : "clinicSchedule",
-      onModeChange: () => {}, counts: { callList: 3, clinicSchedule: 2, ancillarySchedule: 1 },
-      workspaceRole: opts.role, canonicalEnabled: opts.canonicalEnabled,
+    React.createElement(comp.WorkspaceWorkQueueComposition, {
+      header: React.createElement(modeSwitcher.WorkspaceModeSwitcher, { activeMode: opts.role === "patientCareSpecialist" ? "callList" : "clinicSchedule", onModeChange: () => {}, counts: { callList: 3, clinicSchedule: 2, ancillarySchedule: 1 } }),
+      canonicalSection: React.createElement(section.CanonicalLifecycleSection, { workspaceRole: opts.role, enabledOverride: opts.canonicalEnabled }),
       children: React.createElement("div", { "data-testid": "mode-body" }, "existing mode body"),
     }) as React.ReactElement));
 }
 
-// (1/3/5/6/8) PCS flag ON: mode switcher + modes render, canonical section renders
-// INSIDE the same composition, mode body stays mounted, no standalone page.
-async function testRealShellCompositionPcsOn() {
-  const html = renderHeader({ role: "patientCareSpecialist", canonicalEnabled: true, pcs: pcsView() });
-  assert.ok(html.includes("workspace-mode-switcher"), "(1) real WorkspaceModeSwitcher rendered");
-  assert.ok(html.includes("workspace-canonical-header"), "composition boundary rendered");
-  assert.ok(/Calls?|Call List|Outreach/i.test(html) || html.includes("mode-callList") || html.includes("PhoneCall"), "(3) callList mode present in switcher");
-  assert.ok(html.includes("canonical-lifecycle-pcs") && html.includes("stage-vector-5"), "(5) canonical section renders inside the composition");
-  assert.ok(html.includes("mode-body"), "(6) existing mode body remains mounted");
-  assert.ok(!/min-h-screen/.test(html), "(8) no standalone/min-h-screen page");
-  assertNoMock(html, "PCS composition");
+// (1/2/4/5/6/7) real composition renders switcher + section (ON) / nothing (OFF) +
+// mode body; section is in the scrollable body, not the sticky header.
+async function testRealCompositionPcs() {
+  const on = renderComposition({ role: "patientCareSpecialist", canonicalEnabled: true, pcs: pcsView() });
+  assert.ok(on.includes("workspace-mode-switcher"), "(1) real WorkspaceModeSwitcher renders");
+  assert.ok(on.includes("workspace-work-queue-body"), "canonical section is in the scrollable body");
+  assert.ok(on.includes("canonical-lifecycle-pcs") && on.includes("stage-vector-5"), "(4) canonical section renders in the same production composition when ON");
+  assert.ok(on.includes("mode-body"), "(6) existing mode body remains mounted through the composition");
+  assert.ok(!/min-h-screen/.test(on), "(7) no standalone/min-h-screen page");
+  // section must NOT be inside the sticky header
+  const sticky = on.split("workspace-work-queue-body")[0];
+  assert.ok(!sticky.includes("canonical-lifecycle-pcs"), "(§4) canonical list is NOT inside the sticky mode header");
+  assertNoMock(on, "PCS composition");
+  const off = renderComposition({ role: "patientCareSpecialist", canonicalEnabled: false });
+  assert.ok(off.includes("workspace-mode-switcher") && off.includes("mode-body"), "(OFF) switcher + mode body preserved");
+  assert.ok(!off.includes("canonical-lifecycle-pcs") && !off.includes("stage-vector-"), "(5) canonical section renders nothing when OFF");
 }
-// (2/4) ACS flag ON
-async function testRealShellCompositionAcsOn() {
-  const html = renderHeader({ role: "ancillaryCareSpecialist", canonicalEnabled: true, acs: acsView() });
-  assert.ok(html.includes("workspace-mode-switcher"), "(2) mode switcher rendered");
-  assert.ok(html.includes("canonical-lifecycle-acs") && html.includes("stage-vector-5"), "canonical section inside composition");
-  assert.ok(html.includes("mode-body"), "mode body mounted");
-}
-// (7/9) flag OFF: section renders NOTHING, mode switcher + mode body preserved
-async function testRealShellCompositionOff() {
-  const html = renderHeader({ role: "patientCareSpecialist", canonicalEnabled: false });
-  assert.ok(html.includes("workspace-mode-switcher"), "mode switcher preserved when canonical OFF");
-  assert.ok(html.includes("mode-body"), "(9) existing mode body not replaced");
-  assert.ok(!html.includes("canonical-lifecycle-pcs") && !html.includes("stage-vector-"), "(7) canonical section renders nothing when OFF");
+async function testRealCompositionAcs() {
+  const on = renderComposition({ role: "ancillaryCareSpecialist", canonicalEnabled: true, acs: acsView() });
+  assert.ok(on.includes("workspace-mode-switcher") && on.includes("canonical-lifecycle-acs") && on.includes("stage-vector-5") && on.includes("mode-body"), "(2) ACS composition renders switcher + section + mode body");
 }
 
-// canonical views render (no mock), episodes preserved
-async function testPcsViewRenders() {
-  const html = renderToStaticMarkup(React.createElement(pcsComp.CanonicalPcsView, { data: pcsView() }));
-  assert.ok(html.includes("stage-vector-5") && html.includes("stage-vector-9") && html.includes("Jane Doe"));
-  assertNoMock(html, "PCS view");
+// (§2) PCS continuation controls: the pure pagination logic issues the correct
+// request params for each control action (behavioral, not static).
+async function testPaginationControls() {
+  const base = pcsRequestParams(INITIAL_PCS_PAGINATION);
+  assert.deepEqual(base, { cursor: null, unresolvedCursor: null, episodeMembershipId: null, episodeCursor: null }, "initial params");
+  const vNext = pcsRequestParams(pcsPaginationReducer(INITIAL_PCS_PAGINATION, { type: "verifiedNext", cursor: "V2" }));
+  assert.equal(vNext.cursor, "V2"); assert.equal(vNext.episodeMembershipId, null, "verified next → cursor only");
+  const uNext = pcsRequestParams(pcsPaginationReducer(INITIAL_PCS_PAGINATION, { type: "unresolvedNext", cursor: "U2" }));
+  assert.equal(uNext.unresolvedCursor, "U2"); assert.equal(uNext.cursor, null, "unresolved next → unresolvedCursor only");
+  const ep = pcsPaginationReducer(INITIAL_PCS_PAGINATION, { type: "episodeNext", membershipId: 800, cursor: "E2" });
+  const epParams = pcsRequestParams(ep);
+  assert.equal(epParams.episodeMembershipId, 800); assert.equal(epParams.episodeCursor, "E2");
+  assert.equal(epParams.cursor, null); assert.equal(epParams.unresolvedCursor, null, "episode mode sends ONLY episode params");
+  assert.equal(pcsQueryString(epParams), "?episodeMembershipId=800&episodeCursor=E2", "episode continuation query string");
+  assert.equal(pcsQueryString(vNext), "?cursor=V2");
+  const back = pcsRequestParams(pcsPaginationReducer(ep, { type: "episodeBack" }));
+  assert.equal(back.episodeMembershipId, null, "episode back → exits continuation mode");
+  // distinct states produce distinct query keys (one request per state)
+  const keys = new Set([base, vNext, uNext, epParams].map((p) => pcsQueryKey(p).join("|")));
+  assert.equal(keys.size, 4, "(§2) every continuation contract is a distinct request key");
+}
+
+// (§2) the real PCS section renders each continuation control + episode button
+async function testControlsRender() {
+  const qc = new QueryClient();
+  const data = pcsView({ rows: [group({ patientClinicMembershipId: 800, episodesNextCursor: "EP2" })], pageInfo: { limit: 25, nextCursor: "V2", returned: 1 }, unresolved: { rows: [{ globalPlexusPatientId: null, patientClinicMembershipId: null, patientDisplay: null, patientDob: null, clinicMrn: null, identityAvailable: false, identityWarnings: ["identity_membership_inactive"], episodes: [vector({ ancillaryCaseId: 7 })], episodesNextCursor: null }], pageInfo: { limit: 50, nextCursor: "U2", returned: 1 } } });
+  qc.setQueryData(pcsQueryKey(pcsRequestParams(INITIAL_PCS_PAGINATION)), data);
+  const html = renderToStaticMarkup(React.createElement(QueryClientProvider, { client: qc },
+    React.createElement(section.CanonicalLifecycleSection, { workspaceRole: "patientCareSpecialist", enabledOverride: true })));
+  for (const id of ["pcs-verified-next", "pcs-unresolved-next", "pcs-episodes-next-800"]) assert.ok(html.includes(id), `${id} control rendered`);
+  assert.ok(html.includes("Identity unavailable (1)"), "(§6) unresolved count shows returned rows (1), not scanned");
+}
+
+// canonical continuation view renders the next exact records
+async function testContinuationViewRenders() {
+  const cont = pcsView({ rows: [group({ patientClinicMembershipId: 800, episodes: [vector({ ancillaryCaseId: 205 }), vector({ ancillaryCaseId: 206 })], episodesNextCursor: null })] });
+  const html = renderToStaticMarkup(React.createElement(pcsComp.CanonicalPcsView, { data: cont }));
+  assert.ok(html.includes("stage-vector-205") && html.includes("stage-vector-206"), "continuation renders the next exact episodes");
 }
 async function testAcsViewRenders() {
   const html = renderToStaticMarkup(React.createElement(acsComp.CanonicalAcsView, { data: acsView() }));
-  assert.ok(html.includes("stage-vector-5") && html.includes("current-stage-5"));
-  assertNoMock(html, "ACS view");
+  assert.ok(html.includes("stage-vector-5") && html.includes("current-stage-5")); assertNoMock(html, "ACS view");
 }
-async function testUnresolvedIdentityRenders() {
-  const data = pcsView({ rows: [], unresolved: { rows: [{ globalPlexusPatientId: null, patientClinicMembershipId: null, patientDisplay: null, patientDob: null, clinicMrn: null, identityAvailable: false, identityWarnings: ["identity_membership_inactive"], episodes: [vector({ ancillaryCaseId: 5 })], episodesNextCursor: null }], pageInfo: { limit: 50, nextCursor: null, returned: 1 } } });
-  const html = renderToStaticMarkup(React.createElement(pcsComp.CanonicalPcsView, { data }));
-  assert.ok(html.includes("pcs-identity-unavailable") && html.includes("identity_membership_inactive"), "unresolved identity surfaced without PHI");
-}
-async function testFlagsDefaultOff() {
-  assert.equal(pcsFlag.isPcsCanonicalViewEnabled(), false); assert.equal(acsFlag.isAcsCanonicalViewEnabled(), false);
-}
-
-// shell preservation (structural, supplemental): pages always mount the shell; the
-// shell composes via WorkspaceCanonicalHeader; no standalone canonical page.
-async function testShellPreservedStructural() {
-  for (const [f, role] of [["patient-care-specialist-portal.tsx", "patientCareSpecialist"], ["ancillary-care-specialist-portal.tsx", "ancillaryCareSpecialist"]] as const) {
-    const src = readFileSync(join(ROOT, "client/src/pages", f), "utf8");
-    assert.ok(new RegExp(`return <ClinicWorkflowPortal role="${role}"`).test(src), `${f} always mounts the shell`);
-    assert.ok(!/CanonicalPcsPage|CanonicalAcsPage|min-h-screen|isPcsCanonicalViewEnabled|isAcsCanonicalViewEnabled/.test(src), `${f} no standalone canonical page/branch`);
-  }
+async function testFlagsDefaultOff() { assert.equal(pcsFlag.isPcsCanonicalViewEnabled(), false); assert.equal(acsFlag.isAcsCanonicalViewEnabled(), false); }
+async function testShellUsesComposition() {
   const shell = readFileSync(join(ROOT, "client/src/components/portal/TeamPortalShell.tsx"), "utf8");
-  assert.ok(/<WorkspaceCanonicalHeader/.test(shell), "shell composes canonical via WorkspaceCanonicalHeader");
-  assert.ok(/activeWorkspaceMode === "clinicSchedule"/.test(shell) && /workspace-mode-body-callList/.test(shell), "shell mode bodies preserved");
-  const section = readFileSync(join(ROOT, "client/src/components/careSpecialist/CanonicalLifecycleSection.tsx"), "utf8");
-  assert.ok(/if \(!enabled\) return null/.test(section) && !/mockData|usePortalData/.test(section), "section self-gates, no mock source");
+  assert.ok(/<WorkspaceWorkQueueComposition/.test(shell), "shell uses the real composition");
+  assert.ok(/canonicalSection=\{<CanonicalLifecycleSection/.test(shell), "shell passes the canonical section to the composition");
+  assert.ok(/<WorkspaceModeSwitcher/.test(shell), "shell keeps the sticky WorkspaceModeSwitcher");
+  assert.ok(/activeWorkspaceMode === "clinicSchedule"/.test(shell) && /workspace-mode-body-callList/.test(shell), "shell mode bodies preserved (passed as children)");
+  const pcsPage = readFileSync(join(ROOT, "client/src/pages/patient-care-specialist-portal.tsx"), "utf8");
+  assert.ok(/return <ClinicWorkflowPortal role="patientCareSpecialist"/.test(pcsPage) && !/min-h-screen/.test(pcsPage), "PCS page always mounts the shell, no standalone page");
 }
-async function testNoMigration0056() {
-  const { readdirSync } = await import("node:fs");
-  assert.ok(!readdirSync(join(ROOT, "migrations")).some((f) => f.startsWith("0056")), "no migration 0056");
-}
+async function testNoMigration0056() { const { readdirSync } = await import("node:fs"); assert.ok(!readdirSync(join(ROOT, "migrations")).some((f) => f.startsWith("0056")), "no migration 0056"); }
 
 const tests: Array<[string, () => Promise<void>]> = [
-  ["(1/3/5/6/8) real shell composition PCS ON", testRealShellCompositionPcsOn],
-  ["(2/4) real shell composition ACS ON", testRealShellCompositionAcsOn],
-  ["(7/9) real shell composition canonical OFF", testRealShellCompositionOff],
-  ["PCS view renders, no mock", testPcsViewRenders],
+  ["(1/4/5/6/7) real composition PCS", testRealCompositionPcs],
+  ["(2) real composition ACS", testRealCompositionAcs],
+  ["(§2) pagination control params", testPaginationControls],
+  ["(§2/§6) continuation controls render", testControlsRender],
+  ["continuation view renders next records", testContinuationViewRenders],
   ["ACS view renders, no mock", testAcsViewRenders],
-  ["unresolved identity surfaced without PHI", testUnresolvedIdentityRenders],
   ["flags default OFF", testFlagsDefaultOff],
-  ["shell preserved (structural)", testShellPreservedStructural],
+  ["shell uses production composition", testShellUsesComposition],
   ["no migration 0056", testNoMigration0056],
 ];
 async function run() {

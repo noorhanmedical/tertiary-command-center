@@ -38,7 +38,14 @@ import { decodeCursor, encodeCursor, loadCaseFilters, type CanonicalViewFilters 
 
 export { MigrationMissingError };
 
-const SCAN = 5000; // bounded per-membership episode scan
+// Bounded shared fetch window for the verified-patient episode page. The
+// completeness algorithm below makes it LOSSLESS: any membership not fully
+// represented in the window is NOT returned this page and the membership cursor
+// stops before it, so it is retrieved on a later page (never permanently lost).
+const PCS_VERIFIED_EPISODE_WINDOW = 5000;
+// Bounded per-request continuation scan (raw cases, so it advances past invalid
+// early cases to reach valid later episodes).
+const PCS_CONTINUATION_SCAN = 2000;
 
 export type PcsViewInput = {
   clinicId: number; cursor?: string | null; limit?: number; filters?: CanonicalViewFilters;
@@ -67,77 +74,103 @@ export async function getPcsCanonicalView(input: PcsViewInput): Promise<PcsCanon
   return { ...base, availability: "available", warnings: [], rows: verified.rows, pageInfo: verified.pageInfo, unresolved };
 }
 
-// ─── verified patient stream ─────────────────────────────────────────────────
+// ─── verified patient stream (lossless window + completeness) ────────────────
 async function loadVerifiedStream(clinicId: number, afterMemberId: number | null, limit: number, filters: ReturnType<typeof loadCaseFilters>) {
   const memConds = [eq(patientClinicMemberships.clinicId, clinicId), eq(patientClinicMemberships.membershipStatus, "active")];
   if (afterMemberId != null) memConds.push(gt(patientClinicMemberships.id, afterMemberId));
   const raw = await db.select().from(patientClinicMemberships).where(and(...memConds)).orderBy(asc(patientClinicMemberships.id)).limit(limit + 1);
-  // Defense + testability (the fake db ignores WHERE/limit): re-apply clinic +
-  // active + cursor in memory, then order + bound.
   const filtered = raw.filter((m) => m.clinicId === clinicId && m.membershipStatus === "active" && (afterMemberId == null || m.id > afterMemberId)).sort((a, b) => a.id - b.id);
-  const hasMore = filtered.length > limit;
+  const memberHasMore = filtered.length > limit;
   const members = filtered.slice(0, limit);
-  const nextCursor = hasMore && members.length ? encodeCursor(members[members.length - 1].id) : null;
   const memberIds = members.map((m) => m.id);
-  const gppIds = [...new Set(members.map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))];
-  const gppById = await loadGpps(gppIds);
+  if (!memberIds.length) return { rows: [] as PcsPatientGroup[], pageInfo: { limit, nextCursor: null, returned: 0 } };
+  const gppById = await loadGpps([...new Set(members.map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))]);
 
-  // Episodes for the paged memberships (bounded scan; grouped per membership).
-  const caseConds = [eq(patientAncillaryCases.clinicId, clinicId)];
-  if (memberIds.length) caseConds.push(inArray(patientAncillaryCases.patientClinicMembershipId, memberIds));
+  // Bounded shared window over the paged memberships' cases, ordered by
+  // (membership, id). The completeness/lossless guarantee below is contingent on
+  // the DB honoring THIS deterministic ordering + LIMIT (a non-deterministic scan
+  // must never silently reshape the window). The fake db ignores ORDER BY/LIMIT,
+  // so re-order + slice in memory to mirror production and expose the SAME
+  // truncation boundary.
+  const caseConds = [eq(patientAncillaryCases.clinicId, clinicId), inArray(patientAncillaryCases.patientClinicMembershipId, memberIds)];
   applyCaseFilters(caseConds, filters);
-  const casesRaw = memberIds.length ? await db.select().from(patientAncillaryCases).where(and(...caseConds)).orderBy(asc(patientAncillaryCases.id)).limit(SCAN) : [];
-  const cases = casesRaw.filter((c) => c.clinicId === clinicId && c.patientClinicMembershipId != null && memberIds.includes(c.patientClinicMembershipId) && matchesFilters(c, filters)).sort((a, b) => a.id - b.id);
+  const casesRaw = await db.select().from(patientAncillaryCases).where(and(...caseConds)).orderBy(asc(patientAncillaryCases.patientClinicMembershipId), asc(patientAncillaryCases.id)).limit(PCS_VERIFIED_EPISODE_WINDOW + 1);
+  const sorted = casesRaw.filter((c) => c.clinicId === clinicId && c.patientClinicMembershipId != null && memberIds.includes(c.patientClinicMembershipId) && matchesFilters(c, filters))
+    .sort((a, b) => (a.patientClinicMembershipId! - b.patientClinicMembershipId!) || (a.id - b.id));
+  const windowFull = sorted.length > PCS_VERIFIED_EPISODE_WINDOW;
+  const windowed = sorted.slice(0, PCS_VERIFIED_EPISODE_WINDOW);
   const byMember = new Map<number, PatientAncillaryCase[]>();
-  for (const c of cases) { const arr = byMember.get(c.patientClinicMembershipId!) ?? []; arr.push(c); byMember.set(c.patientClinicMembershipId!, arr); }
+  for (const c of windowed) { const arr = byMember.get(c.patientClinicMembershipId!) ?? []; arr.push(c); byMember.set(c.patientClinicMembershipId!, arr); }
+  const lastPresent = byMember.size ? Math.max(...byMember.keys()) : null;
+
+  // Completeness: without a full window every paged membership is fully covered.
+  // With a full window, only memberships up to `lastPresent` are represented; the
+  // tail member `lastPresent` may be truncated (later episodes beyond the window)
+  // and gets a forced continuation cursor; memberships beyond `lastPresent` are
+  // NOT returned and the membership cursor stops at `lastPresent` so they are
+  // retrieved next page (never lost).
+  const returnMembers = windowFull && lastPresent != null ? members.filter((m) => m.id <= lastPresent) : members;
+  const membershipNextCursor = windowFull && lastPresent != null
+    ? encodeCursor(lastPresent)
+    : (memberHasMore && members.length ? encodeCursor(members[members.length - 1].id) : null);
 
   const rows: PcsPatientGroup[] = [];
-  for (const m of members) {
+  for (const m of returnMembers) {
     const gpp = m.globalPlexusPatientId != null ? gppById.get(m.globalPlexusPatientId) : undefined;
-    const all = (byMember.get(m.id) ?? []);
-    const pageCases = all.slice(0, PCS_MAX_EPISODES_PER_PATIENT);
-    const episodesNextCursor = all.length > PCS_MAX_EPISODES_PER_PATIENT ? encodeCursor(pageCases[pageCases.length - 1].id) : null;
-    const g = await groupForMember(clinicId, m, gpp, pageCases, episodesNextCursor);
-    if (g) rows.push(g);
+    // The membership yields a VERIFIED patient only when its global patient is
+    // current (active, not merged). Otherwise its cases flow to the unresolved
+    // stream (never a verified group with fabricated identity).
+    if (!isCurrentPatient(gpp, m.globalPlexusPatientId)) continue;
+    const memberCases = byMember.get(m.id) ?? []; // raw window cases (id order)
+    const validCases = memberCases.filter((c) => c.globalPlexusPatientId === m.globalPlexusPatientId); // exact episodes
+    const pageValid = validCases.slice(0, PCS_MAX_EPISODES_PER_PATIENT);
+    const memberTruncated = windowFull && m.id === lastPresent; // later cases beyond window
+    const episodesNextCursor = validCases.length > PCS_MAX_EPISODES_PER_PATIENT
+      ? encodeCursor(pageValid[pageValid.length - 1].id)                          // more valid beyond the shown page
+      : (memberTruncated && memberCases.length ? encodeCursor(memberCases[memberCases.length - 1].id) : null); // scan past the window for later valid episodes
+    const g = await buildVerifiedGroup(clinicId, m, gpp!, pageValid, episodesNextCursor);
+    // Return a valid patient with 0 in-window episodes ONLY when a continuation
+    // can still reach its later valid episodes (never a permanently empty group).
+    if (g.episodes.length > 0 || g.episodesNextCursor) rows.push(g);
   }
-  return { rows, pageInfo: { limit, nextCursor, returned: members.length } };
+  return { rows, pageInfo: { limit, nextCursor: membershipNextCursor, returned: rows.length } };
 }
 
+// Per-patient episode continuation — scans RAW cases past the cursor (so it moves
+// past invalid early cases to reach later valid episodes) for ONE exact active
+// this-clinic membership; returns the next bounded page of VALID episodes.
 async function loadPatientEpisodeContinuation(clinicId: number, membershipId: number, afterCaseId: number | null, filters: ReturnType<typeof loadCaseFilters>): Promise<PcsPatientGroup | null> {
-  // Validate the membership is an exact active THIS-clinic membership.
   const memRaw = await db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), eq(patientClinicMemberships.id, membershipId))).limit(2);
   const m = memRaw.find((x) => x.id === membershipId && x.clinicId === clinicId && x.membershipStatus === "active");
   if (!m) return null;
   const gpp = m.globalPlexusPatientId != null ? (await loadGpps([m.globalPlexusPatientId])).get(m.globalPlexusPatientId) : undefined;
+  if (!isCurrentPatient(gpp, m.globalPlexusPatientId)) return null;
   const conds = [eq(patientAncillaryCases.clinicId, clinicId), eq(patientAncillaryCases.patientClinicMembershipId, membershipId)];
   if (afterCaseId != null) conds.push(gt(patientAncillaryCases.id, afterCaseId));
   applyCaseFilters(conds, filters);
-  const raw = await db.select().from(patientAncillaryCases).where(and(...conds)).orderBy(asc(patientAncillaryCases.id)).limit(SCAN);
-  const all = raw.filter((c) => c.clinicId === clinicId && c.patientClinicMembershipId === membershipId && (afterCaseId == null || c.id > afterCaseId) && matchesFilters(c, filters)).sort((a, b) => a.id - b.id);
-  const pageCases = all.slice(0, PCS_MAX_EPISODES_PER_PATIENT);
-  const next = all.length > PCS_MAX_EPISODES_PER_PATIENT ? encodeCursor(pageCases[pageCases.length - 1].id) : null;
-  return groupForMember(clinicId, m, gpp, pageCases, next);
+  const raw = await db.select().from(patientAncillaryCases).where(and(...conds)).orderBy(asc(patientAncillaryCases.id)).limit(PCS_CONTINUATION_SCAN + 1);
+  const scanned = raw.filter((c) => c.clinicId === clinicId && c.patientClinicMembershipId === membershipId && (afterCaseId == null || c.id > afterCaseId) && matchesFilters(c, filters)).sort((a, b) => a.id - b.id);
+  const scanFull = scanned.length > PCS_CONTINUATION_SCAN;
+  const window = scanned.slice(0, PCS_CONTINUATION_SCAN);
+  const validCases = window.filter((c) => c.globalPlexusPatientId === m.globalPlexusPatientId);
+  const pageValid = validCases.slice(0, PCS_MAX_EPISODES_PER_PATIENT);
+  const next = validCases.length > PCS_MAX_EPISODES_PER_PATIENT
+    ? encodeCursor(pageValid[pageValid.length - 1].id)
+    : (scanFull && window.length ? encodeCursor(window[window.length - 1].id) : null); // more raw cases to scan for later valid episodes
+  return buildVerifiedGroup(clinicId, m, gpp!, pageValid, next);
 }
 
-async function groupForMember(clinicId: number, m: typeof patientClinicMemberships.$inferSelect, gpp: typeof globalPlexusPatients.$inferSelect | undefined, pageCases: PatientAncillaryCase[], episodesNextCursor: string | null): Promise<PcsPatientGroup | null> {
-  const vectors = await buildStageVectors({ clinicId, cases: pageCases });
-  const byId = new Map(vectors.map((v) => [v.ancillaryCaseId, v]));
-  const episodes: PcsPatientGroup["episodes"] = [];
-  let resolvedIdentity: ReturnType<typeof verifyCaseIdentity> | null = null;
-  for (const c of pageCases) {
-    const idres = verifyCaseIdentity({ clinicId, caseGlobalPatientId: c.globalPlexusPatientId ?? null, caseMembershipId: c.patientClinicMembershipId ?? null, membership: m, globalPatient: gpp });
-    // A verified member's case whose case↔patient pair conflicts must NOT be
-    // grouped under the patient — it belongs to the unresolved stream instead.
-    if (!idres.resolved) continue;
-    resolvedIdentity = idres;
-    const v = byId.get(c.id);
-    if (v) { v.identity.patientDisplay = idres.patientDisplay; v.identity.patientDob = idres.patientDob; v.identity.clinicMrn = idres.clinicMrn; v.identity.available = true; v.identity.warnings = []; episodes.push(v); }
-  }
-  if (!resolvedIdentity || episodes.length === 0) return null;
+function isCurrentPatient(gpp: typeof globalPlexusPatients.$inferSelect | undefined, expectedId: number | null): boolean {
+  return !!gpp && expectedId != null && gpp.id === expectedId && gpp.identityStatus === "active" && gpp.mergedIntoPatientId == null;
+}
+
+async function buildVerifiedGroup(clinicId: number, m: typeof patientClinicMemberships.$inferSelect, gpp: typeof globalPlexusPatients.$inferSelect, validCases: PatientAncillaryCase[], episodesNextCursor: string | null): Promise<PcsPatientGroup> {
+  const vectors = await buildStageVectors({ clinicId, cases: validCases });
+  for (const v of vectors) { v.identity.patientDisplay = gpp.displayName ?? null; v.identity.patientDob = gpp.dob ?? null; v.identity.clinicMrn = m.clinicMrn ?? null; v.identity.available = true; v.identity.warnings = []; }
   return {
     globalPlexusPatientId: m.globalPlexusPatientId, patientClinicMembershipId: m.id,
-    patientDisplay: resolvedIdentity.patientDisplay, patientDob: resolvedIdentity.patientDob, clinicMrn: resolvedIdentity.clinicMrn,
-    identityAvailable: true, identityWarnings: [], episodes, episodesNextCursor,
+    patientDisplay: gpp.displayName ?? null, patientDob: gpp.dob ?? null, clinicMrn: m.clinicMrn ?? null,
+    identityAvailable: true, identityWarnings: [], episodes: vectors, episodesNextCursor,
   };
 }
 
@@ -184,7 +217,10 @@ async function loadUnresolvedStream(clinicId: number, afterCaseId: number | null
       identityAvailable: false, identityWarnings: idres.warnings, episodes: v ? [v] : [], episodesNextCursor: null,
     };
   });
-  return { rows, pageInfo: { limit, nextCursor, returned: page.length } };
+  // `returned` = unresolved rows actually returned; `scanned` = cases examined
+  // (the cursor may advance over verified cases skipped here). The UI shows
+  // `returned`, never `scanned`.
+  return { rows, pageInfo: { limit, nextCursor, returned: rows.length, scanned: page.length } };
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

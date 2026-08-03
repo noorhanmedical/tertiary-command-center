@@ -1281,7 +1281,7 @@
     },
     {
       "path": "client/src/components/portal/TeamPortalShell.tsx",
-      "blob": "1c867eb36ba3dcb0b82e1a77f27d212527d51db8",
+      "blob": "0ff51370805fdd7f6e4c7301336b6156d86ed38c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

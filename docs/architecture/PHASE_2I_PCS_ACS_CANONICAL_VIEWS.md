@@ -247,3 +247,39 @@ pages (reverted to always mount the shell). No other protected UI changed.
 TeamPortalShell (protected UI) manifest blob updated again for the
 WorkspaceCanonicalHeader mount (narrow, additive). The canonical `available` field
 is joined by a normalized `integrity` field on every StageStatus.
+
+## Retrievability & production-composition closeout
+
+- **All PCS continuation contracts wired into the client (§2).** A pure, typed
+  pagination state machine (`pcsPagination.ts`) drives three independent contracts —
+  verified cursor, unresolved cursor, and per-patient episode continuation
+  (`episodeMembershipId`+`episodeCursor`); every param flows into the React Query
+  key (distinct states = distinct requests, no ambiguous cursor concatenation). The
+  in-shell PCS section renders working controls (first/next verified, first/next
+  unresolved, per-patient "Load next episodes" retaining exact membership identity,
+  and "Back to patients"). Flag OFF still issues zero requests.
+- **5000-episode loss window removed (§3).** The verified stream fetches a bounded
+  window ordered by (membership, id); a completeness algorithm returns only
+  memberships fully represented in the window and stops the membership cursor before
+  any deferred membership, so later memberships/episodes are retrieved on a later
+  page — never lost. Each membership's episode page is built from VALID episodes
+  (exact gpp match); invalid early cases are excluded from the verified page (they
+  surface in the unresolved stream) and the continuation cursor advances over raw
+  cases so valid later episodes remain reachable. Every case lands in exactly one
+  stream (never neither, never both). No per-membership N+1.
+- **Production composition matches the behavioral test (§4).** A real
+  `WorkspaceWorkQueueComposition` renders the sticky mode-switcher `header`, then the
+  flag-gated canonical section and the EXISTING mode body (`children`) in the normal
+  scrollable body — the section is never in the sticky header. TeamPortalShell passes
+  its actual mode-body subtree through this same component, and the behavioral test
+  renders the identical component (real WorkspaceModeSwitcher + section + mode body).
+- **Symmetric Billing Document reference agreement (§5).** For each of
+  order/report/procedure-note reference ids, both sides are normalized to null and
+  must be exactly equal whenever EITHER is non-null (`billing_document_reference_
+  mismatch`); a document may never introduce a reference absent from the readiness.
+- **Truthful unresolved metadata (§6).** `unresolved.pageInfo.returned` is the
+  number of unresolved rows actually returned; a separate `scanned` reports cases
+  examined. The UI's "Identity unavailable (N)" uses `returned`, never `scanned`.
+
+TeamPortalShell (protected UI) manifest blob updated again for the composition
+wiring; `WorkspaceCanonicalHeader` is now a thin re-export of the composition.
