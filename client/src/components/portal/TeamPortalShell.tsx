@@ -25,6 +25,9 @@ import {
   WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
 } from "@/components/portal/WorkspaceModeSwitcher";
+// Phase 2I — flag-gated canonical lifecycle stage-vector section, wired INSIDE
+// this shell (renders nothing / zero requests when its flag is OFF).
+import { CanonicalLifecycleSection } from "@/components/careSpecialist/CanonicalLifecycleSection";
 import {
   fetchWorkspaceCallList,
   fetchWorkspaceClinicSchedule,
@@ -3261,6 +3264,10 @@ export function TeamPortalShell({
                   />
                 </div>
                 <div className="p-3">
+                {/* Phase 2I — canonical lifecycle stage vectors, inside the shell.
+                    Renders nothing (and issues zero requests) when the PCS/ACS
+                    canonical-view flag is OFF; never replaces the shell/modes. */}
+                <CanonicalLifecycleSection workspaceRole={workspaceRole} />
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
                 <div className="mb-3 flex items-center justify-between">

@@ -226,3 +226,22 @@ as-zero, no unrelated redesign; check/tests/build/manifest green).
 
 - **`iso()` double-wraps already-Date values** (`caseStageVector.ts`) — harmless
   `new Date(existingDate)`; noted for symmetry only.
+
+## Phase 2I truth closeout (independent review)
+
+Zero blockers, zero majors. Deferred MINOR/HARDENING:
+
+- **Billing Document fingerprint null-null equality edge.**
+  `server/services/canonicalStage/caseStageVector.ts` binds the current Billing
+  Document to the current readiness by `billingReadinessCheckId` (authoritative) AND
+  `evidenceFingerprint`. When BOTH fingerprints are null the `!==` check passes
+  vacuously — not a staleness bypass today (the id binding guarantees the doc points
+  at the current readiness row), but if Phase 2G ever writes a null fingerprint the
+  fingerprint check degrades to a no-op. Hardening: treat a null fingerprint on
+  either side as unverifiable → `billing_document_stale_fingerprint` + status null.
+- **Stage-vector identity `available` default is loose.** In `buildOne`,
+  `identity.available` defaults to `globalPlexusPatientId != null && membershipId
+  != null` without a verified membership. Safe today (display fields are hard-null
+  there so no PHI leaks, PCS overwrites the whole identity block via
+  `verifyCaseIdentity`, ACS never renders display), but defaulting `available:false`
+  would be symmetric so the flag can never read "available" without proof.

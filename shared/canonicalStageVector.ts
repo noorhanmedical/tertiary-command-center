@@ -17,12 +17,21 @@ export type StageAvailability =
   | "migration_missing"     // a required canonical migration is not applied
   | "unavailable";          // this stage's read failed (ordinary, non-migration)
 
-/** One canonical lifecycle stage. `available=false` + a truthful status/warnings
- *  is NEVER collapsed to a false "current" or a zero. */
+/** One canonical lifecycle stage. Truthful availability semantics (§6):
+ *   • `availability` — whether the stage's source SYSTEM/query is usable
+ *     (available / unavailable / upstream_flag_off / migration_missing).
+ *   • `available` — whether exactly ONE exact current source was PROVEN. It is
+ *     true only when availability === "available" AND status != null. A
+ *     successful query with no source → availability=available, available=false,
+ *     status=null. A duplicate-current-evidence conflict → availability=available,
+ *     available=false, status=null, warnings=["duplicate_current_evidence"]. A
+ *     failed query → availability=unavailable, available=false.
+ *  `available=false` + truthful status/warnings is NEVER collapsed to a false
+ *  "current" or a zero. */
 export type StageStatus = {
-  status: string | null;           // canonical stage status, or null when unresolved
-  availability: StageAvailability;  // per-stage truth (upstream_flag_off / unavailable / available)
-  available: boolean;               // convenience: availability === "available" AND a current source exists
+  status: string | null;           // canonical stage status, or null when unresolved/conflicting
+  availability: StageAvailability;  // whether the stage query/source system is usable
+  available: boolean;               // TRUE only when one exact current source was proven
   sourceId: number | null;          // exact source id for a same-clinic/case navigation, when safe
   at: string | null;                // ISO timestamp where applicable
   warnings: string[];               // PHI-free reason codes

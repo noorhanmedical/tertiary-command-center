@@ -3,15 +3,28 @@
  *
  * Given a bounded, already-clinic-scoped set of ancillary cases, this builds one
  * 10-stage canonical lifecycle vector per case using BATCHED, exact-source reads
- * (never per-row / N+1). Every stage is exact-source validated (episode ownership
- * + exhaustive reference/source status agreement, mirroring Phase 2H) and each
- * stage is independently gated by its OWN upstream runtime flag — a disabled
- * stage is reported `upstream_flag_off` (zero reads), never a false status.
+ * (never per-row / N+1). Every stage is validated against the EXACT case
+ * (clinicId + ancillaryCaseId + serviceType) and its exact source (episode
+ * ownership + exhaustive reference/source status agreement, mirroring Phase 2H).
  *
- * READ-ONLY. No writes, no retry rows, no document bytes/note text, no
- * claims/invoice/payment/revenue. A missing canonical table (pg 42P01/42703)
- * throws MigrationMissingError → the route answers 503. An ordinary per-stage
- * read failure marks THAT stage `unavailable` (never a silent zero / false stage).
+ * TRUTH RULES:
+ *  • Exact service — a wrong-service source contributes no status/sourceId/at,
+ *    only a PHI-free warning, and never advances currentStage (§4).
+ *  • No silent tie-break — a stage that should have exactly one current row and
+ *    has MORE than one qualifying current row is an integrity `conflict`
+ *    (duplicate_current_evidence): status/sourceId null, available=false. First/
+ *    last/highest-id/newest are NEVER used unless an explicit canonical lineage
+ *    field proves the one current successor (§5).
+ *  • Availability semantics — `availability` is whether the stage query is usable;
+ *    `available` is TRUE only when exactly one exact current source was proven
+ *    (§6). A successful query with no source is availability=available,
+ *    available=false, status=null.
+ *  • Billing Document is bound to the current readiness by id + evidence
+ *    fingerprint (§13).
+ *
+ * READ-ONLY. No writes/retry rows/document bytes/note text/claims/invoice/payment.
+ * A missing canonical table (pg 42P01/42703) throws MigrationMissingError → 503;
+ * an ordinary per-stage read failure marks THAT stage `unavailable` (never zero).
  */
 
 import { db } from "../../db";
@@ -42,6 +55,10 @@ const MIGRATION_MISSING_CODE = "ANCILLARY_DOCUMENT_MIGRATION_MISSING";
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", MIGRATION_MISSING_CODE]);
 const SCAN_LIMIT = 5000; // bounded across the (already bounded) case page
 
+const NOTE_UNSIGNED_CURRENT = new Set(["needs_signature", "ready_to_sign", "returned_for_correction"]);
+const REPORT_CURRENT = new Set(["uploaded", "generated", "approved", "completed"]);
+const APPT_CURRENT = new Set(["scheduled", "completed"]);
+
 export class MigrationMissingError extends Error {
   readonly code = MIGRATION_MISSING_CODE;
   constructor(cause?: unknown) { super("Canonical migration not applied"); this.name = "MigrationMissingError"; (this as { cause?: unknown }).cause = cause; }
@@ -51,24 +68,35 @@ function isMigration(e: unknown): boolean {
 }
 function iso(v: unknown): string | null { return v ? new Date(v as unknown as Date).toISOString() : null; }
 
-/** Load a stage source; a migration error propagates (→ 503), an ordinary error
- *  resolves to null so ONLY that stage is marked `unavailable` (never zero). */
 async function loadOrNull<T>(fn: () => Promise<T>): Promise<{ ok: true; rows: T } | { ok: false }> {
   try { return { ok: true, rows: await fn() }; }
   catch (e) { if (isMigration(e)) throw new MigrationMissingError(e); return { ok: false }; }
 }
 
-const stage = (o: Partial<StageStatus> & { availability: StageAvailability }): StageStatus => ({
-  status: o.status ?? null, availability: o.availability, available: o.availability === "available",
-  sourceId: o.sourceId ?? null, at: o.at ?? null, warnings: o.warnings ?? [],
-});
+/** Build a stage. `available` is TRUE only when a single exact current source was
+ *  proven (default: availability available AND a non-null status), per §6. */
+const stage = (o: Partial<StageStatus> & { availability: StageAvailability }): StageStatus => {
+  const availability = o.availability;
+  const status = o.status ?? null;
+  const available = o.available ?? (availability === "available" && status != null);
+  return { status, availability, available, sourceId: o.sourceId ?? null, at: o.at ?? null, warnings: o.warnings ?? [] };
+};
 const upstreamOff = (code: string): StageStatus => stage({ availability: "upstream_flag_off", warnings: [code] });
 const unavailable = (code: string): StageStatus => stage({ availability: "unavailable", warnings: [code] });
+const conflictStage = (code = "duplicate_current_evidence"): StageStatus => stage({ availability: "available", status: null, available: false, warnings: [code] });
 
 function tally(list: { code: string }[]): CodeCount[] {
   const m = new Map<string, number>();
   for (const b of list) m.set(b.code, (m.get(b.code) ?? 0) + 1);
   return [...m.entries()].map(([code, count]) => ({ code, count })).sort((a, b) => (b.count - a.count) || a.code.localeCompare(b.code));
+}
+
+/** Exactly-one-current selection — NEVER a first/last/newest tie-break. */
+type Pick<R> = { kind: "missing" } | { kind: "one"; row: R } | { kind: "conflict" };
+function pickSingle<R>(rows: R[]): Pick<R> {
+  if (rows.length === 0) return { kind: "missing" };
+  if (rows.length === 1) return { kind: "one", row: rows[0] };
+  return { kind: "conflict" };
 }
 
 export type StageVectorInput = { clinicId: number; cases: PatientAncillaryCase[] };
@@ -77,48 +105,31 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const { clinicId, cases } = input;
   const caseIds = [...new Set(cases.map((c) => c.id))];
   if (caseIds.length === 0) return [];
-
-  // ── Batched, flag-gated, clinic-scoped source loads (one query per source) ──
   const flags = featureFlags;
 
-  // Admin Review events (timestamp/source) — only when the write flag indicates 0051.
-  const adminEventsGate = flags.serviceSpecificAdminReview;
-  const adminEvents = adminEventsGate
-    ? await loadOrNull(() => db.select().from(ancillaryCaseAdminReviewEvents).where(inArray(ancillaryCaseAdminReviewEvents.ancillaryCaseId, caseIds)).limit(SCAN_LIMIT))
-    : null;
-  const latestAdminEventByCase = new Map<number, { at: string | null; source: string | null }>();
-  if (adminEvents?.ok) {
-    for (const e of adminEvents.rows) {
-      const at = iso(e.actualReviewedAt);
-      const prev = latestAdminEventByCase.get(e.ancillaryCaseId);
-      if (!prev || (at && (prev.at == null || at > prev.at))) latestAdminEventByCase.set(e.ancillaryCaseId, { at, source: e.source ?? null });
-    }
-  }
+  // ── Admin Review events (Phase 2C) ──
+  const adminGate = flags.serviceSpecificAdminReview;
+  const adminLoad = adminGate ? await loadOrNull(() => db.select().from(ancillaryCaseAdminReviewEvents).where(inArray(ancillaryCaseAdminReviewEvents.ancillaryCaseId, caseIds)).limit(SCAN_LIMIT)) : null;
+  const adminByCase = groupArray(adminLoad, (e) => e.ancillaryCaseId, caseIds);
 
-  // Engagement memberships + lists (Phase 2C) — gated by any 2C engagement flag.
+  // ── Engagement memberships + lists (Phase 2C) ──
   const engagementGate = flags.engagementAdminReviewSync || flags.engagementMultiListRepository || flags.engagementRecentLists;
-  const membershipsLoad = engagementGate
-    ? await loadOrNull(() => db.select().from(engagementListMemberships).where(and(inArray(engagementListMemberships.ancillaryCaseId, caseIds), eq(engagementListMemberships.status, "active"))).limit(SCAN_LIMIT))
-    : null;
-  const activeMemberships = membershipsLoad?.ok ? membershipsLoad.rows.filter((m) => m.status === "active" && m.ancillaryCaseId != null && caseIds.includes(m.ancillaryCaseId)) : [];
-  const listIds = [...new Set(activeMemberships.map((m) => m.engagementListId))];
-  const listsLoad = engagementGate && listIds.length
-    ? await loadOrNull(() => db.select().from(engagementLists).where(and(eq(engagementLists.clinicId, clinicId), inArray(engagementLists.id, listIds))).limit(SCAN_LIMIT))
-    : { ok: true as const, rows: [] as typeof engagementLists.$inferSelect[] };
+  const membersLoad = engagementGate ? await loadOrNull(() => db.select().from(engagementListMemberships).where(and(inArray(engagementListMemberships.ancillaryCaseId, caseIds), eq(engagementListMemberships.status, "active"))).limit(SCAN_LIMIT)) : null;
+  const activeMembers = membersLoad?.ok ? membersLoad.rows.filter((m) => m.status === "active" && m.ancillaryCaseId != null && caseIds.includes(m.ancillaryCaseId)) : [];
+  const listIds = [...new Set(activeMembers.map((m) => m.engagementListId))];
+  const listsLoad = engagementGate && listIds.length ? await loadOrNull(() => db.select().from(engagementLists).where(and(eq(engagementLists.clinicId, clinicId), inArray(engagementLists.id, listIds))).limit(SCAN_LIMIT)) : { ok: true as const, rows: [] as typeof engagementLists.$inferSelect[] };
   const listById = new Map<number, typeof engagementLists.$inferSelect>();
   if (listsLoad.ok) for (const l of listsLoad.rows) if (l.clinicId === clinicId) listById.set(l.id, l);
+  const membershipsByCase = groupMemberships(activeMembers, listById, cases);
 
-  // Canonical appointment (Phase 2D) — global_schedule_events canonical ancillary events.
+  // ── Canonical appointment (Phase 2D) ──
   const apptGate = flags.canonicalAppointment;
-  const apptLoad = apptGate
-    ? await loadOrNull(() => db.select().from(globalScheduleEvents).where(and(eq(globalScheduleEvents.clinicId, clinicId), inArray(globalScheduleEvents.ancillaryCaseId, caseIds), inArray(globalScheduleEvents.eventType, ["ancillary_appointment", "same_day_add"]))).limit(SCAN_LIMIT))
-    : null;
+  const apptLoad = apptGate ? await loadOrNull(() => db.select().from(globalScheduleEvents).where(and(eq(globalScheduleEvents.clinicId, clinicId), inArray(globalScheduleEvents.ancillaryCaseId, caseIds), inArray(globalScheduleEvents.eventType, ["ancillary_appointment", "same_day_add"]))).limit(SCAN_LIMIT)) : null;
+  const apptByCase = groupArray(apptLoad, (e) => e.ancillaryCaseId, caseIds, (e) => e.clinicId === clinicId);
 
-  // Unified document references (Phase 2E) — order_note / procedure_note / report.
+  // ── Unified document references (Phase 2E) ──
   const docsGate = flags.unifiedAncillaryDocuments;
-  const refsLoad = docsGate
-    ? await loadOrNull(() => db.select().from(ancillaryDocumentReferences).where(and(eq(ancillaryDocumentReferences.clinicId, clinicId), isNull(ancillaryDocumentReferences.supersededAt), inArray(ancillaryDocumentReferences.ancillaryCaseId, caseIds), inArray(ancillaryDocumentReferences.documentKind, ["order_note", "procedure_note", "report"]))).limit(SCAN_LIMIT))
-    : null;
+  const refsLoad = docsGate ? await loadOrNull(() => db.select().from(ancillaryDocumentReferences).where(and(eq(ancillaryDocumentReferences.clinicId, clinicId), isNull(ancillaryDocumentReferences.supersededAt), inArray(ancillaryDocumentReferences.ancillaryCaseId, caseIds), inArray(ancillaryDocumentReferences.documentKind, ["order_note", "procedure_note", "report"]))).limit(SCAN_LIMIT)) : null;
   const refs = refsLoad?.ok ? refsLoad.rows.filter((r) => r.clinicId === clinicId && r.supersededAt == null) : [];
   const noteSourceIds = [...new Set(refs.filter((r) => (r.documentKind === "order_note" || r.documentKind === "procedure_note") && r.sourceTable === PROCEDURE_NOTE_SOURCE_TABLE && r.sourceId != null).map((r) => r.sourceId as number))];
   const reportSourceIds = [...new Set(refs.filter((r) => r.documentKind === "report" && r.sourceTable === REPORT_SOURCE_TABLE && r.sourceId != null).map((r) => r.sourceId as number))];
@@ -128,127 +139,217 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   if (noteRowsLoad.ok) for (const n of noteRowsLoad.rows) if (n.clinicId === clinicId) noteById.set(n.id, n);
   const cdrById = new Map<number, typeof caseDocumentReadiness.$inferSelect>();
   if (cdrRowsLoad.ok) for (const c of cdrRowsLoad.rows) if (c.clinicId === clinicId) cdrById.set(c.id, c);
+  const refsByCaseKind = groupRefsByCaseKind(refs);
 
-  // Procedure lifecycle (Phase 2F) — procedure_events by exact case.
+  // ── Procedure lifecycle (Phase 2F) ──
   const procGate = flags.canonicalProcedureLifecycle;
-  const procLoad = procGate
-    ? await loadOrNull(() => db.select().from(procedureEvents).where(and(eq(procedureEvents.clinicId, clinicId), inArray(procedureEvents.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT))
-    : null;
+  const procLoad = procGate ? await loadOrNull(() => db.select().from(procedureEvents).where(and(eq(procedureEvents.clinicId, clinicId), inArray(procedureEvents.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
+  const procByCase = groupArray(procLoad, (p) => p.ancillaryCaseId, caseIds, (p) => p.clinicId === clinicId);
 
-  // Billing readiness / Billing Document (Phase 2G) — current non-superseded.
+  // ── Billing readiness / Billing Document (Phase 2G), current non-superseded ──
   const readinessGate = billingReadinessRuntimeEnabled();
-  const readinessLoad = readinessGate
-    ? await loadOrNull(() => db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), isNull(canonicalBillingReadinessChecks.supersededAt), inArray(canonicalBillingReadinessChecks.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT))
-    : null;
+  const readinessLoad = readinessGate ? await loadOrNull(() => db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), isNull(canonicalBillingReadinessChecks.supersededAt), inArray(canonicalBillingReadinessChecks.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
+  const readinessByCase = groupArray(readinessLoad, (r) => r.ancillaryCaseId, caseIds, (r) => r.clinicId === clinicId && r.supersededAt == null);
   const docGate = billingDocumentRuntimeEnabled();
-  const billingDocLoad = docGate
-    ? await loadOrNull(() => db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), isNull(canonicalBillingDocumentRequests.supersededAt), inArray(canonicalBillingDocumentRequests.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT))
-    : null;
+  const billingDocLoad = docGate ? await loadOrNull(() => db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), isNull(canonicalBillingDocumentRequests.supersededAt), inArray(canonicalBillingDocumentRequests.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
+  const billingDocByCase = groupArray(billingDocLoad, (d) => d.ancillaryCaseId, caseIds, (d) => d.clinicId === clinicId && d.supersededAt == null);
 
-  // Per-case indexes (exact clinic + case; superseded excluded already).
-  const apptByCase = groupCurrentAppointment(apptLoad, clinicId, caseIds);
-  const refByCaseKind = groupRefsByCaseKind(refs);
-  const procByCase = groupProcedure(procLoad, clinicId, caseIds);
-  const readinessByCase = groupByCase(readinessLoad, clinicId, caseIds, (r) => r.ancillaryCaseId);
-  const billingDocByCase = groupByCase(billingDocLoad, clinicId, caseIds, (r) => r.ancillaryCaseId);
-  const membershipsByCase = groupMemberships(activeMemberships, listById, cases);
-
-  return cases.map((c) => buildOne(c, {
-    clinicId, adminEventsGate, latestAdminEventByCase, engagementGate, membershipsByCase,
-    apptGate, apptLoad, apptByCase, docsGate, refsLoad, refByCaseKind, noteById, cdrById,
-    procGate, procLoad, procByCase, readinessGate, readinessLoad, readinessByCase,
-    docGate, billingDocLoad, billingDocByCase,
-  }));
+  const ctx: Ctx = {
+    clinicId, adminGate, adminByCase, adminOk: adminLoad?.ok ?? true,
+    engagementGate, membershipsByCase,
+    apptGate, apptOk: apptLoad?.ok ?? true, apptByCase,
+    docsGate, refsOk: refsLoad?.ok ?? true, refsByCaseKind, noteById, cdrById,
+    procGate, procOk: procLoad?.ok ?? true, procByCase,
+    readinessGate, readinessOk: readinessLoad?.ok ?? true, readinessByCase,
+    docGate, docOk: billingDocLoad?.ok ?? true, billingDocByCase,
+  };
+  return cases.map((c) => buildOne(c, ctx));
 }
 
 // ─── per-case assembly ───────────────────────────────────────────────────────
 type Ctx = {
   clinicId: number;
-  adminEventsGate: boolean; latestAdminEventByCase: Map<number, { at: string | null; source: string | null }>;
+  adminGate: boolean; adminOk: boolean; adminByCase: Map<number, typeof ancillaryCaseAdminReviewEvents.$inferSelect[]>;
   engagementGate: boolean; membershipsByCase: Map<number, EngagementMembershipRow[]>;
-  apptGate: boolean; apptLoad: { ok: boolean } | null; apptByCase: Map<number, { status: string; sourceId: number; at: string | null }>;
-  docsGate: boolean; refsLoad: { ok: boolean } | null; refByCaseKind: Map<string, typeof ancillaryDocumentReferences.$inferSelect>;
+  apptGate: boolean; apptOk: boolean; apptByCase: Map<number, typeof globalScheduleEvents.$inferSelect[]>;
+  docsGate: boolean; refsOk: boolean; refsByCaseKind: Map<string, typeof ancillaryDocumentReferences.$inferSelect[]>;
   noteById: Map<number, typeof procedureNotes.$inferSelect>; cdrById: Map<number, typeof caseDocumentReadiness.$inferSelect>;
-  procGate: boolean; procLoad: { ok: boolean } | null; procByCase: Map<number, { status: string; sourceId: number; at: string | null }>;
-  readinessGate: boolean; readinessLoad: { ok: boolean } | null; readinessByCase: Map<number, typeof canonicalBillingReadinessChecks.$inferSelect>;
-  docGate: boolean; billingDocLoad: { ok: boolean } | null; billingDocByCase: Map<number, typeof canonicalBillingDocumentRequests.$inferSelect>;
+  procGate: boolean; procOk: boolean; procByCase: Map<number, typeof procedureEvents.$inferSelect[]>;
+  readinessGate: boolean; readinessOk: boolean; readinessByCase: Map<number, typeof canonicalBillingReadinessChecks.$inferSelect[]>;
+  docGate: boolean; docOk: boolean; billingDocByCase: Map<number, typeof canonicalBillingDocumentRequests.$inferSelect[]>;
 };
 
 function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
   const svc = c.serviceType;
 
-  // Admin Review — status from the case projection (always). Timestamp/source
-  // from the latest event when Phase 2C is on; otherwise available with no `at`.
-  const ev = ctx.latestAdminEventByCase.get(c.id);
-  const adminReview = ctx.adminEventsGate
-    ? stage({ status: c.adminReviewStatus ?? null, availability: "available", at: ev?.at ?? null })
-    : stage({ status: c.adminReviewStatus ?? null, availability: "available" });
+  // ── Admin Review — status from the case projection (always). A single latest
+  // event whose service + status agree supplies the timestamp; a conflict/wrong
+  // service supplies only a warning (status stays the authoritative projection).
+  const adminReview = (() => {
+    if (!ctx.adminGate) return stage({ status: c.adminReviewStatus ?? null, availability: "available", available: c.adminReviewStatus != null });
+    if (!ctx.adminOk) return stage({ status: c.adminReviewStatus ?? null, availability: "available", available: c.adminReviewStatus != null, warnings: ["admin_review_event_read_failed"] });
+    const all = ctx.adminByCase.get(c.id) ?? [];
+    const warnings: string[] = [];
+    if (all.some((e) => e.serviceType !== svc)) warnings.push("admin_review_wrong_service_event");
+    const svcEvents = all.filter((e) => e.serviceType === svc);
+    let at: string | null = null;
+    if (svcEvents.length) {
+      let maxAt = -Infinity; for (const e of svcEvents) { const ts = new Date(e.actualReviewedAt as unknown as Date).getTime(); if (ts > maxAt) maxAt = ts; }
+      const latest = svcEvents.filter((e) => new Date(e.actualReviewedAt as unknown as Date).getTime() === maxAt);
+      const statuses = new Set(latest.map((e) => e.newStatus));
+      if (latest.length > 1 && statuses.size > 1) warnings.push("admin_review_event_conflict");
+      else if (latest[0].newStatus !== c.adminReviewStatus) warnings.push("admin_review_event_projection_mismatch");
+      else at = iso(latest[0].actualReviewedAt);
+    }
+    return stage({ status: c.adminReviewStatus ?? null, availability: "available", available: c.adminReviewStatus != null, at, warnings });
+  })();
 
-  // Engagement
+  // ── Engagement ──
   const mships = ctx.membershipsByCase.get(c.id) ?? [];
   const lastSentAt = mships.reduce<string | null>((acc, m) => (m.sentToEngagementAt && (acc == null || m.sentToEngagementAt > acc) ? m.sentToEngagementAt : acc), null);
   const engagement = !ctx.engagementGate
     ? { ...upstreamOff("engagement_flag_off"), memberships: [] as EngagementMembershipRow[], lastSentAt: null }
-    : { ...stage({ status: mships.length ? "member" : null, availability: "available", at: lastSentAt }), memberships: mships, lastSentAt };
+    : { ...stage({ status: mships.length ? "member" : null, availability: "available", available: mships.length > 0, at: lastSentAt }), memberships: mships, lastSentAt };
 
-  // Appointment
-  const appt = !ctx.apptGate ? upstreamOff("canonical_appointment_flag_off")
-    : ctx.apptLoad && !ctx.apptLoad.ok ? unavailable("appointment_read_failed")
-    : (() => { const a = ctx.apptByCase.get(c.id); return a ? stage({ status: a.status, availability: "available", sourceId: a.sourceId, at: a.at }) : stage({ status: null, availability: "available" }); })();
+  // ── Appointment — current = qualifying event not superseded by a rescheduled
+  // child. >1 current with no lineage successor → conflict. ──
+  const appointment = resolveSourceStage(ctx.apptGate, ctx.apptOk, "canonical_appointment_flag_off", "appointment_read_failed", () => {
+    const all = ctx.apptByCase.get(c.id) ?? [];
+    const wrongSvc = all.some((e) => e.serviceType !== svc && APPT_CURRENT.has(e.status));
+    const qualifying = all.filter((e) => e.serviceType === svc && APPT_CURRENT.has(e.status));
+    const supersededIds = new Set(qualifying.map((e) => e.parentEventId).filter((x): x is number => x != null));
+    const current = qualifying.filter((e) => !supersededIds.has(e.id)); // drop reschedule predecessors
+    return { pick: pickSingle(current), toStage: (e: typeof current[number]) => stage({ status: e.status, availability: "available", sourceId: e.id, at: iso(e.startsAt) }), wrongSvc, wrongCode: "appointment_wrong_service" };
+  });
 
-  // Order Note (exact-source validated)
-  const orderNote = !ctx.docsGate ? upstreamOff("unified_documents_flag_off")
-    : ctx.refsLoad && !ctx.refsLoad.ok ? unavailable("order_note_read_failed")
-    : validatedNoteStage(ctx.refByCaseKind.get(`${c.id}|order_note`), ctx.noteById, c, "order_note");
+  // ── Order Note (exact-source validated + single current) ──
+  const orderNote = resolveRefStage(ctx, c, svc, "order_note", "unified_documents_flag_off", "order_note_read_failed");
+  // ── Report ──
+  const report = resolveReportStage(ctx, c, svc);
+  // ── Procedure ──
+  const procedure = resolveSourceStage(ctx.procGate, ctx.procOk, "procedure_lifecycle_flag_off", "procedure_read_failed", () => {
+    const all = ctx.procByCase.get(c.id) ?? [];
+    const wrongSvc = all.some((e) => e.serviceType !== svc);
+    const qualifying = all.filter((e) => e.serviceType === svc);
+    return { pick: pickSingle(qualifying), toStage: (p: typeof qualifying[number]) => stage({ status: p.procedureStatus, availability: "available", sourceId: p.id, at: iso(p.completedAt) }), wrongSvc, wrongCode: "procedure_wrong_service" };
+  });
 
-  // Procedure lifecycle
-  const procedure = !ctx.procGate ? upstreamOff("procedure_lifecycle_flag_off")
-    : ctx.procLoad && !ctx.procLoad.ok ? unavailable("procedure_read_failed")
-    : (() => { const p = ctx.procByCase.get(c.id); return p ? stage({ status: p.status, availability: "available", sourceId: p.sourceId, at: p.at }) : stage({ status: null, availability: "available" }); })();
-
-  // Report (exact episode + status validated)
-  const report = !ctx.docsGate ? upstreamOff("unified_documents_flag_off")
-    : ctx.refsLoad && !ctx.refsLoad.ok ? unavailable("report_read_failed")
-    : validatedReportStage(ctx.refByCaseKind.get(`${c.id}|report`), ctx.cdrById, c);
-
-  // Procedure Note + Signature (exact-source validated; both need the full runtime)
+  // ── Procedure Note + Signature (full runtime) ──
   const pnRuntime = procedureNoteRuntimeEnabled();
-  const pnRef = ctx.refByCaseKind.get(`${c.id}|procedure_note`);
-  const procedureNote = !pnRuntime ? upstreamOff("procedure_note_flag_off")
-    : ctx.refsLoad && !ctx.refsLoad.ok ? unavailable("procedure_note_read_failed")
-    : validatedNoteStage(pnRef, ctx.noteById, c, "post_procedure_note");
-  const signature = !pnRuntime ? upstreamOff("procedure_note_flag_off")
-    : ctx.refsLoad && !ctx.refsLoad.ok ? unavailable("signature_read_failed")
-    : signatureStageFrom(pnRef, ctx.noteById, c);
+  const procedureNote = !pnRuntime ? upstreamOff("procedure_note_flag_off") : resolveRefStage(ctx, c, svc, "procedure_note", "procedure_note_flag_off", "procedure_note_read_failed");
+  const signature = !pnRuntime ? upstreamOff("procedure_note_flag_off") : resolveSignatureStage(ctx, c, svc);
 
-  // Billing readiness / document
-  const rr = ctx.readinessByCase.get(c.id);
-  const billingReadiness = !ctx.readinessGate ? { ...upstreamOff("billing_readiness_flag_off"), billingBlockers: [] as CodeCount[], claimBlockers: [] as CodeCount[] }
-    : ctx.readinessLoad && !ctx.readinessLoad.ok ? { ...unavailable("billing_readiness_read_failed"), billingBlockers: [] as CodeCount[], claimBlockers: [] as CodeCount[] }
-    : { ...stage({ status: rr?.canonicalStatus ?? null, availability: "available", sourceId: rr?.id ?? null, at: iso(rr?.evaluatedAt) }),
-        billingBlockers: tally(((rr?.billingBlockers as { code: string }[] | null) ?? [])), claimBlockers: tally(((rr?.claimBlockers as { code: string }[] | null) ?? [])) };
+  // ── Billing readiness (single current, exact service) ──
+  const readinessPick = resolveReadinessPick(ctx, c, svc);
+  const billingReadiness = readinessPick.stage;
 
-  const bd = ctx.billingDocByCase.get(c.id);
-  const billingDocument = !ctx.docGate ? upstreamOff("billing_document_flag_off")
-    : ctx.billingDocLoad && !ctx.billingDocLoad.ok ? unavailable("billing_document_read_failed")
-    : bd ? stage({ status: bd.canonicalStatus ?? null, availability: "available", sourceId: bd.id, at: iso(bd.generatedAt) }) : stage({ status: null, availability: "available" });
+  // ── Billing Document (single current, exact service, bound to readiness id +
+  // evidence fingerprint) ──
+  const billingDocument = resolveBillingDocStage(ctx, c, svc, readinessPick.row);
 
-  const stages = { adminReview, engagement, appointment: appt, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument };
+  const stages: Record<CanonicalStageKey, StageStatus> = { adminReview, engagement, appointment, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument };
   const { currentStage, currentStageIntegrity } = deriveCurrentStage(stages);
 
   return {
     ancillaryCaseId: c.id, serviceType: svc, lifecycleStatus: c.lifecycleStatus ?? null,
     adminReviewStatus: c.adminReviewStatus ?? null,
     identity: {
-      globalPlexusPatientId: c.globalPlexusPatientId ?? null,
-      patientClinicMembershipId: c.patientClinicMembershipId ?? null,
+      globalPlexusPatientId: c.globalPlexusPatientId ?? null, patientClinicMembershipId: c.patientClinicMembershipId ?? null,
       patientDisplay: null, patientDob: null, clinicMrn: null,
       available: c.globalPlexusPatientId != null && c.patientClinicMembershipId != null,
       warnings: (c.globalPlexusPatientId == null || c.patientClinicMembershipId == null) ? ["identity_incomplete"] : [],
     },
-    adminReview, engagement, appointment: appt, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument,
+    adminReview, engagement, appointment, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument,
     currentStage, currentStageIntegrity,
   };
+}
+
+// ─── generic single-current source stage ─────────────────────────────────────
+function resolveSourceStage<R>(
+  gate: boolean, ok: boolean, offCode: string, failCode: string,
+  compute: () => { pick: Pick<R>; toStage: (r: R) => StageStatus; wrongSvc: boolean; wrongCode: string },
+): StageStatus {
+  if (!gate) return upstreamOff(offCode);
+  if (!ok) return unavailable(failCode);
+  const { pick, toStage, wrongSvc, wrongCode } = compute();
+  if (pick.kind === "conflict") return conflictStage();
+  if (pick.kind === "one") return toStage(pick.row);
+  // missing — surface a wrong-service warning when a wrong-service candidate exists.
+  return stage({ status: null, availability: "available", warnings: wrongSvc ? [wrongCode] : [] });
+}
+
+function resolveRefStage(ctx: Ctx, c: PatientAncillaryCase, svc: string, kind: "order_note" | "procedure_note", offCode: string, failCode: string): StageStatus {
+  if (!ctx.docsGate && kind === "order_note") return upstreamOff(offCode);
+  if (!ctx.refsOk) return unavailable(failCode);
+  const all = ctx.refsByCaseKind.get(`${c.id}|${kind}`) ?? [];
+  const wrongSvc = all.some((r) => r.serviceType !== svc);
+  const svcRefs = all.filter((r) => r.serviceType === svc);
+  const pick = pickSingle(svcRefs);
+  if (pick.kind === "conflict") return conflictStage();
+  if (pick.kind === "missing") return stage({ status: null, availability: "available", warnings: wrongSvc ? [`${kind}_wrong_service`] : [] });
+  const ref = pick.row;
+  const note = ref.sourceId != null ? ctx.noteById.get(ref.sourceId) : undefined;
+  const reason = validateNote(ref, note, kind === "order_note" ? "order_note" : "post_procedure_note", svc);
+  if (reason) return stage({ status: null, availability: "available", warnings: [reason] });
+  return stage({ status: ref.documentStatus, availability: "available", sourceId: ref.sourceId, at: iso(ref.signedAt) });
+}
+function resolveReportStage(ctx: Ctx, c: PatientAncillaryCase, svc: string): StageStatus {
+  if (!ctx.docsGate) return upstreamOff("unified_documents_flag_off");
+  if (!ctx.refsOk) return unavailable("report_read_failed");
+  const all = ctx.refsByCaseKind.get(`${c.id}|report`) ?? [];
+  const wrongSvc = all.some((r) => r.serviceType !== svc);
+  const svcRefs = all.filter((r) => r.serviceType === svc);
+  const pick = pickSingle(svcRefs);
+  if (pick.kind === "conflict") return conflictStage();
+  if (pick.kind === "missing") return stage({ status: null, availability: "available", warnings: wrongSvc ? ["report_wrong_service"] : [] });
+  const ref = pick.row;
+  const cdr = ref.sourceId != null ? ctx.cdrById.get(ref.sourceId) : undefined;
+  const reason = validateReport(ref, cdr, svc);
+  if (reason) return stage({ status: null, availability: "available", warnings: [reason] });
+  return stage({ status: ref.documentStatus, availability: "available", sourceId: ref.sourceId, at: iso(ref.actualCreatedAt) });
+}
+function resolveSignatureStage(ctx: Ctx, c: PatientAncillaryCase, svc: string): StageStatus {
+  if (!ctx.refsOk) return unavailable("signature_read_failed");
+  const all = ctx.refsByCaseKind.get(`${c.id}|procedure_note`) ?? [];
+  const svcRefs = all.filter((r) => r.serviceType === svc);
+  const pick = pickSingle(svcRefs);
+  if (pick.kind === "conflict") return conflictStage();
+  if (pick.kind === "missing") return stage({ status: null, availability: "available" });
+  const ref = pick.row;
+  const note = ref.sourceId != null ? ctx.noteById.get(ref.sourceId) : undefined;
+  const reason = validateNote(ref, note, "post_procedure_note", svc);
+  if (reason) return stage({ status: null, availability: "available", warnings: [reason] });
+  return stage({ status: note!.signatureStatus ?? null, availability: "available", sourceId: ref.sourceId, at: iso(note!.signedAt), available: note!.signatureStatus != null });
+}
+function resolveReadinessPick(ctx: Ctx, c: PatientAncillaryCase, svc: string): { stage: CaseStageVector["billingReadiness"]; row: typeof canonicalBillingReadinessChecks.$inferSelect | null } {
+  const empty = { billingBlockers: [] as CodeCount[], claimBlockers: [] as CodeCount[] };
+  if (!ctx.readinessGate) return { stage: { ...upstreamOff("billing_readiness_flag_off"), ...empty }, row: null };
+  if (!ctx.readinessOk) return { stage: { ...unavailable("billing_readiness_read_failed"), ...empty }, row: null };
+  const all = ctx.readinessByCase.get(c.id) ?? [];
+  const wrongSvc = all.some((r) => r.serviceType !== svc);
+  const svcRows = all.filter((r) => r.serviceType === svc);
+  const pick = pickSingle(svcRows);
+  if (pick.kind === "conflict") return { stage: { ...conflictStage(), ...empty }, row: null };
+  if (pick.kind === "missing") return { stage: { ...stage({ status: null, availability: "available", warnings: wrongSvc ? ["billing_readiness_wrong_service"] : [] }), ...empty }, row: null };
+  const r = pick.row;
+  return { stage: { ...stage({ status: r.canonicalStatus ?? null, availability: "available", sourceId: r.id, at: iso(r.evaluatedAt), available: r.canonicalStatus != null }), billingBlockers: tally(((r.billingBlockers as { code: string }[] | null) ?? [])), claimBlockers: tally(((r.claimBlockers as { code: string }[] | null) ?? [])) }, row: r };
+}
+function resolveBillingDocStage(ctx: Ctx, c: PatientAncillaryCase, svc: string, readiness: typeof canonicalBillingReadinessChecks.$inferSelect | null): StageStatus {
+  if (!ctx.docGate) return upstreamOff("billing_document_flag_off");
+  if (!ctx.docOk) return unavailable("billing_document_read_failed");
+  const all = ctx.billingDocByCase.get(c.id) ?? [];
+  const wrongSvc = all.some((d) => d.serviceType !== svc);
+  const svcDocs = all.filter((d) => d.serviceType === svc);
+  const pick = pickSingle(svcDocs);
+  if (pick.kind === "conflict") return conflictStage();
+  if (pick.kind === "missing") return stage({ status: null, availability: "available", warnings: wrongSvc ? ["billing_document_wrong_service"] : [] });
+  const d = pick.row;
+  // (§13) the current Billing Document must be bound to the CURRENT readiness by
+  // id + evidence fingerprint — never a stale/other evidence version.
+  if (!readiness) return stage({ status: null, availability: "available", warnings: ["billing_document_readiness_unresolved"] });
+  if (d.billingReadinessCheckId !== readiness.id) return stage({ status: null, availability: "available", warnings: ["billing_document_wrong_readiness"] });
+  if ((d.evidenceFingerprint ?? null) !== (readiness.evidenceFingerprint ?? null)) return stage({ status: null, availability: "available", warnings: ["billing_document_stale_fingerprint"] });
+  return stage({ status: d.canonicalStatus ?? null, availability: "available", sourceId: d.id, at: iso(d.generatedAt), available: d.canonicalStatus != null });
 }
 
 // ─── deterministic currentStage ──────────────────────────────────────────────
@@ -268,76 +369,36 @@ function isComplete(key: CanonicalStageKey, s: StageStatus): boolean {
     default: return false;
   }
 }
-/** A procedure that ended in a terminal non-complete state (cancelled/no_show/…)
- *  halts progression AT the procedure stage — never advanced past silently. */
 function isTerminalHalt(key: CanonicalStageKey, s: StageStatus): boolean {
   return key === "procedure" && (s.status === "cancelled" || s.status === "no_show" || s.status === "unable_to_complete");
 }
 function deriveCurrentStage(stages: Record<CanonicalStageKey, StageStatus>): { currentStage: CanonicalStageKey | null; currentStageIntegrity: "resolved" | "unresolved" | "conflicting" } {
   for (const key of CANONICAL_STAGE_ORDER) {
     const s = stages[key];
-    // A stage whose upstream flag is OFF is not tracked → does not block.
-    if (s.availability === "upstream_flag_off") continue;
-    // A failed/migration stage means we cannot trust progression → no false stage.
+    if (s.availability === "upstream_flag_off") continue;                 // not tracked → not blocking
     if (s.availability !== "available") return { currentStage: null, currentStageIntegrity: "conflicting" };
+    // A conflict (duplicate current evidence) is an integrity conflict, not a stage.
+    if (s.warnings.includes("duplicate_current_evidence")) return { currentStage: null, currentStageIntegrity: "conflicting" };
     if (isTerminalHalt(key, s)) return { currentStage: key, currentStageIntegrity: "resolved" };
     if (!isComplete(key, s)) return { currentStage: key, currentStageIntegrity: "resolved" };
   }
-  // Every tracked stage is complete.
   return { currentStage: null, currentStageIntegrity: "resolved" };
 }
 
 // ─── grouping helpers ────────────────────────────────────────────────────────
-function groupByCase<R extends { supersededAt?: unknown; clinicId?: number | null }>(load: { ok: boolean; rows?: R[] } | null, clinicId: number, caseIds: number[], caseOf: (r: R) => number | null): Map<number, R> {
-  const m = new Map<number, R>();
+function groupArray<R>(load: { ok: boolean; rows?: R[] } | null, caseOf: (r: R) => number | null, caseIds: number[], keep?: (r: R) => boolean): Map<number, R[]> {
+  const m = new Map<number, R[]>();
   if (!load || !load.ok || !load.rows) return m;
   for (const r of load.rows) {
-    // Exact tenancy re-check in memory (defense-in-depth over the SQL clinic
-    // filter) — consistent with every other stage source.
-    if (r.clinicId !== clinicId) continue;
-    // Superseded snapshots are never current (defense-in-depth over the SQL filter).
-    if (r.supersededAt != null) continue;
-    const cid = caseOf(r); if (cid != null && caseIds.includes(cid)) m.set(cid, r);
+    if (keep && !keep(r)) continue;
+    const cid = caseOf(r); if (cid == null || !caseIds.includes(cid)) continue;
+    const arr = m.get(cid) ?? []; arr.push(r); m.set(cid, arr);
   }
   return m;
 }
-function groupCurrentAppointment(load: { ok: boolean; rows?: typeof globalScheduleEvents.$inferSelect[] } | null, clinicId: number, caseIds: number[]) {
-  const m = new Map<number, { status: string; sourceId: number; at: string | null }>();
-  if (!load || !load.ok || !load.rows) return m;
-  // Prefer a current (scheduled/completed) event; else keep the most recent event
-  // so a cancelled/no_show state is still shown truthfully (never fabricated).
-  const rank = (s: string) => (s === "scheduled" || s === "completed") ? 2 : 1;
-  const best = new Map<number, typeof globalScheduleEvents.$inferSelect>();
-  for (const e of load.rows) {
-    if (e.clinicId !== clinicId || e.ancillaryCaseId == null || !caseIds.includes(e.ancillaryCaseId)) continue;
-    const prev = best.get(e.ancillaryCaseId);
-    if (!prev || rank(e.status) > rank(prev.status) || (rank(e.status) === rank(prev.status) && e.startsAt > prev.startsAt)) best.set(e.ancillaryCaseId, e);
-  }
-  for (const [cid, e] of best) m.set(cid, { status: e.status, sourceId: e.id, at: iso(e.startsAt) });
-  return m;
-}
-function groupProcedure(load: { ok: boolean; rows?: typeof procedureEvents.$inferSelect[] } | null, clinicId: number, caseIds: number[]) {
-  const m = new Map<number, { status: string; sourceId: number; at: string | null }>();
-  if (!load || !load.ok || !load.rows) return m;
-  // Most recent procedure_events row per case (terminal states preserved as-is).
-  const best = new Map<number, typeof procedureEvents.$inferSelect>();
-  for (const p of load.rows) {
-    if (p.clinicId !== clinicId || p.ancillaryCaseId == null || !caseIds.includes(p.ancillaryCaseId)) continue;
-    const prev = best.get(p.ancillaryCaseId);
-    if (!prev || (p.lastTransitionAt ?? p.updatedAt) > (prev.lastTransitionAt ?? prev.updatedAt)) best.set(p.ancillaryCaseId, p);
-  }
-  for (const [cid, p] of best) m.set(cid, { status: p.procedureStatus, sourceId: p.id, at: iso(p.completedAt) });
-  return m;
-}
-function groupRefsByCaseKind(refs: typeof ancillaryDocumentReferences.$inferSelect[]) {
-  // The current (non-superseded) reference per (case, kind). If more than one is
-  // current, keep the newest by id (deterministic) — validation still applies.
-  const m = new Map<string, typeof ancillaryDocumentReferences.$inferSelect>();
-  for (const r of refs) {
-    const k = `${r.ancillaryCaseId}|${r.documentKind}`;
-    const prev = m.get(k);
-    if (!prev || r.id > prev.id) m.set(k, r);
-  }
+function groupRefsByCaseKind(refs: typeof ancillaryDocumentReferences.$inferSelect[]): Map<string, typeof ancillaryDocumentReferences.$inferSelect[]> {
+  const m = new Map<string, typeof ancillaryDocumentReferences.$inferSelect[]>();
+  for (const r of refs) { const k = `${r.ancillaryCaseId}|${r.documentKind}`; const arr = m.get(k) ?? []; arr.push(r); m.set(k, arr); }
   return m;
 }
 function groupMemberships(active: typeof engagementListMemberships.$inferSelect[], listById: Map<number, typeof engagementLists.$inferSelect>, cases: PatientAncillaryCase[]): Map<number, EngagementMembershipRow[]> {
@@ -346,27 +407,20 @@ function groupMemberships(active: typeof engagementListMemberships.$inferSelect[
   const m = new Map<number, EngagementMembershipRow[]>();
   for (const mem of active) {
     const list = listById.get(mem.engagementListId);
-    if (!list) continue;                                   // cross-clinic/missing list excluded
+    if (!list) continue;
     const svc = svcByCase.get(mem.ancillaryCaseId as number);
-    if (svc != null && mem.serviceType !== svc) continue;  // wrong-service membership excluded
-    const row: EngagementMembershipRow = {
-      engagementMembershipId: mem.id, engagementListId: list.id,
-      engagementListDisplayName: list.label ?? null, engagementListSourceType: list.sourceType ?? null,
-      engagementListSourceId: list.sourceId ?? null, serviceType: mem.serviceType ?? null,
-      sentToEngagementAt: iso(list.sentToEngagementAt),
-    };
+    if (svc != null && mem.serviceType !== svc) continue;
+    const row: EngagementMembershipRow = { engagementMembershipId: mem.id, engagementListId: list.id, engagementListDisplayName: list.label ?? null, engagementListSourceType: list.sourceType ?? null, engagementListSourceId: list.sourceId ?? null, serviceType: mem.serviceType ?? null, sentToEngagementAt: iso(list.sentToEngagementAt) };
     const arr = m.get(mem.ancillaryCaseId as number) ?? []; arr.push(row); m.set(mem.ancillaryCaseId as number, arr);
   }
   for (const arr of m.values()) arr.sort((a, b) => (a.engagementListId - b.engagementListId) || (a.engagementMembershipId - b.engagementMembershipId));
   return m;
 }
 
-// ─── exact-source validators (mirror Phase 2H rules) ─────────────────────────
-const NOTE_UNSIGNED_CURRENT = new Set(["needs_signature", "ready_to_sign", "returned_for_correction"]);
-const REPORT_CURRENT = new Set(["uploaded", "generated", "approved", "completed"]);
-
-function validateNote(r: typeof ancillaryDocumentReferences.$inferSelect, note: typeof procedureNotes.$inferSelect | undefined, expected: "order_note" | "post_procedure_note"): string {
+// ─── exact-source validators (mirror Phase 2H rules) + exact case service ────
+function validateNote(r: typeof ancillaryDocumentReferences.$inferSelect, note: typeof procedureNotes.$inferSelect | undefined, expected: "order_note" | "post_procedure_note", caseService: string): string {
   const p = expected === "order_note" ? "order_note" : "procedure_note";
+  if (r.serviceType !== caseService) return `${p}_wrong_service`;
   if (r.sourceTable !== (expected === "order_note" ? ORDER_NOTE_SOURCE_TABLE : PROCEDURE_NOTE_SOURCE_TABLE)) return `${p}_wrong_source_table`;
   if (r.ancillaryCaseId == null) return `${p}_missing_case`;
   if (r.serviceType == null) return `${p}_missing_service`;
@@ -374,7 +428,7 @@ function validateNote(r: typeof ancillaryDocumentReferences.$inferSelect, note: 
   if (note.noteType !== expected) return `${p}_wrong_note_type`;
   if (note.clinicId !== r.clinicId) return `${p}_cross_clinic_source`;
   if (note.ancillaryCaseId !== r.ancillaryCaseId) return `${p}_cross_case_source`;
-  if (note.serviceType !== r.serviceType) return `${p}_wrong_service_source`;
+  if (note.serviceType !== r.serviceType || note.serviceType !== caseService) return `${p}_wrong_service_source`;
   if (note.supersededAt != null) return `${p}_superseded_source`;
   if (note.generationStatus === "voided") return `${p}_voided_source`;
   if (r.documentStatus === "signed") {
@@ -386,14 +440,15 @@ function validateNote(r: typeof ancillaryDocumentReferences.$inferSelect, note: 
   } else return `${p}_unsupported_ref_status`;
   return "";
 }
-function validateReport(r: typeof ancillaryDocumentReferences.$inferSelect, cdr: typeof caseDocumentReadiness.$inferSelect | undefined): string {
+function validateReport(r: typeof ancillaryDocumentReferences.$inferSelect, cdr: typeof caseDocumentReadiness.$inferSelect | undefined, caseService: string): string {
+  if (r.serviceType !== caseService) return "report_wrong_service";
   if (r.sourceTable !== REPORT_SOURCE_TABLE) return "report_wrong_source_table";
   if (r.ancillaryCaseId == null) return "report_missing_case";
   if (r.serviceType == null) return "report_missing_service";
   if (r.sourceId == null || !cdr) return "report_source_missing";
   if (cdr.documentType !== "report") return "report_wrong_document_type";
   if (cdr.clinicId !== r.clinicId) return "report_cross_clinic_source";
-  if (cdr.serviceType !== r.serviceType) return "report_wrong_service_source";
+  if (cdr.serviceType !== r.serviceType || cdr.serviceType !== caseService) return "report_wrong_service_source";
   if (r.executionCaseId != null) { if (cdr.executionCaseId == null) return "report_source_missing_execution_case"; if (cdr.executionCaseId !== r.executionCaseId) return "report_execution_case_conflict"; }
   if (r.patientScreeningId != null) { if (cdr.patientScreeningId == null) return "report_source_missing_screening"; if (cdr.patientScreeningId !== r.patientScreeningId) return "report_screening_conflict"; }
   const execProven = r.executionCaseId != null && cdr.executionCaseId === r.executionCaseId;
@@ -403,26 +458,4 @@ function validateReport(r: typeof ancillaryDocumentReferences.$inferSelect, cdr:
   if (!REPORT_CURRENT.has(cdr.documentStatus)) return "report_status_not_current";
   if (r.documentStatus !== cdr.documentStatus) return "report_status_disagreement";
   return "";
-}
-function validatedNoteStage(ref: typeof ancillaryDocumentReferences.$inferSelect | undefined, noteById: Map<number, typeof procedureNotes.$inferSelect>, c: PatientAncillaryCase, expected: "order_note" | "post_procedure_note"): StageStatus {
-  if (!ref) return stage({ status: null, availability: "available" });
-  const note = ref.sourceId != null ? noteById.get(ref.sourceId) : undefined;
-  const reason = validateNote(ref, note, expected);
-  if (reason) return stage({ status: null, availability: "available", warnings: [reason] });
-  return stage({ status: ref.documentStatus, availability: "available", sourceId: ref.sourceId, at: iso(ref.signedAt) });
-}
-function validatedReportStage(ref: typeof ancillaryDocumentReferences.$inferSelect | undefined, cdrById: Map<number, typeof caseDocumentReadiness.$inferSelect>, c: PatientAncillaryCase): StageStatus {
-  if (!ref) return stage({ status: null, availability: "available" });
-  const cdr = ref.sourceId != null ? cdrById.get(ref.sourceId) : undefined;
-  const reason = validateReport(ref, cdr);
-  if (reason) return stage({ status: null, availability: "available", warnings: [reason] });
-  return stage({ status: ref.documentStatus, availability: "available", sourceId: ref.sourceId, at: iso(ref.actualCreatedAt) });
-}
-function signatureStageFrom(ref: typeof ancillaryDocumentReferences.$inferSelect | undefined, noteById: Map<number, typeof procedureNotes.$inferSelect>, c: PatientAncillaryCase): StageStatus {
-  if (!ref) return stage({ status: null, availability: "available" });
-  const note = ref.sourceId != null ? noteById.get(ref.sourceId) : undefined;
-  const reason = validateNote(ref, note, "post_procedure_note");
-  if (reason) return stage({ status: null, availability: "available", warnings: [reason] });
-  // Signature truth comes from the EXACT validated note source only.
-  return stage({ status: note!.signatureStatus ?? null, availability: "available", sourceId: ref.sourceId, at: iso(note!.signedAt) });
 }

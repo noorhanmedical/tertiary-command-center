@@ -11,17 +11,14 @@
 // That file is a static, unwired mockup/design reference kept for
 // visual experimentation only. Any visual experiment must live on a
 // separate preview route, not here.
+//
+// Phase 2I — the canonical ACS stage-vector data is wired INSIDE this shell via
+// the flag-gated CanonicalLifecycleSection (see TeamPortalShell). This page always
+// renders the exact existing shell; the canonical section renders nothing when
+// VITE_FEATURE_ACS_CANONICAL_VIEW is OFF (the default) and issues zero requests.
 
-// Phase 2I — when VITE_FEATURE_ACS_CANONICAL_VIEW is ON, render the canonical
-// ACS stage-vector view instead of the legacy shell. Flag OFF (the default)
-// renders the exact legacy workspace and issues ZERO canonical requests.
 import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
-import { isAcsCanonicalViewEnabled } from "@/lib/acsCanonicalViewFlag";
-import { CanonicalAcsPage } from "@/components/careSpecialist/CanonicalAcsPage";
 
 export default function AncillaryCareSpecialistPortalPage() {
-  if (isAcsCanonicalViewEnabled()) {
-    return <CanonicalAcsPage />;
-  }
   return <ClinicWorkflowPortal role="ancillaryCareSpecialist" />;
 }

@@ -146,3 +146,55 @@ zero canonical requests. Flag ON adds only read-only canonical rows/cards with
 truthful loading/empty/unavailable/migration states and bounded pagination; existing
 real detail destinations are reused only when the canonical row carries the exact
 owning clinic/case/episode id.
+
+## Truth closeout (post-#325-review)
+
+Corrections applied while preserving the frozen 2I scope:
+
+- **Existing shell preserved (§2).** The flag-ON path no longer replaces
+  TeamPortalShell with a standalone page. Both portal pages ALWAYS mount
+  `ClinicWorkflowPortal → TeamPortalShell`; the canonical stage-vector data is wired
+  INTO the shell via a narrow flag-gated `CanonicalLifecycleSection` inserted right
+  after the `WorkspaceModeSwitcher`. Flag OFF → the section renders nothing and
+  issues zero requests; all modes, tabs, tools, dialogs, navigation, and real
+  actions are untouched. `TeamPortalShell.tsx` (protected UI) is intentionally
+  changed by a one-line mount + one import; its manifest blob is updated via the
+  sanctioned mechanism. The former standalone `CanonicalPcsPage`/`CanonicalAcsPage`
+  containers are reduced to pure in-shell view bodies.
+- **Clinic-membership identity boundary (§3).** `verifyCaseIdentity`
+  (`server/services/pcs/pcsIdentity.ts`) resolves global-patient display ONLY
+  through a verified exact ACTIVE clinic membership whose `globalPlexusPatientId`
+  matches the case, and only for a CURRENT global patient (active, not merged).
+  Any failure → `identityAvailable=false`, all display fields null, a PHI-free
+  warning (`identity_membership_missing`/`_wrong_clinic`/`_inactive`/
+  `identity_patient_membership_conflict`/`identity_global_patient_missing`/`_not_current`),
+  and the case is never grouped with another patient.
+- **Patient-centric PCS pagination (§7).** PCS pages exact active clinic
+  memberships by a stable membership-id cursor, resolves each patient through the
+  verified membership, and batch-loads that patient's bounded episodes — so a
+  patient's episodes are never split across pages. Null-membership cases go to a
+  bounded, first-page-only, exact-case bucket (no demographic grouping). Hard
+  bounds: 500 episodes/page, 100 unresolved cases/page.
+- **Exact service per stage (§4).** Every stage additionally requires
+  `serviceType === case.serviceType` on the reference AND the source; a
+  wrong-service source contributes no status/sourceId/at, only a `*_wrong_service`
+  warning, and never advances `currentStage`.
+- **No silent tie-break (§5).** Each single-current source collects ALL qualifying
+  current rows; 0 → missing, 1 → resolved, >1 → integrity `conflict`
+  (`duplicate_current_evidence`: status/sourceId null, available=false,
+  currentStage=null, integrity=conflicting). First/last/highest-id/newest are
+  never used; canonical reschedule lineage (`parentEventId`) is the only successor
+  proof for appointments.
+- **Billing Document version linkage (§13).** The current Billing Document must
+  bind to the current readiness by `billingReadinessCheckId` AND
+  `evidenceFingerprint`; a wrong-readiness / stale-fingerprint / readiness-unresolved
+  document yields no status (warnings `billing_document_wrong_readiness` /
+  `_stale_fingerprint` / `_readiness_unresolved`).
+- **Availability semantics (§6).** `available` is TRUE only when exactly one exact
+  current source was proven (availability available AND status non-null); a
+  successful query with no source, a conflict, a failure, or an upstream-off stage
+  are all `available=false` with truthful `availability`.
+
+Intentionally changed protected UI: `client/src/components/portal/TeamPortalShell.tsx`
+(narrow in-shell section mount + import) plus the two `approvedException` portal
+pages (reverted to always mount the shell). No other protected UI changed.
