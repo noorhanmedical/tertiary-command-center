@@ -114,10 +114,17 @@ async function loadVerifiedStream(clinicId: number, afterMemberId: number | null
     ? encodeCursor(lastPresent)
     : (memberHasMore && members.length ? encodeCursor(members[members.length - 1].id) : null);
 
-  const rows: PcsPatientGroup[] = [];
+  // First pass: per returned membership, resolve its verified identity + bounded
+  // first page of VALID episodes + continuation cursor. NO canonical source reads
+  // here — collect every valid episode case for ALL returned memberships so the
+  // stage vectors can be built in ONE batched call (no per-membership / per-case
+  // N+1).
+  type Plan = { m: typeof members[number]; gpp: typeof globalPlexusPatients.$inferSelect; pageValid: PatientAncillaryCase[]; episodesNextCursor: string | null };
+  const plans: Plan[] = [];
+  const allValidCases: PatientAncillaryCase[] = [];
   for (const m of returnMembers) {
     const gpp = m.globalPlexusPatientId != null ? gppById.get(m.globalPlexusPatientId) : undefined;
-    // The membership yields a VERIFIED patient only when its global patient is
+    // A membership yields a VERIFIED patient only when its global patient is
     // current (active, not merged). Otherwise its cases flow to the unresolved
     // stream (never a verified group with fabricated identity).
     if (!isCurrentPatient(gpp, m.globalPlexusPatientId)) continue;
@@ -128,12 +135,36 @@ async function loadVerifiedStream(clinicId: number, afterMemberId: number | null
     const episodesNextCursor = validCases.length > PCS_MAX_EPISODES_PER_PATIENT
       ? encodeCursor(pageValid[pageValid.length - 1].id)                          // more valid beyond the shown page
       : (memberTruncated && memberCases.length ? encodeCursor(memberCases[memberCases.length - 1].id) : null); // scan past the window for later valid episodes
-    const g = await buildVerifiedGroup(clinicId, m, gpp!, pageValid, episodesNextCursor);
-    // Return a valid patient with 0 in-window episodes ONLY when a continuation
-    // can still reach its later valid episodes (never a permanently empty group).
-    if (g.episodes.length > 0 || g.episodesNextCursor) rows.push(g);
+    // Only materialize a patient with at least one in-window episode OR a
+    // continuation to its later valid episodes (never a permanently empty group).
+    if (pageValid.length === 0 && !episodesNextCursor) continue;
+    plans.push({ m, gpp: gpp!, pageValid, episodesNextCursor });
+    allValidCases.push(...pageValid);
   }
+
+  // ONE batched stage-vector build for the entire verified PCS page (at most one
+  // read per canonical source total — never scaling with the patient-group count).
+  const vectors = await buildStageVectors({ clinicId, cases: allValidCases });
+  const vectorByCase = new Map(vectors.map((v) => [v.ancillaryCaseId, v]));
+
+  const rows: PcsPatientGroup[] = plans.map((p) => assembleVerifiedGroup(p.m, p.gpp, p.pageValid, vectorByCase, p.episodesNextCursor));
   return { rows, pageInfo: { limit, nextCursor: membershipNextCursor, returned: rows.length } };
+}
+
+// Assemble a verified patient group from PRE-BUILT stage vectors (no DB reads).
+function assembleVerifiedGroup(m: typeof patientClinicMemberships.$inferSelect, gpp: typeof globalPlexusPatients.$inferSelect, pageValid: PatientAncillaryCase[], vectorByCase: Map<number, PcsPatientGroup["episodes"][number]>, episodesNextCursor: string | null): PcsPatientGroup {
+  const episodes: PcsPatientGroup["episodes"] = [];
+  for (const c of pageValid) {
+    const v = vectorByCase.get(c.id);
+    if (!v) continue;
+    v.identity.patientDisplay = gpp.displayName ?? null; v.identity.patientDob = gpp.dob ?? null; v.identity.clinicMrn = m.clinicMrn ?? null; v.identity.available = true; v.identity.warnings = [];
+    episodes.push(v);
+  }
+  return {
+    globalPlexusPatientId: m.globalPlexusPatientId, patientClinicMembershipId: m.id,
+    patientDisplay: gpp.displayName ?? null, patientDob: gpp.dob ?? null, clinicMrn: m.clinicMrn ?? null,
+    identityAvailable: true, identityWarnings: [], episodes, episodesNextCursor,
+  };
 }
 
 // Per-patient episode continuation — scans RAW cases past the cursor (so it moves

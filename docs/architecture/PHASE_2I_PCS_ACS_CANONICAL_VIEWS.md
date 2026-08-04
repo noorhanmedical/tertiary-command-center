@@ -283,3 +283,28 @@ is joined by a normalized `integrity` field on every StageStatus.
 
 TeamPortalShell (protected UI) manifest blob updated again for the composition
 wiring; `WorkspaceCanonicalHeader` is now a thin re-export of the composition.
+
+## Query-shape & interaction closeout
+
+- **PCS verified page is fully batched (§2).** `loadVerifiedStream` no longer calls
+  `buildStageVectors` inside the membership loop. A first pass resolves each returned
+  membership's verified identity + bounded first page of VALID episodes +
+  continuation cursor (no DB reads), collects ALL valid episode cases for ALL
+  returned memberships into one bounded array, then calls `buildStageVectors` EXACTLY
+  ONCE for the whole verified page and assembles every patient group from a single
+  `vectorByCase` map. Canonical source selects are constant regardless of patient-
+  group count — proven at 1 / 25 / 100 returned memberships (each stage source
+  selected at most once, identical across N). The unresolved stream still builds
+  once for its bounded page; a single-patient episode continuation is one separate
+  user-requested page (one build).
+- **Real continuation controls behaviorally clicked (§3).** A new interaction test
+  (`pcsContinuationInteraction.test.tsx`) renders the ACTUAL production
+  `CanonicalLifecycleSection` / PcsSection via `react-test-renderer` (DOM-free, runs
+  hooks + effects), mocks global `fetch`, and CLICKS the real onClick handlers —
+  asserting: exactly one initial request (no continuation params); "Next patients" →
+  `cursor=V2`; "First patients" → initial; "Next/First unavailable" →
+  `unresolvedCursor`; "Load next episodes" → `episodeMembershipId`+`episodeCursor`
+  and the continuation response renders the exact next ancillaryCaseIds (205, 206);
+  "Back to patients" → no episode param; one request per click (no duplicates);
+  displaying a control issues no request; flag OFF → zero requests. `react-test-
+  renderer` (+ types) added as a dev-only dependency for this.

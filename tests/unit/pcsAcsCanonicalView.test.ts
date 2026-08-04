@@ -162,6 +162,42 @@ async function testCursorsDistinct() {
   assert.equal(r.rows.length, 1); assert.equal(r.unresolved.rows.length, 1);
 }
 
+// ═══ §2 initial PCS page is BATCHED — canonical source selects do NOT scale
+// with the number of returned patient groups (no per-membership / per-case N+1) ═══
+async function testVerifiedPageBatched() {
+  const t = await loadCanonicalTables();
+  const p = await pcs();
+  // Every canonical stage source that is unconditionally read (flag-gated only)
+  // for a non-empty verified page. Each must be selected AT MOST ONCE regardless
+  // of how many memberships/patients the page returns.
+  const stageSources = [t.adminReviewEvents, t.engagementMemberships, t.gse, t.documentReferences, t.procedureEvents, t.billingReadinessChecks, t.billingDocumentRequests];
+  const perN: number[][] = [];
+  for (const N of [1, 25, 100]) {
+    const pcms = Array.from({ length: N }, (_, i) => pcm({ id: 800 + i, globalPlexusPatientId: 900 + i }));
+    const gpps = Array.from({ length: N }, (_, i) => gpp({ id: 900 + i }));
+    const cases = Array.from({ length: N }, (_, i) => acase({ id: 5000 + i, patientClinicMembershipId: 800 + i, globalPlexusPatientId: 900 + i, serviceType: "BrainWave" }));
+    const counts = await runWithDb(spec(t, { cases, pcms, gpps }), ALL, async (calls: Call[]) => {
+      const r = await p.getPcsCanonicalView({ clinicId: 1, limit: N }); // N returned patient groups
+      // vectors attached to the correct membership + case
+      assert.equal(r.rows.length, N, `${N} verified patient groups`);
+      assert.ok(r.rows.every((g) => g.episodes.length === 1 && g.episodes[0].ancillaryCaseId === 5000 + (g.patientClinicMembershipId! - 800)), "vector attached to the correct membership/case");
+      return stageSources.map((src) => countOps(calls, "select", src));
+    });
+    for (const c of counts) assert.ok(c <= 1, `(§2) a canonical stage source selected at most once for N=${N} (got ${c})`);
+    perN.push(counts);
+  }
+  // The counts must be IDENTICAL across 1 / 25 / 100 — no scaling with group count.
+  assert.deepEqual(perN[0], perN[1], "(§2) source selects constant from 1 → 25 memberships");
+  assert.deepEqual(perN[1], perN[2], "(§2) source selects constant from 25 → 100 memberships");
+}
+// repeated same-service episodes remain separate under batching
+async function testBatchedRepeatedSameService() {
+  const t = await loadCanonicalTables();
+  const r = await runPcs(t, { cases: [acase({ id: 5, patientClinicMembershipId: 800, globalPlexusPatientId: 900, serviceType: "BrainWave" }), acase({ id: 9, patientClinicMembershipId: 800, globalPlexusPatientId: 900, serviceType: "BrainWave" })], pcms: [pcm({ id: 800 })], gpps: [gpp()] });
+  assert.equal(r.rows[0].episodes.length, 2, "repeated same-service episodes separate after batching");
+  assert.deepEqual(r.rows[0].episodes.map((e) => e.ancillaryCaseId), [5, 9]);
+}
+
 // ═══ §3 multi-membership >window retrievability (1-8) ═══
 async function testMultiMembershipWindow() {
   const t = await loadCanonicalTables();
@@ -362,6 +398,8 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(10/11) verified episode continuation", testEpisodeContinuation],
   ["(12) unresolved continuation", testUnresolvedContinuation],
   ["(13) cursors distinct", testCursorsDistinct],
+  ["(§2) verified page batched — no source N+1 at 1/25/100", testVerifiedPageBatched],
+  ["(§2) batched repeated same-service separate", testBatchedRepeatedSameService],
   ["(§3 1-3) multi-membership >window retrievable", testMultiMembershipWindow],
   ["(§3 4/5) valid later cases preserved", testValidLaterCasesPreserved],
   ["(§3 6/7) stream exclusivity + completeness", testStreamExclusivity],
