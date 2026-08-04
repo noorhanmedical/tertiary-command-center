@@ -15,13 +15,17 @@ export type AllocRow = {
   currency?: string | null; amount?: string | null;
 };
 export type TargetRef = { clinicId: number; targetType: "claim" | "invoice"; targetId: number; currency: string; ancillaryCaseId?: number | null; serviceType?: string | null };
+export type ReceiptRow = { id?: number; clinicId?: number | null; eventType?: string | null; status?: string | null; currency?: string | null; ancillaryCaseId?: number | null; serviceType?: string | null };
 export type LineageResult = { ok: true } | { ok: false; code: string };
 const cents = (v: unknown): number | null => { try { return toCents(v as string); } catch { return null; } };
 
 /** Validate the COMPLETE allocation set for one exact target. Every apply/negation
  *  must match the target's clinic/type/id/currency; negations must name an apply
- *  parent IN THIS SET (same target) and not exceed it cumulatively. */
-export function validateTargetAllocationSet(allocs: AllocRow[], target: TargetRef): LineageResult {
+ *  parent IN THIS SET (same target) and not exceed it cumulatively. When a receipts
+ *  map is supplied, each apply's actual payment receipt is verified (§4): it must
+ *  exist, be a POSTED payment (never pending/failed), and agree on clinic/case/
+ *  service/currency — an orphaned/failed/pending receipt never counts. */
+export function validateTargetAllocationSet(allocs: AllocRow[], target: TargetRef, receipts?: Map<number, ReceiptRow>): LineageResult {
   const applies = new Map<number, AllocRow>();
   for (const a of allocs) {
     if (a.clinicId !== target.clinicId) return { ok: false, code: "allocation_wrong_clinic" };
@@ -31,6 +35,17 @@ export function validateTargetAllocationSet(allocs: AllocRow[], target: TargetRe
     if (target.serviceType != null && a.serviceType != null && a.serviceType !== target.serviceType) return { ok: false, code: "allocation_wrong_service" };
     const c = cents(a.amount);
     if (c == null || c <= 0) return { ok: false, code: "allocation_amount_invalid" };
+    // §4 verify the actual receipt for this allocation when supplied.
+    if (receipts) {
+      const rcpt = a.paymentId != null ? receipts.get(a.paymentId) : undefined;
+      if (!rcpt) return { ok: false, code: "allocation_receipt_missing" };
+      if (rcpt.eventType !== "payment") return { ok: false, code: "allocation_receipt_not_payment" };
+      if (rcpt.status !== "posted") return { ok: false, code: "allocation_receipt_not_posted" };
+      if ((rcpt.clinicId ?? null) !== a.clinicId) return { ok: false, code: "allocation_receipt_wrong_clinic" };
+      if ((rcpt.currency ?? null) !== (a.currency ?? null)) return { ok: false, code: "allocation_receipt_currency_mismatch" };
+      if (target.ancillaryCaseId != null && rcpt.ancillaryCaseId != null && rcpt.ancillaryCaseId !== target.ancillaryCaseId) return { ok: false, code: "allocation_receipt_wrong_case" };
+      if (target.serviceType != null && rcpt.serviceType != null && rcpt.serviceType !== target.serviceType) return { ok: false, code: "allocation_receipt_wrong_service" };
+    }
     if (a.eventType === "apply") { if (a.id != null) applies.set(a.id, a); }
     // Only apply/refund/reversal are modeled today. `adjustment` has no command path
     // and no bound here → fail closed until one exists (never silently reduce owed).

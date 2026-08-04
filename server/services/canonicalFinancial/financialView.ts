@@ -99,7 +99,8 @@ async function buildClaims(clinicId: number, cursor: string | null | undefined, 
     const rowConflict = (r: typeof page[number]): boolean => perCaseConflict(r.ancillaryCaseId) || lineageConflict(r);
     const rows: CanonicalClaimRow[] = page.map((r) => ({
       claimId: r.id, ancillaryCaseId: r.ancillaryCaseId ?? -1, serviceType: r.serviceType, patientDisplay: null,
-      status: r.canonicalStatus, claimReady: r.canonicalStatus === "ready" && !rowConflict(r), attemptNumber: r.attemptNumber,
+      // §7 NEVER surface a stale raw status when lineage is broken — null it out.
+      status: rowConflict(r) ? null : r.canonicalStatus, claimReady: r.canonicalStatus === "ready" && !rowConflict(r), attemptNumber: r.attemptNumber,
       supersedesClaimId: r.supersedesClaimId ?? null, billingDocumentId: r.billingDocumentId ?? null,
       billingReadinessCheckId: r.billingReadinessCheckId ?? null, evidenceFingerprint: r.evidenceFingerprint ?? null,
       currency: r.currency, chargeAmount: typeof r.chargeAmount === "string" ? r.chargeAmount : null,
@@ -150,13 +151,16 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     const truncated = allocRaw.length > SCAN;   // completeness could not be proven
     const allocByInvoice = new Map<number, typeof allocRaw>();
     for (const a of allocRaw) { const arr = allocByInvoice.get(a.targetId) ?? []; arr.push(a); allocByInvoice.set(a.targetId, arr); }
+    // §4 batch-load the actual receipts for these allocations (no per-alloc read).
+    const payIds = [...new Set(allocRaw.map((a) => a.paymentId).filter((x): x is number => x != null))];
+    const receiptById = new Map((payIds.length ? (await db.select().from(canonicalPayments).where(and(eq(canonicalPayments.clinicId, input.clinicId), inArray(canonicalPayments.id, payIds))).limit(SCAN)) : []).filter((p) => p.clinicId === input.clinicId).map((p) => [p.id, p]));
     const rows: CanonicalInvoiceRow[] = page.map((r) => {
       let originalCents = 0; let amountOk = true;
       try { originalCents = r.totalAmount != null ? toCents(r.totalAmount) : 0; } catch { amountOk = false; }
       // §5 validate the COMPLETE allocation lineage for this exact invoice — a
       // malformed row must NEVER change the balance (integrity conflict instead).
       const invAllocs = allocByInvoice.get(r.id) ?? [];
-      const lineageOk = validateTargetAllocationSet(invAllocs, { clinicId: r.clinicId, targetType: "invoice", targetId: r.id, currency: r.currency, ancillaryCaseId: r.ancillaryCaseId ?? null, serviceType: r.serviceType ?? null }).ok;
+      const lineageOk = validateTargetAllocationSet(invAllocs, { clinicId: r.clinicId, targetType: "invoice", targetId: r.id, currency: r.currency, ancillaryCaseId: r.ancillaryCaseId ?? null, serviceType: r.serviceType ?? null }, receiptById).ok;
       // Synthesize the ledger from the COMPLETE allocation set: apply → collected,
       // refund/reversal → negations (effective net = apply − refund − reversal).
       const synth = invAllocs.map((a) => ({ currency: a.currency, amount: a.amount, eventType: a.eventType === "apply" ? "payment" : a.eventType, status: "posted", claimId: null, invoiceId: r.id } as never));
@@ -168,7 +172,7 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
         : derived;
       return {
         invoiceId: r.id, ancillaryCaseId: r.ancillaryCaseId ?? -1, serviceType: r.serviceType, patientDisplay: null,
-        invoiceType: r.invoiceType, recipientType: r.recipientType ?? null, status: r.canonicalStatus, invoiceNumber: r.invoiceNumber ?? null,
+        invoiceType: r.invoiceType, recipientType: r.recipientType ?? null, status: conflict ? null : r.canonicalStatus, invoiceNumber: r.invoiceNumber ?? null,
         claimId: r.claimId ?? null, currency: r.currency, totalAmount: typeof r.totalAmount === "string" ? r.totalAmount : null,
         balance, issuedAt: iso(r.issuedAt), deliveredAt: iso(r.deliveredAt),
         warnings: [...(amountOk ? [] : ["invoice_amount_invalid"]), ...(versionConflict ? ["duplicate_active_invoice"] : [])], integrity: conflict ? "conflicting" : "resolved",

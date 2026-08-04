@@ -22,7 +22,7 @@ import { canonicalPaymentsRuntimeEnabled } from "../../lib/featureFlags";
 import { toCents, sumCents } from "@shared/money";
 import { validateAllocation, netAppliedCents } from "./balance";
 import { validateNegationLineage, sumNegationsForParent } from "./allocationLineage";
-import { isFinancialMigration, writeTransition, idempotentReplay, commandFingerprint, verifyCanonicalIdentity, SUPPORTED_CURRENCIES, nonEmpty, type DbLike } from "./commandSupport";
+import { isFinancialMigration, writeTransition, resolveFinancialCommandRace, commandFingerprint, verifyCanonicalIdentity, SUPPORTED_CURRENCIES, nonEmpty, type DbLike } from "./commandSupport";
 
 const PAYMENT_TYPES = new Set<string>(CANONICAL_PAYMENT_TYPES);
 const IMPORT_TYPES = new Set(["processor_import", "remittance_import"]);
@@ -106,7 +106,7 @@ export async function recordCanonicalPayment(input: RecordPaymentInput): Promise
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "record_payment", clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, paymentType: input.paymentType, currency: input.currency, amount: input.amount, externalTransactionId: input.externalTransactionId });
-    const replay = await idempotentReplay(db as unknown as DbLike, "payment", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "payment", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "reused", paymentId: replay.entityId };
     const cents = centsOf(input.amount);
@@ -151,7 +151,7 @@ export async function recordCanonicalPayment(input: RecordPaymentInput): Promise
     } catch (e) {
       if (isUnique(e)) {
         // Race lost after the entry gate — reload the audit row and compare fingerprint.
-        const post = await idempotentReplay(db as unknown as DbLike, "payment", input.clinicId, input.idempotencyKey, fp);
+        const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "payment", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
         if (post.kind === "replay") return { status: "reused", paymentId: post.entityId };
         if (post.kind === "conflict") return { status: "idempotency_conflict" };
         if (nonEmpty(input.externalTransactionId)) { const dup = await findExternalTxn(input.clinicId, input.externalTransactionId as string); if (dup) return externalTxnSameIntent(dup, input, caseId, serviceType) ? { status: "reused", paymentId: dup.id } : { status: "external_transaction_conflict" }; }
@@ -185,7 +185,7 @@ export async function allocateCanonicalPayment(input: AllocateInput): Promise<Pa
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "allocate_payment", clinicId: input.clinicId, paymentId: input.paymentId, targetType: input.targetType, targetId: input.targetId, amount: input.amount, isOverpayment: input.isOverpayment === true });
-    const replay = await idempotentReplay(db as unknown as DbLike, "allocation", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "allocation", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "reused", allocationId: replay.entityId };
     const dbh = db as unknown as DbLike;
@@ -251,7 +251,7 @@ export async function allocateCanonicalPayment(input: AllocateInput): Promise<Pa
       return result;
     } catch (e) {
       if ((e as { code?: string })?.code === "TARGET_UPDATE_CONFLICT") return { status: "conflict" };
-      if (isUnique(e)) { const post = await idempotentReplay(db as unknown as DbLike, "allocation", input.clinicId, input.idempotencyKey, fp); if (post.kind === "replay") return { status: "reused", allocationId: post.entityId }; if (post.kind === "conflict") return { status: "idempotency_conflict" }; }
+      if (isUnique(e)) { const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "allocation", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp }); if (post.kind === "replay") return { status: "reused", allocationId: post.entityId }; if (post.kind === "conflict") return { status: "idempotency_conflict" }; }
       throw e;
     }
   } catch (e) { if (isFinancialMigration(e)) return { status: "migration_missing" }; return { status: "persistence_failed" }; }
@@ -266,7 +266,7 @@ async function negateAllocation(input: NegateInput, eventType: "refund" | "rever
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: `${eventType}_allocation`, clinicId: input.clinicId, paymentId: input.paymentId, allocationId: input.allocationId, amount: input.amount });
-    const replay = await idempotentReplay(db as unknown as DbLike, "allocation", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "allocation", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return eventType === "refund" ? { status: "refunded", allocationId: replay.entityId } : { status: "reversed", allocationId: replay.entityId };
     const amountCents = centsOf(input.amount);
@@ -279,6 +279,9 @@ async function negateAllocation(input: NegateInput, eventType: "refund" | "rever
         await advisoryLock(tx, input.clinicId, input.paymentId);
         const payment = await loadPayment(tx, input.clinicId, input.paymentId);
         if (!payment || payment.eventType !== "payment") return { status: "not_found" };
+        // §6 receipt eligibility: only a POSTED payment can be negated — a pending or
+        // failed receipt is never refundable/reversible.
+        if (payment.status !== "posted") return { status: "target_not_payable" };
         const all = await allocationsForPayment(tx, input.clinicId, input.paymentId);
         if (all.truncated) return { status: "allocation_integrity_unavailable" };
         const parent = all.rows.find((a) => a.id === input.allocationId && a.eventType === "apply" && a.paymentId === input.paymentId && a.clinicId === input.clinicId);
@@ -330,7 +333,7 @@ async function negateAllocation(input: NegateInput, eventType: "refund" | "rever
       return result;
     } catch (e) {
       if ((e as { code?: string })?.code === "TARGET_UPDATE_CONFLICT") return { status: "conflict" };
-      if (isUnique(e)) { const post = await idempotentReplay(db as unknown as DbLike, "allocation", input.clinicId, input.idempotencyKey, fp); if (post.kind === "replay") return eventType === "refund" ? { status: "refunded", allocationId: post.entityId } : { status: "reversed", allocationId: post.entityId }; if (post.kind === "conflict") return { status: "idempotency_conflict" }; return { status: "conflict" }; }
+      if (isUnique(e)) { const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "allocation", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp }); if (post.kind === "replay") return eventType === "refund" ? { status: "refunded", allocationId: post.entityId } : { status: "reversed", allocationId: post.entityId }; if (post.kind === "conflict") return { status: "idempotency_conflict" }; return { status: "conflict" }; }
       throw e;
     }
   } catch (e) { if (isFinancialMigration(e)) return { status: "migration_missing" }; return { status: "persistence_failed" }; }

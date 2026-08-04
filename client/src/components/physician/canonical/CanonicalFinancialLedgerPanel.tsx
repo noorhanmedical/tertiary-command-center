@@ -113,7 +113,7 @@ export function CanonicalFinancialLedgerPanel({ enabledOverride }: { enabledOver
               <tr key={r.claimId} className="border-t border-slate-100">
                 <Td>#{r.ancillaryCaseId}<IntegrityPill integrity={r.integrity} /></Td>
                 <Td>{r.serviceType}</Td>
-                <Td>{r.status}{r.attemptNumber > 1 ? ` (attempt ${r.attemptNumber})` : ""}</Td>
+                <Td>{r.status ?? "—"}{r.attemptNumber > 1 ? ` (attempt ${r.attemptNumber})` : ""}</Td>
                 <Td>{money(r.chargeAmount, r.currency)}</Td>
                 <Td><Codes items={r.submissionBlockers} /></Td>
                 <Td>{r.submittedAt ? `${fmt(r.submittedAt)}${r.submissionSource ? ` · ${r.submissionSource}` : ""}` : "—"}</Td>
@@ -130,7 +130,7 @@ export function CanonicalFinancialLedgerPanel({ enabledOverride }: { enabledOver
               <tr key={r.invoiceId} className="border-t border-slate-100">
                 <Td>{r.invoiceNumber ?? `#${r.invoiceId}`}<IntegrityPill integrity={r.integrity} /></Td>
                 <Td>{r.invoiceType}</Td>
-                <Td>{r.status}</Td>
+                <Td>{r.status ?? "—"}</Td>
                 <Td>{money(r.totalAmount, r.currency)}</Td>
                 <Td><Balance b={r.balance} /></Td>
               </tr>

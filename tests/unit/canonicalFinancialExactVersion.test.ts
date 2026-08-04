@@ -184,6 +184,44 @@ async function testNegateWrongService() {
   assert.equal(r.status, "case_service_mismatch", "(22/33) refund with wrong service rejected");
 }
 
+async function testNegatePendingReceipt() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  // A pending (unverified) receipt cannot be refunded.
+  const spec = negBase(t, { canonicalPayments: { select: () => [paymentRow({ status: "pending" })] } });
+  const r = await runWithDb(spec, CHAIN, async (calls: Call[]) => { const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" }); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "no write on pending receipt"); return res; });
+  assert.equal(r.status, "target_not_payable", "(36) pending receipt cannot be refunded");
+  const failed = negBase(t, { canonicalPayments: { select: () => [paymentRow({ status: "failed" })] } });
+  const r2 = await runWithDb(failed, CHAIN, async () => p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" }));
+  assert.equal(r2.status, "target_not_payable", "(37) failed receipt cannot be refunded");
+}
+async function testReadModelStatusNull() {
+  const t = await loadCanonicalTables(); const v = await view();
+  // A conflicting invoice (stale evidence) must show status null, never the raw status.
+  const claimRow = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, attemptNumber: 1, evidenceFingerprint: "fp-1", billingDocumentId: 600, billingReadinessCheckId: 500, globalPlexusPatientId: 900, patientClinicMembershipId: 800, submittedAt: OLD, submissionSource: "manual_attestation", currency: "USD", chargeAmount: "420.00", updatedAt: OLD };
+  const invStale = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-STALE", canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", invoiceNumber: "INV-1", currency: "USD", totalAmount: "420.00", supersededAt: null, issuedAt: OLD };
+  const spec = new Map<unknown, TableSpec>([
+    [t.canonicalClaims, { select: () => [claimRow] }], [t.canonicalInvoices, { select: () => [invStale] }],
+    [t.canonicalPayments, { select: () => [] }], [t.canonicalPaymentAllocations, { select: () => [] }],
+    [t.ancillaryCases, { select: () => [acase()] }], [t.memberships, { select: () => [pcm()] }], [t.globalPatients, { select: () => [gpp()] }],
+    [t.billingReadinessChecks, { select: () => [] }], [t.billingDocumentRequests, { select: () => [] }],
+  ]);
+  const r = await runWithDb(spec, CHAIN, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  assert.equal(r.invoices.rows[0].integrity, "conflicting"); assert.equal(r.invoices.rows[0].status, null, "(7) conflicting invoice → status null, never a stale raw status");
+}
+async function testStageClaimScanOverflow() {
+  const t = await loadCanonicalTables(); const { buildStageVectors } = await stageMod();
+  // >SCAN_LIMIT claims → claim stage unavailable, never derived from a partial set.
+  const many = Array.from({ length: 5001 }, (_, i) => ({ id: 700 + i, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", supersededAt: null, attemptNumber: 1, evidenceFingerprint: "fp-1", globalPlexusPatientId: 900, patientClinicMembershipId: 800, currency: "USD" }));
+  const spec = new Map<unknown, TableSpec>([
+    [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }], [t.gse, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }], [t.procedureEvents, { select: () => [] }], [t.billingReadinessChecks, { select: () => [] }], [t.billingDocumentRequests, { select: () => [] }],
+    [t.canonicalClaims, { select: () => many }], [t.canonicalInvoices, { select: () => [] }], [t.canonicalPayments, { select: () => [] }], [t.canonicalPaymentAllocations, { select: () => [] }],
+    [t.memberships, { select: () => [pcm()] }], [t.globalPatients, { select: () => [gpp()] }],
+  ]);
+  const v = await runWithDb(spec, CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [acase() as never] }))[0]);
+  assert.equal(v.claim.availability, "unavailable", "(31) claim scan overflow → unavailable"); assert.ok(v.claim.warnings.includes("financial_stage_data_truncated"));
+  assert.equal(v.payment.availability, "unavailable", "(35) no false paid stage from truncated rows");
+}
+
 // ── §11 exact-target payment stage ──
 async function testStageExactTarget() {
   const t = await loadCanonicalTables(); const { buildStageVectors } = await stageMod();
@@ -194,9 +232,9 @@ async function testStageExactTarget() {
   // Alloc to the CLAIM (799) and to a WRONG invoice (799) must be excluded when the
   // active target is invoice 800; only the 420 apply to invoice 800 counts → paid.
   const allocs = [
-    { id: 1, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "claim", targetId: 700, currency: "USD", amount: "999.00" },
-    { id: 2, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "invoice", targetId: 799, currency: "USD", amount: "999.00" },
-    { id: 3, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00" },
+    { id: 1, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "claim", targetId: 700, currency: "USD", amount: "999.00" },
+    { id: 2, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "invoice", targetId: 799, currency: "USD", amount: "999.00" },
+    { id: 3, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00" },
   ];
   const spec = new Map<unknown, TableSpec>([
     [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }],
@@ -224,6 +262,9 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(28) negate superseded target zero writes", testNegateSupersededTarget],
   ["(29) negate zero-row update rolls back", testNegateZeroRowTargetUpdate],
   ["(22/33) negate wrong service rejected", testNegateWrongService],
+  ["(36/37) negate pending/failed receipt rejected", testNegatePendingReceipt],
+  ["(7) read-model conflicting status null", testReadModelStatusNull],
+  ["(31/35) stage claim scan overflow unavailable", testStageClaimScanOverflow],
   ["(39/40/42) exact-target payment stage", testStageExactTarget],
 ];
 async function run() {

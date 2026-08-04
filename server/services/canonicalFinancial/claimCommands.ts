@@ -19,7 +19,7 @@ import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { canonicalClaimsRuntimeEnabled, featureFlags } from "../../lib/featureFlags";
 import { evaluateClaimReadiness, type CaseRef } from "./claimReadiness";
 import { canTransitionClaim, claimSubmissionSourceValid } from "./stateMachines";
-import { isFinancialMigration, writeTransition, idempotentReplay, commandFingerprint, verifyCanonicalIdentity, nonEmpty, type DbLike } from "./commandSupport";
+import { isFinancialMigration, writeTransition, resolveFinancialCommandRace, commandFingerprint, verifyCanonicalIdentity, nonEmpty, type DbLike } from "./commandSupport";
 
 const WORKING_STATUSES = new Set<CanonicalClaimStatus>(["not_ready", "ready", "draft", "queued"]);
 const UNIQUE_VIOLATION = "23505";
@@ -99,7 +99,7 @@ export async function createOrReuseCanonicalClaimDraft(input: CreateDraftInput):
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "create_claim_draft", clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
-    const replay = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "reused", claimId: replay.entityId };
     const acase = await loadCase(input.clinicId, input.ancillaryCaseId);
@@ -143,7 +143,7 @@ export async function createOrReuseCanonicalClaimDraft(input: CreateDraftInput):
         if (again.kind === "conflict") return { status: "conflict" };
         // A racing command may have won on our idempotency key — reload the audit row
         // and compare the fingerprint (never assume the entry gate was sufficient).
-        const post = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
+        const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
         if (post.kind === "replay") return { status: "reused", claimId: post.entityId };
         if (post.kind === "conflict") return { status: "idempotency_conflict" };
       }
@@ -159,7 +159,7 @@ export async function transitionCanonicalClaim(input: TransitionInput2): Promise
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "transition_claim", clinicId: input.clinicId, claimId: input.claimId, transition: input.transition, sourceType: input.sourceType, sourceReference: input.sourceReference, reason: input.reason });
-    const replay = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: "", to: input.transition };
     const rows = await db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, input.clinicId), eq(canonicalClaims.id, input.claimId))).limit(2);
@@ -185,7 +185,7 @@ export async function transitionCanonicalClaim(input: TransitionInput2): Promise
     });
     if (!done) {
       // §7 zero-row update: an identical racing command may have already applied it.
-      const post = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
+      const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
       if (post.kind === "replay") return { status: "transitioned", claimId: input.claimId, from, to };
       if (post.kind === "conflict") return { status: "idempotency_conflict" };
       return { status: "conflict" };
@@ -201,7 +201,7 @@ export async function createCanonicalClaimCorrection(input: CorrectionInput): Pr
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "correct_claim", clinicId: input.clinicId, priorClaimId: input.priorClaimId, reason: input.reason });
-    const replay = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "reused", claimId: replay.entityId };
     const rows = await db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, input.clinicId), eq(canonicalClaims.id, input.priorClaimId))).limit(2);

@@ -20,7 +20,7 @@ export type CanonicalClaimRow = {
   ancillaryCaseId: number;
   serviceType: string;
   patientDisplay: string | null;        // authorized display only (verified membership)
-  status: string;                        // canonical claim status
+  status: string | null;                 // NULL when lineage is missing/conflicting — never a stale raw status
   claimReady: boolean;
   attemptNumber: number;
   supersedesClaimId: number | null;
@@ -45,7 +45,7 @@ export type CanonicalInvoiceRow = {
   patientDisplay: string | null;
   invoiceType: string;                   // patient | payer | clinic (never merged)
   recipientType: string | null;
-  status: string;
+  status: string | null;                 // NULL when lineage is missing/conflicting — never a stale raw status
   invoiceNumber: string | null;
   claimId: number | null;
   currency: string;

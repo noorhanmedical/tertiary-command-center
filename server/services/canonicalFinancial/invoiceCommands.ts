@@ -17,7 +17,7 @@ import { canonicalClaims } from "@shared/schema/canonicalClaims";
 import { canonicalInvoicesRuntimeEnabled } from "../../lib/featureFlags";
 import { canTransitionInvoice, invoiceDeliveredRequiresEvent } from "./stateMachines";
 import { reconcileLines, toCents, type MoneyLine } from "@shared/money";
-import { isFinancialMigration, writeTransition, idempotentReplay, commandFingerprint, nonEmpty, type DbLike } from "./commandSupport";
+import { isFinancialMigration, writeTransition, resolveFinancialCommandRace, commandFingerprint, nonEmpty, type DbLike } from "./commandSupport";
 
 const INVOICE_WORKING = new Set<CanonicalInvoiceStatus>(["draft", "approved"]);
 const CLAIM_INVOICEABLE = new Set(["ready", "draft", "queued", "submitted", "accepted", "partially_paid", "paid"]);
@@ -80,7 +80,7 @@ export async function createOrReuseCanonicalInvoiceDraft(input: CreateInvoiceInp
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "create_invoice", clinicId: input.clinicId, claimId: input.claimId, invoiceType: input.invoiceType, recipientType: input.recipientType, recipientId: input.recipientId });
-    const replay = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "invoice", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "reused", invoiceId: replay.entityId };
     const claim = await loadClaim(input.clinicId, input.claimId);
@@ -129,7 +129,7 @@ export async function transitionCanonicalInvoice(input: InvoiceTransitionInput):
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "transition_invoice", clinicId: input.clinicId, invoiceId: input.invoiceId, transition: input.transition, deliveryEventReference: input.deliveryEventReference, sourceType: input.sourceType, sourceReference: input.sourceReference, reason: input.reason });
-    const replay = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "invoice", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from: "", to: input.transition };
     const rows = await db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, input.clinicId), eq(canonicalInvoices.id, input.invoiceId))).limit(2);
@@ -159,7 +159,7 @@ export async function transitionCanonicalInvoice(input: InvoiceTransitionInput):
     });
     if (!done) {
       // §7 zero-row update: an identical racing command may have already applied it.
-      const post = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);
+      const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "invoice", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
       if (post.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from, to };
       if (post.kind === "conflict") return { status: "idempotency_conflict" };
       return { status: "conflict" };
@@ -175,7 +175,7 @@ export async function createCanonicalInvoiceCorrection(input: InvoiceCorrectionI
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "correct_invoice", clinicId: input.clinicId, priorInvoiceId: input.priorInvoiceId, reason: input.reason });
-    const replay = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);
+    const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "invoice", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "reused", invoiceId: replay.entityId };
     const rows = await db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, input.clinicId), eq(canonicalInvoices.id, input.priorInvoiceId))).limit(2);

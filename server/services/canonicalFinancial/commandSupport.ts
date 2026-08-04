@@ -115,6 +115,15 @@ export async function idempotentReplay(db: DbLike, entityType: CanonicalFinancia
   return { kind: "replay", entityId: hit.entityId };
 }
 
+/** §8 The ONE shared post-race resolver, used after every unique violation, zero-row
+ *  guarded update, and transition-audit uniqueness failure across all command paths:
+ *  same key + same fingerprint → prior outcome (replay); same key + different
+ *  fingerprint → idempotency_conflict; no audit record → genuine conflict. Thin
+ *  named wrapper over idempotentReplay so every caller shares one implementation. */
+export async function resolveFinancialCommandRace(db: DbLike, args: { entityType: CanonicalFinancialEntityType; clinicId: number; idempotencyKey: string | null | undefined; commandFingerprint: string }): Promise<ReplayResult> {
+  return idempotentReplay(db, args.entityType, args.clinicId, args.idempotencyKey, args.commandFingerprint);
+}
+
 // (priorTransitionEntityId removed — every recovery path now uses idempotentReplay,
 // which compares the command fingerprint; a bare key lookup would be fingerprint-blind.)
 

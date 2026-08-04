@@ -38,9 +38,11 @@ function proc(o: Record<string, unknown> = {}) { return { id: 400, clinicId: 1, 
 function readiness(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evaluatedAt: OLD, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: null, reportDocumentReferenceId: null, procedureNoteDocumentReferenceId: null, billingBlockers: [], claimBlockers: [], ...o }; }
 function billingDoc(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, generatedAt: OLD, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: null, reportDocumentReferenceId: null, ...o }; }
 // 2J
-function claim(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", supersededAt: null, attemptNumber: 1, submittedAt: null, updatedAt: OLD, chargeAmount: "420.00", currency: "USD", ...o }; }
-function invoice(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "issued", supersededAt: null, invoiceNumber: "INV-1-800", issuedAt: OLD, totalAmount: "420.00", currency: "USD", ...o }; }
-function payment(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", status: "posted", postedAt: OLD, receivedAt: OLD, amount: "420.00", ...o }; }
+function claim(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", supersededAt: null, attemptNumber: 1, evidenceFingerprint: "fp-1", globalPlexusPatientId: 900, patientClinicMembershipId: 800, submittedAt: OLD, submissionSource: "manual_attestation", updatedAt: OLD, chargeAmount: "420.00", currency: "USD", ...o }; }
+function pcm(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active", ...o }; }
+function gpp(o: Record<string, unknown> = {}) { return { id: 900, identityStatus: "active", mergedIntoPatientId: null, ...o }; }
+function invoice(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, evidenceFingerprint: "fp-1", canonicalStatus: "issued", supersededAt: null, invoiceNumber: "INV-1-800", issuedAt: OLD, totalAmount: "420.00", currency: "USD", ...o }; }
+function payment(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", status: "posted", currency: "USD", postedAt: OLD, receivedAt: OLD, amount: "420.00", ...o }; }
 function alloc(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", paymentId: 900, eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
 
 type Opts = { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; claimsMig?: boolean };
@@ -61,6 +63,8 @@ function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts = {}) 
     [t.canonicalInvoices, { select: () => o.invoices ?? [] }],
     [t.canonicalPayments, { select: () => o.payments ?? [] }],
     [t.canonicalPaymentAllocations, { select: () => o.allocations ?? [] }],
+    [t.memberships, { select: () => [pcm()] }],
+    [t.globalPatients, { select: () => [gpp()] }],
   ]);
 }
 async function build(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts, flags: Record<string, boolean>, calls?: (c: Call[]) => void) {
@@ -92,6 +96,15 @@ async function testFlagsOnFullyPaid() {
   const v = await build(t, { claims: [claim({ canonicalStatus: "paid" })], invoices: [invoice({ canonicalStatus: "paid" })], payments: [payment()], allocations: [alloc({ amount: "420.00" })] }, WITH_2J);
   assert.equal(v.claim.status, "paid"); assert.equal(v.invoice.status, "paid"); assert.equal(v.payment.status, "paid", "reconciled zero outstanding ⇒ paid");
   assert.equal(v.currentStage, null, "fully paid ⇒ lifecycle complete");
+}
+async function testInvoiceStageSupersededParentClaim() {
+  const t = await loadCanonicalTables();
+  // The invoice's parent claim was superseded (a correction), but the live invoice
+  // still points at it — the invoice-claim context is loaded by exact id (no
+  // supersession filter), so the invoice stage must NOT falsely conflict.
+  const v = await build(t, { claims: [claim({ canonicalStatus: "submitted", supersededAt: OLD })], invoices: [invoice({ canonicalStatus: "issued" })] }, WITH_2J);
+  assert.equal(v.invoice.status, "issued", "superseded parent claim is valid history — invoice stage not conflicting");
+  assert.notEqual(v.invoice.integrity, "conflicting");
 }
 async function testPartialPaymentDoesNotComplete() {
   const t = await loadCanonicalTables();
@@ -153,6 +166,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(57) unapplied payment does not complete", testUnappliedDoesNotComplete],
   ["(58) refund reopens the stage", testRefundReopens],
   ["(33/34) partial refund → partially_refunded", testPartialRefund],
+  ["invoice stage: superseded parent claim ok", testInvoiceStageSupersededParentClaim],
   ["duplicate current claim → conflict", testClaimConflict],
   ["posted event alone never paid", testPaymentPostedNotPaid],
   ["missing claim table → 503", testClaimMigration503],
