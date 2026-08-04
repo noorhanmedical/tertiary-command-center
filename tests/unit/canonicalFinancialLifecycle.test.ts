@@ -26,7 +26,7 @@ const ALL = {
 } as const;
 
 // ── builders ──
-function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", ...o }; }
+function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", globalPlexusPatientId: 900, patientClinicMembershipId: 800, ...o }; }
 function readinessRow(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, claimBlockers: [], warnings: [], ...o }; }
 // An exact approved claim charge (amount source vocabulary + reconciled lines +
 // required fields). Tests override pieces to exercise the readiness contract.
@@ -47,23 +47,27 @@ function claimCharge(o: Record<string, unknown> = {}) {
   };
 }
 function billingDocRow(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, globalPlexusPatientId: 900, patientClinicMembershipId: 800, sourceData: { claimCharge: claimCharge() }, ...o }; }
-function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", currency: "USD", chargeAmount: "420.00", claimSubmissionBlockers: [], warnings: [], submittedAt: null, submissionSource: null, updatedAt: OLD, ...o }; }
-function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", invoiceNumber: "INV-1", currency: "USD", totalAmount: "420.00", supersededAt: null, issuedAt: OLD, deliveredAt: null, warnings: [], ...o }; }
+function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", globalPlexusPatientId: 900, patientClinicMembershipId: 800, currency: "USD", chargeAmount: "420.00", claimSubmissionBlockers: [], warnings: [], submittedAt: null, submissionSource: null, updatedAt: OLD, ...o }; }
+function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", invoiceNumber: "INV-1", currency: "USD", totalAmount: "420.00", supersededAt: null, issuedAt: OLD, deliveredAt: null, warnings: [], ...o }; }
 function paymentRow(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, invoiceId: 800, eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "100.00", externalTransactionId: null, reversesPaymentId: null, postedAt: OLD, ...o }; }
 function allocRow(o: Record<string, unknown> = {}) { return { id: 950, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "100.00", isOverpayment: 0, ...o }; }
 
-function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; cases?: unknown[]; readiness?: unknown[]; docs?: unknown[]; claimsMig?: boolean; invoicesErr?: boolean } = {}) {
+function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; cases?: unknown[]; memberships?: unknown[]; globalPatients?: unknown[]; readiness?: unknown[]; docs?: unknown[]; claimsMig?: boolean; invoicesErr?: boolean } = {}) {
   const mig = () => { throw Object.assign(new Error("relation missing"), { code: "42P01" }); };
   return new Map<unknown, TableSpec>([
     [t.canonicalClaims, { select: () => { if (o.claimsMig) return mig(); return o.claims ?? []; } }],
     [t.canonicalInvoices, { select: () => { if (o.invoicesErr) throw new Error("inv down"); return o.invoices ?? []; } }],
     [t.canonicalPayments, { select: () => o.payments ?? [] }],
     [t.canonicalPaymentAllocations, { select: () => o.allocations ?? [] }],
-    [t.ancillaryCases, { select: () => o.cases ?? [acase()] }],
+    [t.ancillaryCases, { select: () => o.cases ?? [acase(), acase({ id: 6, ancillaryCaseId: 6 }), acase({ id: 9 })] }],
+    [t.memberships, { select: () => o.memberships ?? [pcm()] }],
+    [t.globalPatients, { select: () => o.globalPatients ?? [gpp()] }],
     [t.billingReadinessChecks, { select: () => o.readiness ?? [] }],
     [t.billingDocumentRequests, { select: () => o.docs ?? [] }],
   ]);
 }
+function pcm(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active", ...o }; }
+function gpp(o: Record<string, unknown> = {}) { return { id: 900, identityStatus: "active", mergedIntoPatientId: null, ...o }; }
 
 // ═══ Money invariants (§9, §13) ═══
 async function testMoney() {
@@ -230,11 +234,27 @@ async function testViewHistoryNotDuplicate() {
   const t = await loadCanonicalTables(); const v = await view();
   // A submitted historical attempt + a correction draft for the SAME case is VALID
   // and must NOT read as a duplicate-current conflict.
-  const valid = await runWithDb(spec(t, { claims: [claimRow({ id: 700, canonicalStatus: "submitted", attemptNumber: 1 }), claimRow({ id: 701, canonicalStatus: "draft", attemptNumber: 2 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  const valid = await runWithDb(spec(t, { claims: [claimRow({ id: 700, canonicalStatus: "submitted", attemptNumber: 1, submittedAt: OLD, submissionSource: "manual_attestation" }), claimRow({ id: 701, canonicalStatus: "draft", attemptNumber: 2 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
   assert.ok(valid.claims.rows.every((x) => x.integrity === "resolved"), "(1/30) submitted history + correction draft is not a conflict");
   // TWO active working attempts for one case IS a conflict.
   const dup = await runWithDb(spec(t, { claims: [claimRow({ id: 700, canonicalStatus: "draft", attemptNumber: 1 }), claimRow({ id: 701, canonicalStatus: "ready", attemptNumber: 2 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
   assert.ok(dup.claims.rows.every((x) => x.integrity === "conflicting"), "(3/31) two active working claims conflict");
+}
+async function testViewClaimLineageConflict() {
+  const t = await loadCanonicalTables(); const v = await view();
+  // A claim whose membership went inactive is now stale → conflicting, not claimReady.
+  const inactive = await runWithDb(spec(t, { claims: [claimRow()], memberships: [pcm({ membershipStatus: "inactive" })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  assert.equal(inactive.claims.rows[0].integrity, "conflicting", "(11) inactive membership → claim conflicting");
+  assert.equal(inactive.claims.rows[0].claimReady, false, "stale claim never claimReady");
+  // Merged global patient → conflicting.
+  const merged = await runWithDb(spec(t, { claims: [claimRow()], globalPatients: [gpp({ mergedIntoPatientId: 999 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  assert.equal(merged.claims.rows[0].integrity, "conflicting", "(12) merged global patient → claim conflicting");
+}
+async function testViewInvoiceLineageConflict() {
+  const t = await loadCanonicalTables(); const v = await view();
+  // Invoice evidence fingerprint disagrees with its claim → conflicting.
+  const stale = await runWithDb(spec(t, { claims: [claimRow({ id: 700, evidenceFingerprint: "fp-1" })], invoices: [invoiceRow({ id: 800, claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-STALE" })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  assert.equal(stale.invoices.rows[0].integrity, "conflicting", "(13) stale invoice evidence → conflicting");
 }
 async function testViewDuplicateAcrossPagination() {
   const t = await loadCanonicalTables(); const v = await view();
@@ -250,6 +270,22 @@ function fakeApp() { const map: Record<string, Function[]> = {}; return { app: {
 function mockRes() { return { statusCode: 200, body: null as unknown, status(c: number) { this.statusCode = c; return this; }, json(b: unknown) { this.body = b; return this; } }; }
 async function invoke(h: Function[], req: unknown, res: unknown) { for (const fn of h) { let nexted = false; await fn(req, res, () => { nexted = true; }); if (!nexted) return; } }
 async function handler(path: string) { const { app, map } = fakeApp(); (await routes()).registerCanonicalFinancialRoutes(app); return map[`GET ${path}`]; }
+async function testReadinessRouteIdentity() {
+  const t = await loadCanonicalTables(); const h = await handler("/api/ancillary-cases/:id/canonical-claim-readiness");
+  // Valid exact identity → claimReady true.
+  const okRes = mockRes();
+  await runWithDb(spec(t, { readiness: [readinessRow()], docs: [billingDocRow()] }), ALL, async () => { await invoke(h, { session: { userId: "u", role: "biller" }, clinicId: 1, params: { id: "5" }, query: {} }, okRes); });
+  assert.equal((okRes.body as { claimReady: boolean }).claimReady, true, "(18) valid exact identity qualifies");
+  // Wrong Billing Document membership → conflicting, never claimReady.
+  const memRes = mockRes();
+  await runWithDb(spec(t, { readiness: [readinessRow()], docs: [billingDocRow({ patientClinicMembershipId: 801 })] }), ALL, async () => { await invoke(h, { session: { userId: "u", role: "biller" }, clinicId: 1, params: { id: "5" }, query: {} }, memRes); });
+  assert.equal((memRes.body as { integrity: string }).integrity, "conflicting", "(16) wrong Billing Document membership → conflicting");
+  assert.equal((memRes.body as { claimReady: boolean }).claimReady, false);
+  // Wrong Billing Document global patient → conflicting.
+  const gpRes = mockRes();
+  await runWithDb(spec(t, { readiness: [readinessRow()], docs: [billingDocRow({ globalPlexusPatientId: 901 })] }), ALL, async () => { await invoke(h, { session: { userId: "u", role: "biller" }, clinicId: 1, params: { id: "5" }, query: {} }, gpRes); });
+  assert.equal((gpRes.body as { integrity: string }).integrity, "conflicting", "(17) wrong Billing Document global patient → conflicting");
+}
 async function testRouteAuth() {
   const h = await handler("/api/canonical-financial-view");
   const check = async (session: unknown, clinicId: unknown, expect: number) => { const res = mockRes(); await runWithDb(new Map(), { canonicalClaims: true }, async () => { await invoke(h, { session, clinicId, query: {} }, res); }); return res.statusCode === expect; };
@@ -299,7 +335,10 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(20) cross-clinic excluded", testViewCrossClinic],
   ["(86/89) pagination bounded", testViewPagination],
   ["(1/3) history not duplicate; active dup conflicts", testViewHistoryNotDuplicate],
+  ["(11/12) claim lineage identity conflict", testViewClaimLineageConflict],
+  ["(13) invoice lineage stale evidence conflict", testViewInvoiceLineageConflict],
   ["(5) duplicate detection across pagination", testViewDuplicateAcrossPagination],
+  ["(16-18) readiness route identity", testReadinessRouteIdentity],
   ["(16-19) route auth", testRouteAuth],
   ["(5/93) route flag off disabled", testRouteFlagOffDisabled],
   ["route allowed roles", testRouteAllowedRoles],

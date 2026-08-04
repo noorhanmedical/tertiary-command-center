@@ -18,6 +18,7 @@ import { featureFlags } from "../lib/featureFlags";
 import { disabledCanonicalFinancialView } from "@shared/canonicalFinancialView";
 import { getCanonicalFinancialView } from "../services/canonicalFinancial/financialView";
 import { evaluateClaimReadiness } from "../services/canonicalFinancial/claimReadiness";
+import { verifyCanonicalIdentity } from "../services/canonicalFinancial/commandSupport";
 import { db } from "../db";
 import { and, eq, isNull } from "drizzle-orm";
 import { canonicalBillingReadinessChecks } from "@shared/schema/billingReadiness";
@@ -85,10 +86,14 @@ export function registerCanonicalFinancialRoutes(app: Express): void {
       const c = caseRows.find((x) => x.id === ancillaryCaseId && x.clinicId === clinicId);
       if (!c) return res.status(404).json({ error: "Not found" });
       if (!canonicalClaimsRuntimeEnabled()) return res.json({ disabled: true, upstream: "flag_off" });
+      // §3 Prove the canonical case identity with the SAME verifier the command uses
+      // BEFORE any evidence read; a failure conflicts without wasted queries.
+      const idFail = await verifyCanonicalIdentity(clinicId, c.globalPlexusPatientId, c.patientClinicMembershipId);
+      if (idFail) return res.json({ ancillaryCaseId, serviceType: c.serviceType, claimReady: false, status: "not_ready", blockers: [{ code: "identity_" + idFail }], warnings: [], integrity: "conflicting" });
       // EXACT case-scoped queries (never a clinic-wide 500-row in-memory scan).
       const readiness = (await db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), eq(canonicalBillingReadinessChecks.ancillaryCaseId, ancillaryCaseId), isNull(canonicalBillingReadinessChecks.supersededAt))).limit(200)).filter((r) => r.clinicId === clinicId && r.ancillaryCaseId === ancillaryCaseId);
       const docs = (await db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), eq(canonicalBillingDocumentRequests.ancillaryCaseId, ancillaryCaseId), isNull(canonicalBillingDocumentRequests.supersededAt))).limit(200)).filter((r) => r.clinicId === clinicId && r.ancillaryCaseId === ancillaryCaseId);
-      const result = evaluateClaimReadiness({ clinicId, ancillaryCaseId, serviceType: c.serviceType }, readiness, docs);
+      const result = evaluateClaimReadiness({ clinicId, ancillaryCaseId, serviceType: c.serviceType, verifiedGlobalPlexusPatientId: c.globalPlexusPatientId, verifiedPatientClinicMembershipId: c.patientClinicMembershipId }, readiness, docs);
       // Never expose evidence bytes / note text — only ids + blocker codes.
       return res.json({ ancillaryCaseId, serviceType: c.serviceType, claimReady: result.claimReady, status: result.status, blockers: result.blockers.map((b) => ({ code: b.code })), warnings: result.warnings, integrity: result.integrity });
     } catch (e) {

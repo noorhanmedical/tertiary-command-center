@@ -183,12 +183,18 @@ export async function transitionCanonicalClaim(input: TransitionInput2): Promise
       await writeTransition(tx, { entityType: "claim", entityId: input.claimId, clinicId: input.clinicId, ancillaryCaseId: claim.ancillaryCaseId, serviceType: claim.serviceType, fromStatus: from, toStatus: to, actorUserId: input.actorUserId, actorRole: input.actorRole, reason: input.reason ?? null, sourceType: input.sourceType ?? "claim_command", sourceReference: input.sourceReference ?? null, idempotencyKey: input.idempotencyKey ?? null, commandFingerprint: fp });
       return true;
     });
-    if (!done) return { status: "conflict" };
+    if (!done) {
+      // §7 zero-row update: an identical racing command may have already applied it.
+      const post = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
+      if (post.kind === "replay") return { status: "transitioned", claimId: input.claimId, from, to };
+      if (post.kind === "conflict") return { status: "idempotency_conflict" };
+      return { status: "conflict" };
+    }
     return { status: "transitioned", claimId: input.claimId, from, to };
   } catch (e) { if (isUnique(e)) return { status: "conflict" }; if (isFinancialMigration(e)) return { status: "migration_missing" }; return { status: "persistence_failed" }; }
 }
 
-export type CorrectionInput = { clinicId: number; priorClaimId: number; actorUserId: string; actorRole: string; reason?: string | null; idempotencyKey?: string | null };
+export type CorrectionInput = { clinicId: number; priorClaimId: number; actorUserId: string; actorRole: string; reason?: string | null; idempotencyKey: string };
 
 export async function createCanonicalClaimCorrection(input: CorrectionInput): Promise<ClaimCommandResult> {
   if (!canonicalClaimsRuntimeEnabled()) return { status: "skipped_flag_off" };

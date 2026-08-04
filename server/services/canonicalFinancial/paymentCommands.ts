@@ -20,7 +20,8 @@ import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { canonicalPaymentsRuntimeEnabled } from "../../lib/featureFlags";
 import { toCents, sumCents } from "@shared/money";
-import { validateAllocation, netAppliedCents, parentNegationRemainingCents } from "./balance";
+import { validateAllocation, netAppliedCents } from "./balance";
+import { validateNegationLineage, sumNegationsForParent } from "./allocationLineage";
 import { isFinancialMigration, writeTransition, idempotentReplay, commandFingerprint, verifyCanonicalIdentity, SUPPORTED_CURRENCIES, nonEmpty, type DbLike } from "./commandSupport";
 
 const PAYMENT_TYPES = new Set<string>(CANONICAL_PAYMENT_TYPES);
@@ -209,6 +210,15 @@ export async function allocateCanonicalPayment(input: AllocateInput): Promise<Pa
         if (!target.payable || target.supersededAt != null) return { status: "conflict" };
         // Evidence/total/currency/state changed since the pre-tx read → conflict.
         if (targetChanged(preTarget, target)) return { status: "conflict" };
+        // §6 exact service ownership: reload the canonical case and prove the receipt,
+        // target, and case all agree on service (both case-bound). Wrong service → no write.
+        if (payment.serviceType != null && target.serviceType != null && payment.serviceType !== target.serviceType) return { status: "case_service_mismatch" };
+        if (target.ancillaryCaseId != null) {
+          const cases = await tx.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, input.clinicId), eq(patientAncillaryCases.id, target.ancillaryCaseId))).limit(2);
+          const kase = (cases as (typeof patientAncillaryCases.$inferSelect)[]).find((x) => x.id === target.ancillaryCaseId && x.clinicId === input.clinicId);
+          if (!kase || kase.serviceType !== target.serviceType) return { status: "case_service_mismatch" };
+          if (payment.ancillaryCaseId != null && payment.ancillaryCaseId !== target.ancillaryCaseId) return { status: "allocation_rejected", code: "allocation_wrong_case" };
+        }
         const paymentCents = centsOf(payment.amount) ?? 0;
         // §9 completeness: a truncated allocation set cannot yield a valid bound.
         const fromPayment = await allocationsForPayment(tx, input.clinicId, input.paymentId);
@@ -264,35 +274,56 @@ async function negateAllocation(input: NegateInput, eventType: "refund" | "rever
     const targetCode = 3;
     try {
       const result = await (db as unknown as DbLike).transaction(async (tx): Promise<PaymentCommandResult> => {
+        // §4 ATOMIC: ALL checks BEFORE any insert. After the first insert, any failure
+        // THROWS so the whole transaction rolls back (never a plain return).
         await advisoryLock(tx, input.clinicId, input.paymentId);
+        const payment = await loadPayment(tx, input.clinicId, input.paymentId);
+        if (!payment || payment.eventType !== "payment") return { status: "not_found" };
         const all = await allocationsForPayment(tx, input.clinicId, input.paymentId);
         if (all.truncated) return { status: "allocation_integrity_unavailable" };
         const parent = all.rows.find((a) => a.id === input.allocationId && a.eventType === "apply" && a.paymentId === input.paymentId && a.clinicId === input.clinicId);
         if (!parent) return { status: "parent_allocation_invalid" };
         await advisoryLock(tx, parent.targetId, targetCode);
-        const remaining = parentNegationRemainingCents({ id: parent.id, amount: parent.amount }, all.rows);
-        if (remaining <= 0) return { status: "already_reversed" };
-        if (amountCents > remaining) return { status: "exceeds_original" };
+        // Reload the exact target under the lock; missing/superseded → insert nothing.
+        const target = await loadTarget(tx, parent.targetType as "claim" | "invoice", input.clinicId, parent.targetId);
+        if (!target) return { status: "target_not_found" };
+        if (target.supersededAt != null) return { status: "conflict" };
+        // §6 service ownership: reload the exact case and prove receipt/target/case agree.
+        if (target.ancillaryCaseId != null) {
+          const cases = await tx.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, input.clinicId), eq(patientAncillaryCases.id, target.ancillaryCaseId))).limit(2);
+          const kase = (cases as (typeof patientAncillaryCases.$inferSelect)[]).find((x) => x.id === target.ancillaryCaseId && x.clinicId === input.clinicId);
+          if (!kase || kase.serviceType !== target.serviceType) return { status: "case_service_mismatch" };
+        }
+        const targetSet = await allocationsForTarget(tx, input.clinicId, parent.targetType, parent.targetId);
+        if (targetSet.truncated) return { status: "allocation_integrity_unavailable" };
+        // §5 lineage: the proposed negation must match its parent + receipt + target.
+        const lineage = validateNegationLineage({
+          parent, paymentId: input.paymentId, clinicId: input.clinicId, amountCents,
+          payment: { clinicId: payment.clinicId, ancillaryCaseId: payment.ancillaryCaseId ?? null, serviceType: payment.serviceType ?? null, currency: payment.currency },
+          target: { clinicId: target.clinicId, ancillaryCaseId: target.ancillaryCaseId, serviceType: target.serviceType, currency: target.currency },
+          priorNegatedCents: sumNegationsForParent(all.rows, parent.id),
+        });
+        if (!lineage.ok) {
+          if (lineage.code === "already_reversed") return { status: "already_reversed" };
+          if (lineage.code === "exceeds_original") return { status: "exceeds_original" };
+          if (lineage.code === "allocation_wrong_service") return { status: "case_service_mismatch" };
+          if (lineage.code === "allocation_currency_mismatch" || lineage.code === "allocation_wrong_case") return { status: "allocation_rejected", code: lineage.code };
+          return { status: "parent_allocation_invalid" };
+        }
+        // Determine the exact target transition from the effective net AFTER this negation.
+        const netAfter = netAppliedCents(targetSet.rows) - amountCents;
+        const derived = netAfter <= 0 ? (parent.targetType === "invoice" ? "issued" : "submitted") : netAfter >= target.totalCents ? "paid" : "partially_paid";
+
+        // ── Only now WRITE. Any failure past here THROWS → rollback. ──
         const [row] = await tx.insert(canonicalPaymentAllocations).values({
           paymentId: input.paymentId, clinicId: input.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType ?? null,
           eventType, parentAllocationId: parent.id, targetType: parent.targetType, targetId: parent.targetId, currency: parent.currency, amount: input.amount,
           reason: input.reason ?? null, idempotencyKey: input.idempotencyKey ?? null, commandFingerprint: fp, actorUserId: input.actorUserId, sourceSystem: `payment_${eventType}`,
         }).returning();
-        // Reopen the target: derive its status from the NEW effective net applied
-        // over the COMPLETE allocation set (truncation → integrity-unavailable).
-        const targetSet = await allocationsForTarget(tx, input.clinicId, parent.targetType, parent.targetId);
-        if (targetSet.truncated) return { status: "allocation_integrity_unavailable" };
-        const net = netAppliedCents(targetSet.rows); // includes the just-inserted negation
-        const target = await loadTarget(tx, parent.targetType, input.clinicId, parent.targetId);
-        if (target && target.supersededAt == null) {
-          const derived = net <= 0 ? (parent.targetType === "invoice" ? "issued" : "submitted") : net >= target.totalCents ? "paid" : "partially_paid";
-          const tbl = parent.targetType === "claim" ? canonicalClaims : canonicalInvoices;
-          // FAIL CLOSED like the apply path: gate on the exact current status and
-          // require exactly one affected row — else roll back the whole negation.
-          const upd = await tx.update(tbl as never).set({ canonicalStatus: derived, updatedAt: new Date() } as never)
-            .where(and(eq((tbl as typeof canonicalClaims).id, parent.targetId), eq((tbl as typeof canonicalClaims).clinicId, input.clinicId), eq((tbl as typeof canonicalClaims).canonicalStatus, target.status), isNull((tbl as typeof canonicalClaims).supersededAt))).returning();
-          if ((upd as unknown[]).length !== 1) throw Object.assign(new Error("target_update_conflict"), { code: "TARGET_UPDATE_CONFLICT" });
-        }
+        const tbl = parent.targetType === "claim" ? canonicalClaims : canonicalInvoices;
+        const upd = await tx.update(tbl as never).set({ canonicalStatus: derived, updatedAt: new Date() } as never)
+          .where(and(eq((tbl as typeof canonicalClaims).id, parent.targetId), eq((tbl as typeof canonicalClaims).clinicId, input.clinicId), eq((tbl as typeof canonicalClaims).canonicalStatus, target.status), isNull((tbl as typeof canonicalClaims).supersededAt))).returning();
+        if ((upd as unknown[]).length !== 1) throw Object.assign(new Error("target_update_conflict"), { code: "TARGET_UPDATE_CONFLICT" });
         await writeTransition(tx, { entityType: "allocation", entityId: row.id as number, clinicId: input.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType ?? null, fromStatus: "apply", toStatus: eventType, actorUserId: input.actorUserId, actorRole: input.actorRole, reason: input.reason ?? eventType, sourceType: `payment_${eventType}`, sourceReference: String(parent.id), idempotencyKey: input.idempotencyKey ?? null, commandFingerprint: fp });
         return (eventType === "refund" ? { status: "refunded", allocationId: row.id as number } : { status: "reversed", allocationId: row.id as number }) as PaymentCommandResult;
       });

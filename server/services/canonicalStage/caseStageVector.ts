@@ -35,6 +35,8 @@ import { canonicalClaims } from "@shared/schema/canonicalClaims";
 import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { canonicalPayments } from "@shared/schema/canonicalPayments";
 import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllocations";
+import { validateTargetAllocationSet } from "../canonicalFinancial/allocationLineage";
+import { selectStageClaim, selectStageInvoice } from "../canonicalFinancial/financialVersion";
 import { toCents, sumCents } from "@shared/money";
 import {
   ancillaryDocumentReferences,
@@ -287,14 +289,16 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
   const claim = resolveSourceStage(ctx.claimGate, ctx.claimOk, "canonical_claims_flag_off", "claim_read_failed", () => {
     const all = ctx.claimByCase.get(c.id) ?? [];
     const wrongSvc = all.some((r) => r.serviceType !== svc);
-    const qualifying = all.filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
-    return { pick: pickSingle(qualifying), toStage: (r: typeof qualifying[number]) => stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.submittedAt ?? r.updatedAt), available: r.canonicalStatus != null }), wrongSvc, wrongCode: "claim_wrong_service" };
+    const svcRows = all.filter((r) => r.serviceType === svc);
+    // §1 shared version selector — active working attempt else the exact documented
+    // historical version (never a local status re-implementation).
+    return { pick: selectStageClaim(svcRows), toStage: (r: typeof svcRows[number]) => stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.submittedAt ?? r.updatedAt), available: r.canonicalStatus != null }), wrongSvc, wrongCode: "claim_wrong_service" };
   });
   const invoice = resolveSourceStage(ctx.invoiceGate, ctx.invoiceOk, "canonical_invoices_flag_off", "invoice_read_failed", () => {
     const all = ctx.invoiceByCase.get(c.id) ?? [];
     const wrongSvc = all.some((r) => r.serviceType !== svc);
-    const qualifying = all.filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
-    return { pick: pickSingle(qualifying), toStage: (r: typeof qualifying[number]) => stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.issuedAt), available: r.canonicalStatus != null }), wrongSvc, wrongCode: "invoice_wrong_service" };
+    const svcRows = all.filter((r) => r.serviceType === svc);
+    return { pick: selectStageInvoice(svcRows), toStage: (r: typeof svcRows[number]) => stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.issuedAt), available: r.canonicalStatus != null }), wrongSvc, wrongCode: "invoice_wrong_service" };
   });
   // Payment stage — DERIVED from the reconciled ledger + allocations against the
   // case's current claim/invoice total (PHI-free: no amounts exposed, only a status).
@@ -319,6 +323,11 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     const targetId = targetType === "invoice" ? invoices[0].id : targetType === "claim" ? claims[0].id : null;
     const totalStr = targetType === "invoice" ? (invoices[0].totalAmount as string | null) : targetType === "claim" ? (claims[0].chargeAmount as string | null) : null;
     const allocs = targetType != null && targetId != null ? caseAllocs.filter((a) => a.targetType === targetType && a.targetId === targetId) : [];
+    // §5 malformed allocation lineage for the exact target → conflict (never a balance).
+    if (targetType != null && targetId != null && allocs.length > 0) {
+      const targetCurrency = targetType === "invoice" ? (invoices[0].currency as string) : (claims[0].currency as string);
+      if (!validateTargetAllocationSet(allocs as never, { clinicId: c.clinicId, targetType, targetId, currency: targetCurrency, ancillaryCaseId: c.id, serviceType: svc }).ok) return conflictStage("payment_allocation_lineage_conflict");
+    }
     if (postedPayments.length === 0 && allocs.length === 0) return stage({ status: null, availability: "available", available: false });
     let appliedC = 0, refundedC = 0, totalC: number | null = null, bad = false;
     try {

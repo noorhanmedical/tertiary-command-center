@@ -17,6 +17,10 @@ import {
 } from "../../lib/featureFlags";
 import { deriveBalance } from "./balance";
 import { claimCaseIntegrity, invoiceClaimIntegrity } from "./financialVersion";
+import { validateTargetAllocationSet } from "./allocationLineage";
+import { validateClaimLineage, validateInvoiceLineage } from "./lineageValidators";
+import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
+import { globalPlexusPatients, patientClinicMemberships } from "@shared/schema/plexusIdentity";
 import { toCents } from "@shared/money";
 import {
   CANONICAL_FINANCIAL_VIEW_VERSION, FINANCIAL_DEFAULT_LIMIT, FINANCIAL_MAX_LIMIT,
@@ -82,16 +86,27 @@ async function buildClaims(clinicId: number, cursor: string | null | undefined, 
     const perCaseConflict = (cid: number | null): boolean => cid != null && (caseConflict.get(cid) ?? false);
     const page = all.slice(0, limit);
     const nextCursor = all.length > limit && page.length ? encode(page[page.length - 1].id) : null;
+    // §2 revalidate each page claim's lineage against the CURRENT case + identity
+    // (batched — no N+1). A now-stale/invalid row → integrity conflict, never a false
+    // canonical status.
+    const caseIds = [...new Set(page.map((r) => r.ancillaryCaseId).filter((x): x is number => x != null))];
+    const memIds = [...new Set(page.map((r) => r.patientClinicMembershipId).filter((x): x is number => x != null))];
+    const gpIds = [...new Set(page.map((r) => r.globalPlexusPatientId).filter((x): x is number => x != null))];
+    const caseById = new Map((caseIds.length ? (await db.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, input.clinicId), inArray(patientAncillaryCases.id, caseIds))).limit(SCAN)) : []).filter((x) => x.clinicId === input.clinicId).map((x) => [x.id, x]));
+    const memById = new Map((memIds.length ? (await db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, input.clinicId), inArray(patientClinicMemberships.id, memIds))).limit(SCAN)) : []).filter((x) => x.clinicId === input.clinicId).map((x) => [x.id, x]));
+    const gpById = new Map((gpIds.length ? (await db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gpIds)).limit(SCAN)) : []).map((x) => [x.id, x]));
+    const lineageConflict = (r: typeof page[number]): boolean => !validateClaimLineage(r as never, { case: (r.ancillaryCaseId != null ? caseById.get(r.ancillaryCaseId) : null) ?? null, membership: (r.patientClinicMembershipId != null ? memById.get(r.patientClinicMembershipId) : null) ?? null, globalPatient: (r.globalPlexusPatientId != null ? gpById.get(r.globalPlexusPatientId) : null) ?? null }).ok;
+    const rowConflict = (r: typeof page[number]): boolean => perCaseConflict(r.ancillaryCaseId) || lineageConflict(r);
     const rows: CanonicalClaimRow[] = page.map((r) => ({
       claimId: r.id, ancillaryCaseId: r.ancillaryCaseId ?? -1, serviceType: r.serviceType, patientDisplay: null,
-      status: r.canonicalStatus, claimReady: r.canonicalStatus === "ready", attemptNumber: r.attemptNumber,
+      status: r.canonicalStatus, claimReady: r.canonicalStatus === "ready" && !rowConflict(r), attemptNumber: r.attemptNumber,
       supersedesClaimId: r.supersedesClaimId ?? null, billingDocumentId: r.billingDocumentId ?? null,
       billingReadinessCheckId: r.billingReadinessCheckId ?? null, evidenceFingerprint: r.evidenceFingerprint ?? null,
       currency: r.currency, chargeAmount: typeof r.chargeAmount === "string" ? r.chargeAmount : null,
       submissionBlockers: tally(((r.claimSubmissionBlockers as { code: string }[] | null) ?? [])),
-      warnings: perCaseConflict(r.ancillaryCaseId) ? ["duplicate_current_evidence"] : [],
+      warnings: [...(perCaseConflict(r.ancillaryCaseId) ? ["duplicate_current_evidence"] : []), ...(lineageConflict(r) ? ["claim_lineage_conflict"] : [])],
       submittedAt: iso(r.submittedAt), submissionSource: r.submissionSource ?? null,
-      integrity: perCaseConflict(r.ancillaryCaseId) ? "conflicting" : "resolved",
+      integrity: rowConflict(r) ? "conflicting" : "resolved",
       evaluatedAt: iso(r.updatedAt),
     }));
     return { availability: aggTruncated ? "unavailable" : "available", warnings: aggTruncated ? ["duplicate_detection_truncated"] : [], rows, pageInfo: { limit, nextCursor, returned: page.length } };
@@ -120,6 +135,10 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     for (const [k, rows] of invByClaim) claimConflict.set(k, invoiceClaimIntegrity(rows) === "conflicting");
     const page = all.slice(0, limit);
     const nextCursor = all.length > limit && page.length ? encode(page[page.length - 1].id) : null;
+    // §2 revalidate each page invoice against its exact CLAIM (batched — no N+1).
+    const claimIds = [...new Set(page.map((r) => r.claimId).filter((x): x is number => x != null))];
+    const claimById = new Map((claimIds.length ? (await db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, input.clinicId), inArray(canonicalClaims.id, claimIds))).limit(SCAN)) : []).filter((x) => x.clinicId === input.clinicId).map((x) => [x.id, x]));
+    const invLineageConflict = (r: typeof page[number]): boolean => !validateInvoiceLineage(r as never, (r.claimId != null ? claimById.get(r.claimId) : null) ?? null).ok;
     // Balance derives from the COMPLETE allocation set for this bounded invoice
     // page (batched — one query, no per-invoice N+1). If the read could be
     // truncated (hits the cap), the affected balances are marked CONFLICTING rather
@@ -134,12 +153,16 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     const rows: CanonicalInvoiceRow[] = page.map((r) => {
       let originalCents = 0; let amountOk = true;
       try { originalCents = r.totalAmount != null ? toCents(r.totalAmount) : 0; } catch { amountOk = false; }
+      // §5 validate the COMPLETE allocation lineage for this exact invoice — a
+      // malformed row must NEVER change the balance (integrity conflict instead).
+      const invAllocs = allocByInvoice.get(r.id) ?? [];
+      const lineageOk = validateTargetAllocationSet(invAllocs, { clinicId: r.clinicId, targetType: "invoice", targetId: r.id, currency: r.currency, ancillaryCaseId: r.ancillaryCaseId ?? null, serviceType: r.serviceType ?? null }).ok;
       // Synthesize the ledger from the COMPLETE allocation set: apply → collected,
       // refund/reversal → negations (effective net = apply − refund − reversal).
-      const synth = (allocByInvoice.get(r.id) ?? []).map((a) => ({ currency: a.currency, amount: a.amount, eventType: a.eventType === "apply" ? "payment" : a.eventType, status: "posted", claimId: null, invoiceId: r.id } as never));
+      const synth = invAllocs.map((a) => ({ currency: a.currency, amount: a.amount, eventType: a.eventType === "apply" ? "payment" : a.eventType, status: "posted", claimId: null, invoiceId: r.id } as never));
       const derived = deriveBalance({ currency: r.currency, originalAmountCents: amountOk ? originalCents : 0, ledger: synth });
       const versionConflict = r.claimId != null && (claimConflict.get(r.claimId) ?? false);
-      const conflict = !amountOk || truncated || versionConflict || derived.integrity === "conflicting";
+      const conflict = !amountOk || truncated || versionConflict || !lineageOk || invLineageConflict(r) || derived.integrity === "conflicting";
       const balance = conflict
         ? { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, ...(amountOk ? [] : ["invoice_amount_invalid"]), ...(truncated ? ["balance_ledger_truncated"] : [])] }
         : derived;

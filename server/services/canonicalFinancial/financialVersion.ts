@@ -54,3 +54,29 @@ export function invoiceClaimIntegrity<R extends VersionRow>(rows: R[]): "resolve
   if (historicalIdentityConflict(rows, INVOICE_HISTORICAL_STATUSES, (r) => r.invoiceNumber ?? null)) return "conflicting";
   return "resolved";
 }
+
+/** Select the ONE representative version for a stage: the active working row when
+ *  present; otherwise the exact documented historical version. Submitted/issued
+ *  history + a correction draft is fine (the draft wins as active). >1 active →
+ *  conflict; a missing/duplicate historical version identity → conflict/missing —
+ *  never silently accepted as unkeyed history. */
+export function selectStageClaim<R extends VersionRow>(rows: R[]): ActivePick<R> {
+  const active = selectActive(rows, CLAIM_ACTIVE_STATUSES);
+  if (active.kind !== "missing") return active;                     // active draft (or >1 → conflict)
+  const hist = rows.filter((r) => r.supersededAt == null && CLAIM_HISTORICAL_STATUSES.has(r.canonicalStatus));
+  if (hist.length === 0) return { kind: "missing" };
+  if (hist.some((r) => r.attemptNumber == null)) return { kind: "conflict" }; // unkeyed history → fail closed
+  if (historicalIdentityConflict(hist, CLAIM_HISTORICAL_STATUSES, (r) => r.attemptNumber ?? null)) return { kind: "conflict" };
+  // Explicit rule: the highest attemptNumber is the current historical version.
+  const row = hist.reduce((a, b) => ((b.attemptNumber ?? 0) > (a.attemptNumber ?? 0) ? b : a));
+  return { kind: "one", row };
+}
+export function selectStageInvoice<R extends VersionRow>(rows: R[]): ActivePick<R> {
+  const active = selectActive(rows, INVOICE_ACTIVE_STATUSES);
+  if (active.kind !== "missing") return active;
+  const hist = rows.filter((r) => r.supersededAt == null && INVOICE_HISTORICAL_STATUSES.has(r.canonicalStatus));
+  if (hist.length === 0) return { kind: "missing" };
+  if (hist.length > 1) return { kind: "conflict" };                // >1 non-superseded issued version → conflict
+  if (hist[0].invoiceNumber == null) return { kind: "conflict" };  // missing required version identity → fail closed
+  return { kind: "one", row: hist[0] };
+}

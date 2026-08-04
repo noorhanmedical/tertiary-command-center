@@ -157,7 +157,13 @@ export async function transitionCanonicalInvoice(input: InvoiceTransitionInput):
       await writeTransition(tx, { entityType: "invoice", entityId: input.invoiceId, clinicId: input.clinicId, ancillaryCaseId: inv.ancillaryCaseId, serviceType: inv.serviceType, fromStatus: from, toStatus: to, actorUserId: input.actorUserId, actorRole: input.actorRole, reason: input.reason ?? null, sourceType: input.sourceType ?? "invoice_command", sourceReference: input.sourceReference ?? (to === "delivered" ? input.deliveryEventReference ?? null : null), idempotencyKey: input.idempotencyKey ?? null, commandFingerprint: fp });
       return true;
     });
-    if (!done) return { status: "conflict" };
+    if (!done) {
+      // §7 zero-row update: an identical racing command may have already applied it.
+      const post = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);
+      if (post.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from, to };
+      if (post.kind === "conflict") return { status: "idempotency_conflict" };
+      return { status: "conflict" };
+    }
     return { status: "transitioned", invoiceId: input.invoiceId, from, to };
   } catch (e) { if (isUnique(e)) return { status: "conflict" }; if (isFinancialMigration(e)) return { status: "migration_missing" }; return { status: "persistence_failed" }; }
 }

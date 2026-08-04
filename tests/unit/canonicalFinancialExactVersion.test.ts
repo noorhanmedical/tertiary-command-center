@@ -137,12 +137,59 @@ async function testTxLockReloadConflict() {
   assert.equal(r.status, "conflict", "(35) target evidence changed before lock → conflict");
 }
 
+function applyParent(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
+function negBase(t: Awaited<ReturnType<typeof loadCanonicalTables>>, over: Partial<Record<string, TableSpec>> = {}) {
+  const m = new Map<unknown, TableSpec>([
+    [t.ancillaryCases, { select: () => [acase()] }], [t.memberships, { select: () => [pcm()] }], [t.globalPatients, { select: () => [gpp()] }],
+    [t.canonicalPayments, { select: () => [paymentRow()] }],
+    [t.canonicalInvoices, { select: () => [invoiceRow({ id: 800, totalAmount: "420.00" })], onUpdate: (v) => [{ ...v, id: 800 }] }],
+    [t.canonicalPaymentAllocations, { select: () => [applyParent()], onInsert: ins(970) }],
+    [t.canonicalFinancialTransitions, { select: () => [], onInsert: ins(1) }],
+  ]);
+  for (const [k, v] of Object.entries(over)) m.set((t as Record<string, unknown>)[k], v);
+  return m;
+}
+async function testNegateAtomicTruncation() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  // A truncated TARGET allocation set discovered under the lock → zero committed rows.
+  const many = [applyParent(), ...Array.from({ length: 2001 }, (_, i) => applyParent({ id: 2000 + i, targetId: 800 }))];
+  const spec = negBase(t, { canonicalPaymentAllocations: { select: () => many, onInsert: ins(970) } });
+  const r = await runWithDb(spec, CHAIN, async (calls: Call[]) => { const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" }); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "no negation inserted on truncation"); assert.equal(countOps(calls, "insert", t.canonicalFinancialTransitions), 0, "no audit on truncation"); return res; });
+  assert.equal(r.status, "allocation_integrity_unavailable", "(26) target truncation after lock commits zero negation rows");
+}
+async function testNegateMissingTarget() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  const spec = negBase(t, { canonicalInvoices: { select: () => [] } });
+  const r = await runWithDb(spec, CHAIN, async (calls: Call[]) => { const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" }); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "no negation inserted"); return res; });
+  assert.equal(r.status, "target_not_found", "(27) missing target commits zero negation rows");
+}
+async function testNegateSupersededTarget() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  const spec = negBase(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800, totalAmount: "420.00", supersededAt: OLD })] } });
+  const r = await runWithDb(spec, CHAIN, async (calls: Call[]) => { const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" }); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "no negation inserted"); return res; });
+  assert.equal(r.status, "conflict", "(28) superseded target commits zero negation rows");
+}
+async function testNegateZeroRowTargetUpdate() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  // Target update affects zero rows (concurrent status change) → THROW → rollback.
+  const spec = negBase(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800, totalAmount: "420.00", canonicalStatus: "paid" })], onUpdate: () => [] } });
+  const r = await runWithDb(spec, CHAIN, async () => p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" }));
+  assert.equal(r.status, "conflict", "(29) zero-row target update rolls back negation and audit");
+}
+async function testNegateWrongService() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  // Target invoice service disagrees with its canonical case → no write.
+  const spec = negBase(t, { ancillaryCases: { select: () => [acase({ serviceType: "NerveGuard" })] } });
+  const r = await runWithDb(spec, CHAIN, async (calls: Call[]) => { const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" }); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "no write on wrong service"); return res; });
+  assert.equal(r.status, "case_service_mismatch", "(22/33) refund with wrong service rejected");
+}
+
 // ── §11 exact-target payment stage ──
 async function testStageExactTarget() {
   const t = await loadCanonicalTables(); const { buildStageVectors } = await stageMod();
   const svcCase = { id: 5, clinicId: 1, serviceType: "BrainWave", globalPlexusPatientId: 900, patientClinicMembershipId: 800 };
-  const claimT = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, chargeAmount: "420.00", updatedAt: OLD, submittedAt: OLD };
-  const invT = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "issued", supersededAt: null, totalAmount: "420.00", issuedAt: OLD };
+  const claimT = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, attemptNumber: 1, chargeAmount: "420.00", currency: "USD", updatedAt: OLD, submittedAt: OLD };
+  const invT = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "issued", supersededAt: null, invoiceNumber: "INV-1-800", totalAmount: "420.00", currency: "USD", issuedAt: OLD };
   const mig = () => { throw Object.assign(new Error("x"), { code: "42P01" }); };
   // Alloc to the CLAIM (799) and to a WRONG invoice (799) must be excluded when the
   // active target is invoice 800; only the 420 apply to invoice 800 counts → paid.
@@ -172,6 +219,11 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(28/29) external-txn case/amount conflict", testExternalTxnCaseCurrencyConflict],
   ["(30/31/33) allocation truncation bound", testAllocationTruncationBound],
   ["(35) tx-lock reload conflict", testTxLockReloadConflict],
+  ["(26) negate truncation zero writes", testNegateAtomicTruncation],
+  ["(27) negate missing target zero writes", testNegateMissingTarget],
+  ["(28) negate superseded target zero writes", testNegateSupersededTarget],
+  ["(29) negate zero-row update rolls back", testNegateZeroRowTargetUpdate],
+  ["(22/33) negate wrong service rejected", testNegateWrongService],
   ["(39/40/42) exact-target payment stage", testStageExactTarget],
 ];
 async function run() {

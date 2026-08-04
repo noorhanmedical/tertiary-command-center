@@ -61,7 +61,8 @@ function baseSpec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, over: Part
     [t.billingDocumentRequests, { select: () => [docRow()] }],
     [t.canonicalClaims, { select: () => [], onInsert: ins(700), onUpdate: (v) => [{ ...v, id: 700 }] }],
     [t.canonicalInvoices, { select: () => [], onInsert: ins(800), onUpdate: (v) => [{ ...v, id: 800 }] }],
-    [t.canonicalPayments, { select: () => [], onInsert: ins(900) }],
+    // Default receipt present so refund/reversal (which reload the receipt) work.
+    [t.canonicalPayments, { select: () => [paymentRow()], onInsert: ins(900) }],
     [t.canonicalPaymentAllocations, { select: () => [], onInsert: ins(950) }],
     [t.canonicalFinancialTransitions, { select: () => [], onInsert: ins(1) }],
   ]);
@@ -255,7 +256,7 @@ async function testAllocatePartial() {
 async function testAllocateCrossClinicWrongCaseCurrency() {
   const t = await loadCanonicalTables(); const p = await paymentCmd();
   const mk = (over: Partial<Record<string, TableSpec>>) => baseSpec(t, { canonicalPayments: { select: () => [paymentRow({ id: 900, amount: "420.00" })] }, ...over });
-  const wrongCase = await runWithDb(mk({ canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "issued", ancillaryCaseId: 6 })] } }), ALL, async () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "invoice", targetId: 800, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a1" }));
+  const wrongCase = await runWithDb(mk({ ancillaryCases: { select: () => [acase(), acase({ id: 6 })] }, canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "issued", ancillaryCaseId: 6 })] } }), ALL, async () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "invoice", targetId: 800, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a1" }));
   assert.ok(wrongCase.status === "allocation_rejected" && wrongCase.code === "allocation_wrong_case", "(35) wrong-case allocation rejected");
   const curr = await runWithDb(mk({ canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "issued", currency: "EUR" })] } }), ALL, async () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "invoice", targetId: 800, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a1" }));
   assert.ok(curr.status === "allocation_rejected" && curr.code === "allocation_currency_mismatch", "(36) currency mismatch rejected");

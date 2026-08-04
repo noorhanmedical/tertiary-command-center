@@ -75,13 +75,9 @@ export function netAppliedCents(allocs: AllocationRow[]): number {
   const negs = allocs.filter((a) => a.eventType === "refund" || a.eventType === "reversal").map((a) => toCents(a.amount));
   return sumCents(applies) - sumCents(negs);
 }
-/** Remaining negatable amount of ONE parent apply-allocation = its amount − Σ of the
- *  refund/reversal rows that name it. Never below zero. */
-export function parentNegationRemainingCents(parent: { id: number; amount: string }, allocs: AllocationRow[]): number {
-  const applied = toCents(parent.amount);
-  const negated = sumCents(allocs.filter((a) => (a.eventType === "refund" || a.eventType === "reversal") && a.parentAllocationId === parent.id).map((a) => toCents(a.amount)));
-  return Math.max(0, applied - negated);
-}
+// (parentNegationRemainingCents removed — the negate command derives the remaining
+// parent amount via allocationLineage.sumNegationsForParent + validateNegationLineage,
+// the single source of truth for that bound.)
 
 // ─── Payment allocation validators (pure) ────────────────────────────────────
 export type AllocationCheck = { ok: true } | { ok: false; code: string };
