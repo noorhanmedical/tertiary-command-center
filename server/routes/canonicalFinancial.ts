@@ -24,6 +24,11 @@ import { canonicalBillingReadinessChecks } from "@shared/schema/billingReadiness
 import { canonicalBillingDocumentRequests } from "@shared/schema/billingDocuments";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { canonicalClaimsRuntimeEnabled } from "../lib/featureFlags";
+import { createOrReuseCanonicalClaimDraft, transitionCanonicalClaim, createCanonicalClaimCorrection } from "../services/canonicalFinancial/claimCommands";
+import { createOrReuseCanonicalInvoiceDraft, transitionCanonicalInvoice, createCanonicalInvoiceCorrection } from "../services/canonicalFinancial/invoiceCommands";
+import { recordCanonicalPayment, allocateCanonicalPayment, refundCanonicalPayment, reverseCanonicalPayment } from "../services/canonicalFinancial/paymentCommands";
+import type { CanonicalClaimStatus } from "@shared/schema/canonicalClaims";
+import type { CanonicalInvoiceStatus } from "@shared/schema/canonicalInvoices";
 
 const MIGRATION_CODE = "ANCILLARY_DOCUMENT_MIGRATION_MISSING";
 const MIGRATION = new Set(["42P01", "42703", MIGRATION_CODE]);
@@ -56,7 +61,9 @@ export function registerCanonicalFinancialRoutes(app: Express): void {
     const clinicId = requireClinicScope(req, res);
     if (clinicId == null) return;
     try {
-      const view = await getCanonicalFinancialView({ clinicId, cursor: typeof req.query.cursor === "string" ? req.query.cursor : null, limit: parseLimit(req.query.limit) });
+      const q = req.query as Record<string, unknown>;
+      const cur = (k: string) => (typeof q[k] === "string" ? (q[k] as string) : null);
+      const view = await getCanonicalFinancialView({ clinicId, claimsCursor: cur("claimsCursor"), invoicesCursor: cur("invoicesCursor"), paymentsCursor: cur("paymentsCursor"), limit: parseLimit(req.query.limit) });
       return res.json(view);
     } catch (e) {
       if (migration(res, e)) return;
@@ -78,8 +85,9 @@ export function registerCanonicalFinancialRoutes(app: Express): void {
       const c = caseRows.find((x) => x.id === ancillaryCaseId && x.clinicId === clinicId);
       if (!c) return res.status(404).json({ error: "Not found" });
       if (!canonicalClaimsRuntimeEnabled()) return res.json({ disabled: true, upstream: "flag_off" });
-      const readiness = (await db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), isNull(canonicalBillingReadinessChecks.supersededAt))).limit(500)).filter((r) => r.clinicId === clinicId);
-      const docs = (await db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), isNull(canonicalBillingDocumentRequests.supersededAt))).limit(500)).filter((r) => r.clinicId === clinicId);
+      // EXACT case-scoped queries (never a clinic-wide 500-row in-memory scan).
+      const readiness = (await db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), eq(canonicalBillingReadinessChecks.ancillaryCaseId, ancillaryCaseId), isNull(canonicalBillingReadinessChecks.supersededAt))).limit(200)).filter((r) => r.clinicId === clinicId && r.ancillaryCaseId === ancillaryCaseId);
+      const docs = (await db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), eq(canonicalBillingDocumentRequests.ancillaryCaseId, ancillaryCaseId), isNull(canonicalBillingDocumentRequests.supersededAt))).limit(200)).filter((r) => r.clinicId === clinicId && r.ancillaryCaseId === ancillaryCaseId);
       const result = evaluateClaimReadiness({ clinicId, ancillaryCaseId, serviceType: c.serviceType }, readiness, docs);
       // Never expose evidence bytes / note text — only ids + blocker codes.
       return res.json({ ancillaryCaseId, serviceType: c.serviceType, claimReady: result.claimReady, status: result.status, blockers: result.blockers.map((b) => ({ code: b.code })), warnings: result.warnings, integrity: result.integrity });
@@ -88,4 +96,56 @@ export function registerCanonicalFinancialRoutes(app: Express): void {
       return res.status(500).json({ error: "Failed to evaluate claim readiness" });
     }
   });
+
+  // ── Command routes (authorized WRITE lifecycle) ─────────────────────────────
+  // Biller/admin + clinic scope; actor + clinic from the session ONLY (never body/
+  // query). Idempotency key REQUIRED. Typed 400/403/404/409/503; flag OFF → 404
+  // disabled BEFORE any schema access; migration missing → 503. No external
+  // financial operation is executed by any of these.
+  const CODE_BY_STATUS: Record<string, number> = {
+    created: 201, recorded: 201, allocated: 201, transitioned: 200, refunded: 201, reversed: 201, reused: 200,
+    skipped_flag_off: 404, not_found: 404, target_not_found: 404,
+    invalid_transition: 409, conflict: 409, already_reversed: 409, exceeds_original: 409, payment_status_derived: 409, allocation_rejected: 409, line_items_invalid: 409,
+    submission_source_required: 400, submission_provenance_required: 400, transmission_unavailable: 400, invalid_amount: 400, invalid_source: 400, recipient_invalid: 400, identity_incomplete: 400, claim_not_invoiceable: 400, amount_source_missing: 400, evidence_conflict: 409, target_not_payable: 409,
+    migration_missing: 503, persistence_failed: 500,
+  };
+  const send = (res: Response, r: { status: string } & Record<string, unknown>) => res.status(CODE_BY_STATUS[r.status] ?? 500).json(r);
+  const idem = (req: Request, res: Response): string | null => {
+    const k = (req.body as { idempotencyKey?: unknown })?.idempotencyKey;
+    if (typeof k !== "string" || k.trim().length === 0) { res.status(400).json({ error: "idempotencyKey required", code: "idempotency_required" }); return null; }
+    return k;
+  };
+  // Wraps a command handler with auth + clinic scope + actor-from-session + idempotency.
+  function command(handler: (ctx: { clinicId: number; actorUserId: string; actorRole: string; idempotencyKey: string; req: Request }) => Promise<{ status: string } & Record<string, unknown>>) {
+    return async (req: Request, res: Response) => {
+      const clinicId = requireClinicScope(req, res); if (clinicId == null) return;
+      const key = idem(req, res); if (key == null) return;
+      try { return send(res, await handler({ clinicId, actorUserId: req.session!.userId as string, actorRole: String(req.session!.role), idempotencyKey: key, req })); }
+      catch (e) { if (migration(res, e)) return; return res.status(500).json({ error: "Command failed" }); }
+    };
+  }
+  const intParam = (v: unknown): number => Number.parseInt(String(v), 10);
+
+  app.post("/api/ancillary-cases/:id/canonical-claim", requireBillerOrAdmin, command(async (c) =>
+    createOrReuseCanonicalClaimDraft({ clinicId: c.clinicId, ancillaryCaseId: intParam(c.req.params.id), actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+  app.post("/api/canonical-claims/:id/transition", requireBillerOrAdmin, command(async (c) =>
+    transitionCanonicalClaim({ clinicId: c.clinicId, claimId: intParam(c.req.params.id), transition: (c.req.body?.transition) as CanonicalClaimStatus, reason: c.req.body?.reason ?? null, sourceType: c.req.body?.sourceType ?? null, sourceReference: c.req.body?.sourceReference ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+  app.post("/api/canonical-claims/:id/correction", requireBillerOrAdmin, command(async (c) =>
+    createCanonicalClaimCorrection({ clinicId: c.clinicId, priorClaimId: intParam(c.req.params.id), reason: c.req.body?.reason ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+
+  app.post("/api/canonical-claims/:id/canonical-invoice", requireBillerOrAdmin, command(async (c) =>
+    createOrReuseCanonicalInvoiceDraft({ clinicId: c.clinicId, claimId: intParam(c.req.params.id), invoiceType: String(c.req.body?.invoiceType ?? ""), recipientType: String(c.req.body?.recipientType ?? ""), recipientId: String(c.req.body?.recipientId ?? ""), actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+  app.post("/api/canonical-invoices/:id/transition", requireBillerOrAdmin, command(async (c) =>
+    transitionCanonicalInvoice({ clinicId: c.clinicId, invoiceId: intParam(c.req.params.id), transition: (c.req.body?.transition) as CanonicalInvoiceStatus, deliveryEventReference: c.req.body?.deliveryEventReference ?? null, reason: c.req.body?.reason ?? null, sourceType: c.req.body?.sourceType ?? null, sourceReference: c.req.body?.sourceReference ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+  app.post("/api/canonical-invoices/:id/correction", requireBillerOrAdmin, command(async (c) =>
+    createCanonicalInvoiceCorrection({ clinicId: c.clinicId, priorInvoiceId: intParam(c.req.params.id), reason: c.req.body?.reason ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+
+  app.post("/api/canonical-payments", requireBillerOrAdmin, command(async (c) =>
+    recordCanonicalPayment({ clinicId: c.clinicId, ancillaryCaseId: c.req.body?.ancillaryCaseId ?? null, serviceType: c.req.body?.serviceType ?? null, paymentType: String(c.req.body?.paymentType ?? ""), currency: String(c.req.body?.currency ?? ""), amount: String(c.req.body?.amount ?? ""), externalTransactionId: c.req.body?.externalTransactionId ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, sourceSystem: "payment_route", idempotencyKey: c.idempotencyKey })));
+  app.post("/api/canonical-payments/:id/allocations", requireBillerOrAdmin, command(async (c) =>
+    allocateCanonicalPayment({ clinicId: c.clinicId, paymentId: intParam(c.req.params.id), targetType: (c.req.body?.targetType) as "claim" | "invoice", targetId: intParam(c.req.body?.targetId), amount: String(c.req.body?.amount ?? ""), isOverpayment: c.req.body?.isOverpayment === true, reason: c.req.body?.reason ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+  app.post("/api/canonical-payments/:id/refund", requireBillerOrAdmin, command(async (c) =>
+    refundCanonicalPayment({ clinicId: c.clinicId, paymentId: intParam(c.req.params.id), amount: String(c.req.body?.amount ?? ""), reason: c.req.body?.reason ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
+  app.post("/api/canonical-payments/:id/reverse", requireBillerOrAdmin, command(async (c) =>
+    reverseCanonicalPayment({ clinicId: c.clinicId, paymentId: intParam(c.req.params.id), amount: String(c.req.body?.amount ?? ""), reason: c.req.body?.reason ?? null, actorUserId: c.actorUserId, actorRole: c.actorRole, idempotencyKey: c.idempotencyKey })));
 }

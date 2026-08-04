@@ -9,7 +9,8 @@
 // string shown with its explicit currency. Read-only; no mutations; one request.
 
 import * as React from "react";
-import { useCanonicalFinancialView } from "./useCanonicalFinancialView";
+import { useState } from "react";
+import { useCanonicalFinancialView, type FinancialCursors } from "./useCanonicalFinancialView";
 import type {
   CanonicalFinancialView, FinancialSection, FinancialAvailability,
   CanonicalClaimRow, CanonicalInvoiceRow, CanonicalPaymentRow, CodeCount, CanonicalBalance,
@@ -41,13 +42,19 @@ const AVAIL_MSG: Partial<Record<FinancialAvailability, string>> = {
   disabled_flag_off: "Canonical financial data is disabled.",
 };
 
-function SectionShell<Row>({ title, section, children }: { title: string; section: FinancialSection<Row>; children: (rows: Row[]) => React.ReactNode }) {
+function SectionShell<Row>({ title, section, onFirst, onNext, children }: { title: string; section: FinancialSection<Row>; onFirst?: () => void; onNext?: () => void; children: (rows: Row[]) => React.ReactNode }) {
   const msg = AVAIL_MSG[section.availability];
+  const key = title.toLowerCase();
   return (
-    <section className="space-y-2" data-testid={`canonical-financial-section-${title.toLowerCase()}`}>
+    <section className="space-y-2" data-testid={`canonical-financial-section-${key}`}>
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
-        <span className="text-[11px] text-slate-400">{section.availability}{section.pageInfo.nextCursor ? " · more available" : ""}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-400">{section.availability}</span>
+          {/* Independent per-section pagination — advancing one never skips another. */}
+          <button type="button" data-testid={`financial-first-${key}`} onClick={onFirst} className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50">First</button>
+          <button type="button" data-testid={`financial-next-${key}`} disabled={!section.pageInfo.nextCursor} onClick={onNext} className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 disabled:opacity-40 hover:bg-slate-50">Next</button>
+        </div>
       </div>
       {msg ? (
         <div data-testid="canonical-financial-unavailable" className="rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -79,7 +86,8 @@ function Balance({ b }: { b: CanonicalBalance }) {
 }
 
 export function CanonicalFinancialLedgerPanel({ enabledOverride }: { enabledOverride?: boolean } = {}) {
-  const { enabled, data, isLoading, isError, isMigrationMissing, error } = useCanonicalFinancialView(enabledOverride);
+  const [cursors, setCursors] = useState<FinancialCursors>({});
+  const { enabled, data, isLoading, isError, isMigrationMissing, error } = useCanonicalFinancialView(cursors, enabledOverride);
   if (!enabled) return null; // flag OFF ⇒ no request, nothing rendered
   if (isLoading) return <div data-testid="canonical-financial-loading" className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">Loading canonical financial ledger…</div>;
   if (isMigrationMissing) return <div data-testid="canonical-financial-migration" className="rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">Canonical financial storage is not yet available (migration pending).</div>;
@@ -97,7 +105,8 @@ export function CanonicalFinancialLedgerPanel({ enabledOverride }: { enabledOver
         <p className="text-[11px] text-slate-500">Clinic-scoped · evidence-versioned · read-only · {view.dataVersion} · generated {fmt(view.generatedAt)}</p>
       </div>
 
-      <SectionShell<CanonicalClaimRow> title="Claims" section={view.claims}>
+      <SectionShell<CanonicalClaimRow> title="Claims" section={view.claims}
+        onFirst={() => setCursors((c) => ({ ...c, claims: null }))} onNext={() => setCursors((c) => ({ ...c, claims: view.claims.pageInfo.nextCursor }))}>
         {(rows) => (
           <table className="w-full text-xs"><thead className="bg-slate-100"><tr><Th>Case</Th><Th>Service</Th><Th>Status</Th><Th>Charge</Th><Th>Blockers</Th><Th>Submitted</Th></tr></thead>
             <tbody>{rows.map((r) => (
@@ -113,7 +122,8 @@ export function CanonicalFinancialLedgerPanel({ enabledOverride }: { enabledOver
         )}
       </SectionShell>
 
-      <SectionShell<CanonicalInvoiceRow> title="Invoices" section={view.invoices}>
+      <SectionShell<CanonicalInvoiceRow> title="Invoices" section={view.invoices}
+        onFirst={() => setCursors((c) => ({ ...c, invoices: null }))} onNext={() => setCursors((c) => ({ ...c, invoices: view.invoices.pageInfo.nextCursor }))}>
         {(rows) => (
           <table className="w-full text-xs"><thead className="bg-slate-100"><tr><Th>Invoice</Th><Th>Type</Th><Th>Status</Th><Th>Total</Th><Th>Balance</Th></tr></thead>
             <tbody>{rows.map((r) => (
@@ -128,7 +138,8 @@ export function CanonicalFinancialLedgerPanel({ enabledOverride }: { enabledOver
         )}
       </SectionShell>
 
-      <SectionShell<CanonicalPaymentRow> title="Payments" section={view.payments}>
+      <SectionShell<CanonicalPaymentRow> title="Payments" section={view.payments}
+        onFirst={() => setCursors((c) => ({ ...c, payments: null }))} onNext={() => setCursors((c) => ({ ...c, payments: view.payments.pageInfo.nextCursor }))}>
         {(rows) => (
           <table className="w-full text-xs"><thead className="bg-slate-100"><tr><Th>Event</Th><Th>Type</Th><Th>Status</Th><Th>Amount</Th><Th>Posted</Th></tr></thead>
             <tbody>{rows.map((r) => (

@@ -10,7 +10,8 @@ import { useQuery } from "@tanstack/react-query";
 import { isAnyCanonicalFinancialEnabled } from "@/lib/canonicalFinancialEnabled";
 import type { CanonicalFinancialView } from "@shared/canonicalFinancialView";
 
-export const CANONICAL_FINANCIAL_VIEW_QUERY_KEY = ["/api/canonical-financial-view"] as const;
+const BASE = "/api/canonical-financial-view";
+export const CANONICAL_FINANCIAL_VIEW_QUERY_KEY = [BASE] as const;
 const MIGRATION_MISSING_CODE = "ANCILLARY_DOCUMENT_MIGRATION_MISSING";
 
 export function isFinancialMigrationMissing(error: unknown): boolean {
@@ -18,11 +19,29 @@ export function isFinancialMigrationMissing(error: unknown): boolean {
   return msg.includes(MIGRATION_MISSING_CODE) || /^503:/.test(msg);
 }
 
-export function useCanonicalFinancialView(enabledOverride?: boolean) {
+// Independent per-section cursors — claims/invoices/payments paginate separately so
+// advancing one section NEVER skips records in the others. The query key includes
+// all three so React Query refetches exactly once per cursor change.
+export type FinancialCursors = { claims?: string | null; invoices?: string | null; payments?: string | null };
+
+export function useCanonicalFinancialView(cursors?: FinancialCursors, enabledOverride?: boolean) {
   const enabled = enabledOverride ?? isAnyCanonicalFinancialEnabled();
+  const c = cursors ?? {};
+  const anyCursor = !!(c.claims || c.invoices || c.payments);
+  const queryKey = anyCursor ? [BASE, c.claims ?? null, c.invoices ?? null, c.payments ?? null] : CANONICAL_FINANCIAL_VIEW_QUERY_KEY;
   const query = useQuery<CanonicalFinancialView>({
-    queryKey: CANONICAL_FINANCIAL_VIEW_QUERY_KEY,
+    queryKey,
     enabled, // OFF ⇒ the query never runs (no network request)
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      if (c.claims) p.set("claimsCursor", c.claims);
+      if (c.invoices) p.set("invoicesCursor", c.invoices);
+      if (c.payments) p.set("paymentsCursor", c.payments);
+      const qs = p.toString();
+      const res = await fetch(`${BASE}${qs ? `?${qs}` : ""}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json() as Promise<CanonicalFinancialView>;
+    },
   });
   return { enabled, ...query, isMigrationMissing: query.isError && isFinancialMigrationMissing(query.error) };
 }

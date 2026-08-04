@@ -24,6 +24,23 @@ export const CANONICAL_CLAIM_SUBMISSION_SOURCES = [
 ] as const;
 export type CanonicalClaimSubmissionSource = (typeof CANONICAL_CLAIM_SUBMISSION_SOURCES)[number];
 
+// A claim charge amount may qualify ONLY when tagged with one of these EXACT
+// approved provenance sources. An arbitrary/non-empty string NEVER qualifies — a
+// missing approved source is a blocker, never a defaulted or invented amount.
+export const CANONICAL_CLAIM_AMOUNT_SOURCES = [
+  "approved_fee_schedule", "canonical_charge_config", "imported_charge", "authorized_manual_entry",
+] as const;
+export type CanonicalClaimAmountSource = (typeof CANONICAL_CLAIM_AMOUNT_SOURCES)[number];
+
+// Every required claim field must come from an exact approved source; a missing
+// one is a PHI-free blocker (never invented). Diagnosis/authorization are required
+// only where the service/payer demands it — modeled as conditional blockers.
+export const CANONICAL_CLAIM_REQUIRED_FIELDS = [
+  "service_code", "units", "place_of_service", "rendering_provider",
+  "billing_provider", "facility", "payer", "coverage_reference",
+] as const;
+export type CanonicalClaimRequiredField = (typeof CANONICAL_CLAIM_REQUIRED_FIELDS)[number];
+
 export const canonicalClaims = pgTable("canonical_claims", {
   id: serial("id").primaryKey(),
   clinicId: integer("clinic_id").notNull().references(() => clinics.id, { onDelete: "no action" }),

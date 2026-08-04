@@ -46,13 +46,16 @@ function findByTestId(root: TestRenderer.ReactTestRenderer, id: string): boolean
 
 async function render(enabledOverride: boolean | undefined, seed?: CanonicalFinancialView) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } } });
-  let fetches = 0;
-  qc.setDefaultOptions({ queries: { retry: false, gcTime: 0, staleTime: 0, queryFn: async () => { fetches++; return seed ?? view(); } } });
-  if (seed) qc.setQueryData(CANONICAL_FINANCIAL_VIEW_QUERY_KEY, seed);
+  const urls: string[] = [];
+  const realFetch = globalThis.fetch;
+  // Stub fetch: the hook owns its queryFn (builds the URL with cursor params).
+  (globalThis as { fetch: unknown }).fetch = async (u: string) => { urls.push(String(u)); return { ok: true, status: 200, json: async () => seed ?? view(), text: async () => "" } as unknown as Response; };
   let root!: TestRenderer.ReactTestRenderer;
   await act(async () => { root = TestRenderer.create(React.createElement(QueryClientProvider, { client: qc }, React.createElement(CanonicalFinancialLedgerPanel, { enabledOverride }))); });
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  return { root, fetches: () => fetches };
+  const click = async (testId: string) => { const btn = root.root.findAll((n) => (n.props as { ["data-testid"]?: string })["data-testid"] === testId)[0]; assert.ok(btn, `control ${testId} present`); await act(async () => { (btn.props as { onClick: () => void }).onClick(); }); await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
+  const restore = () => { (globalThis as { fetch: unknown }).fetch = realFetch; };
+  return { root, fetches: () => urls.length, urls, click, restore };
 }
 
 async function testFlagOffRendersNothing() {
@@ -84,6 +87,20 @@ async function testDisabledEnvelopeRendersNothing() {
   const { root } = await render(true, disabledCanonicalFinancialView("2027-06-10T09:00:00.000Z"));
   assert.equal(root.toJSON(), null, "disabled envelope ⇒ nothing rendered");
 }
+async function testIndependentCursorControls() {
+  // Claims section has a next cursor; clicking Next must issue ONE request carrying
+  // ONLY the claims cursor (invoices/payments untouched).
+  const paged = view({ claims: { availability: "available", warnings: [], rows: view().claims.rows, pageInfo: { limit: 25, nextCursor: "Y2xhaW1z", returned: 1 } } });
+  const { urls, click, restore } = await render(true, paged);
+  const initial = urls.length;
+  assert.ok(initial >= 1, "initial fetch issued");
+  await click("financial-next-claims");
+  assert.equal(urls.length, initial + 1, "(70/71) exactly one request per Next click");
+  const last = urls[urls.length - 1];
+  assert.ok(last.includes("claimsCursor=Y2xhaW1z"), "(69) claims Next carries the claims cursor");
+  assert.ok(!last.includes("invoicesCursor") && !last.includes("paymentsCursor"), "independent — other sections' cursors not sent");
+  restore();
+}
 
 const tests: Array<[string, () => Promise<void>]> = [
   ["flag OFF renders nothing, zero requests", testFlagOffRendersNothing],
@@ -91,6 +108,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["section unavailable shows explicit note", testSectionUnavailableNote],
   ["upstream_flag_off shown truthfully", testUpstreamFlagOffNote],
   ["disabled envelope renders nothing", testDisabledEnvelopeRendersNothing],
+  ["(69-71) independent cursor controls", testIndependentCursorControls],
 ];
 async function run() {
   let failed = 0;

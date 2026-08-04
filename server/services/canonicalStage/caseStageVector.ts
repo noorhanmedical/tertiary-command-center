@@ -34,6 +34,8 @@ import { canonicalBillingDocumentRequests } from "@shared/schema/billingDocument
 import { canonicalClaims } from "@shared/schema/canonicalClaims";
 import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { canonicalPayments } from "@shared/schema/canonicalPayments";
+import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllocations";
+import { toCents, sumCents } from "@shared/money";
 import {
   ancillaryDocumentReferences,
   ORDER_NOTE_SOURCE_TABLE, PROCEDURE_NOTE_SOURCE_TABLE, REPORT_SOURCE_TABLE,
@@ -174,6 +176,8 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const paymentGate = canonicalPaymentsRuntimeEnabled();
   const paymentLoad = paymentGate ? await loadOrNull(() => db.select().from(canonicalPayments).where(and(eq(canonicalPayments.clinicId, clinicId), inArray(canonicalPayments.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
   const paymentByCase = groupArray(paymentLoad, (r) => r.ancillaryCaseId, caseIds, (r) => r.clinicId === clinicId);
+  const allocLoad = paymentGate ? await loadOrNull(() => db.select().from(canonicalPaymentAllocations).where(and(eq(canonicalPaymentAllocations.clinicId, clinicId), inArray(canonicalPaymentAllocations.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
+  const allocByCase = groupArray(allocLoad, (r) => r.ancillaryCaseId, caseIds, (r) => r.clinicId === clinicId);
 
   const ctx: Ctx = {
     clinicId, adminGate, adminByCase, adminOk: adminLoad?.ok ?? true,
@@ -185,7 +189,7 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
     docGate, docOk: billingDocLoad?.ok ?? true, billingDocByCase,
     claimGate, claimOk: claimLoad?.ok ?? true, claimByCase,
     invoiceGate, invoiceOk: invoiceLoad?.ok ?? true, invoiceByCase,
-    paymentGate, paymentOk: paymentLoad?.ok ?? true, paymentByCase,
+    paymentGate, paymentOk: (paymentLoad?.ok ?? true) && (allocLoad?.ok ?? true), paymentByCase, allocByCase,
   };
   return cases.map((c) => buildOne(c, ctx));
 }
@@ -204,6 +208,7 @@ type Ctx = {
   claimGate: boolean; claimOk: boolean; claimByCase: Map<number, typeof canonicalClaims.$inferSelect[]>;
   invoiceGate: boolean; invoiceOk: boolean; invoiceByCase: Map<number, typeof canonicalInvoices.$inferSelect[]>;
   paymentGate: boolean; paymentOk: boolean; paymentByCase: Map<number, typeof canonicalPayments.$inferSelect[]>;
+  allocByCase: Map<number, typeof canonicalPaymentAllocations.$inferSelect[]>;
 };
 
 function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
@@ -291,17 +296,37 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     const qualifying = all.filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
     return { pick: pickSingle(qualifying), toStage: (r: typeof qualifying[number]) => stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.issuedAt), available: r.canonicalStatus != null }), wrongSvc, wrongCode: "invoice_wrong_service" };
   });
-  // Payment stage: the ledger is append-only, so it is never "single current". The
-  // stage is `posted` once at least one posted collection event exists (PHI-free,
-  // no amounts), `pending` otherwise. Never fabricates paid/zero.
+  // Payment stage — DERIVED from the reconciled ledger + allocations against the
+  // case's current claim/invoice total (PHI-free: no amounts exposed, only a status).
+  // A posted payment event alone NEVER completes the stage; only a reconciled zero
+  // outstanding with valid allocations reaches `paid`. Refund/reversal reopen it.
   const payment = (() => {
     if (!ctx.paymentGate) return upstreamOff("canonical_payments_flag_off");
     if (!ctx.paymentOk) return unavailable("payment_read_failed");
-    const all = (ctx.paymentByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc);
-    const posted = all.filter((r) => r.eventType === "payment" && r.status === "posted");
-    if (posted.length === 0) return stage({ status: all.length ? "pending" : null, availability: "available", available: false });
-    let maxAt = -Infinity; for (const p of posted) { const ts = new Date((p.postedAt ?? p.receivedAt) as unknown as Date).getTime(); if (Number.isFinite(ts) && ts > maxAt) maxAt = ts; }
-    return stage({ status: "posted", availability: "available", available: true, at: Number.isFinite(maxAt) ? new Date(maxAt).toISOString() : null });
+    // Already case-scoped by allocByCase/paymentByCase; a null serviceType (an
+    // untagged receipt) is still this case's money and must not be dropped.
+    const events = (ctx.paymentByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc || r.serviceType == null);
+    const allocs = (ctx.allocByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc || r.serviceType == null);
+    const postedPayments = events.filter((r) => r.eventType === "payment" && r.status === "posted");
+    // Exact target total: prefer a single current invoice, else the single current claim.
+    const invoices = (ctx.invoiceByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
+    const claims = (ctx.claimByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
+    const totalStr = invoices.length === 1 ? (invoices[0].totalAmount as string | null) : claims.length === 1 ? (claims[0].chargeAmount as string | null) : null;
+    if (postedPayments.length === 0 && allocs.length === 0) return stage({ status: null, availability: "available", available: false });
+    let appliedC = 0, refundedC = 0, totalC: number | null = null, bad = false;
+    try {
+      appliedC = sumCents(allocs.map((a) => toCents(a.amount)));
+      refundedC = sumCents(events.filter((r) => (r.eventType === "refund" || r.eventType === "reversal") && r.status !== "failed").map((r) => toCents(r.amount)));
+      totalC = totalStr != null ? toCents(totalStr) : null;
+    } catch { bad = true; }
+    if (bad) return conflictStage("payment_amount_conflict");
+    const netApplied = appliedC - refundedC;
+    if (refundedC > 0 && netApplied <= 0) return stage({ status: refundedC >= appliedC ? "reversed" : "refunded", availability: "available", available: false });
+    if (netApplied <= 0) return stage({ status: "unapplied", availability: "available", available: false });
+    if (totalC == null) return conflictStage("payment_target_unresolved");
+    if (netApplied > totalC) return stage({ status: "overpaid", availability: "available", available: false });
+    if (netApplied === totalC) return stage({ status: "paid", availability: "available", available: true });
+    return stage({ status: "partially_paid", availability: "available", available: false });
   })();
 
   const stages: Record<CanonicalStageKey, StageStatus> = { adminReview, engagement, appointment, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument, claim, invoice, payment };
@@ -437,7 +462,9 @@ function isComplete(key: CanonicalStageKey, s: StageStatus): boolean {
     // Phase 2J financial stages — complete only at their exact terminal states.
     case "claim": return st === "paid" || st === "accepted";
     case "invoice": return st === "paid";
-    case "payment": return st === "posted";
+    // Payment completes ONLY at a reconciled zero-outstanding (paid) — never from a
+    // mere posted event, a partial payment, an unapplied receipt, or after a refund.
+    case "payment": return st === "paid";
     default: return false;
   }
 }

@@ -28,17 +28,29 @@ const ALL = {
 // ── builders ──
 function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", ...o }; }
 function readinessRow(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, claimBlockers: [], warnings: [], ...o }; }
-function billingDocRow(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, globalPlexusPatientId: 900, patientClinicMembershipId: 800, sourceData: { chargeAmount: "420.00", amountSource: "approved_fee_schedule" }, ...o }; }
+// An exact approved claim charge (amount source vocabulary + reconciled lines +
+// required fields). Tests override pieces to exercise the readiness contract.
+function claimCharge(o: Record<string, unknown> = {}) {
+  return {
+    amountSource: "approved_fee_schedule", currency: "USD", chargeAmount: "420.00",
+    lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }],
+    fields: { service_code: "SVC", units: "1", place_of_service: "11", rendering_provider: "RP", billing_provider: "BP", facility: "FAC", payer: "PAYER", coverage_reference: "COV" },
+    ...o,
+  };
+}
+function billingDocRow(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, globalPlexusPatientId: 900, patientClinicMembershipId: 800, sourceData: { claimCharge: claimCharge() }, ...o }; }
 function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", currency: "USD", chargeAmount: "420.00", claimSubmissionBlockers: [], warnings: [], submittedAt: null, submissionSource: null, updatedAt: OLD, ...o }; }
 function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", invoiceNumber: "INV-1", currency: "USD", totalAmount: "420.00", supersededAt: null, issuedAt: OLD, deliveredAt: null, warnings: [], ...o }; }
 function paymentRow(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, invoiceId: 800, eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "100.00", externalTransactionId: null, reversesPaymentId: null, postedAt: OLD, ...o }; }
+function allocRow(o: Record<string, unknown> = {}) { return { id: 950, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", targetType: "invoice", targetId: 800, currency: "USD", amount: "100.00", isOverpayment: 0, ...o }; }
 
-function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; cases?: unknown[]; readiness?: unknown[]; docs?: unknown[]; claimsMig?: boolean; invoicesErr?: boolean } = {}) {
+function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; cases?: unknown[]; readiness?: unknown[]; docs?: unknown[]; claimsMig?: boolean; invoicesErr?: boolean } = {}) {
   const mig = () => { throw Object.assign(new Error("relation missing"), { code: "42P01" }); };
   return new Map<unknown, TableSpec>([
     [t.canonicalClaims, { select: () => { if (o.claimsMig) return mig(); return o.claims ?? []; } }],
     [t.canonicalInvoices, { select: () => { if (o.invoicesErr) throw new Error("inv down"); return o.invoices ?? []; } }],
     [t.canonicalPayments, { select: () => o.payments ?? [] }],
+    [t.canonicalPaymentAllocations, { select: () => o.allocations ?? [] }],
     [t.ancillaryCases, { select: () => o.cases ?? [acase()] }],
     [t.billingReadinessChecks, { select: () => o.readiness ?? [] }],
     [t.billingDocumentRequests, { select: () => o.docs ?? [] }],
@@ -109,6 +121,19 @@ async function testClaimReadiness() {
   assert.ok(!blocked.claimReady && blocked.blockers.some((x) => x.code === "missing_payer"), "(23/25/32) claim blocker prevents readiness & stays visible");
   const noAmount = r.evaluateClaimReadiness(c, [readinessRow()] as never, [billingDocRow({ sourceData: {} })] as never);
   assert.ok(!noAmount.claimReady && noAmount.blockers.some((x) => x.code === "claim_amount_source_missing"), "(34) no invented amount");
+  // Exact claim-charge contract (§3): arbitrary/invalid sources never qualify.
+  const arbSource = r.evaluateClaimReadiness(c, [readinessRow()] as never, [billingDocRow({ sourceData: { claimCharge: claimCharge({ amountSource: "whatever" }) } })] as never);
+  assert.ok(!arbSource.claimReady && arbSource.blockers.some((x) => x.code === "claim_amount_source_invalid"), "arbitrary amount source rejected");
+  const badTotal = r.evaluateClaimReadiness(c, [readinessRow()] as never, [billingDocRow({ sourceData: { claimCharge: claimCharge({ chargeAmount: "500.00" }) } })] as never);
+  assert.ok(!badTotal.claimReady && badTotal.blockers.some((x) => x.code === "claim_total_line_mismatch"), "total != sum of line items rejected");
+  const dupLine = r.evaluateClaimReadiness(c, [readinessRow()] as never, [billingDocRow({ sourceData: { claimCharge: claimCharge({ lineItems: [{ lineId: "l1", amount: "210.00", source: "s" }, { lineId: "l1", amount: "210.00", source: "s" }] }) } })] as never);
+  assert.ok(!dupLine.claimReady && dupLine.blockers.some((x) => x.code === "claim_line_duplicate_identity"), "duplicate line identity rejected");
+  const negAmt = r.evaluateClaimReadiness(c, [readinessRow()] as never, [billingDocRow({ sourceData: { claimCharge: claimCharge({ chargeAmount: "1.5x", lineItems: [{ lineId: "l1", amount: "1.5x", source: "s" }] }) } })] as never);
+  assert.ok(!negAmt.claimReady && negAmt.blockers.some((x) => x.code === "claim_line_amount_invalid"), "invalid decimal amount rejected");
+  const negUnits = r.evaluateClaimReadiness(c, [readinessRow()] as never, [billingDocRow({ sourceData: { claimCharge: claimCharge({ lineItems: [{ lineId: "l1", amount: "420.00", source: "s", unit: -1 }] }) } })] as never);
+  assert.ok(!negUnits.claimReady && negUnits.blockers.some((x) => x.code === "claim_line_negative_units"), "negative units rejected");
+  const missField = r.evaluateClaimReadiness(c, [readinessRow()] as never, [billingDocRow({ sourceData: { claimCharge: claimCharge({ fields: { service_code: "SVC" } }) } })] as never);
+  assert.ok(!missField.claimReady && missField.blockers.some((x) => x.code === "claim_field_missing_payer"), "missing required field blocked, not invented");
   const staleFp = r.evaluateClaimReadiness(c, [readinessRow({ evidenceFingerprint: "fp-2" })] as never, [billingDocRow({ evidenceFingerprint: "fp-1" })] as never);
   assert.ok(!staleFp.claimReady && staleFp.integrity === "conflicting" && staleFp.blockers.some((x) => x.code === "evidence_fingerprint_stale"), "(29) fingerprint mismatch rejected");
   const nullFp = r.evaluateClaimReadiness(c, [readinessRow({ evidenceFingerprint: null })] as never, [billingDocRow({ evidenceFingerprint: null })] as never);
@@ -157,10 +182,10 @@ async function testViewFlagsAndReads() {
 }
 async function testViewRows() {
   const t = await loadCanonicalTables(); const v = await view();
-  const r = await runWithDb(spec(t, { claims: [claimRow()], invoices: [invoiceRow()], payments: [paymentRow({ amount: "100.00" })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  const r = await runWithDb(spec(t, { claims: [claimRow()], invoices: [invoiceRow()], payments: [paymentRow({ amount: "100.00" })], allocations: [allocRow({ amount: "100.00" })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
   assert.equal(r.claims.rows.length, 1); assert.equal(r.claims.rows[0].status, "ready");
   assert.equal(r.invoices.rows.length, 1);
-  assert.equal(r.invoices.rows[0].balance.paidAmount, "100.00"); assert.equal(r.invoices.rows[0].balance.outstandingBalance, "320.00", "(79) invoice balance reconciles from ledger");
+  assert.equal(r.invoices.rows[0].balance.paidAmount, "100.00"); assert.equal(r.invoices.rows[0].balance.outstandingBalance, "320.00", "(79) invoice balance reconciles from allocations");
   assert.equal(r.payments.rows.length, 1); assert.equal(r.payments.rows[0].amount, "100.00");
   // no revenue-share / profit fields, no card/bank data
   const keys = JSON.stringify(r).toLowerCase();
@@ -176,10 +201,10 @@ async function testViewConflictAndBatch() {
   // duplicate current claim per case → conflict
   const dup = await runWithDb(spec(t, { claims: [claimRow({ id: 700 }), claimRow({ id: 701 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
   assert.ok(dup.claims.rows.every((x) => x.integrity === "conflicting" && x.warnings.includes("duplicate_current_evidence")), "duplicate current claim → conflict, not first/newest");
-  // batched payment read for invoice balances (one query for many invoices)
-  await runWithDb(spec(t, { invoices: [invoiceRow({ id: 800 }), invoiceRow({ id: 801 })], payments: [paymentRow({ invoiceId: 800 }), paymentRow({ id: 901, invoiceId: 801 })] }), ALL, async (calls: Call[]) => {
+  // batched allocation read for invoice balances (one query for many invoices)
+  await runWithDb(spec(t, { invoices: [invoiceRow({ id: 800 }), invoiceRow({ id: 801 })], allocations: [allocRow({ targetId: 800 }), allocRow({ id: 951, targetId: 801 })] }), ALL, async (calls: Call[]) => {
     await v.getCanonicalFinancialView({ clinicId: 1 });
-    assert.equal(countOps(calls, "select", t.canonicalPayments), 1 + 1, "(90) one batched ledger read for invoices + one payments-section read (no per-invoice N+1)");
+    assert.equal(countOps(calls, "select", t.canonicalPaymentAllocations), 1, "(90) ONE batched allocation read for all invoices (no per-invoice N+1)");
   });
 }
 async function testViewCrossClinic() {
@@ -195,7 +220,7 @@ async function testViewPagination() {
 }
 
 // ═══ Route auth / flags / migration ═══
-function fakeApp() { const map: Record<string, Function[]> = {}; return { app: { get: (p: string, ...h: Function[]) => { map[`GET ${p}`] = h; } } as never, map }; }
+function fakeApp() { const map: Record<string, Function[]> = {}; return { app: { get: (p: string, ...h: Function[]) => { map[`GET ${p}`] = h; }, post: (p: string, ...h: Function[]) => { map[`POST ${p}`] = h; } } as never, map }; }
 function mockRes() { return { statusCode: 200, body: null as unknown, status(c: number) { this.statusCode = c; return this; }, json(b: unknown) { this.body = b; return this; } }; }
 async function invoke(h: Function[], req: unknown, res: unknown) { for (const fn of h) { let nexted = false; await fn(req, res, () => { nexted = true; }); if (!nexted) return; } }
 async function handler(path: string) { const { app, map } = fakeApp(); (await routes()).registerCanonicalFinancialRoutes(app); return map[`GET ${path}`]; }

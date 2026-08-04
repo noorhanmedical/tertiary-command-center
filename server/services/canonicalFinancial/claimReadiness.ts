@@ -12,6 +12,58 @@
 
 import type { CanonicalBillingReadinessCheck } from "@shared/schema/billingReadiness";
 import type { CanonicalBillingDocumentRequest } from "@shared/schema/billingDocuments";
+import { CANONICAL_CLAIM_AMOUNT_SOURCES, CANONICAL_CLAIM_REQUIRED_FIELDS } from "@shared/schema/canonicalClaims";
+import { reconcileLines, toCents, type MoneyLine } from "@shared/money";
+
+const AMOUNT_SOURCES = new Set<string>(CANONICAL_CLAIM_AMOUNT_SOURCES);
+const SUPPORTED_CURRENCIES = new Set(["USD"]);
+
+/** The EXACT approved claim-charge source carried on the Billing Document's
+ *  source_data.claim_charge. Absent/partial → blockers (never invented). */
+type ClaimChargeSource = {
+  amountSource?: unknown; currency?: unknown; chargeAmount?: unknown;
+  lineItems?: unknown; fields?: Record<string, unknown>;
+  requiresDiagnosis?: unknown; requiresAuthorization?: unknown;
+};
+
+/** Validate the approved claim charge: exact amount source, supported currency,
+ *  reconciled line items, total = sum of lines, and every required coding/provider/
+ *  payer field present from an approved source. Returns exact charge + blockers. */
+function evaluateClaimCharge(sd: { claimCharge?: ClaimChargeSource } | null): { chargeAmount: string | null; amountSource: string | null; blockers: { code: string }[] } {
+  const cc = sd?.claimCharge ?? null;
+  const blockers: { code: string }[] = [];
+  if (!cc || typeof cc !== "object") { return { chargeAmount: null, amountSource: null, blockers: [{ code: "claim_amount_source_missing" }] }; }
+  const amountSource = typeof cc.amountSource === "string" && AMOUNT_SOURCES.has(cc.amountSource) ? cc.amountSource : null;
+  if (amountSource == null) blockers.push({ code: "claim_amount_source_invalid" });
+  const currency = typeof cc.currency === "string" ? cc.currency.trim() : "";
+  if (!currency || !SUPPORTED_CURRENCIES.has(currency)) blockers.push({ code: "claim_currency_unsupported" });
+  // Line items must reconcile exactly, and the claim total must equal their sum.
+  let chargeAmount: string | null = null;
+  const rawLines = Array.isArray(cc.lineItems) ? cc.lineItems : null;
+  if (!rawLines || rawLines.length === 0) blockers.push({ code: "claim_line_items_missing" });
+  else {
+    const lines: MoneyLine[] = rawLines.map((l) => l as MoneyLine);
+    const rec = reconcileLines(lines);
+    if (!rec.ok) blockers.push({ code: `claim_${rec.code}` });
+    else {
+      let declared: number | null = null;
+      try { declared = typeof cc.chargeAmount === "string" ? toCents(cc.chargeAmount) : null; } catch { declared = null; }
+      if (declared == null) blockers.push({ code: "claim_charge_amount_invalid" });
+      else if (declared !== rec.totalCents) blockers.push({ code: "claim_total_line_mismatch" });
+      else if (declared < 0) blockers.push({ code: "claim_charge_amount_negative" });
+      else chargeAmount = typeof cc.chargeAmount === "string" ? cc.chargeAmount : null;
+    }
+  }
+  // Every required field must be present from an approved source (never invented).
+  const fields = (cc.fields && typeof cc.fields === "object") ? cc.fields : {};
+  for (const f of CANONICAL_CLAIM_REQUIRED_FIELDS) {
+    const v = fields[f];
+    if (v == null || (typeof v === "string" && v.trim().length === 0)) blockers.push({ code: `claim_field_missing_${f}` });
+  }
+  if (cc.requiresDiagnosis === true) { const v = fields["diagnosis"]; if (v == null || (typeof v === "string" && !v.trim())) blockers.push({ code: "claim_field_missing_diagnosis" }); }
+  if (cc.requiresAuthorization === true) { const v = fields["authorization"]; if (v == null || (typeof v === "string" && !v.trim())) blockers.push({ code: "claim_field_missing_authorization" }); }
+  return { chargeAmount: blockers.length ? null : chargeAmount, amountSource, blockers };
+}
 
 export type CaseRef = { clinicId: number; ancillaryCaseId: number; serviceType: string };
 
@@ -88,14 +140,15 @@ export function evaluateClaimReadiness(
   // Project to {code} ONLY — never spread upstream blocker objects verbatim (they
   // may carry non-contract fields; keep the DTO promise of PHI-free code-only).
   for (const b of ((r.claimBlockers as { code?: unknown }[] | null) ?? [])) if (typeof b?.code === "string") blockers.push({ code: b.code });
-  // Amount must come from an EXACT approved source (fee schedule / canonical charge
-  // config / explicitly imported / authorized manual entry) — never defaulted to
-  // zero and never invented. The Billing Document carries no charge; an approved
-  // amount, when present, is an exact provenance-tagged value on source_data.
-  const sd = (d.sourceData as { chargeAmount?: string; amountSource?: string } | null) ?? null;
-  const chargeAmount = nonEmpty(sd?.chargeAmount);
-  const amountSource = nonEmpty(sd?.amountSource);
-  if (chargeAmount == null || amountSource == null) blockers.push({ code: "claim_amount_source_missing" });
+  // Amount + every required claim field must come from an EXACT approved source
+  // (fee schedule / canonical charge config / explicit import / authorized manual
+  // entry) carried on source_data.claim_charge — never defaulted to zero, never
+  // invented, and an arbitrary non-empty string never qualifies. Line items must
+  // reconcile and the total must equal their exact sum.
+  const charge = evaluateClaimCharge((d.sourceData as { claimCharge?: ClaimChargeSource } | null) ?? null);
+  const chargeAmount = charge.chargeAmount;
+  const amountSource = charge.amountSource;
+  blockers.push(...charge.blockers);
 
   const evidence: ClaimEvidence = {
     billingReadinessCheckId: r.id, billingDocumentId: d.id, evidenceFingerprint: rfp,

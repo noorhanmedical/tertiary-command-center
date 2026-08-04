@@ -11,6 +11,7 @@ import { and, eq, gt, isNull, inArray, asc } from "drizzle-orm";
 import { canonicalClaims } from "@shared/schema/canonicalClaims";
 import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { canonicalPayments } from "@shared/schema/canonicalPayments";
+import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllocations";
 import {
   canonicalClaimsRuntimeEnabled, canonicalInvoicesRuntimeEnabled, canonicalPaymentsRuntimeEnabled,
 } from "../../lib/featureFlags";
@@ -42,19 +43,24 @@ function clamp(n?: number): number { return !Number.isFinite(n) || n == null ? F
 function decode(c?: string | null): number | null { if (typeof c !== "string" || !c) return null; try { const n = Number.parseInt(Buffer.from(c, "base64url").toString("utf8"), 10); return Number.isSafeInteger(n) && n >= 0 ? n : null; } catch { return null; } }
 function encode(id: number): string { return Buffer.from(String(id), "utf8").toString("base64url"); }
 
-export type FinancialViewInput = { clinicId: number; cursor?: string | null; limit?: number };
+// Independent cursors per section — one numeric cursor is NEVER shared across the
+// three unrelated id spaces (that would skip records in the others).
+export type FinancialViewInput = { clinicId: number; claimsCursor?: string | null; invoicesCursor?: string | null; paymentsCursor?: string | null; limit?: number };
 
 export async function getCanonicalFinancialView(input: FinancialViewInput): Promise<CanonicalFinancialView> {
   const generatedAt = new Date().toISOString();
   const [claims, invoices, payments] = await Promise.all([
-    buildClaims(input), buildInvoices(input), buildPayments(input),
+    buildClaims(input.clinicId, input.claimsCursor, input.limit),
+    buildInvoices(input.clinicId, input.invoicesCursor, input.limit),
+    buildPayments(input.clinicId, input.paymentsCursor, input.limit),
   ]);
   return { disabled: false, generatedAt, dataVersion: CANONICAL_FINANCIAL_VIEW_VERSION, clinicScoped: true, claims, invoices, payments };
 }
 
 // ─── Claims ──────────────────────────────────────────────────────────────────
-async function buildClaims(input: FinancialViewInput): Promise<FinancialSection<CanonicalClaimRow>> {
-  const limit = clamp(input.limit), after = decode(input.cursor);
+async function buildClaims(clinicId: number, cursor: string | null | undefined, limitIn: number | undefined): Promise<FinancialSection<CanonicalClaimRow>> {
+  const input = { clinicId };
+  const limit = clamp(limitIn), after = decode(cursor);
   const shell = (availability: FinancialAvailability, warnings: string[] = []): FinancialSection<CanonicalClaimRow> => ({ availability, warnings, rows: [], pageInfo: { limit, nextCursor: null, returned: 0 } });
   if (!canonicalClaimsRuntimeEnabled()) return shell("upstream_flag_off", ["canonical_claims_flag_off"]);
   try {
@@ -83,9 +89,10 @@ async function buildClaims(input: FinancialViewInput): Promise<FinancialSection<
   } catch (e) { return sectionFailure(e, () => shell("unavailable", ["claims_read_failed"])); }
 }
 
-// ─── Invoices (with derived balance from the payment ledger) ─────────────────
-async function buildInvoices(input: FinancialViewInput): Promise<FinancialSection<CanonicalInvoiceRow>> {
-  const limit = clamp(input.limit), after = decode(input.cursor);
+// ─── Invoices (balance DERIVED from the COMPLETE allocation set) ─────────────
+async function buildInvoices(clinicId: number, cursor: string | null | undefined, limitIn: number | undefined): Promise<FinancialSection<CanonicalInvoiceRow>> {
+  const input = { clinicId };
+  const limit = clamp(limitIn), after = decode(cursor);
   const shell = (availability: FinancialAvailability, warnings: string[] = []): FinancialSection<CanonicalInvoiceRow> => ({ availability, warnings, rows: [], pageInfo: { limit, nextCursor: null, returned: 0 } });
   if (!canonicalInvoicesRuntimeEnabled()) return shell("upstream_flag_off", ["canonical_invoices_flag_off"]);
   try {
@@ -95,36 +102,43 @@ async function buildInvoices(input: FinancialViewInput): Promise<FinancialSectio
     const all = raw.filter((r) => r.clinicId === input.clinicId && r.supersededAt == null && (after == null || r.id > after)).sort((a, b) => a.id - b.id);
     const page = all.slice(0, limit);
     const nextCursor = all.length > limit && page.length ? encode(page[page.length - 1].id) : null;
-    // Batched ledger read for balance derivation (one query for all invoices).
+    // Balance derives from the COMPLETE allocation set for this bounded invoice
+    // page (batched — one query, no per-invoice N+1). If the read could be
+    // truncated (hits the cap), the affected balances are marked CONFLICTING rather
+    // than presented as a falsely resolved partial total.
     const invoiceIds = page.map((r) => r.id);
-    const ledger = canonicalPaymentsRuntimeEnabled() && invoiceIds.length
-      ? (await db.select().from(canonicalPayments).where(and(eq(canonicalPayments.clinicId, input.clinicId), inArray(canonicalPayments.invoiceId, invoiceIds))).limit(SCAN)).filter((p) => p.clinicId === input.clinicId)
+    const allocRaw = canonicalPaymentsRuntimeEnabled() && invoiceIds.length
+      ? (await db.select().from(canonicalPaymentAllocations).where(and(eq(canonicalPaymentAllocations.clinicId, input.clinicId), eq(canonicalPaymentAllocations.targetType, "invoice"), inArray(canonicalPaymentAllocations.targetId, invoiceIds))).limit(SCAN + 1)).filter((a) => a.clinicId === input.clinicId && a.targetType === "invoice" && invoiceIds.includes(a.targetId))
       : [];
-    const ledgerByInvoice = new Map<number, typeof ledger>();
-    for (const p of ledger) { if (p.invoiceId == null) continue; const arr = ledgerByInvoice.get(p.invoiceId) ?? []; arr.push(p); ledgerByInvoice.set(p.invoiceId, arr); }
+    const truncated = allocRaw.length > SCAN;   // completeness could not be proven
+    const allocByInvoice = new Map<number, typeof allocRaw>();
+    for (const a of allocRaw) { const arr = allocByInvoice.get(a.targetId) ?? []; arr.push(a); allocByInvoice.set(a.targetId, arr); }
     const rows: CanonicalInvoiceRow[] = page.map((r) => {
       let originalCents = 0; let amountOk = true;
       try { originalCents = r.totalAmount != null ? toCents(r.totalAmount) : 0; } catch { amountOk = false; }
-      // A corrupt/unparseable persisted total is a CONFLICT — never a silent
-      // resolved 0.00 balance. Mark the derived balance conflicting so the UI shows
-      // an integrity problem instead of a clean fully-derived zero (empty-as-success).
-      const derived = deriveBalance({ currency: r.currency, originalAmountCents: amountOk ? originalCents : 0, ledger: ledgerByInvoice.get(r.id) ?? [] });
-      const balance = amountOk ? derived : { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, "invoice_amount_invalid"] };
+      // Synthesize the ledger from applied allocations (paid = sum of allocations).
+      const synth = (allocByInvoice.get(r.id) ?? []).map((a) => ({ currency: a.currency, amount: a.amount, eventType: "payment", status: "posted", claimId: null, invoiceId: r.id } as never));
+      const derived = deriveBalance({ currency: r.currency, originalAmountCents: amountOk ? originalCents : 0, ledger: synth });
+      const conflict = !amountOk || truncated || derived.integrity === "conflicting";
+      const balance = conflict
+        ? { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, ...(amountOk ? [] : ["invoice_amount_invalid"]), ...(truncated ? ["balance_ledger_truncated"] : [])] }
+        : derived;
       return {
         invoiceId: r.id, ancillaryCaseId: r.ancillaryCaseId ?? -1, serviceType: r.serviceType, patientDisplay: null,
         invoiceType: r.invoiceType, recipientType: r.recipientType ?? null, status: r.canonicalStatus, invoiceNumber: r.invoiceNumber ?? null,
         claimId: r.claimId ?? null, currency: r.currency, totalAmount: typeof r.totalAmount === "string" ? r.totalAmount : null,
         balance, issuedAt: iso(r.issuedAt), deliveredAt: iso(r.deliveredAt),
-        warnings: amountOk ? [] : ["invoice_amount_invalid"], integrity: (!amountOk || balance.integrity === "conflicting") ? "conflicting" : "resolved",
+        warnings: amountOk ? [] : ["invoice_amount_invalid"], integrity: conflict ? "conflicting" : "resolved",
       };
     });
-    return { availability: "available", warnings: [], rows, pageInfo: { limit, nextCursor, returned: page.length } };
+    return { availability: "available", warnings: truncated ? ["balance_ledger_truncated"] : [], rows, pageInfo: { limit, nextCursor, returned: page.length } };
   } catch (e) { return sectionFailure(e, () => shell("unavailable", ["invoices_read_failed"])); }
 }
 
 // ─── Payments (ledger events) ────────────────────────────────────────────────
-async function buildPayments(input: FinancialViewInput): Promise<FinancialSection<CanonicalPaymentRow>> {
-  const limit = clamp(input.limit), after = decode(input.cursor);
+async function buildPayments(clinicId: number, cursor: string | null | undefined, limitIn: number | undefined): Promise<FinancialSection<CanonicalPaymentRow>> {
+  const input = { clinicId };
+  const limit = clamp(limitIn), after = decode(cursor);
   const shell = (availability: FinancialAvailability, warnings: string[] = []): FinancialSection<CanonicalPaymentRow> => ({ availability, warnings, rows: [], pageInfo: { limit, nextCursor: null, returned: 0 } });
   if (!canonicalPaymentsRuntimeEnabled()) return shell("upstream_flag_off", ["canonical_payments_flag_off"]);
   try {

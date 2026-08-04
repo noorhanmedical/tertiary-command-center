@@ -217,6 +217,8 @@ export async function loadCanonicalTables() {
   const canonClaims = await import("../../shared/schema/canonicalClaims");
   const canonInvoices = await import("../../shared/schema/canonicalInvoices");
   const canonPayments = await import("../../shared/schema/canonicalPayments");
+  const canonAllocations = await import("../../shared/schema/canonicalPaymentAllocations");
+  const canonTransitions = await import("../../shared/schema/canonicalFinancialTransitions");
   return {
     // Phase 2C engagement identity (Phase 2H list/membership wiring reads these).
     engagementLists: engagementLists.engagementLists,
@@ -225,6 +227,8 @@ export async function loadCanonicalTables() {
     canonicalClaims: canonClaims.canonicalClaims,
     canonicalInvoices: canonInvoices.canonicalInvoices,
     canonicalPayments: canonPayments.canonicalPayments,
+    canonicalPaymentAllocations: canonAllocations.canonicalPaymentAllocations,
+    canonicalFinancialTransitions: canonTransitions.canonicalFinancialTransitions,
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
     screenings: scr.patientScreenings,
