@@ -115,15 +115,7 @@ export async function idempotentReplay(db: DbLike, entityType: CanonicalFinancia
   return { kind: "replay", entityId: hit.entityId };
 }
 
-/** Convergence lookup after a unique-violation (returns the recorded entityId for
- *  the key, ignoring fingerprint — the fingerprint gate already ran at command entry). */
-export async function priorTransitionEntityId(db: DbLike, entityType: CanonicalFinancialEntityType, clinicId: number, idempotencyKey: string | null | undefined): Promise<number | null> {
-  if (!idempotencyKey) return null;
-  const rows = await db.select().from(canonicalFinancialTransitions).where(and(
-    eq(canonicalFinancialTransitions.entityType, entityType), eq(canonicalFinancialTransitions.clinicId, clinicId), eq(canonicalFinancialTransitions.idempotencyKey, idempotencyKey),
-  )).limit(1);
-  const hit = (rows as { entityType: string; clinicId: number; idempotencyKey: string | null; entityId: number }[]).find((r) => r.entityType === entityType && r.clinicId === clinicId && r.idempotencyKey === idempotencyKey);
-  return hit ? hit.entityId : null;
-}
+// (priorTransitionEntityId removed — every recovery path now uses idempotentReplay,
+// which compares the command fingerprint; a bare key lookup would be fingerprint-blind.)
 
 export const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v : null);

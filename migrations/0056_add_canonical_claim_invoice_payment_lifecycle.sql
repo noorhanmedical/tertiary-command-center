@@ -297,7 +297,9 @@ CREATE TABLE IF NOT EXISTS canonical_financial_transitions (
   -- key: same key + same fingerprint → replay; same key + different → conflict.
   command_fingerprint                text,
   created_at                         timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT ck_cft_entity_type CHECK (entity_type IN ('claim','invoice','payment','allocation'))
+  CONSTRAINT ck_cft_entity_type CHECK (entity_type IN ('claim','invoice','payment','allocation')),
+  -- §6 every command audit record carries exact idempotency + fingerprint provenance.
+  CONSTRAINT ck_cft_command_provenance CHECK (idempotency_key IS NOT NULL AND command_fingerprint IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_cft_entity ON canonical_financial_transitions(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_cft_clinic ON canonical_financial_transitions(clinic_id);

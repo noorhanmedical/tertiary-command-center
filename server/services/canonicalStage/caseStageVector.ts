@@ -306,16 +306,23 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     // Already case-scoped by allocByCase/paymentByCase; a null serviceType (an
     // untagged receipt) is still this case's money and must not be dropped.
     const events = (ctx.paymentByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc || r.serviceType == null);
-    const allocs = (ctx.allocByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc || r.serviceType == null);
+    const caseAllocs = (ctx.allocByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc || r.serviceType == null);
     const postedPayments = events.filter((r) => r.eventType === "payment" && r.status === "posted");
-    // Exact target total: prefer a single current invoice, else the single current claim.
+    // §11 Select ONE exact active financial target — the single current invoice, else
+    // the single current claim. >1 current in the same slot → conflict. Then include
+    // ONLY allocations for THAT exact target (never every allocation in the case);
+    // historical claim/invoice allocations must not affect the active stage.
     const invoices = (ctx.invoiceByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
     const claims = (ctx.claimByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
-    const totalStr = invoices.length === 1 ? (invoices[0].totalAmount as string | null) : claims.length === 1 ? (claims[0].chargeAmount as string | null) : null;
+    if (invoices.length > 1 || (invoices.length === 0 && claims.length > 1)) return conflictStage("payment_target_conflict");
+    const targetType = invoices.length === 1 ? "invoice" : claims.length === 1 ? "claim" : null;
+    const targetId = targetType === "invoice" ? invoices[0].id : targetType === "claim" ? claims[0].id : null;
+    const totalStr = targetType === "invoice" ? (invoices[0].totalAmount as string | null) : targetType === "claim" ? (claims[0].chargeAmount as string | null) : null;
+    const allocs = targetType != null && targetId != null ? caseAllocs.filter((a) => a.targetType === targetType && a.targetId === targetId) : [];
     if (postedPayments.length === 0 && allocs.length === 0) return stage({ status: null, availability: "available", available: false });
     let appliedC = 0, refundedC = 0, totalC: number | null = null, bad = false;
     try {
-      // Effective net applied = Σ apply − Σ (refund + reversal) allocation rows.
+      // Effective net applied = Σ apply − Σ (refund + reversal) for the EXACT target.
       appliedC = sumCents(allocs.filter((a) => a.eventType === "apply").map((a) => toCents(a.amount)));
       refundedC = sumCents(allocs.filter((a) => a.eventType === "refund" || a.eventType === "reversal").map((a) => toCents(a.amount)));
       totalC = totalStr != null ? toCents(totalStr) : null;
@@ -326,12 +333,12 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     if (appliedC > 0 && netApplied <= 0) return stage({ status: refundedC >= appliedC ? "reversed" : "refunded", availability: "available", available: false });
     if (netApplied <= 0) return stage({ status: "unapplied", availability: "available", available: false });
     if (totalC == null) return conflictStage("payment_target_unresolved");
-    // Overpayment takes precedence over the partial-refund label when a residual net
-    // still exceeds the target total.
     if (netApplied > totalC) return stage({ status: "overpaid", availability: "available", available: false });
-    // A partial negation with a residual applied balance below the total is partially_refunded.
-    if (refundedC > 0) return stage({ status: "partially_refunded", availability: "available", available: false });
+    // A reconciled zero outstanding (net === total) is PAID even if a refund occurred
+    // and was re-covered — only outstanding matters for completion.
     if (netApplied === totalC) return stage({ status: "paid", availability: "available", available: true });
+    // A residual net below the total after a negation is partially_refunded.
+    if (refundedC > 0) return stage({ status: "partially_refunded", availability: "available", available: false });
     return stage({ status: "partially_paid", availability: "available", available: false });
   })();
 

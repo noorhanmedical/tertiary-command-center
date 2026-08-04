@@ -105,8 +105,8 @@ export function registerCanonicalFinancialRoutes(app: Express): void {
   const CODE_BY_STATUS: Record<string, number> = {
     created: 201, recorded: 201, allocated: 201, transitioned: 200, refunded: 201, reversed: 201, reused: 200,
     skipped_flag_off: 404, not_found: 404, target_not_found: 404,
-    invalid_transition: 409, conflict: 409, already_reversed: 409, exceeds_original: 409, payment_status_derived: 409, allocation_rejected: 409, line_items_invalid: 409, idempotency_conflict: 409, parent_allocation_invalid: 409,
-    submission_source_required: 400, submission_provenance_required: 400, transmission_unavailable: 400, invalid_amount: 400, invalid_source: 400, recipient_invalid: 400, identity_incomplete: 400, identity_invalid: 400, case_service_mismatch: 400, unsupported_currency: 400, claim_not_invoiceable: 400, amount_source_missing: 400, evidence_conflict: 409, target_not_payable: 409, delivery_event_required: 400, delivery_source_required: 400,
+    invalid_transition: 409, conflict: 409, already_reversed: 409, exceeds_original: 409, payment_status_derived: 409, allocation_rejected: 409, line_items_invalid: 409, idempotency_conflict: 409, parent_allocation_invalid: 409, external_transaction_conflict: 409, allocation_integrity_unavailable: 409,
+    submission_source_required: 400, submission_provenance_required: 400, transmission_unavailable: 400, invalid_amount: 400, invalid_source: 400, recipient_invalid: 400, identity_incomplete: 400, identity_invalid: 400, case_service_mismatch: 400, unsupported_currency: 400, claim_not_invoiceable: 400, amount_source_missing: 400, evidence_conflict: 409, target_not_payable: 409, delivery_event_required: 400, delivery_source_required: 400, idempotency_required: 400,
     migration_missing: 503, persistence_failed: 500,
   };
   const send = (res: Response, r: { status: string } & Record<string, unknown>) => res.status(CODE_BY_STATUS[r.status] ?? 500).json(r);

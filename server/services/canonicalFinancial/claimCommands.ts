@@ -19,7 +19,7 @@ import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { canonicalClaimsRuntimeEnabled, featureFlags } from "../../lib/featureFlags";
 import { evaluateClaimReadiness, type CaseRef } from "./claimReadiness";
 import { canTransitionClaim, claimSubmissionSourceValid } from "./stateMachines";
-import { isFinancialMigration, writeTransition, priorTransitionEntityId, idempotentReplay, commandFingerprint, verifyCanonicalIdentity, nonEmpty, type DbLike } from "./commandSupport";
+import { isFinancialMigration, writeTransition, idempotentReplay, commandFingerprint, verifyCanonicalIdentity, nonEmpty, type DbLike } from "./commandSupport";
 
 const WORKING_STATUSES = new Set<CanonicalClaimStatus>(["not_ready", "ready", "draft", "queued"]);
 const UNIQUE_VIOLATION = "23505";
@@ -39,6 +39,7 @@ export type ClaimCommandResult =
   | { status: "transitioned"; claimId: number; from: string; to: string }
   | { status: "conflict" }
   | { status: "idempotency_conflict" }
+  | { status: "idempotency_required" }
   | { status: "migration_missing" }
   | { status: "persistence_failed" };
 
@@ -91,10 +92,11 @@ function evidenceValues(ev: NonNullable<ReturnType<typeof evaluateClaimReadiness
   };
 }
 
-export type CreateDraftInput = { clinicId: number; ancillaryCaseId: number; actorUserId: string; actorRole: string; idempotencyKey?: string | null };
+export type CreateDraftInput = { clinicId: number; ancillaryCaseId: number; actorUserId: string; actorRole: string; idempotencyKey: string };
 
 export async function createOrReuseCanonicalClaimDraft(input: CreateDraftInput): Promise<ClaimCommandResult> {
   if (!canonicalClaimsRuntimeEnabled()) return { status: "skipped_flag_off" };
+  if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "create_claim_draft", clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
     const replay = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
@@ -106,7 +108,7 @@ export async function createOrReuseCanonicalClaimDraft(input: CreateDraftInput):
     // is insufficient) — failure creates no claim and no transition.
     const idFail = await verifyCanonicalIdentity(input.clinicId, acase.globalPlexusPatientId, acase.patientClinicMembershipId);
     if (idFail) return { status: "identity_incomplete", identityFailure: idFail };
-    const ref: CaseRef = { clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType };
+    const ref: CaseRef = { clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, serviceType: acase.serviceType, verifiedGlobalPlexusPatientId: acase.globalPlexusPatientId, verifiedPatientClinicMembershipId: acase.patientClinicMembershipId };
     const { readiness, docs } = await loadCaseEvidence(input.clinicId, input.ancillaryCaseId);
     const result = evaluateClaimReadiness(ref, readiness, docs);
     if (result.integrity === "conflicting") return { status: "evidence_conflict", blockers: result.blockers };
@@ -139,8 +141,11 @@ export async function createOrReuseCanonicalClaimDraft(input: CreateDraftInput):
         const again = await currentActiveDraft(input.clinicId, input.ancillaryCaseId);
         if (again.kind === "one") return claimReuseMatches(again.row, result.evidence, ref) ? { status: "reused", claimId: again.row.id } : { status: "conflict" };
         if (again.kind === "conflict") return { status: "conflict" };
-        const byKey = await priorTransitionEntityId(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey);
-        if (byKey != null) return { status: "reused", claimId: byKey };
+        // A racing command may have won on our idempotency key — reload the audit row
+        // and compare the fingerprint (never assume the entry gate was sufficient).
+        const post = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
+        if (post.kind === "replay") return { status: "reused", claimId: post.entityId };
+        if (post.kind === "conflict") return { status: "idempotency_conflict" };
       }
       throw e;
     }
@@ -151,6 +156,7 @@ export type TransitionInput2 = { clinicId: number; claimId: number; actorUserId:
 
 export async function transitionCanonicalClaim(input: TransitionInput2): Promise<ClaimCommandResult> {
   if (!canonicalClaimsRuntimeEnabled()) return { status: "skipped_flag_off" };
+  if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "transition_claim", clinicId: input.clinicId, claimId: input.claimId, transition: input.transition, sourceType: input.sourceType, sourceReference: input.sourceReference, reason: input.reason });
     const replay = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
@@ -186,6 +192,7 @@ export type CorrectionInput = { clinicId: number; priorClaimId: number; actorUse
 
 export async function createCanonicalClaimCorrection(input: CorrectionInput): Promise<ClaimCommandResult> {
   if (!canonicalClaimsRuntimeEnabled()) return { status: "skipped_flag_off" };
+  if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "correct_claim", clinicId: input.clinicId, priorClaimId: input.priorClaimId, reason: input.reason });
     const replay = await idempotentReplay(db as unknown as DbLike, "claim", input.clinicId, input.idempotencyKey, fp);
@@ -199,7 +206,7 @@ export async function createCanonicalClaimCorrection(input: CorrectionInput): Pr
     const idFail = await verifyCanonicalIdentity(input.clinicId, acase.globalPlexusPatientId, acase.patientClinicMembershipId);
     if (idFail) return { status: "identity_incomplete", identityFailure: idFail };
     const { readiness, docs } = await loadCaseEvidence(input.clinicId, prior.ancillaryCaseId as number);
-    const result = evaluateClaimReadiness({ clinicId: input.clinicId, ancillaryCaseId: prior.ancillaryCaseId as number, serviceType: prior.serviceType }, readiness, docs);
+    const result = evaluateClaimReadiness({ clinicId: input.clinicId, ancillaryCaseId: prior.ancillaryCaseId as number, serviceType: prior.serviceType, verifiedGlobalPlexusPatientId: acase.globalPlexusPatientId, verifiedPatientClinicMembershipId: acase.patientClinicMembershipId }, readiness, docs);
     if (result.integrity === "conflicting" || !result.evidence) return { status: "evidence_conflict", blockers: result.blockers };
     const priorWorking = WORKING_STATUSES.has(prior.canonicalStatus as CanonicalClaimStatus);
     const status: CanonicalClaimStatus = result.claimReady ? "ready" : "not_ready";

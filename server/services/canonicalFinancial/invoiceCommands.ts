@@ -45,6 +45,7 @@ export type InvoiceCommandResult =
   | { status: "transitioned"; invoiceId: number; from: string; to: string }
   | { status: "conflict" }
   | { status: "idempotency_conflict" }
+  | { status: "idempotency_required" }
   | { status: "migration_missing" }
   | { status: "persistence_failed" };
 
@@ -72,10 +73,11 @@ function invoiceReuseMatches(row: InvoiceRow, claim: typeof canonicalClaims.$inf
     && JSON.stringify(row.lineItems ?? []) === JSON.stringify(lines);
 }
 
-export type CreateInvoiceInput = { clinicId: number; claimId: number; invoiceType: string; recipientType: string; recipientId: string; actorUserId: string; actorRole: string; idempotencyKey?: string | null };
+export type CreateInvoiceInput = { clinicId: number; claimId: number; invoiceType: string; recipientType: string; recipientId: string; actorUserId: string; actorRole: string; idempotencyKey: string };
 
 export async function createOrReuseCanonicalInvoiceDraft(input: CreateInvoiceInput): Promise<InvoiceCommandResult> {
   if (!canonicalInvoicesRuntimeEnabled()) return { status: "skipped_flag_off" };
+  if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "create_invoice", clinicId: input.clinicId, claimId: input.claimId, invoiceType: input.invoiceType, recipientType: input.recipientType, recipientId: input.recipientId });
     const replay = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);
@@ -120,10 +122,11 @@ export async function createOrReuseCanonicalInvoiceDraft(input: CreateInvoiceInp
   } catch (e) { if (isFinancialMigration(e)) return { status: "migration_missing" }; return { status: "persistence_failed" }; }
 }
 
-export type InvoiceTransitionInput = { clinicId: number; invoiceId: number; transition: CanonicalInvoiceStatus; deliveryEventReference?: string | null; reason?: string | null; sourceType?: string | null; sourceReference?: string | null; actorUserId: string; actorRole: string; idempotencyKey?: string | null };
+export type InvoiceTransitionInput = { clinicId: number; invoiceId: number; transition: CanonicalInvoiceStatus; deliveryEventReference?: string | null; reason?: string | null; sourceType?: string | null; sourceReference?: string | null; actorUserId: string; actorRole: string; idempotencyKey: string };
 
 export async function transitionCanonicalInvoice(input: InvoiceTransitionInput): Promise<InvoiceCommandResult> {
   if (!canonicalInvoicesRuntimeEnabled()) return { status: "skipped_flag_off" };
+  if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "transition_invoice", clinicId: input.clinicId, invoiceId: input.invoiceId, transition: input.transition, deliveryEventReference: input.deliveryEventReference, sourceType: input.sourceType, sourceReference: input.sourceReference, reason: input.reason });
     const replay = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);
@@ -163,6 +166,7 @@ export type InvoiceCorrectionInput = { clinicId: number; priorInvoiceId: number;
 
 export async function createCanonicalInvoiceCorrection(input: InvoiceCorrectionInput): Promise<InvoiceCommandResult> {
   if (!canonicalInvoicesRuntimeEnabled()) return { status: "skipped_flag_off" };
+  if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
   try {
     const fp = commandFingerprint({ action: "correct_invoice", clinicId: input.clinicId, priorInvoiceId: input.priorInvoiceId, reason: input.reason });
     const replay = await idempotentReplay(db as unknown as DbLike, "invoice", input.clinicId, input.idempotencyKey, fp);

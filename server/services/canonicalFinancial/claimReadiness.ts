@@ -18,6 +18,21 @@ import { reconcileLines, toCents, type MoneyLine } from "@shared/money";
 const AMOUNT_SOURCES = new Set<string>(CANONICAL_CLAIM_AMOUNT_SOURCES);
 const SUPPORTED_CURRENCIES = new Set(["USD"]);
 
+// Which approved provenance sources may prove EACH field. A fee schedule proves
+// codes/units only — NEVER payer, coverage, or provider. No cross-field inheritance.
+const FIELD_SOURCE_ALLOW: Record<string, Set<string>> = {
+  service_code: new Set(["approved_fee_schedule", "canonical_charge_config", "authorized_manual_entry", "imported_charge"]),
+  units: new Set(["approved_fee_schedule", "canonical_charge_config", "authorized_manual_entry", "imported_charge"]),
+  place_of_service: new Set(["facility_registry", "canonical_charge_config", "authorized_manual_entry"]),
+  facility: new Set(["facility_registry", "authorized_manual_entry"]),
+  rendering_provider: new Set(["credentialing_registry", "authorized_manual_entry"]),
+  billing_provider: new Set(["credentialing_registry", "authorized_manual_entry"]),
+  payer: new Set(["payer_contract", "coverage_import", "authorized_manual_entry"]),
+  coverage_reference: new Set(["payer_contract", "coverage_import", "authorized_manual_entry"]),
+  diagnosis: new Set(["clinical_documentation", "coverage_import", "authorized_manual_entry"]),
+  authorization: new Set(["payer_contract", "authorized_manual_entry"]),
+};
+
 /** The EXACT approved claim-charge source carried on the Billing Document's
  *  source_data.claim_charge. Absent/partial → blockers (never invented). */
 type ClaimChargeSource = {
@@ -30,7 +45,8 @@ type ClaimChargeSource = {
  *  (never re-read/reinterpreted from arbitrary sourceData after this succeeds). */
 export type ValidatedClaimCharge = {
   chargeAmount: string; amountSource: string; currency: string;
-  lineItems: MoneyLine[]; fields: Record<string, string>; fieldProvenance: Record<string, string>;
+  lineItems: MoneyLine[]; fields: Record<string, string>;
+  fieldProvenance: Record<string, { sourceType: string; sourceId: string | null }>;
 };
 
 /** Validate the approved claim charge: exact amount source, supported currency,
@@ -62,28 +78,35 @@ function evaluateClaimCharge(sd: { claimCharge?: ClaimChargeSource } | null): { 
       else { chargeAmount = cc.chargeAmount as string; lineItems = lines; }
     }
   }
-  // Every required field must be present from an approved source (never invented).
+  // Every required field must carry EXPLICIT approved field-specific provenance —
+  // NO inheritance of the charge amount source. A fee schedule may prove a code/charge
+  // only; it must NOT prove payer, coverage, or provider.
   const rawFields = (cc.fields && typeof cc.fields === "object") ? cc.fields : {};
-  const rawProv = (cc.fieldProvenance && typeof cc.fieldProvenance === "object") ? cc.fieldProvenance : {};
-  const fields: Record<string, string> = {}; const fieldProvenance: Record<string, string> = {};
+  const fields: Record<string, string> = {}; const fieldProvenance: Record<string, { sourceType: string; sourceId: string | null }> = {};
   const required = [...CANONICAL_CLAIM_REQUIRED_FIELDS] as string[];
   if (cc.requiresDiagnosis === true) required.push("diagnosis");
   if (cc.requiresAuthorization === true) required.push("authorization");
   for (const f of required) {
-    const v = rawFields[f];
-    if (v == null || (typeof v === "string" && v.trim().length === 0)) { blockers.push({ code: `claim_field_missing_${f}` }); continue; }
-    fields[f] = String(v);
-    // Provenance must itself be an approved source — never an arbitrary string.
-    const p = rawProv[f];
-    if (typeof p === "string" && AMOUNT_SOURCES.has(p)) fieldProvenance[f] = p;
-    else if (amountSource != null) fieldProvenance[f] = amountSource; // inherit the exact approved amount source
-    else blockers.push({ code: `claim_field_provenance_invalid_${f}` });
+    const cell = rawFields[f] as { value?: unknown; sourceType?: unknown; sourceId?: unknown } | undefined;
+    const value = cell && typeof cell === "object" ? cell.value : undefined;
+    if (value == null || (typeof value === "string" && value.trim().length === 0)) { blockers.push({ code: `claim_field_missing_${f}` }); continue; }
+    const sourceType = cell && typeof cell.sourceType === "string" ? cell.sourceType : null;
+    const allowed = FIELD_SOURCE_ALLOW[f];
+    if (sourceType == null || !allowed || !allowed.has(sourceType)) { blockers.push({ code: `claim_field_provenance_invalid_${f}` }); continue; }
+    fields[f] = String(value);
+    fieldProvenance[f] = { sourceType, sourceId: cell && typeof cell.sourceId === "string" ? cell.sourceId : null };
   }
   if (blockers.length > 0 || chargeAmount == null || amountSource == null || !currency) return { charge: null, blockers };
   return { charge: { chargeAmount, amountSource, currency, lineItems, fields, fieldProvenance }, blockers };
 }
 
-export type CaseRef = { clinicId: number; ancillaryCaseId: number; serviceType: string };
+export type CaseRef = {
+  clinicId: number; ancillaryCaseId: number; serviceType: string;
+  // §4 exact VERIFIED case identity. When present, the Billing Document identity
+  // must agree exactly (never substitute the case identity for a wrong document).
+  verifiedGlobalPlexusPatientId?: number | null;
+  verifiedPatientClinicMembershipId?: number | null;
+};
 
 export type ClaimEvidence = {
   billingReadinessCheckId: number;
@@ -101,7 +124,7 @@ export type ClaimEvidence = {
   currency: string | null;
   lineItems: MoneyLine[];
   fields: Record<string, string>;
-  fieldProvenance: Record<string, string>;
+  fieldProvenance: Record<string, { sourceType: string; sourceId: string | null }>;
 };
 
 export type ClaimReadinessResult = {
@@ -158,6 +181,20 @@ export function evaluateClaimReadiness(
   // whenever EITHER is non-null (present/null, null/present, or different → reject).
   const rPE = (r.procedureEventId as number | null) ?? null, dPE = (d.procedureEventId as number | null) ?? null;
   if (rPE !== dPE) return notReady([{ code: "evidence_procedure_event_mismatch" }], [], "conflicting");
+  // §4 Billing Document patient identity must equal the VERIFIED case identity — a
+  // wrong-document identity is a conflict, NEVER silently replaced by the case's.
+  if (c.verifiedGlobalPlexusPatientId != null || c.verifiedPatientClinicMembershipId != null) {
+    if ((d.globalPlexusPatientId as number | null ?? null) !== (c.verifiedGlobalPlexusPatientId ?? null)
+      || (d.patientClinicMembershipId as number | null ?? null) !== (c.verifiedPatientClinicMembershipId ?? null)) {
+      return notReady([{ code: "billing_document_identity_mismatch" }], [], "conflicting");
+    }
+    // Readiness identity fields must agree where persisted.
+    const rGpp = (r as { globalPlexusPatientId?: number | null }).globalPlexusPatientId ?? null;
+    const rPcm = (r as { patientClinicMembershipId?: number | null }).patientClinicMembershipId ?? null;
+    if ((rGpp != null && rGpp !== (c.verifiedGlobalPlexusPatientId ?? null)) || (rPcm != null && rPcm !== (c.verifiedPatientClinicMembershipId ?? null))) {
+      return notReady([{ code: "billing_readiness_identity_mismatch" }], [], "conflicting");
+    }
+  }
   // Readiness + Billing Document must be in a state that permits claim progression.
   if (!READINESS_ALLOWS_CLAIM.has(r.canonicalStatus ?? "")) return notReady([{ code: "billing_readiness_not_claim_ready" }], [], "missing");
   if (!DOC_CURRENT_STATUSES.has(d.canonicalStatus ?? "")) return notReady([{ code: "billing_document_not_current" }], [], "missing");

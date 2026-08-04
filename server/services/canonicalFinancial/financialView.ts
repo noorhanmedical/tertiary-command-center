@@ -16,6 +16,7 @@ import {
   canonicalClaimsRuntimeEnabled, canonicalInvoicesRuntimeEnabled, canonicalPaymentsRuntimeEnabled,
 } from "../../lib/featureFlags";
 import { deriveBalance } from "./balance";
+import { claimCaseIntegrity, invoiceClaimIntegrity } from "./financialVersion";
 import { toCents } from "@shared/money";
 import {
   CANONICAL_FINANCIAL_VIEW_VERSION, FINANCIAL_DEFAULT_LIMIT, FINANCIAL_MAX_LIMIT,
@@ -68,9 +69,17 @@ async function buildClaims(clinicId: number, cursor: string | null | undefined, 
     if (after != null) conds.push(gt(canonicalClaims.id, after));
     const raw = await db.select().from(canonicalClaims).where(and(...conds)).orderBy(asc(canonicalClaims.id)).limit(limit + 1);
     const all = raw.filter((r) => r.clinicId === input.clinicId && r.supersededAt == null && (after == null || r.id > after)).sort((a, b) => a.id - b.id);
-    // Duplicate current claim per case → integrity conflict (never first/newest).
-    const perCase = new Map<number, number>();
-    for (const r of all) if (r.ancillaryCaseId != null && !["voided", "superseded"].includes(r.canonicalStatus)) perCase.set(r.ancillaryCaseId, (perCase.get(r.ancillaryCaseId) ?? 0) + 1);
+    // Duplicate-current per case across the COMPLETE clinic set (not just the page):
+    // conflict ONLY when the ACTIVE working slot has >1 row or historical versions
+    // collide — valid submitted-history + a correction draft is NOT a conflict.
+    const agg = (await db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, input.clinicId), isNull(canonicalClaims.supersededAt))).limit(SCAN + 1)).filter((r) => r.clinicId === input.clinicId && r.supersededAt == null);
+    const aggTruncated = agg.length > SCAN;
+    if (aggTruncated) return shell("unavailable", ["duplicate_detection_truncated"]); // never render a possibly-stale page
+    const byCase = new Map<number, typeof agg>();
+    for (const r of agg) { if (r.ancillaryCaseId == null) continue; const arr = byCase.get(r.ancillaryCaseId) ?? []; arr.push(r); byCase.set(r.ancillaryCaseId, arr); }
+    const caseConflict = new Map<number, boolean>();
+    for (const [cid, rows] of byCase) caseConflict.set(cid, claimCaseIntegrity(rows) === "conflicting");
+    const perCaseConflict = (cid: number | null): boolean => cid != null && (caseConflict.get(cid) ?? false);
     const page = all.slice(0, limit);
     const nextCursor = all.length > limit && page.length ? encode(page[page.length - 1].id) : null;
     const rows: CanonicalClaimRow[] = page.map((r) => ({
@@ -80,12 +89,12 @@ async function buildClaims(clinicId: number, cursor: string | null | undefined, 
       billingReadinessCheckId: r.billingReadinessCheckId ?? null, evidenceFingerprint: r.evidenceFingerprint ?? null,
       currency: r.currency, chargeAmount: typeof r.chargeAmount === "string" ? r.chargeAmount : null,
       submissionBlockers: tally(((r.claimSubmissionBlockers as { code: string }[] | null) ?? [])),
-      warnings: r.ancillaryCaseId != null && (perCase.get(r.ancillaryCaseId) ?? 0) > 1 ? ["duplicate_current_evidence"] : [],
+      warnings: perCaseConflict(r.ancillaryCaseId) ? ["duplicate_current_evidence"] : [],
       submittedAt: iso(r.submittedAt), submissionSource: r.submissionSource ?? null,
-      integrity: r.ancillaryCaseId != null && (perCase.get(r.ancillaryCaseId) ?? 0) > 1 ? "conflicting" : "resolved",
+      integrity: perCaseConflict(r.ancillaryCaseId) ? "conflicting" : "resolved",
       evaluatedAt: iso(r.updatedAt),
     }));
-    return { availability: "available", warnings: raw.length >= SCAN ? ["counts_truncated"] : [], rows, pageInfo: { limit, nextCursor, returned: page.length } };
+    return { availability: aggTruncated ? "unavailable" : "available", warnings: aggTruncated ? ["duplicate_detection_truncated"] : [], rows, pageInfo: { limit, nextCursor, returned: page.length } };
   } catch (e) { return sectionFailure(e, () => shell("unavailable", ["claims_read_failed"])); }
 }
 
@@ -100,6 +109,15 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     if (after != null) conds.push(gt(canonicalInvoices.id, after));
     const raw = await db.select().from(canonicalInvoices).where(and(...conds)).orderBy(asc(canonicalInvoices.id)).limit(limit + 1);
     const all = raw.filter((r) => r.clinicId === input.clinicId && r.supersededAt == null && (after == null || r.id > after)).sort((a, b) => a.id - b.id);
+    // Per-CLAIM active-slot conflict across the COMPLETE clinic set (issued history +
+    // a correction draft is valid; two active working invoices for one claim is not).
+    const invAgg = (await db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, input.clinicId), isNull(canonicalInvoices.supersededAt))).limit(SCAN + 1)).filter((r) => r.clinicId === input.clinicId && r.supersededAt == null);
+    const invAggTruncated = invAgg.length > SCAN;
+    if (invAggTruncated) return shell("unavailable", ["duplicate_detection_truncated"]);
+    const invByClaim = new Map<number, typeof invAgg>();
+    for (const r of invAgg) { if (r.claimId == null) continue; const arr = invByClaim.get(r.claimId) ?? []; arr.push(r); invByClaim.set(r.claimId, arr); }
+    const claimConflict = new Map<number, boolean>();
+    for (const [k, rows] of invByClaim) claimConflict.set(k, invoiceClaimIntegrity(rows) === "conflicting");
     const page = all.slice(0, limit);
     const nextCursor = all.length > limit && page.length ? encode(page[page.length - 1].id) : null;
     // Balance derives from the COMPLETE allocation set for this bounded invoice
@@ -120,7 +138,8 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
       // refund/reversal → negations (effective net = apply − refund − reversal).
       const synth = (allocByInvoice.get(r.id) ?? []).map((a) => ({ currency: a.currency, amount: a.amount, eventType: a.eventType === "apply" ? "payment" : a.eventType, status: "posted", claimId: null, invoiceId: r.id } as never));
       const derived = deriveBalance({ currency: r.currency, originalAmountCents: amountOk ? originalCents : 0, ledger: synth });
-      const conflict = !amountOk || truncated || derived.integrity === "conflicting";
+      const versionConflict = r.claimId != null && (claimConflict.get(r.claimId) ?? false);
+      const conflict = !amountOk || truncated || versionConflict || derived.integrity === "conflicting";
       const balance = conflict
         ? { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, ...(amountOk ? [] : ["invoice_amount_invalid"]), ...(truncated ? ["balance_ledger_truncated"] : [])] }
         : derived;
@@ -129,10 +148,10 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
         invoiceType: r.invoiceType, recipientType: r.recipientType ?? null, status: r.canonicalStatus, invoiceNumber: r.invoiceNumber ?? null,
         claimId: r.claimId ?? null, currency: r.currency, totalAmount: typeof r.totalAmount === "string" ? r.totalAmount : null,
         balance, issuedAt: iso(r.issuedAt), deliveredAt: iso(r.deliveredAt),
-        warnings: amountOk ? [] : ["invoice_amount_invalid"], integrity: conflict ? "conflicting" : "resolved",
+        warnings: [...(amountOk ? [] : ["invoice_amount_invalid"]), ...(versionConflict ? ["duplicate_active_invoice"] : [])], integrity: conflict ? "conflicting" : "resolved",
       };
     });
-    return { availability: "available", warnings: truncated ? ["balance_ledger_truncated"] : [], rows, pageInfo: { limit, nextCursor, returned: page.length } };
+    return { availability: invAggTruncated ? "unavailable" : "available", warnings: [...(truncated ? ["balance_ledger_truncated"] : []), ...(invAggTruncated ? ["duplicate_detection_truncated"] : [])], rows, pageInfo: { limit, nextCursor, returned: page.length } };
   } catch (e) { return sectionFailure(e, () => shell("unavailable", ["invoices_read_failed"])); }
 }
 

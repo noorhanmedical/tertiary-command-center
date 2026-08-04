@@ -30,11 +30,19 @@ function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, s
 function readinessRow(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, claimBlockers: [], warnings: [], ...o }; }
 // An exact approved claim charge (amount source vocabulary + reconciled lines +
 // required fields). Tests override pieces to exercise the readiness contract.
+function claimFields() {
+  return {
+    service_code: { value: "SVC", sourceType: "approved_fee_schedule" }, units: { value: "1", sourceType: "approved_fee_schedule" },
+    place_of_service: { value: "11", sourceType: "facility_registry" }, facility: { value: "FAC", sourceType: "facility_registry" },
+    rendering_provider: { value: "RP", sourceType: "credentialing_registry" }, billing_provider: { value: "BP", sourceType: "credentialing_registry" },
+    payer: { value: "PAYER", sourceType: "payer_contract" }, coverage_reference: { value: "COV", sourceType: "payer_contract" },
+  };
+}
 function claimCharge(o: Record<string, unknown> = {}) {
   return {
     amountSource: "approved_fee_schedule", currency: "USD", chargeAmount: "420.00",
     lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }],
-    fields: { service_code: "SVC", units: "1", place_of_service: "11", rendering_provider: "RP", billing_provider: "BP", facility: "FAC", payer: "PAYER", coverage_reference: "COV" },
+    fields: claimFields(),
     ...o,
   };
 }
@@ -218,6 +226,24 @@ async function testViewPagination() {
   const r = await runWithDb(spec(t, { claims }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1, limit: 2 }));
   assert.equal(r.claims.rows.length, 2, "(86) bounded claim pagination"); assert.ok(r.claims.pageInfo.nextCursor, "(89) deterministic cursor");
 }
+async function testViewHistoryNotDuplicate() {
+  const t = await loadCanonicalTables(); const v = await view();
+  // A submitted historical attempt + a correction draft for the SAME case is VALID
+  // and must NOT read as a duplicate-current conflict.
+  const valid = await runWithDb(spec(t, { claims: [claimRow({ id: 700, canonicalStatus: "submitted", attemptNumber: 1 }), claimRow({ id: 701, canonicalStatus: "draft", attemptNumber: 2 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  assert.ok(valid.claims.rows.every((x) => x.integrity === "resolved"), "(1/30) submitted history + correction draft is not a conflict");
+  // TWO active working attempts for one case IS a conflict.
+  const dup = await runWithDb(spec(t, { claims: [claimRow({ id: 700, canonicalStatus: "draft", attemptNumber: 1 }), claimRow({ id: 701, canonicalStatus: "ready", attemptNumber: 2 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
+  assert.ok(dup.claims.rows.every((x) => x.integrity === "conflicting"), "(3/31) two active working claims conflict");
+}
+async function testViewDuplicateAcrossPagination() {
+  const t = await loadCanonicalTables(); const v = await view();
+  // Two active drafts for case 5 exist, but they fall on DIFFERENT pages — the
+  // duplicate must still be detected via the complete-set aggregation.
+  const claims = [claimRow({ id: 700, ancillaryCaseId: 5, canonicalStatus: "draft" }), claimRow({ id: 701, ancillaryCaseId: 9, canonicalStatus: "draft" }), claimRow({ id: 702, ancillaryCaseId: 5, canonicalStatus: "ready" })];
+  const r = await runWithDb(spec(t, { claims }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1, limit: 1 }));
+  assert.equal(r.claims.rows.length, 1); assert.equal(r.claims.rows[0].integrity, "conflicting", "(5) duplicate detection works across pagination boundaries");
+}
 
 // ═══ Route auth / flags / migration ═══
 function fakeApp() { const map: Record<string, Function[]> = {}; return { app: { get: (p: string, ...h: Function[]) => { map[`GET ${p}`] = h; }, post: (p: string, ...h: Function[]) => { map[`POST ${p}`] = h; } } as never, map }; }
@@ -272,6 +298,8 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(90) view conflict + batched", testViewConflictAndBatch],
   ["(20) cross-clinic excluded", testViewCrossClinic],
   ["(86/89) pagination bounded", testViewPagination],
+  ["(1/3) history not duplicate; active dup conflicts", testViewHistoryNotDuplicate],
+  ["(5) duplicate detection across pagination", testViewDuplicateAcrossPagination],
   ["(16-19) route auth", testRouteAuth],
   ["(5/93) route flag off disabled", testRouteFlagOffDisabled],
   ["route allowed roles", testRouteAllowedRoles],

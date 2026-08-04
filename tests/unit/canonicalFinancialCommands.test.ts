@@ -27,7 +27,17 @@ const ALL = {
 // ── fixtures ──
 function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", globalPlexusPatientId: 900, patientClinicMembershipId: 800, ...o }; }
 function readinessRow(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, claimBlockers: [], warnings: [], ...o }; }
-function charge(o: Record<string, unknown> = {}) { return { amountSource: "approved_fee_schedule", currency: "USD", chargeAmount: "420.00", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], fields: { service_code: "S", units: "1", place_of_service: "11", rendering_provider: "RP", billing_provider: "BP", facility: "F", payer: "P", coverage_reference: "C" }, ...o }; }
+// Field-specific provenance: each required field carries {value, sourceType} where
+// sourceType is approved FOR THAT FIELD (a fee schedule can't prove payer/provider).
+function chargeFields() {
+  return {
+    service_code: { value: "S", sourceType: "approved_fee_schedule" }, units: { value: "1", sourceType: "approved_fee_schedule" },
+    place_of_service: { value: "11", sourceType: "facility_registry" }, facility: { value: "F", sourceType: "facility_registry" },
+    rendering_provider: { value: "RP", sourceType: "credentialing_registry" }, billing_provider: { value: "BP", sourceType: "credentialing_registry" },
+    payer: { value: "P", sourceType: "payer_contract" }, coverage_reference: { value: "C", sourceType: "payer_contract" },
+  };
+}
+function charge(o: Record<string, unknown> = {}) { return { amountSource: "approved_fee_schedule", currency: "USD", chargeAmount: "420.00", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], fields: chargeFields(), ...o }; }
 function docRow(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, globalPlexusPatientId: 900, patientClinicMembershipId: 800, sourceData: { claimCharge: charge() }, ...o }; }
 function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, currency: "USD", chargeAmount: "420.00", amountSource: "approved_fee_schedule", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], globalPlexusPatientId: 900, patientClinicMembershipId: 800, ...o }; }
 function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1-800", currency: "USD", totalAmount: "420.00", supersededAt: null, evidenceFingerprint: "fp-1", ...o }; }
@@ -213,9 +223,14 @@ async function testPaymentInvalid() {
 }
 async function testPaymentExternalDedup() {
   const t = await loadCanonicalTables(); const p = await paymentCmd();
-  const spec = baseSpec(t, { canonicalPayments: { select: () => [paymentRow({ id: 900, externalTransactionId: "X-1" })], onInsert: ins(901) } });
+  // Exact same intent (clinic/type/amount/currency/case/service/source) → reused.
+  const dupRow = { id: 900, clinicId: 1, ancillaryCaseId: null, serviceType: null, paymentType: "processor_import", amount: "5.00", currency: "USD", sourceSystem: "x", externalTransactionId: "X-1", eventType: "payment", status: "posted" };
+  const spec = baseSpec(t, { canonicalPayments: { select: () => [dupRow], onInsert: ins(901) } });
   const r = await runWithDb(spec, ALL, async () => p.recordCanonicalPayment({ clinicId: 1, paymentType: "processor_import", currency: "USD", amount: "5.00", externalTransactionId: "X-1", actorUserId: "u", actorRole: "biller", sourceSystem: "x", idempotencyKey: "p2" }));
-  assert.ok(r.status === "reused" && r.paymentId === 900, "(30) duplicate external transaction converges");
+  assert.ok(r.status === "reused" && r.paymentId === 900, "(26) exact-duplicate external transaction reuses");
+  // Different amount for the same external txn → conflict (never reuse a different intent).
+  const conf = await runWithDb(spec, ALL, async () => p.recordCanonicalPayment({ clinicId: 1, paymentType: "processor_import", currency: "USD", amount: "9.99", externalTransactionId: "X-1", actorUserId: "u", actorRole: "biller", sourceSystem: "x", idempotencyKey: "p3" }));
+  assert.equal(conf.status, "external_transaction_conflict", "(27) external transaction different amount conflicts");
 }
 async function testAllocateAndDerivePaid() {
   const t = await loadCanonicalTables(); const p = await paymentCmd();
