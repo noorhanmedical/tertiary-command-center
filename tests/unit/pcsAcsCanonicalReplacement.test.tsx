@@ -146,7 +146,9 @@ async function testShellUsesComposition() {
   const pcsPage = readFileSync(join(ROOT, "client/src/pages/patient-care-specialist-portal.tsx"), "utf8");
   assert.ok(/return <ClinicWorkflowPortal role="patientCareSpecialist"/.test(pcsPage) && !/min-h-screen/.test(pcsPage), "PCS page always mounts the shell, no standalone page");
 }
-async function testNoMigration0056() { const { readdirSync } = await import("node:fs"); assert.ok(!readdirSync(join(ROOT, "migrations")).some((f) => f.startsWith("0056")), "no migration 0056"); }
+// Phase 2J owns migration 0056 (canonical claim/invoice/payment lifecycle); the
+// forbidden-next boundary is now 0057.
+async function testNoMigration0057() { const { readdirSync } = await import("node:fs"); assert.ok(!readdirSync(join(ROOT, "migrations")).some((f) => f.startsWith("0057")), "no migration 0057"); }
 
 const tests: Array<[string, () => Promise<void>]> = [
   ["(1/4/5/6/7) real composition PCS", testRealCompositionPcs],
@@ -157,7 +159,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["ACS view renders, no mock", testAcsViewRenders],
   ["flags default OFF", testFlagsDefaultOff],
   ["shell uses production composition", testShellUsesComposition],
-  ["no migration 0056", testNoMigration0056],
+  ["no migration 0057", testNoMigration0057],
 ];
 async function run() {
   let failed = 0;

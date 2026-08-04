@@ -5,7 +5,8 @@
 // behavioral component tests (rendered with a crafted DTO). Read-only; no actions.
 
 import {
-  CANONICAL_STAGE_ORDER, type CaseStageVector, type StageStatus, type CanonicalStageKey,
+  CANONICAL_STAGE_ORDER, CANONICAL_FINANCIAL_STAGE_KEYS,
+  type CaseStageVector, type StageStatus, type CanonicalStageKey,
 } from "@shared/canonicalStageVector";
 
 const STAGE_LABELS: Record<CanonicalStageKey, string> = {
@@ -13,7 +14,11 @@ const STAGE_LABELS: Record<CanonicalStageKey, string> = {
   orderNote: "Order Note", procedure: "Procedure", report: "Report",
   procedureNote: "Procedure Note", signature: "Signature",
   billingReadiness: "Billing Readiness", billingDocument: "Billing Document",
+  claim: "Claim", invoice: "Invoice", payment: "Payment",
 };
+// Phase 2J financial stages render only when their 2J flag is ON. While
+// `upstream_flag_off` they are hidden, so with 2J OFF this surface is unchanged.
+const FINANCIAL_STAGES = new Set<CanonicalStageKey>(CANONICAL_FINANCIAL_STAGE_KEYS);
 
 function fmt(ts: string | null): string {
   if (!ts) return "";
@@ -54,7 +59,11 @@ export function StageVectorView({ v }: { v: CaseStageVector }) {
         </span>
       </div>
       <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
-        {CANONICAL_STAGE_ORDER.map((k) => (
+        {CANONICAL_STAGE_ORDER.filter((k) => {
+          if (!FINANCIAL_STAGES.has(k)) return true;                 // core stages always render
+          const s = v[k] as StageStatus | undefined;                 // financial: render only when enabled
+          return s != null && s.availability !== "upstream_flag_off";
+        }).map((k) => (
           <StageCell key={k} label={STAGE_LABELS[k]} s={v[k]} testId={`stage-${k}-${v.ancillaryCaseId}`} />
         ))}
       </div>

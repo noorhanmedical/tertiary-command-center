@@ -184,6 +184,25 @@ export const featureFlags = {
    *  facts only). Requires the full Billing Document runtime IN ADDITION to this
    *  flag — see billingDocumentGeneratorEnabled(). Default OFF. generatedByAi=false. */
   billingDocumentGenerator: readBool("FEATURE_BILLING_DOCUMENT_GENERATOR", false),
+
+  // ── Phase 2J — canonical claim / invoice / payment lifecycle (migration 0056) ──
+  // All default OFF ⇒ zero migration-0056 reads/writes; the Phase 4 operational
+  // invoice desk + legacy Finance mock rows are untouched. None auto-enables an
+  // upstream flag.
+  /** Enables the canonical claim-readiness evaluator + versioned claim lifecycle,
+   *  built from the EXACT current Billing Document evidence version. Requires the
+   *  full Billing Document runtime (see canonicalClaimsRuntimeEnabled). */
+  canonicalClaims: readBool("FEATURE_CANONICAL_CLAIMS", false),
+  /** Enables the canonical (ancillary-case, evidence-versioned) invoice lifecycle
+   *  derived from a canonical claim. Requires canonical claims. */
+  canonicalInvoices: readBool("FEATURE_CANONICAL_INVOICES", false),
+  /** Enables the canonical append-only payment ledger + derived balances.
+   *  Requires canonical claims. */
+  canonicalPayments: readBool("FEATURE_CANONICAL_PAYMENTS", false),
+  /** Present-but-inert gate for external claim transmission. There is NO tenant-safe
+   *  transmission adapter in the repo — this flag does NOT imply transmission exists
+   *  and gates only the documented external boundary. Default OFF. */
+  canonicalClaimTransmission: readBool("FEATURE_CANONICAL_CLAIM_TRANSMISSION", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;
@@ -242,4 +261,21 @@ export function billingDocumentRuntimeEnabled(): boolean {
 /** The Billing Document generator requires the full document runtime AND its flag. */
 export function billingDocumentGeneratorEnabled(): boolean {
   return billingDocumentRuntimeEnabled() && featureFlags.billingDocumentGenerator;
+}
+
+/**
+ * Phase 2J runtime gates. A canonical claim is built from the EXACT current Billing
+ * Document, so claims sit at the END of the canonical chain and require the full
+ * Billing Document runtime (which itself requires every upstream 2A–2G stage) PLUS
+ * their own flag. Invoices require claims; payments require claims. Any partial
+ * combination returns false so no migration-0056 read/write occurs.
+ */
+export function canonicalClaimsRuntimeEnabled(): boolean {
+  return billingDocumentRuntimeEnabled() && featureFlags.canonicalClaims;
+}
+export function canonicalInvoicesRuntimeEnabled(): boolean {
+  return canonicalClaimsRuntimeEnabled() && featureFlags.canonicalInvoices;
+}
+export function canonicalPaymentsRuntimeEnabled(): boolean {
+  return canonicalClaimsRuntimeEnabled() && featureFlags.canonicalPayments;
 }

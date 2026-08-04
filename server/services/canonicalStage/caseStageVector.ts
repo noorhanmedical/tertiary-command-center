@@ -31,6 +31,9 @@ import { db } from "../../db";
 import { and, eq, isNull, inArray } from "drizzle-orm";
 import { canonicalBillingReadinessChecks } from "@shared/schema/billingReadiness";
 import { canonicalBillingDocumentRequests } from "@shared/schema/billingDocuments";
+import { canonicalClaims } from "@shared/schema/canonicalClaims";
+import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
+import { canonicalPayments } from "@shared/schema/canonicalPayments";
 import {
   ancillaryDocumentReferences,
   ORDER_NOTE_SOURCE_TABLE, PROCEDURE_NOTE_SOURCE_TABLE, REPORT_SOURCE_TABLE,
@@ -45,6 +48,7 @@ import type { PatientAncillaryCase } from "@shared/schema/ancillaryCases";
 import {
   featureFlags, billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled,
   procedureNoteRuntimeEnabled,
+  canonicalClaimsRuntimeEnabled, canonicalInvoicesRuntimeEnabled, canonicalPaymentsRuntimeEnabled,
 } from "../../lib/featureFlags";
 import {
   CANONICAL_STAGE_ORDER, type CaseStageVector, type StageStatus, type StageAvailability,
@@ -160,6 +164,17 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const billingDocLoad = docGate ? await loadOrNull(() => db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), isNull(canonicalBillingDocumentRequests.supersededAt), inArray(canonicalBillingDocumentRequests.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
   const billingDocByCase = groupArray(billingDocLoad, (d) => d.ancillaryCaseId, caseIds, (d) => d.clinicId === clinicId && d.supersededAt == null);
 
+  // ── Canonical claim / invoice / payment (Phase 2J), current non-superseded ──
+  const claimGate = canonicalClaimsRuntimeEnabled();
+  const claimLoad = claimGate ? await loadOrNull(() => db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), isNull(canonicalClaims.supersededAt), inArray(canonicalClaims.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
+  const claimByCase = groupArray(claimLoad, (r) => r.ancillaryCaseId, caseIds, (r) => r.clinicId === clinicId && r.supersededAt == null);
+  const invoiceGate = canonicalInvoicesRuntimeEnabled();
+  const invoiceLoad = invoiceGate ? await loadOrNull(() => db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), isNull(canonicalInvoices.supersededAt), inArray(canonicalInvoices.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
+  const invoiceByCase = groupArray(invoiceLoad, (r) => r.ancillaryCaseId, caseIds, (r) => r.clinicId === clinicId && r.supersededAt == null);
+  const paymentGate = canonicalPaymentsRuntimeEnabled();
+  const paymentLoad = paymentGate ? await loadOrNull(() => db.select().from(canonicalPayments).where(and(eq(canonicalPayments.clinicId, clinicId), inArray(canonicalPayments.ancillaryCaseId, caseIds))).limit(SCAN_LIMIT)) : null;
+  const paymentByCase = groupArray(paymentLoad, (r) => r.ancillaryCaseId, caseIds, (r) => r.clinicId === clinicId);
+
   const ctx: Ctx = {
     clinicId, adminGate, adminByCase, adminOk: adminLoad?.ok ?? true,
     engagementGate, membershipsByCase,
@@ -168,6 +183,9 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
     procGate, procOk: procLoad?.ok ?? true, procByCase,
     readinessGate, readinessOk: readinessLoad?.ok ?? true, readinessByCase,
     docGate, docOk: billingDocLoad?.ok ?? true, billingDocByCase,
+    claimGate, claimOk: claimLoad?.ok ?? true, claimByCase,
+    invoiceGate, invoiceOk: invoiceLoad?.ok ?? true, invoiceByCase,
+    paymentGate, paymentOk: paymentLoad?.ok ?? true, paymentByCase,
   };
   return cases.map((c) => buildOne(c, ctx));
 }
@@ -183,6 +201,9 @@ type Ctx = {
   procGate: boolean; procOk: boolean; procByCase: Map<number, typeof procedureEvents.$inferSelect[]>;
   readinessGate: boolean; readinessOk: boolean; readinessByCase: Map<number, typeof canonicalBillingReadinessChecks.$inferSelect[]>;
   docGate: boolean; docOk: boolean; billingDocByCase: Map<number, typeof canonicalBillingDocumentRequests.$inferSelect[]>;
+  claimGate: boolean; claimOk: boolean; claimByCase: Map<number, typeof canonicalClaims.$inferSelect[]>;
+  invoiceGate: boolean; invoiceOk: boolean; invoiceByCase: Map<number, typeof canonicalInvoices.$inferSelect[]>;
+  paymentGate: boolean; paymentOk: boolean; paymentByCase: Map<number, typeof canonicalPayments.$inferSelect[]>;
 };
 
 function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
@@ -256,7 +277,34 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
   // evidence fingerprint) ──
   const billingDocument = resolveBillingDocStage(ctx, c, svc, readinessPick.row);
 
-  const stages: Record<CanonicalStageKey, StageStatus> = { adminReview, engagement, appointment, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument };
+  // ── Phase 2J financial stages (single current per case+service; conflict on >1;
+  // upstream_flag_off when the 2J flag is OFF → non-blocking, non-rendered). ──
+  const claim = resolveSourceStage(ctx.claimGate, ctx.claimOk, "canonical_claims_flag_off", "claim_read_failed", () => {
+    const all = ctx.claimByCase.get(c.id) ?? [];
+    const wrongSvc = all.some((r) => r.serviceType !== svc);
+    const qualifying = all.filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
+    return { pick: pickSingle(qualifying), toStage: (r: typeof qualifying[number]) => stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.submittedAt ?? r.updatedAt), available: r.canonicalStatus != null }), wrongSvc, wrongCode: "claim_wrong_service" };
+  });
+  const invoice = resolveSourceStage(ctx.invoiceGate, ctx.invoiceOk, "canonical_invoices_flag_off", "invoice_read_failed", () => {
+    const all = ctx.invoiceByCase.get(c.id) ?? [];
+    const wrongSvc = all.some((r) => r.serviceType !== svc);
+    const qualifying = all.filter((r) => r.serviceType === svc && !["voided", "superseded"].includes(r.canonicalStatus));
+    return { pick: pickSingle(qualifying), toStage: (r: typeof qualifying[number]) => stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.issuedAt), available: r.canonicalStatus != null }), wrongSvc, wrongCode: "invoice_wrong_service" };
+  });
+  // Payment stage: the ledger is append-only, so it is never "single current". The
+  // stage is `posted` once at least one posted collection event exists (PHI-free,
+  // no amounts), `pending` otherwise. Never fabricates paid/zero.
+  const payment = (() => {
+    if (!ctx.paymentGate) return upstreamOff("canonical_payments_flag_off");
+    if (!ctx.paymentOk) return unavailable("payment_read_failed");
+    const all = (ctx.paymentByCase.get(c.id) ?? []).filter((r) => r.serviceType === svc);
+    const posted = all.filter((r) => r.eventType === "payment" && r.status === "posted");
+    if (posted.length === 0) return stage({ status: all.length ? "pending" : null, availability: "available", available: false });
+    let maxAt = -Infinity; for (const p of posted) { const ts = new Date((p.postedAt ?? p.receivedAt) as unknown as Date).getTime(); if (Number.isFinite(ts) && ts > maxAt) maxAt = ts; }
+    return stage({ status: "posted", availability: "available", available: true, at: Number.isFinite(maxAt) ? new Date(maxAt).toISOString() : null });
+  })();
+
+  const stages: Record<CanonicalStageKey, StageStatus> = { adminReview, engagement, appointment, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument, claim, invoice, payment };
   const { currentStage, currentStageIntegrity } = deriveCurrentStage(stages);
 
   return {
@@ -269,6 +317,7 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
       warnings: (c.globalPlexusPatientId == null || c.patientClinicMembershipId == null) ? ["identity_incomplete"] : [],
     },
     adminReview, engagement, appointment, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument,
+    claim, invoice, payment,
     currentStage, currentStageIntegrity,
   };
 }
@@ -385,6 +434,10 @@ function isComplete(key: CanonicalStageKey, s: StageStatus): boolean {
     case "signature": return st === "signed";
     case "billingReadiness": return st === "ready_to_generate" || st === "billing_document_generated";
     case "billingDocument": return st === "generated" || st === "approved";
+    // Phase 2J financial stages — complete only at their exact terminal states.
+    case "claim": return st === "paid" || st === "accepted";
+    case "invoice": return st === "paid";
+    case "payment": return st === "posted";
     default: return false;
   }
 }
