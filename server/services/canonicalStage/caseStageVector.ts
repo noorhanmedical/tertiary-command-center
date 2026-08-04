@@ -315,16 +315,22 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     if (postedPayments.length === 0 && allocs.length === 0) return stage({ status: null, availability: "available", available: false });
     let appliedC = 0, refundedC = 0, totalC: number | null = null, bad = false;
     try {
-      appliedC = sumCents(allocs.map((a) => toCents(a.amount)));
-      refundedC = sumCents(events.filter((r) => (r.eventType === "refund" || r.eventType === "reversal") && r.status !== "failed").map((r) => toCents(r.amount)));
+      // Effective net applied = Σ apply − Σ (refund + reversal) allocation rows.
+      appliedC = sumCents(allocs.filter((a) => a.eventType === "apply").map((a) => toCents(a.amount)));
+      refundedC = sumCents(allocs.filter((a) => a.eventType === "refund" || a.eventType === "reversal").map((a) => toCents(a.amount)));
       totalC = totalStr != null ? toCents(totalStr) : null;
     } catch { bad = true; }
     if (bad) return conflictStage("payment_amount_conflict");
     const netApplied = appliedC - refundedC;
-    if (refundedC > 0 && netApplied <= 0) return stage({ status: refundedC >= appliedC ? "reversed" : "refunded", availability: "available", available: false });
+    // Fully negated → refunded/reversed (reopened); never completes.
+    if (appliedC > 0 && netApplied <= 0) return stage({ status: refundedC >= appliedC ? "reversed" : "refunded", availability: "available", available: false });
     if (netApplied <= 0) return stage({ status: "unapplied", availability: "available", available: false });
     if (totalC == null) return conflictStage("payment_target_unresolved");
+    // Overpayment takes precedence over the partial-refund label when a residual net
+    // still exceeds the target total.
     if (netApplied > totalC) return stage({ status: "overpaid", availability: "available", available: false });
+    // A partial negation with a residual applied balance below the total is partially_refunded.
+    if (refundedC > 0) return stage({ status: "partially_refunded", availability: "available", available: false });
     if (netApplied === totalC) return stage({ status: "paid", availability: "available", available: true });
     return stage({ status: "partially_paid", availability: "available", available: false });
   })();

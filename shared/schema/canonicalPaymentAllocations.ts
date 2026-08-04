@@ -14,6 +14,10 @@ import { canonicalPayments } from "./canonicalPayments";
 
 export const CANONICAL_ALLOCATION_TARGET_TYPES = ["claim", "invoice"] as const;
 export type CanonicalAllocationTargetType = (typeof CANONICAL_ALLOCATION_TARGET_TYPES)[number];
+// apply = money applied to a target; refund/reversal = a NEW append-only row that
+// names an exact parent apply-allocation (originals are never mutated).
+export const CANONICAL_ALLOCATION_EVENT_TYPES = ["apply", "refund", "reversal", "adjustment"] as const;
+export type CanonicalAllocationEventType = (typeof CANONICAL_ALLOCATION_EVENT_TYPES)[number];
 
 export const canonicalPaymentAllocations = pgTable("canonical_payment_allocations", {
   id: serial("id").primaryKey(),
@@ -21,6 +25,8 @@ export const canonicalPaymentAllocations = pgTable("canonical_payment_allocation
   clinicId: integer("clinic_id").notNull().references(() => clinics.id, { onDelete: "no action" }),
   ancillaryCaseId: integer("ancillary_case_id"),
   serviceType: text("service_type"),
+  eventType: text("event_type").notNull().default("apply"),
+  parentAllocationId: integer("parent_allocation_id"),
   targetType: text("target_type").notNull(),          // claim | invoice
   targetId: integer("target_id").notNull(),
   currency: text("currency").notNull().default("USD"),
@@ -28,6 +34,7 @@ export const canonicalPaymentAllocations = pgTable("canonical_payment_allocation
   isOverpayment: integer("is_overpayment").notNull().default(0), // 0/1 — explicit overpayment flag
   reason: text("reason"),
   idempotencyKey: text("idempotency_key"),
+  commandFingerprint: text("command_fingerprint"),
   actorUserId: varchar("actor_user_id"),
   sourceSystem: text("source_system"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),

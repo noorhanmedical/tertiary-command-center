@@ -116,8 +116,9 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     const rows: CanonicalInvoiceRow[] = page.map((r) => {
       let originalCents = 0; let amountOk = true;
       try { originalCents = r.totalAmount != null ? toCents(r.totalAmount) : 0; } catch { amountOk = false; }
-      // Synthesize the ledger from applied allocations (paid = sum of allocations).
-      const synth = (allocByInvoice.get(r.id) ?? []).map((a) => ({ currency: a.currency, amount: a.amount, eventType: "payment", status: "posted", claimId: null, invoiceId: r.id } as never));
+      // Synthesize the ledger from the COMPLETE allocation set: apply → collected,
+      // refund/reversal → negations (effective net = apply − refund − reversal).
+      const synth = (allocByInvoice.get(r.id) ?? []).map((a) => ({ currency: a.currency, amount: a.amount, eventType: a.eventType === "apply" ? "payment" : a.eventType, status: "posted", claimId: null, invoiceId: r.id } as never));
       const derived = deriveBalance({ currency: r.currency, originalAmountCents: amountOk ? originalCents : 0, ledger: synth });
       const conflict = !amountOk || truncated || derived.integrity === "conflicting";
       const balance = conflict

@@ -66,6 +66,23 @@ export function deriveBalance(input: BalanceInput): CanonicalBalance {
 
 function safeStr(cents: number): string { try { return centsToString(cents); } catch { return "0.00"; } }
 
+// ─── Effective allocation math (allocation-specific negations) ───────────────
+export type AllocationRow = { eventType: string; amount: string; parentAllocationId?: number | null; id?: number };
+/** EFFECTIVE net applied to a target = Σ apply − Σ (refund + reversal). Adjustment
+ *  rows shift owed, handled by the caller. Throws on malformed money. */
+export function netAppliedCents(allocs: AllocationRow[]): number {
+  const applies = allocs.filter((a) => a.eventType === "apply").map((a) => toCents(a.amount));
+  const negs = allocs.filter((a) => a.eventType === "refund" || a.eventType === "reversal").map((a) => toCents(a.amount));
+  return sumCents(applies) - sumCents(negs);
+}
+/** Remaining negatable amount of ONE parent apply-allocation = its amount − Σ of the
+ *  refund/reversal rows that name it. Never below zero. */
+export function parentNegationRemainingCents(parent: { id: number; amount: string }, allocs: AllocationRow[]): number {
+  const applied = toCents(parent.amount);
+  const negated = sumCents(allocs.filter((a) => (a.eventType === "refund" || a.eventType === "reversal") && a.parentAllocationId === parent.id).map((a) => toCents(a.amount)));
+  return Math.max(0, applied - negated);
+}
+
 // ─── Payment allocation validators (pure) ────────────────────────────────────
 export type AllocationCheck = { ok: true } | { ok: false; code: string };
 

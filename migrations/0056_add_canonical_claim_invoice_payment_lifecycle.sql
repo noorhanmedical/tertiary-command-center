@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS canonical_claims (
   charge_amount                      numeric(12,2),
   line_items                         jsonb NOT NULL DEFAULT '[]'::jsonb,
   amount_source                      text,
+  -- Exact validated claim fields + their approved provenance (persisted verbatim).
+  claim_fields                       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  field_provenance                   jsonb NOT NULL DEFAULT '{}'::jsonb,
   -- Submission provenance (only from an exact authorized source / attestation).
   submitted_at                       timestamp,
   submission_source                  text,
@@ -194,10 +197,13 @@ CREATE TABLE IF NOT EXISTS canonical_payments (
   invoice_id                         integer REFERENCES canonical_invoices(id) ON DELETE NO ACTION,
   event_type                         text NOT NULL DEFAULT 'payment', -- payment|refund|reversal|adjustment
   payment_type                       text NOT NULL DEFAULT 'manual',  -- patient|payer|manual|processor_import|remittance_import
-  status                             text NOT NULL DEFAULT 'posted',  -- posted|reversed|failed
+  -- NEVER default to posted: an unverified insert is 'pending'. A validated command
+  -- sets 'posted' explicitly with exact source + actor provenance.
+  status                             text NOT NULL DEFAULT 'pending',  -- pending|imported|posted|reversed|failed
   currency                           text NOT NULL DEFAULT 'USD',
   amount                             numeric(12,2) NOT NULL,
   external_transaction_id            text,
+  command_fingerprint                text,
   -- Refund/reversal lineage (a new ledger event that points at the posted event).
   reverses_payment_id                integer REFERENCES canonical_payments(id) ON DELETE NO ACTION,
   reason                             text,
@@ -210,7 +216,7 @@ CREATE TABLE IF NOT EXISTS canonical_payments (
   -- NO updated_at: rows are immutable (append-only). Corrections are new events.
   CONSTRAINT ck_cp_event_type CHECK (event_type IN ('payment','refund','reversal','adjustment')),
   CONSTRAINT ck_cp_payment_type CHECK (payment_type IN ('patient','payer','manual','processor_import','remittance_import')),
-  CONSTRAINT ck_cp_status CHECK (status IN ('posted','reversed','failed')),
+  CONSTRAINT ck_cp_status CHECK (status IN ('pending','imported','posted','reversed','failed')),
   CONSTRAINT ck_cp_currency_nonempty CHECK (length(btrim(currency)) > 0),
   -- payment/refund/reversal amounts must be positive; adjustment may be signed.
   CONSTRAINT ck_cp_amount_positive CHECK (event_type = 'adjustment' OR amount > 0),
@@ -239,6 +245,10 @@ CREATE TABLE IF NOT EXISTS canonical_payment_allocations (
   clinic_id                          integer NOT NULL REFERENCES clinics(id) ON DELETE NO ACTION,
   ancillary_case_id                  integer REFERENCES patient_ancillary_cases(id) ON DELETE NO ACTION,
   service_type                       text,
+  -- Allocation-specific negations are NEW append-only rows that name an exact parent
+  -- apply-allocation; original rows are never mutated.
+  event_type                         text NOT NULL DEFAULT 'apply',   -- apply|refund|reversal|adjustment
+  parent_allocation_id               integer REFERENCES canonical_payment_allocations(id) ON DELETE NO ACTION,
   target_type                        text NOT NULL,          -- claim | invoice
   target_id                          integer NOT NULL,
   currency                           text NOT NULL DEFAULT 'USD',
@@ -246,13 +256,17 @@ CREATE TABLE IF NOT EXISTS canonical_payment_allocations (
   is_overpayment                     integer NOT NULL DEFAULT 0,
   reason                             text,
   idempotency_key                    text,
+  command_fingerprint                text,
   actor_user_id                      varchar,
   source_system                      text,
   created_at                         timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT ck_cpa_event_type CHECK (event_type IN ('apply','refund','reversal','adjustment')),
   CONSTRAINT ck_cpa_target_type CHECK (target_type IN ('claim','invoice')),
   CONSTRAINT ck_cpa_currency_nonempty CHECK (length(btrim(currency)) > 0),
   CONSTRAINT ck_cpa_amount_positive CHECK (amount > 0),
-  CONSTRAINT ck_cpa_overpayment_flag CHECK (is_overpayment IN (0,1))
+  CONSTRAINT ck_cpa_overpayment_flag CHECK (is_overpayment IN (0,1)),
+  -- Refund/reversal allocations MUST name an exact parent apply-allocation.
+  CONSTRAINT ck_cpa_negation_lineage CHECK (event_type NOT IN ('refund','reversal') OR parent_allocation_id IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_cpa_payment ON canonical_payment_allocations(payment_id);
 CREATE INDEX IF NOT EXISTS idx_cpa_clinic ON canonical_payment_allocations(clinic_id);
@@ -279,6 +293,9 @@ CREATE TABLE IF NOT EXISTS canonical_financial_transitions (
   source_type                        text,
   source_reference                   text,
   idempotency_key                    text,
+  -- Deterministic fingerprint of the FULL command intent bound to the idempotency
+  -- key: same key + same fingerprint → replay; same key + different → conflict.
+  command_fingerprint                text,
   created_at                         timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT ck_cft_entity_type CHECK (entity_type IN ('claim','invoice','payment','allocation'))
 );

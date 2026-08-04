@@ -65,6 +65,10 @@ export const canonicalClaims = pgTable("canonical_claims", {
   chargeAmount: numeric("charge_amount", { precision: 12, scale: 2 }),
   lineItems: jsonb("line_items").notNull().default([]),
   amountSource: text("amount_source"),
+  // Exact validated claim fields + their approved provenance (persisted verbatim
+  // from the readiness evaluator; never re-derived from arbitrary sourceData).
+  claimFields: jsonb("claim_fields").notNull().default({}),
+  fieldProvenance: jsonb("field_provenance").notNull().default({}),
   submittedAt: timestamp("submitted_at"),
   submissionSource: text("submission_source"),
   submissionReference: text("submission_reference"),

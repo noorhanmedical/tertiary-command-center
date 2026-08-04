@@ -27,7 +27,7 @@ const ALL = {
 
 // ── builders ──
 function acase(o: Record<string, unknown> = {}) { return { id: 5, clinicId: 1, serviceType: "BrainWave", ...o }; }
-function readinessRow(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, claimBlockers: [], warnings: [], ...o }; }
+function readinessRow(o: Record<string, unknown> = {}) { return { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, claimBlockers: [], warnings: [], ...o }; }
 // An exact approved claim charge (amount source vocabulary + reconciled lines +
 // required fields). Tests override pieces to exercise the readiness contract.
 function claimCharge(o: Record<string, unknown> = {}) {
@@ -42,7 +42,7 @@ function billingDocRow(o: Record<string, unknown> = {}) { return { id: 600, clin
 function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", currency: "USD", chargeAmount: "420.00", claimSubmissionBlockers: [], warnings: [], submittedAt: null, submissionSource: null, updatedAt: OLD, ...o }; }
 function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", invoiceNumber: "INV-1", currency: "USD", totalAmount: "420.00", supersededAt: null, issuedAt: OLD, deliveredAt: null, warnings: [], ...o }; }
 function paymentRow(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, invoiceId: 800, eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "100.00", externalTransactionId: null, reversesPaymentId: null, postedAt: OLD, ...o }; }
-function allocRow(o: Record<string, unknown> = {}) { return { id: 950, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", targetType: "invoice", targetId: 800, currency: "USD", amount: "100.00", isOverpayment: 0, ...o }; }
+function allocRow(o: Record<string, unknown> = {}) { return { id: 950, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "100.00", isOverpayment: 0, ...o }; }
 
 function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; cases?: unknown[]; readiness?: unknown[]; docs?: unknown[]; claimsMig?: boolean; invoicesErr?: boolean } = {}) {
   const mig = () => { throw Object.assign(new Error("relation missing"), { code: "42P01" }); };

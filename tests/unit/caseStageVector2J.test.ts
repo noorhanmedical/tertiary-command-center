@@ -41,7 +41,7 @@ function billingDoc(o: Record<string, unknown> = {}) { return { id: 600, clinicI
 function claim(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", supersededAt: null, submittedAt: null, updatedAt: OLD, chargeAmount: "420.00", ...o }; }
 function invoice(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "issued", supersededAt: null, issuedAt: OLD, totalAmount: "420.00", ...o }; }
 function payment(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", status: "posted", postedAt: OLD, receivedAt: OLD, amount: "420.00", ...o }; }
-function alloc(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", paymentId: 900, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
+function alloc(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", paymentId: 900, eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
 
 type Opts = { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; claimsMig?: boolean };
 function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts = {}) {
@@ -109,10 +109,18 @@ async function testUnappliedDoesNotComplete() {
 }
 async function testRefundReopens() {
   const t = await loadCanonicalTables();
-  // 420 applied then 420 refunded ⇒ net zero ⇒ reversed/refunded, stage reopened.
-  const v = await build(t, { claims: [claim({ canonicalStatus: "paid" })], invoices: [invoice()], payments: [payment(), payment({ id: 901, eventType: "refund", reversesPaymentId: 900, amount: "420.00" })], allocations: [alloc({ amount: "420.00" })] }, WITH_2J);
+  // 420 applied then 420 refunded (allocation-specific negation) ⇒ net zero ⇒
+  // reversed/refunded, stage reopened.
+  const v = await build(t, { claims: [claim({ canonicalStatus: "paid" })], invoices: [invoice()], payments: [payment()], allocations: [alloc({ id: 950, amount: "420.00" }), alloc({ id: 951, eventType: "refund", parentAllocationId: 950, amount: "420.00" })] }, WITH_2J);
   assert.ok(v.payment.status === "reversed" || v.payment.status === "refunded", "(58) refund changes stage");
   assert.notEqual(v.currentStage, null, "refund reopens the lifecycle");
+}
+async function testPartialRefund() {
+  const t = await loadCanonicalTables();
+  // 420 applied then 100 refunded ⇒ net 320 residual ⇒ partially_refunded, not complete.
+  const v = await build(t, { claims: [claim({ canonicalStatus: "paid" })], invoices: [invoice()], payments: [payment()], allocations: [alloc({ id: 950, amount: "420.00" }), alloc({ id: 951, eventType: "refund", parentAllocationId: 950, amount: "100.00" })] }, WITH_2J);
+  assert.equal(v.payment.status, "partially_refunded", "(33/34) partial refund reopens balance");
+  assert.notEqual(v.currentStage, null);
 }
 async function testClaimConflict() {
   const t = await loadCanonicalTables();
@@ -144,6 +152,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(55) partial payment does not complete", testPartialPaymentDoesNotComplete],
   ["(57) unapplied payment does not complete", testUnappliedDoesNotComplete],
   ["(58) refund reopens the stage", testRefundReopens],
+  ["(33/34) partial refund → partially_refunded", testPartialRefund],
   ["duplicate current claim → conflict", testClaimConflict],
   ["posted event alone never paid", testPaymentPostedNotPaid],
   ["missing claim table → 503", testClaimMigration503],

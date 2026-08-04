@@ -29,6 +29,7 @@ export const canonicalFinancialTransitions = pgTable("canonical_financial_transi
   sourceType: text("source_type"),
   sourceReference: text("source_reference"),
   idempotencyKey: text("idempotency_key"),
+  commandFingerprint: text("command_fingerprint"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_cft_entity").on(table.entityType, table.entityId),

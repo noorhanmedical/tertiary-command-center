@@ -22,23 +22,31 @@ const SUPPORTED_CURRENCIES = new Set(["USD"]);
  *  source_data.claim_charge. Absent/partial → blockers (never invented). */
 type ClaimChargeSource = {
   amountSource?: unknown; currency?: unknown; chargeAmount?: unknown;
-  lineItems?: unknown; fields?: Record<string, unknown>;
+  lineItems?: unknown; fields?: Record<string, unknown>; fieldProvenance?: Record<string, unknown>;
   requiresDiagnosis?: unknown; requiresAuthorization?: unknown;
+};
+
+/** The exact validated charge payload — persisted VERBATIM by the command service
+ *  (never re-read/reinterpreted from arbitrary sourceData after this succeeds). */
+export type ValidatedClaimCharge = {
+  chargeAmount: string; amountSource: string; currency: string;
+  lineItems: MoneyLine[]; fields: Record<string, string>; fieldProvenance: Record<string, string>;
 };
 
 /** Validate the approved claim charge: exact amount source, supported currency,
  *  reconciled line items, total = sum of lines, and every required coding/provider/
- *  payer field present from an approved source. Returns exact charge + blockers. */
-function evaluateClaimCharge(sd: { claimCharge?: ClaimChargeSource } | null): { chargeAmount: string | null; amountSource: string | null; blockers: { code: string }[] } {
+ *  payer field present from an approved source. Returns the exact validated payload
+ *  ONLY when there are zero blockers. */
+function evaluateClaimCharge(sd: { claimCharge?: ClaimChargeSource } | null): { charge: ValidatedClaimCharge | null; blockers: { code: string }[] } {
   const cc = sd?.claimCharge ?? null;
   const blockers: { code: string }[] = [];
-  if (!cc || typeof cc !== "object") { return { chargeAmount: null, amountSource: null, blockers: [{ code: "claim_amount_source_missing" }] }; }
+  if (!cc || typeof cc !== "object") { return { charge: null, blockers: [{ code: "claim_amount_source_missing" }] }; }
   const amountSource = typeof cc.amountSource === "string" && AMOUNT_SOURCES.has(cc.amountSource) ? cc.amountSource : null;
   if (amountSource == null) blockers.push({ code: "claim_amount_source_invalid" });
   const currency = typeof cc.currency === "string" ? cc.currency.trim() : "";
   if (!currency || !SUPPORTED_CURRENCIES.has(currency)) blockers.push({ code: "claim_currency_unsupported" });
   // Line items must reconcile exactly, and the claim total must equal their sum.
-  let chargeAmount: string | null = null;
+  let chargeAmount: string | null = null; let lineItems: MoneyLine[] = [];
   const rawLines = Array.isArray(cc.lineItems) ? cc.lineItems : null;
   if (!rawLines || rawLines.length === 0) blockers.push({ code: "claim_line_items_missing" });
   else {
@@ -51,18 +59,28 @@ function evaluateClaimCharge(sd: { claimCharge?: ClaimChargeSource } | null): { 
       if (declared == null) blockers.push({ code: "claim_charge_amount_invalid" });
       else if (declared !== rec.totalCents) blockers.push({ code: "claim_total_line_mismatch" });
       else if (declared < 0) blockers.push({ code: "claim_charge_amount_negative" });
-      else chargeAmount = typeof cc.chargeAmount === "string" ? cc.chargeAmount : null;
+      else { chargeAmount = cc.chargeAmount as string; lineItems = lines; }
     }
   }
   // Every required field must be present from an approved source (never invented).
-  const fields = (cc.fields && typeof cc.fields === "object") ? cc.fields : {};
-  for (const f of CANONICAL_CLAIM_REQUIRED_FIELDS) {
-    const v = fields[f];
-    if (v == null || (typeof v === "string" && v.trim().length === 0)) blockers.push({ code: `claim_field_missing_${f}` });
+  const rawFields = (cc.fields && typeof cc.fields === "object") ? cc.fields : {};
+  const rawProv = (cc.fieldProvenance && typeof cc.fieldProvenance === "object") ? cc.fieldProvenance : {};
+  const fields: Record<string, string> = {}; const fieldProvenance: Record<string, string> = {};
+  const required = [...CANONICAL_CLAIM_REQUIRED_FIELDS] as string[];
+  if (cc.requiresDiagnosis === true) required.push("diagnosis");
+  if (cc.requiresAuthorization === true) required.push("authorization");
+  for (const f of required) {
+    const v = rawFields[f];
+    if (v == null || (typeof v === "string" && v.trim().length === 0)) { blockers.push({ code: `claim_field_missing_${f}` }); continue; }
+    fields[f] = String(v);
+    // Provenance must itself be an approved source — never an arbitrary string.
+    const p = rawProv[f];
+    if (typeof p === "string" && AMOUNT_SOURCES.has(p)) fieldProvenance[f] = p;
+    else if (amountSource != null) fieldProvenance[f] = amountSource; // inherit the exact approved amount source
+    else blockers.push({ code: `claim_field_provenance_invalid_${f}` });
   }
-  if (cc.requiresDiagnosis === true) { const v = fields["diagnosis"]; if (v == null || (typeof v === "string" && !v.trim())) blockers.push({ code: "claim_field_missing_diagnosis" }); }
-  if (cc.requiresAuthorization === true) { const v = fields["authorization"]; if (v == null || (typeof v === "string" && !v.trim())) blockers.push({ code: "claim_field_missing_authorization" }); }
-  return { chargeAmount: blockers.length ? null : chargeAmount, amountSource, blockers };
+  if (blockers.length > 0 || chargeAmount == null || amountSource == null || !currency) return { charge: null, blockers };
+  return { charge: { chargeAmount, amountSource, currency, lineItems, fields, fieldProvenance }, blockers };
 }
 
 export type CaseRef = { clinicId: number; ancillaryCaseId: number; serviceType: string };
@@ -79,6 +97,11 @@ export type ClaimEvidence = {
   patientClinicMembershipId: number | null;
   chargeAmount: string | null;
   amountSource: string | null;
+  // The complete validated charge payload — persisted verbatim by the command.
+  currency: string | null;
+  lineItems: MoneyLine[];
+  fields: Record<string, string>;
+  fieldProvenance: Record<string, string>;
 };
 
 export type ClaimReadinessResult = {
@@ -131,6 +154,10 @@ export function evaluateClaimReadiness(
     const rr = (r[k] as number | null) ?? null, dd = (d[k] as number | null) ?? null;
     if (rr !== dd) return notReady([{ code: "evidence_reference_mismatch" }], [], "conflicting");
   }
+  // Procedure-event agreement — normalize both sides to null; require exact equality
+  // whenever EITHER is non-null (present/null, null/present, or different → reject).
+  const rPE = (r.procedureEventId as number | null) ?? null, dPE = (d.procedureEventId as number | null) ?? null;
+  if (rPE !== dPE) return notReady([{ code: "evidence_procedure_event_mismatch" }], [], "conflicting");
   // Readiness + Billing Document must be in a state that permits claim progression.
   if (!READINESS_ALLOWS_CLAIM.has(r.canonicalStatus ?? "")) return notReady([{ code: "billing_readiness_not_claim_ready" }], [], "missing");
   if (!DOC_CURRENT_STATUSES.has(d.canonicalStatus ?? "")) return notReady([{ code: "billing_document_not_current" }], [], "missing");
@@ -145,20 +172,20 @@ export function evaluateClaimReadiness(
   // entry) carried on source_data.claim_charge — never defaulted to zero, never
   // invented, and an arbitrary non-empty string never qualifies. Line items must
   // reconcile and the total must equal their exact sum.
-  const charge = evaluateClaimCharge((d.sourceData as { claimCharge?: ClaimChargeSource } | null) ?? null);
-  const chargeAmount = charge.chargeAmount;
-  const amountSource = charge.amountSource;
-  blockers.push(...charge.blockers);
+  const { charge, blockers: chargeBlockers } = evaluateClaimCharge((d.sourceData as { claimCharge?: ClaimChargeSource } | null) ?? null);
+  blockers.push(...chargeBlockers);
 
   const evidence: ClaimEvidence = {
     billingReadinessCheckId: r.id, billingDocumentId: d.id, evidenceFingerprint: rfp,
     orderNoteDocumentReferenceId: (d.orderNoteDocumentReferenceId as number | null) ?? null,
     reportDocumentReferenceId: (d.reportDocumentReferenceId as number | null) ?? null,
     procedureNoteDocumentReferenceId: (d.procedureNoteDocumentReferenceId as number | null) ?? null,
-    procedureEventId: (d.procedureEventId as number | null) ?? null,
+    procedureEventId: dPE,
     globalPlexusPatientId: (d.globalPlexusPatientId as number | null) ?? null,
     patientClinicMembershipId: (d.patientClinicMembershipId as number | null) ?? null,
-    chargeAmount, amountSource,
+    chargeAmount: charge?.chargeAmount ?? null, amountSource: charge?.amountSource ?? null,
+    currency: charge?.currency ?? null, lineItems: charge?.lineItems ?? [],
+    fields: charge?.fields ?? {}, fieldProvenance: charge?.fieldProvenance ?? {},
   };
   if (blockers.length > 0) return { claimReady: false, status: "not_ready", blockers, warnings: [], integrity: "resolved", evidence };
   return { claimReady: true, status: "ready", blockers: [], warnings: [], integrity: "resolved", evidence };
