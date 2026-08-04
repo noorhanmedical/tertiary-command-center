@@ -29,6 +29,15 @@ export const featureFlags = {
    *  NOT auto-enable upstream canonical flags; each overview section checks its own
    *  upstream runtime gate and is marked unavailable (never zero) when that is OFF. */
   clinicianPortalCanonicalData: readBool("FEATURE_CLINICIAN_PORTAL_CANONICAL_DATA", false),
+  /** Phase 2I — serves the canonical PCS (Patient Care Specialist) stage-vector read
+   *  model. Default OFF ⇒ the endpoint returns an explicit disabled contract before any
+   *  canonical read; the PCS workspace renders exactly as before. Does NOT auto-enable
+   *  any upstream canonical flag; each stage reports its own upstream gate truthfully. */
+  pcsCanonicalView: readBool("FEATURE_PCS_CANONICAL_VIEW", false),
+  /** Phase 2I — serves the canonical ACS (Ancillary Care Specialist) stage-vector read
+   *  model. Independent of the PCS flag so the two surfaces roll out separately. Default
+   *  OFF ⇒ explicit disabled contract before any canonical read. */
+  acsCanonicalView: readBool("FEATURE_ACS_CANONICAL_VIEW", false),
 
   // ─── Phase 2A — Global Plexus patient identity ─────────────────
   // Both flags default OFF. The corresponding SQL migration

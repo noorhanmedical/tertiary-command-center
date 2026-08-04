@@ -198,3 +198,77 @@ acceptance, no unrecoverable retry, no destructive migration). Deferred:
   message (`getQueryFn` throws `"<status>: <body>"`). Both branches are truthful
   non-zero error states (never a zero-count render), so this is cosmetic; a
   structured error surfaced by a custom `queryFn` would be cleaner.
+
+## Phase 2I — PCS/ACS canonical views (closeout review)
+
+None block Phase 2I under the frozen gate (no cross-clinic disclosure, no identity
+collision/demographic fallback, no episode merging, no false current stage, no
+superseded-as-current, no mock in canonical mode, no claims/invoice/payment, no
+unauthorized access, no unbounded/N+1, migration-missing → 503, no failed-section-
+as-zero, no unrelated redesign; check/tests/build/manifest green).
+
+- **Admin roles are allow-listed but scope-denied in production.** `/api/pcs`
+  and `/api/acs/canonical-view` include `admin` in their role sets, but
+  `clinicContext` sets `req.clinicId = null` for admins, so `requireClinicScope`
+  returns 403. This is the deliberate 2H fail-closed pattern (prevents any
+  cross-clinic admin read); a clinic-selector / explicit server-context clinic
+  for admins would be needed to actually serve admins. Pinned by the intended
+  contract (missing clinic scope → 403). Not a boundary risk.
+
+- **PCS identity-display reads are not migration-wrapped.** In
+  `pcsCanonicalView.ts`, the `global_plexus_patients` / `patient_clinic_memberships`
+  display-name reads run outside `loadOrNull`; a missing 0049 table still yields a
+  truthful 503 (the raw pg `42P01` propagates and the route's migration set catches
+  it), but an ordinary read failure there fails the whole request rather than
+  degrading to "display unavailable". Consider wrapping them so display-only
+  failures degrade gracefully. Not a correctness/boundary risk (identity is never
+  inferred from demographics; only the authorized display name is affected).
+
+- **`iso()` double-wraps already-Date values** (`caseStageVector.ts`) — harmless
+  `new Date(existingDate)`; noted for symmetry only.
+
+## Phase 2I truth closeout (independent review)
+
+Zero blockers, zero majors. Deferred MINOR/HARDENING:
+
+- **Billing Document fingerprint null-null equality edge.**
+  `server/services/canonicalStage/caseStageVector.ts` binds the current Billing
+  Document to the current readiness by `billingReadinessCheckId` (authoritative) AND
+  `evidenceFingerprint`. When BOTH fingerprints are null the `!==` check passes
+  vacuously — not a staleness bypass today (the id binding guarantees the doc points
+  at the current readiness row), but if Phase 2G ever writes a null fingerprint the
+  fingerprint check degrades to a no-op. Hardening: treat a null fingerprint on
+  either side as unverifiable → `billing_document_stale_fingerprint` + status null.
+- **Stage-vector identity `available` default is loose.** In `buildOne`,
+  `identity.available` defaults to `globalPlexusPatientId != null && membershipId
+  != null` without a verified membership. Safe today (display fields are hard-null
+  there so no PHI leaks, PCS overwrites the whole identity block via
+  `verifyCaseIdentity`, ACS never renders display), but defaulting `available:false`
+  would be symmetric so the flag can never read "available" without proof.
+
+## Phase 2I final acceptance (independent review)
+
+Zero blockers, zero majors — ACCEPT. Deferred MINOR/HARDENING:
+
+- **`isTerminalHalt` lists only `procedure`.** A cancelled/no_show *appointment*
+  halts progression correctly because `isComplete("appointment")` excludes those
+  statuses (deriveCurrentStage stops there), but the halt is implicit for
+  appointments rather than explicit in `isTerminalHalt`. Cosmetic — behavior is
+  correct and tested.
+- **Appointment `blocked`/`pending_sync` coverage.** The current-leaf status is
+  preserved status-agnostically (never coerced to "missing"); `cancelled`/`no_show`
+  are asserted and `blocked`/`pending_sync` are now covered by the terminal-status
+  loop. Noted for completeness.
+
+## Phase 2I retrievability closeout (independent review)
+
+Zero blockers, zero majors — all eight bounded areas satisfied. Deferred MINOR:
+
+- **Verified-window lossless guarantee is ordering-contingent.** `loadVerifiedStream`
+  relies on Postgres honoring `ORDER BY (patient_clinic_membership_id, id) LIMIT
+  window+1` so the completeness boundary is deterministic; the in-memory re-sort
+  mirrors it. A now-added comment flags that no non-deterministic scan may reshape
+  the window; a covering index would make the ordering guaranteed cheap.
+- **`loadUnresolvedStream` membership fetch bound.** Memberships are loaded with
+  `.limit(PCS_UNRESOLVED_MAX_LIMIT * 2)`, safe under the ≤1-membership-per-case-id
+  invariant. Noted for completeness.
