@@ -40,7 +40,7 @@ function chargeFields() {
 function charge(o: Record<string, unknown> = {}) { return { amountSource: "approved_fee_schedule", currency: "USD", chargeAmount: "420.00", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], fields: chargeFields(), ...o }; }
 function docRow(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, globalPlexusPatientId: 900, patientClinicMembershipId: 800, sourceData: { claimCharge: charge() }, ...o }; }
 function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, currency: "USD", chargeAmount: "420.00", amountSource: "approved_fee_schedule", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], globalPlexusPatientId: 900, patientClinicMembershipId: 800, ...o }; }
-function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1-800", currency: "USD", totalAmount: "420.00", supersededAt: null, evidenceFingerprint: "fp-1", ...o }; }
+function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1-800", currency: "USD", totalAmount: "420.00", supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...o }; }
 function paymentRow(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "420.00", reversesPaymentId: null, ...o }; }
 function applyAlloc(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
 function negAlloc(o: Record<string, unknown> = {}) { return { id: 951, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "refund", parentAllocationId: 950, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
@@ -238,6 +238,7 @@ async function testAllocateAndDerivePaid() {
   // Payment 420 fully allocated to a 420 invoice → invoice derived paid.
   const spec = baseSpec(t, {
     canonicalPayments: { select: () => [paymentRow({ id: 900, amount: "420.00" })] },
+    canonicalClaims: { select: () => [claimRow()] },
     canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "issued", totalAmount: "420.00" })], onUpdate: (v) => [{ ...v, id: 800 }] },
     canonicalPaymentAllocations: { select: () => [], onInsert: ins(950) },
   });
@@ -248,6 +249,7 @@ async function testAllocatePartial() {
   const t = await loadCanonicalTables(); const p = await paymentCmd();
   const spec = baseSpec(t, {
     canonicalPayments: { select: () => [paymentRow({ id: 900, amount: "100.00" })] },
+    canonicalClaims: { select: () => [claimRow()] },
     canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "issued", totalAmount: "420.00" })], onUpdate: (v) => [{ ...v, id: 800 }] },
   });
   const r = await runWithDb(spec, ALL, async () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "invoice", targetId: 800, amount: "100.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a1" }));
@@ -288,6 +290,7 @@ async function testAllocateTargetUpdateFailClosed() {
   // allocation insert + transition roll back → conflict (never a false "allocated").
   const spec = baseSpec(t, {
     canonicalPayments: { select: () => [paymentRow({ id: 900, amount: "420.00" })] },
+    canonicalClaims: { select: () => [claimRow()] },
     canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "issued", totalAmount: "420.00" })], onUpdate: () => [] },
   });
   const r = await runWithDb(spec, ALL, async () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "invoice", targetId: 800, amount: "420.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a1" }));

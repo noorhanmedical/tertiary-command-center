@@ -53,7 +53,9 @@ export async function classify(acase: typeof patientAncillaryCases.$inferSelect)
   const readiness = (await db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), eq(canonicalBillingReadinessChecks.ancillaryCaseId, acase.id), isNull(canonicalBillingReadinessChecks.supersededAt))).limit(10)).filter((r) => r.clinicId === clinicId && r.ancillaryCaseId === acase.id);
   const docs = (await db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), eq(canonicalBillingDocumentRequests.ancillaryCaseId, acase.id), isNull(canonicalBillingDocumentRequests.supersededAt))).limit(10)).filter((r) => r.clinicId === clinicId && r.ancillaryCaseId === acase.id);
   if (docs.length === 0) { plan.outcomes.push("no_current_billing_document"); return plan; }
-  const result = evaluateClaimReadiness({ clinicId, ancillaryCaseId: acase.id, serviceType: acase.serviceType }, readiness, docs);
+  // Pass the case's verified identity so the §4 BD-identity check is active in the
+  // dry-run report (a BD pointing at the wrong patient is reported, not silently ready).
+  const result = evaluateClaimReadiness({ clinicId, ancillaryCaseId: acase.id, serviceType: acase.serviceType, verifiedGlobalPlexusPatientId: acase.globalPlexusPatientId ?? null, verifiedPatientClinicMembershipId: acase.patientClinicMembershipId ?? null }, readiness, docs);
   plan.blockers = result.blockers.map((b) => b.code);
   if (result.integrity === "conflicting") plan.outcomes.push("evidence_conflict");
   else if (result.claimReady) plan.outcomes.push("claim_ready");

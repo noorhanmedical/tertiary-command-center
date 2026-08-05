@@ -136,6 +136,28 @@ async function testTxLockReloadConflict() {
   const r = await runWithDb(spec, CHAIN, async () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "invoice", targetId: 800, amount: "1.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a" }));
   assert.equal(r.status, "conflict", "(35) target evidence changed before lock → conflict");
 }
+async function testAllocateLineageStaleTargetRejected() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  // A claim STILL payable (submitted) but whose global patient was merged AFTER
+  // creation. The read model flags it conflicting; the WRITE path must equally refuse
+  // to drive it to paid — a conflicting/invalid target can never produce paid.
+  const staleClaim = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, attemptNumber: 1, evidenceFingerprint: "fp-1", billingDocumentId: 600, billingReadinessCheckId: 500, globalPlexusPatientId: 900, patientClinicMembershipId: 800, submittedAt: OLD, submissionSource: "manual_attestation", currency: "USD", chargeAmount: "420.00", updatedAt: OLD };
+  const spec = new Map<unknown, TableSpec>([
+    [t.ancillaryCases, { select: () => [acase()] }], [t.memberships, { select: () => [pcm()] }], [t.globalPatients, { select: () => [gpp({ mergedIntoPatientId: 901 })] }],
+    [t.canonicalPayments, { select: () => [paymentRow()], onInsert: ins(901) }],
+    [t.canonicalClaims, { select: () => [staleClaim], onUpdate: (v) => [{ ...v, id: 700 }] }],
+    [t.canonicalInvoices, { select: () => [] }],
+    [t.canonicalPaymentAllocations, { select: () => [], onInsert: ins(960) }],
+    [t.canonicalFinancialTransitions, { select: () => [], onInsert: ins(1) }],
+  ]);
+  const r = await runWithDb(spec, CHAIN, async (calls: Call[]) => {
+    const res = await p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "claim", targetId: 700, amount: "420.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a" });
+    assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "no allocation inserted for a lineage-stale target");
+    assert.equal(countOps(calls, "update", t.canonicalClaims), 0, "lineage-stale target never driven to paid");
+    return res;
+  });
+  assert.ok(r.status === "allocation_rejected" && r.code === "claim_global_patient_merged", "(43) lineage-stale but payable target rejected before paid");
+}
 
 function applyParent(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
 function negBase(t: Awaited<ReturnType<typeof loadCanonicalTables>>, over: Partial<Record<string, TableSpec>> = {}) {
@@ -257,6 +279,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(28/29) external-txn case/amount conflict", testExternalTxnCaseCurrencyConflict],
   ["(30/31/33) allocation truncation bound", testAllocationTruncationBound],
   ["(35) tx-lock reload conflict", testTxLockReloadConflict],
+  ["(43) allocate lineage-stale target rejected", testAllocateLineageStaleTargetRejected],
   ["(26) negate truncation zero writes", testNegateAtomicTruncation],
   ["(27) negate missing target zero writes", testNegateMissingTarget],
   ["(28) negate superseded target zero writes", testNegateSupersededTarget],

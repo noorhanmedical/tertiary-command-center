@@ -272,3 +272,65 @@ Zero blockers, zero majors — all eight bounded areas satisfied. Deferred MINOR
 - **`loadUnresolvedStream` membership fetch bound.** Memberships are loaded with
   `.limit(PCS_UNRESOLVED_MAX_LIMIT * 2)`, safe under the ≤1-membership-per-case-id
   invariant. Noted for completeness.
+
+---
+
+## Phase 2J consolidated-audit hardening items
+
+Surfaced during the Phase 2J consolidated final audit (see
+`PHASE_2J_FINAL_TRACEABILITY_MATRIX.md`). All 26 frozen Phase 2J requirements are
+VERIFIED; the following are HARDENING-only and must NOT reopen/redesign Phase 2J.
+
+- **Refund does not free receipt capacity.** `paymentCommands.receiptApplied` sums all
+  `apply` allocations for a receipt without adding back allocation-specific refunds/
+  reversals, so a refunded allocation still consumes the receipt remainder. Safe and
+  conservative (can only under-allocate, never over-allocate); a future model could
+  return refunded capacity to the receipt.
+- **`adjustment` allocation event type has no command path.** The schema allows it and
+  `allocationLineage.validateTargetAllocationSet` fail-closes it. A later phase could
+  add an approved adjustment command (fee waiver / write-off) with provenance + a
+  defined balance sign.
+- **DB-level provenance CHECKs on entity tables.** Only `canonical_financial_transitions`
+  has `ck_cft_command_provenance`. Command-created claim/invoice/payment/allocation
+  rows always set idempotency_key/actor/source at the app layer; matching CHECKs on
+  those tables would add defence in depth.
+- **Explicit overpayment / credit ledger.** Allocation carries an `is_overpayment`
+  flag but there is no first-class overpayment surface.
+- **Exhaustive N+1 matrix at 1/25/100 cases.** Read model and stage vector are batched
+  (single `inArray` per relation, proven by the batched-read count test); an explicit
+  1/25/100-case count matrix could be added.
+- **Dedicated overflow test for stage identity/parent-claim loads.** These loads request
+  `SCAN_LIMIT+1` and fold into the stage truncation flags; a targeted overflow test
+  could be added (currently unreachable — page-bounded).
+- **Unified canonical Finance surface.** Per the accepted Phase 2H design, the canonical
+  financial ledger is an appended read-only panel; the legacy mock Finance page remains
+  behind the 2H flag (never coexisting). A future phase could unify them.
+
+### Consolidated-audit re-review items (MINOR/HARDENING)
+
+Surfaced by the Phase 2J consolidated final-audit independent review. The single MAJOR
+it found (write-path allocation could drive a lineage-stale-but-payable target to
+`paid`) was FIXED in the audit pass — `paymentCommands.validateTargetLineage` now runs
+the shared `validateClaimLineage`/`validateInvoiceLineage` inside `allocateCanonicalPayment`
+before the allocation insert. The following are deferred:
+
+- **Replay response reports `from: ""`.** `claimCommands.transitionCanonicalClaim` /
+  `invoiceCommands.transitionCanonicalInvoice` return an empty `from` on an idempotent
+  replay (the real prior status is not reloaded). Persistence is correct (no second
+  write); only the response contract field is inaccurate on replay. Fix: have
+  `resolveFinancialCommandRace` return the prior `fromStatus` from the audit row, or omit
+  `from` on replay.
+- **Refunded-then-recovered `paid` masks a residual refund at the stage level.**
+  `caseStageVector` reports `paid` (complete) when `netApplied === total` even after a
+  refund+re-pay, so the stage shows no residual refund signal. Matches the accepted
+  "only outstanding matters for completion" rule and the read-model invoice balance still
+  exposes `refundedAmount`, so no data is lost — flagged as a truthfulness nuance only.
+- **No distinct `imported` receipt path for processor/remittance imports.**
+  `recordCanonicalPayment` inserts `status:"posted"` for a validated command. A future
+  phase could map `IMPORT_TYPES` → `imported` (still non-collected, pending
+  reconciliation) to more faithfully model unverified imports before they are posted.
+- **Full refund reopens a claim to `submitted` rather than its pre-payment status.**
+  `paymentCommands.negateAllocation` derives the reopened claim status as `submitted`;
+  a claim allocated while `accepted` is reopened to `submitted`, silently downgrading
+  adjudication state. No false money (never creates `paid`). A future phase could reopen
+  to the pre-payment status captured at allocation time.
