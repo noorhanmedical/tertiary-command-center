@@ -94,6 +94,29 @@ export function validateNegationLineage(args: {
   return { ok: true };
 }
 
+export type ReceiptWideRef = { clinicId: number | null; currency: string | null; ancillaryCaseId: number | null; serviceType: string | null; amount: string | null };
+/** Receipt-WIDE: a single receipt's COMPLETE allocation set (across ALL its targets)
+ *  must agree with the receipt on clinic/currency/case/service, carry positive
+ *  parseable amounts, and never APPLY more than the receipt amount (Σ apply ≤ receipt).
+ *  A malformed or over-applied receipt conflicts every target it funds. */
+export function validateReceiptWide(receipt: ReceiptWideRef, allocs: AllocRow[]): LineageResult {
+  const cap = cents(receipt.amount);
+  if (cap == null) return { ok: false, code: "receipt_amount_invalid" };
+  let applied = 0;
+  for (const a of allocs) {
+    if ((a.clinicId ?? null) !== (receipt.clinicId ?? null)) return { ok: false, code: "receipt_allocation_wrong_clinic" };
+    if ((a.currency ?? null) !== (receipt.currency ?? null)) return { ok: false, code: "receipt_allocation_currency_mismatch" };
+    if (receipt.ancillaryCaseId != null && a.ancillaryCaseId != null && a.ancillaryCaseId !== receipt.ancillaryCaseId) return { ok: false, code: "receipt_allocation_wrong_case" };
+    if (receipt.serviceType != null && a.serviceType != null && a.serviceType !== receipt.serviceType) return { ok: false, code: "receipt_allocation_wrong_service" };
+    const c = cents(a.amount);
+    if (c == null || c <= 0) return { ok: false, code: "receipt_allocation_amount_invalid" };
+    if (a.eventType === "apply") applied += c;
+    else if (a.eventType !== "refund" && a.eventType !== "reversal") return { ok: false, code: "receipt_allocation_event_type_invalid" };
+  }
+  if (applied > cap) return { ok: false, code: "receipt_over_allocated" };
+  return { ok: true };
+}
+
 export function sumNegationsForParent(allocs: AllocRow[], parentId: number): number {
   return sumCents(allocs.filter((a) => (a.eventType === "refund" || a.eventType === "reversal") && a.parentAllocationId === parentId).map((a) => cents(a.amount) ?? 0));
 }

@@ -37,7 +37,7 @@ import { canonicalPayments } from "@shared/schema/canonicalPayments";
 import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllocations";
 import { validateTargetAllocationSet } from "../canonicalFinancial/allocationLineage";
 import { selectStageClaim, selectStageInvoice } from "../canonicalFinancial/financialVersion";
-import { validateClaimLineage, validateInvoiceLineage } from "../canonicalFinancial/lineageValidators";
+import { validateClaimLineage, validateInvoiceLineage, type ClaimLineageCtx, type InvoiceLineageCtx } from "../canonicalFinancial/lineageValidators";
 import { patientClinicMemberships, globalPlexusPatients } from "@shared/schema/plexusIdentity";
 import { toCents, sumCents } from "@shared/money";
 import {
@@ -202,10 +202,25 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const memById = new Map((memLoad?.ok ? memLoad.rows : []).filter((m) => m.clinicId === clinicId).map((m) => [m.id, m]));
   const gpById = new Map((gpLoad?.ok ? gpLoad.rows : []).map((g) => [g.id, g]));
   const invoiceClaimById = new Map((invClaimLoad?.ok ? invClaimLoad.rows : []).filter((c) => c.clinicId === clinicId).map((c) => [c.id, c]));
+  // §2 exact Billing Document / readiness / parent-version context for the SAME
+  // COMPLETE lineage validators the read model uses (loaded by the claim/invoice's own
+  // id references, NOT by case), so stage and read model agree exactly.
+  const claimBdIds = [...new Set(claimRows.map((r) => r.billingDocumentId).filter((x): x is number => x != null))];
+  const claimRdIds = [...new Set(claimRows.map((r) => r.billingReadinessCheckId).filter((x): x is number => x != null))];
+  const claimParentIds = [...new Set(claimRows.map((r) => r.supersedesClaimId).filter((x): x is number => x != null))];
+  const invParentIds = [...new Set(invoiceRows.map((r) => r.supersedesInvoiceId).filter((x): x is number => x != null))];
+  const claimBdLoad = claimGate && claimBdIds.length ? await loadOrNull(() => db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), inArray(canonicalBillingDocumentRequests.id, claimBdIds))).limit(SCAN_LIMIT + 1)) : null;
+  const claimRdLoad = claimGate && claimRdIds.length ? await loadOrNull(() => db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), inArray(canonicalBillingReadinessChecks.id, claimRdIds))).limit(SCAN_LIMIT + 1)) : null;
+  const claimParentLoad = claimGate && claimParentIds.length ? await loadOrNull(() => db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), inArray(canonicalClaims.id, claimParentIds))).limit(SCAN_LIMIT + 1)) : null;
+  const invParentLoad = invoiceGate && invParentIds.length ? await loadOrNull(() => db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), inArray(canonicalInvoices.id, invParentIds))).limit(SCAN_LIMIT + 1)) : null;
+  const claimBdById = new Map((claimBdLoad?.ok ? claimBdLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
+  const claimRdById = new Map((claimRdLoad?.ok ? claimRdLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
+  const claimParentById = new Map((claimParentLoad?.ok ? claimParentLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
+  const invParentById = new Map((invParentLoad?.ok ? invParentLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
 
   const ctx: Ctx = {
-    memById, gpById, invoiceClaimById,
-    claimTrunc: trunc(claimLoad) || trunc(memLoad) || trunc(gpLoad), invoiceTrunc: trunc(invoiceLoad) || trunc(invClaimLoad), paymentTrunc: trunc(paymentLoad) || trunc(allocLoad),
+    memById, gpById, invoiceClaimById, claimBdById, claimRdById, claimParentById, invParentById,
+    claimTrunc: trunc(claimLoad) || trunc(memLoad) || trunc(gpLoad) || trunc(claimBdLoad) || trunc(claimRdLoad) || trunc(claimParentLoad), invoiceTrunc: trunc(invoiceLoad) || trunc(invClaimLoad) || trunc(invParentLoad), paymentTrunc: trunc(paymentLoad) || trunc(allocLoad),
     clinicId, adminGate, adminByCase, adminOk: adminLoad?.ok ?? true,
     engagementGate, membershipsByCase,
     apptGate, apptOk: apptLoad?.ok ?? true, apptByCase,
@@ -239,7 +254,41 @@ type Ctx = {
   memById: Map<number, typeof patientClinicMemberships.$inferSelect>;
   gpById: Map<number, typeof globalPlexusPatients.$inferSelect>;
   invoiceClaimById: Map<number, typeof canonicalClaims.$inferSelect>;
+  claimBdById: Map<number, typeof canonicalBillingDocumentRequests.$inferSelect>;
+  claimRdById: Map<number, typeof canonicalBillingReadinessChecks.$inferSelect>;
+  claimParentById: Map<number, typeof canonicalClaims.$inferSelect>;
+  invParentById: Map<number, typeof canonicalInvoices.$inferSelect>;
 };
+
+// Assemble the SAME COMPLETE lineage contexts the read model uses, from the stage
+// vector's by-id maps (identical validators → stage and read model agree exactly).
+function claimLineageCtx(ctx: Ctx, c: PatientAncillaryCase, r: typeof canonicalClaims.$inferSelect): ClaimLineageCtx {
+  const bd = r.billingDocumentId != null ? ctx.claimBdById.get(r.billingDocumentId) : undefined;
+  const rd = r.billingReadinessCheckId != null ? ctx.claimRdById.get(r.billingReadinessCheckId) : undefined;
+  const parent = r.supersedesClaimId != null ? ctx.claimParentById.get(r.supersedesClaimId) : undefined;
+  const ev = (x: typeof canonicalBillingDocumentRequests.$inferSelect | typeof canonicalBillingReadinessChecks.$inferSelect) => ({
+    clinicId: x.clinicId ?? null, ancillaryCaseId: x.ancillaryCaseId ?? null, serviceType: x.serviceType, supersededAt: x.supersededAt,
+    evidenceFingerprint: x.evidenceFingerprint ?? null, procedureEventId: x.procedureEventId ?? null,
+    orderNoteDocumentReferenceId: x.orderNoteDocumentReferenceId ?? null, reportDocumentReferenceId: x.reportDocumentReferenceId ?? null, procedureNoteDocumentReferenceId: x.procedureNoteDocumentReferenceId ?? null,
+    globalPlexusPatientId: x.globalPlexusPatientId ?? null, patientClinicMembershipId: x.patientClinicMembershipId ?? null,
+  });
+  return {
+    case: { clinicId: c.clinicId, serviceType: c.serviceType },
+    membership: (r.patientClinicMembershipId != null ? ctx.memById.get(r.patientClinicMembershipId) : null) ?? null,
+    globalPatient: (r.globalPlexusPatientId != null ? ctx.gpById.get(r.globalPlexusPatientId) : null) ?? null,
+    readiness: rd ? ev(rd) : null,
+    billingDocument: bd ? { ...ev(bd), billingReadinessCheckId: bd.billingReadinessCheckId ?? null } : null,
+    parentClaim: parent ? { clinicId: parent.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType, attemptNumber: parent.attemptNumber ?? null } : null,
+  };
+}
+function invoiceLineageCtx(ctx: Ctx, r: typeof canonicalInvoices.$inferSelect): InvoiceLineageCtx {
+  const claim = r.claimId != null ? ctx.invoiceClaimById.get(r.claimId) : undefined;
+  const parent = r.supersedesInvoiceId != null ? ctx.invParentById.get(r.supersedesInvoiceId) : undefined;
+  return {
+    claim: claim ? { clinicId: claim.clinicId, ancillaryCaseId: claim.ancillaryCaseId ?? null, serviceType: claim.serviceType, billingDocumentId: claim.billingDocumentId ?? null, billingReadinessCheckId: claim.billingReadinessCheckId ?? null, evidenceFingerprint: claim.evidenceFingerprint ?? null, currency: claim.currency, lineItems: claim.lineItems } : null,
+    parentInvoice: parent ? { clinicId: parent.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType, claimId: parent.claimId ?? null } : null,
+  };
+}
 
 function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
   const svc = c.serviceType;
@@ -321,7 +370,7 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     // §1 shared version selector + the SAME lineage validator the read model uses —
     // a stale/invalid selected claim → conflict (status null), never a false stage.
     return { pick: selectStageClaim(svcRows), toStage: (r: typeof svcRows[number]) => {
-      const lin = validateClaimLineage(r as never, { case: c, membership: (r.patientClinicMembershipId != null ? ctx.memById.get(r.patientClinicMembershipId) : null) ?? null, globalPatient: (r.globalPlexusPatientId != null ? ctx.gpById.get(r.globalPlexusPatientId) : null) ?? null });
+      const lin = validateClaimLineage(r as never, claimLineageCtx(ctx, c, r));
       return lin.ok ? stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.submittedAt ?? r.updatedAt), available: r.canonicalStatus != null }) : conflictStage("claim_lineage_conflict");
     }, wrongSvc, wrongCode: "claim_wrong_service" };
   });
@@ -332,8 +381,7 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     return { pick: selectStageInvoice(svcRows), toStage: (r: typeof svcRows[number]) => {
       // Exact claimId lookup (superseded parent claim is valid history) — same source
       // the read model uses, so stage and read model agree.
-      const claimCtx = r.claimId != null ? (ctx.invoiceClaimById.get(r.claimId) ?? null) : null;
-      const lin = validateInvoiceLineage(r as never, claimCtx as never);
+      const lin = validateInvoiceLineage(r as never, invoiceLineageCtx(ctx, r));
       return lin.ok ? stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.issuedAt), available: r.canonicalStatus != null }) : conflictStage("invoice_lineage_conflict");
     }, wrongSvc, wrongCode: "invoice_wrong_service" };
   });
@@ -360,12 +408,18 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     const invPick = selectStageInvoice(invAll);
     if (invPick.kind === "conflict") return conflictStage("payment_target_conflict");
     let targetType: "invoice" | "claim" | null = null, targetId: number | null = null, totalStr: string | null = null, targetCurrency: string | null = null;
-    if (invPick.kind === "one") { targetType = "invoice"; targetId = invPick.row.id; totalStr = (invPick.row.totalAmount as string | null) ?? null; targetCurrency = (invPick.row.currency as string | null) ?? null; }
+    let selectedInvoice: typeof invAll[number] | null = null, selectedClaim: typeof clmAll[number] | null = null;
+    if (invPick.kind === "one") { targetType = "invoice"; targetId = invPick.row.id; totalStr = (invPick.row.totalAmount as string | null) ?? null; targetCurrency = (invPick.row.currency as string | null) ?? null; selectedInvoice = invPick.row; }
     else {
       const clmPick = selectStageClaim(clmAll);
       if (clmPick.kind === "conflict") return conflictStage("payment_target_conflict");
-      if (clmPick.kind === "one") { targetType = "claim"; targetId = clmPick.row.id; totalStr = (clmPick.row.chargeAmount as string | null) ?? null; targetCurrency = (clmPick.row.currency as string | null) ?? null; }
+      if (clmPick.kind === "one") { targetType = "claim"; targetId = clmPick.row.id; totalStr = (clmPick.row.chargeAmount as string | null) ?? null; targetCurrency = (clmPick.row.currency as string | null) ?? null; selectedClaim = clmPick.row; }
     }
+    // §4 payment-target lineage gate — run the COMPLETE target lineage validator on the
+    // selected target BEFORE reading allocations or deriving any balance. A lineage-stale
+    // target can never yield paid/partial/refunded/reversed (status null, conflicting).
+    if (selectedInvoice != null && !validateInvoiceLineage(selectedInvoice as never, invoiceLineageCtx(ctx, selectedInvoice)).ok) return conflictStage("payment_target_lineage_conflict");
+    if (selectedClaim != null && !validateClaimLineage(selectedClaim as never, claimLineageCtx(ctx, c, selectedClaim)).ok) return conflictStage("payment_target_lineage_conflict");
     const allocs = targetType != null && targetId != null ? caseAllocs.filter((a) => a.targetType === targetType && a.targetId === targetId) : [];
     // §4/§5 receipt-aware allocation lineage for the exact target → conflict (never a balance).
     if (targetType != null && targetId != null && allocs.length > 0) {

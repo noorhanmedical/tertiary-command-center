@@ -17,10 +17,9 @@ import {
 } from "../../lib/featureFlags";
 import { deriveBalance } from "./balance";
 import { claimCaseIntegrity, invoiceClaimIntegrity } from "./financialVersion";
-import { validateTargetAllocationSet } from "./allocationLineage";
+import { validateTargetAllocationSet, validateReceiptWide } from "./allocationLineage";
 import { validateClaimLineage, validateInvoiceLineage } from "./lineageValidators";
-import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
-import { globalPlexusPatients, patientClinicMemberships } from "@shared/schema/plexusIdentity";
+import { loadClaimLineageContexts, loadInvoiceLineageContexts } from "./financialLineageContext";
 import { toCents } from "@shared/money";
 import {
   CANONICAL_FINANCIAL_VIEW_VERSION, FINANCIAL_DEFAULT_LIMIT, FINANCIAL_MAX_LIMIT,
@@ -86,16 +85,11 @@ async function buildClaims(clinicId: number, cursor: string | null | undefined, 
     const perCaseConflict = (cid: number | null): boolean => cid != null && (caseConflict.get(cid) ?? false);
     const page = all.slice(0, limit);
     const nextCursor = all.length > limit && page.length ? encode(page[page.length - 1].id) : null;
-    // §2 revalidate each page claim's lineage against the CURRENT case + identity
-    // (batched — no N+1). A now-stale/invalid row → integrity conflict, never a false
-    // canonical status.
-    const caseIds = [...new Set(page.map((r) => r.ancillaryCaseId).filter((x): x is number => x != null))];
-    const memIds = [...new Set(page.map((r) => r.patientClinicMembershipId).filter((x): x is number => x != null))];
-    const gpIds = [...new Set(page.map((r) => r.globalPlexusPatientId).filter((x): x is number => x != null))];
-    const caseById = new Map((caseIds.length ? (await db.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, input.clinicId), inArray(patientAncillaryCases.id, caseIds))).limit(SCAN)) : []).filter((x) => x.clinicId === input.clinicId).map((x) => [x.id, x]));
-    const memById = new Map((memIds.length ? (await db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, input.clinicId), inArray(patientClinicMemberships.id, memIds))).limit(SCAN)) : []).filter((x) => x.clinicId === input.clinicId).map((x) => [x.id, x]));
-    const gpById = new Map((gpIds.length ? (await db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gpIds)).limit(SCAN)) : []).map((x) => [x.id, x]));
-    const lineageConflict = (r: typeof page[number]): boolean => !validateClaimLineage(r as never, { case: (r.ancillaryCaseId != null ? caseById.get(r.ancillaryCaseId) : null) ?? null, membership: (r.patientClinicMembershipId != null ? memById.get(r.patientClinicMembershipId) : null) ?? null, globalPatient: (r.globalPlexusPatientId != null ? gpById.get(r.globalPlexusPatientId) : null) ?? null }).ok;
+    // §2 revalidate each page claim's COMPLETE lineage against the CURRENT case +
+    // identity + Billing Document + readiness + parent version (batched — no N+1).
+    // A now-stale/invalid row → integrity conflict, never a false canonical status.
+    const claimCtxById = await loadClaimLineageContexts(input.clinicId, page as never);
+    const lineageConflict = (r: typeof page[number]): boolean => !validateClaimLineage(r as never, claimCtxById.get(r.id) ?? {}).ok;
     const rowConflict = (r: typeof page[number]): boolean => perCaseConflict(r.ancillaryCaseId) || lineageConflict(r);
     const rows: CanonicalClaimRow[] = page.map((r) => ({
       claimId: r.id, ancillaryCaseId: r.ancillaryCaseId ?? -1, serviceType: r.serviceType, patientDisplay: null,
@@ -136,10 +130,10 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     for (const [k, rows] of invByClaim) claimConflict.set(k, invoiceClaimIntegrity(rows) === "conflicting");
     const page = all.slice(0, limit);
     const nextCursor = all.length > limit && page.length ? encode(page[page.length - 1].id) : null;
-    // §2 revalidate each page invoice against its exact CLAIM (batched — no N+1).
-    const claimIds = [...new Set(page.map((r) => r.claimId).filter((x): x is number => x != null))];
-    const claimById = new Map((claimIds.length ? (await db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, input.clinicId), inArray(canonicalClaims.id, claimIds))).limit(SCAN)) : []).filter((x) => x.clinicId === input.clinicId).map((x) => [x.id, x]));
-    const invLineageConflict = (r: typeof page[number]): boolean => !validateInvoiceLineage(r as never, (r.claimId != null ? claimById.get(r.claimId) : null) ?? null).ok;
+    // §2 revalidate each page invoice against its exact CLAIM + parent version + exact
+    // authorized lines + type/recipient/delivery provenance (batched — no N+1).
+    const invCtxById = await loadInvoiceLineageContexts(input.clinicId, page as never);
+    const invLineageConflict = (r: typeof page[number]): boolean => !validateInvoiceLineage(r as never, invCtxById.get(r.id) ?? { claim: null }).ok;
     // Balance derives from the COMPLETE allocation set for this bounded invoice
     // page (batched — one query, no per-invoice N+1). If the read could be
     // truncated (hits the cap), the affected balances are marked CONFLICTING rather
@@ -154,6 +148,28 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     // §4 batch-load the actual receipts for these allocations (no per-alloc read).
     const payIds = [...new Set(allocRaw.map((a) => a.paymentId).filter((x): x is number => x != null))];
     const receiptById = new Map((payIds.length ? (await db.select().from(canonicalPayments).where(and(eq(canonicalPayments.clinicId, input.clinicId), inArray(canonicalPayments.id, payIds))).limit(SCAN)) : []).filter((p) => p.clinicId === input.clinicId).map((p) => [p.id, p]));
+    // §5 receipt-WIDE truth: load each referenced receipt's COMPLETE allocation set
+    // across ALL its targets (SCAN+1 truncation detection) and prove Σapplies never
+    // exceed the receipt and every allocation agrees on clinic/currency/case/service.
+    // One receipt over-applied across other targets conflicts THIS invoice's balance.
+    const rwRaw = canonicalPaymentsRuntimeEnabled() && payIds.length
+      ? (await db.select().from(canonicalPaymentAllocations).where(and(eq(canonicalPaymentAllocations.clinicId, input.clinicId), inArray(canonicalPaymentAllocations.paymentId, payIds))).limit(SCAN + 1)).filter((a) => a.clinicId === input.clinicId && a.paymentId != null && payIds.includes(a.paymentId))
+      : [];
+    const receiptWideTruncated = rwRaw.length > SCAN;
+    const rwByReceipt = new Map<number, typeof rwRaw>();
+    for (const a of rwRaw) { if (a.paymentId == null) continue; const arr = rwByReceipt.get(a.paymentId) ?? []; arr.push(a); rwByReceipt.set(a.paymentId, arr); }
+    const receiptOk = (pid: number): boolean => {
+      const rcpt = receiptById.get(pid);
+      if (!rcpt) return false;
+      return validateReceiptWide({ clinicId: rcpt.clinicId, currency: rcpt.currency, ancillaryCaseId: rcpt.ancillaryCaseId ?? null, serviceType: rcpt.serviceType ?? null, amount: rcpt.amount }, (rwByReceipt.get(pid) ?? []) as never).ok;
+    };
+    const receiptWideConflict = (invId: number): boolean => {
+      const allocs = allocByInvoice.get(invId) ?? [];
+      if (allocs.length === 0) return false;
+      if (receiptWideTruncated) return true;               // completeness could not be proven
+      const pids = [...new Set(allocs.map((a) => a.paymentId).filter((x): x is number => x != null))];
+      return pids.some((pid) => !receiptOk(pid));
+    };
     const rows: CanonicalInvoiceRow[] = page.map((r) => {
       let originalCents = 0; let amountOk = true;
       try { originalCents = r.totalAmount != null ? toCents(r.totalAmount) : 0; } catch { amountOk = false; }
@@ -166,16 +182,17 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
       const synth = invAllocs.map((a) => ({ currency: a.currency, amount: a.amount, eventType: a.eventType === "apply" ? "payment" : a.eventType, status: "posted", claimId: null, invoiceId: r.id } as never));
       const derived = deriveBalance({ currency: r.currency, originalAmountCents: amountOk ? originalCents : 0, ledger: synth });
       const versionConflict = r.claimId != null && (claimConflict.get(r.claimId) ?? false);
-      const conflict = !amountOk || truncated || versionConflict || !lineageOk || invLineageConflict(r) || derived.integrity === "conflicting";
+      const rwConflict = receiptWideConflict(r.id);
+      const conflict = !amountOk || truncated || versionConflict || !lineageOk || invLineageConflict(r) || rwConflict || derived.integrity === "conflicting";
       const balance = conflict
-        ? { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, ...(amountOk ? [] : ["invoice_amount_invalid"]), ...(truncated ? ["balance_ledger_truncated"] : [])] }
+        ? { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, ...(amountOk ? [] : ["invoice_amount_invalid"]), ...(truncated ? ["balance_ledger_truncated"] : []), ...(rwConflict ? [receiptWideTruncated ? "receipt_wide_truncated" : "receipt_over_allocated"] : [])] }
         : derived;
       return {
         invoiceId: r.id, ancillaryCaseId: r.ancillaryCaseId ?? -1, serviceType: r.serviceType, patientDisplay: null,
         invoiceType: r.invoiceType, recipientType: r.recipientType ?? null, status: conflict ? null : r.canonicalStatus, invoiceNumber: r.invoiceNumber ?? null,
         claimId: r.claimId ?? null, currency: r.currency, totalAmount: typeof r.totalAmount === "string" ? r.totalAmount : null,
         balance, issuedAt: iso(r.issuedAt), deliveredAt: iso(r.deliveredAt),
-        warnings: [...(amountOk ? [] : ["invoice_amount_invalid"]), ...(versionConflict ? ["duplicate_active_invoice"] : [])], integrity: conflict ? "conflicting" : "resolved",
+        warnings: [...(amountOk ? [] : ["invoice_amount_invalid"]), ...(versionConflict ? ["duplicate_active_invoice"] : []), ...(rwConflict ? [receiptWideTruncated ? "receipt_wide_truncated" : "receipt_over_allocated"] : [])], integrity: conflict ? "conflicting" : "resolved",
       };
     });
     return { availability: invAggTruncated ? "unavailable" : "available", warnings: [...(truncated ? ["balance_ledger_truncated"] : []), ...(invAggTruncated ? ["duplicate_detection_truncated"] : [])], rows, pageInfo: { limit, nextCursor, returned: page.length } };

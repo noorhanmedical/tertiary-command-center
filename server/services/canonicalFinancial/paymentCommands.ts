@@ -327,6 +327,10 @@ async function negateAllocation(input: NegateInput, eventType: "refund" | "rever
         const target = await loadTarget(tx, parent.targetType as "claim" | "invoice", input.clinicId, parent.targetId);
         if (!target) return { status: "target_not_found" };
         if (target.supersededAt != null) return { status: "conflict" };
+        // §6 negation target eligibility: only a target that currently HOLDS applied
+        // money (partially_paid/paid) may be negated — never a draft/approved/voided/
+        // rejected/denied/reopened target. Zero writes on an ineligible state.
+        if (target.status !== "partially_paid" && target.status !== "paid") return { status: "target_not_payable" };
         // §6 service ownership: reload the exact case and prove receipt/target/case agree.
         if (target.ancillaryCaseId != null) {
           const cases = await tx.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, input.clinicId), eq(patientAncillaryCases.id, target.ancillaryCaseId))).limit(2);

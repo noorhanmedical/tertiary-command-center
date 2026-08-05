@@ -157,8 +157,8 @@ export type TransitionInput2 = { clinicId: number; claimId: number; actorUserId:
 export async function transitionCanonicalClaim(input: TransitionInput2): Promise<ClaimCommandResult> {
   if (!canonicalClaimsRuntimeEnabled()) return { status: "skipped_flag_off" };
   if (!nonEmpty(input.idempotencyKey)) return { status: "idempotency_required" };
+  const fp = commandFingerprint({ action: "transition_claim", clinicId: input.clinicId, claimId: input.claimId, transition: input.transition, sourceType: input.sourceType, sourceReference: input.sourceReference, reason: input.reason });
   try {
-    const fp = commandFingerprint({ action: "transition_claim", clinicId: input.clinicId, claimId: input.claimId, transition: input.transition, sourceType: input.sourceType, sourceReference: input.sourceReference, reason: input.reason });
     const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
     if (replay.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: "", to: input.transition };
@@ -191,7 +191,18 @@ export async function transitionCanonicalClaim(input: TransitionInput2): Promise
       return { status: "conflict" };
     }
     return { status: "transitioned", claimId: input.claimId, from, to };
-  } catch (e) { if (isUnique(e)) return { status: "conflict" }; if (isFinancialMigration(e)) return { status: "migration_missing" }; return { status: "persistence_failed" }; }
+  } catch (e) {
+    // §7 unique violation: a racing identical command won — resolve by fingerprint
+    // (replay the exact prior success; different intent → idempotency_conflict).
+    if (isUnique(e)) {
+      const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
+      if (post.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: "", to: input.transition };
+      if (post.kind === "conflict") return { status: "idempotency_conflict" };
+      return { status: "conflict" };
+    }
+    if (isFinancialMigration(e)) return { status: "migration_missing" };
+    return { status: "persistence_failed" };
+  }
 }
 
 export type CorrectionInput = { clinicId: number; priorClaimId: number; actorUserId: string; actorRole: string; reason?: string | null; idempotencyKey: string };
@@ -236,6 +247,15 @@ export async function createCanonicalClaimCorrection(input: CorrectionInput): Pr
       });
       if (!created) return { status: "conflict" };
       return { status: "created", claimId: created.id as number, claimReady: result.claimReady, blockers: result.blockers };
-    } catch (e) { if (isUnique(e)) return { status: "conflict" }; throw e; }
+    } catch (e) {
+      // §7 racing identical correction won → replay its exact prior success.
+      if (isUnique(e)) {
+        const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
+        if (post.kind === "replay") return { status: "reused", claimId: post.entityId };
+        if (post.kind === "conflict") return { status: "idempotency_conflict" };
+        return { status: "conflict" };
+      }
+      throw e;
+    }
   } catch (e) { if (isFinancialMigration(e)) return { status: "migration_missing" }; return { status: "persistence_failed" }; }
 }

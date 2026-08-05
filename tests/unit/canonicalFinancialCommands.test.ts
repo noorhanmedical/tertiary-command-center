@@ -40,7 +40,7 @@ function chargeFields() {
 function charge(o: Record<string, unknown> = {}) { return { amountSource: "approved_fee_schedule", currency: "USD", chargeAmount: "420.00", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], fields: chargeFields(), ...o }; }
 function docRow(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, globalPlexusPatientId: 900, patientClinicMembershipId: 800, sourceData: { claimCharge: charge() }, ...o }; }
 function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, currency: "USD", chargeAmount: "420.00", amountSource: "approved_fee_schedule", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], globalPlexusPatientId: 900, patientClinicMembershipId: 800, ...o }; }
-function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1-800", currency: "USD", totalAmount: "420.00", supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...o }; }
+function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1-800", currency: "USD", totalAmount: "420.00", lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], supersedesInvoiceId: null, deliveredAt: null, deliveryEventReference: null, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...o }; }
 function paymentRow(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "420.00", reversesPaymentId: null, ...o }; }
 function applyAlloc(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
 function negAlloc(o: Record<string, unknown> = {}) { return { id: 951, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "refund", parentAllocationId: 950, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
@@ -161,6 +161,29 @@ async function testClaimCorrectionSubmittedRetained() {
   const spec = baseSpec(t, { canonicalClaims: { select: () => [claimRow({ id: 700, canonicalStatus: "submitted", attemptNumber: 1 })], onInsert: ins(701) } });
   const r = await runWithDb(spec, ALL, async (calls: Call[]) => { const res = await c.createCanonicalClaimCorrection({ clinicId: 1, priorClaimId: 700, actorUserId: "u", actorRole: "biller", reason: "fix", idempotencyKey: "corr1" }); assert.equal(countOps(calls, "update", t.canonicalClaims), 0, "(18) submitted history NOT rewritten"); return res; });
   assert.ok(r.status === "created" && r.claimId === 701, "(17) correction creates child attempt");
+}
+async function testClaimCorrectionRaceReplay() {
+  const t = await loadCanonicalTables(); const c = await claimCmd(); const { commandFingerprint } = await cs();
+  // §7 a racing identical correction won: entry gate sees none, the audit insert loses
+  // the race (23505), the post-catch resolve finds the SAME-intent winner → replay its
+  // exact prior success (never a generic conflict).
+  const fp = commandFingerprint({ action: "correct_claim", clinicId: 1, priorClaimId: 700, reason: "fix" });
+  const replayRow = { entityType: "claim", clinicId: 1, idempotencyKey: "corr-r", entityId: 701, commandFingerprint: fp };
+  let n = 0;
+  const spec = baseSpec(t, {
+    canonicalClaims: { select: () => [claimRow({ id: 700, canonicalStatus: "submitted", attemptNumber: 1 })], onInsert: ins(701) },
+    canonicalFinancialTransitions: { select: () => (n++ === 0 ? [] : [replayRow]), onInsert: () => { throw Object.assign(new Error("dup"), { code: "23505" }); } },
+  });
+  const r = await runWithDb(spec, ALL, async (calls: Call[]) => { const res = await c.createCanonicalClaimCorrection({ clinicId: 1, priorClaimId: 700, actorUserId: "u", actorRole: "biller", reason: "fix", idempotencyKey: "corr-r" }); assert.equal(countOps(calls, "update", t.canonicalClaims), 0, "no history rewrite on a lost race"); return res; });
+  assert.ok(r.status === "reused" && r.claimId === 701, "identical correction race replays exact prior success");
+  // Different-intent winner under the same key → idempotency_conflict, never a false reuse.
+  let n2 = 0;
+  const spec2 = baseSpec(t, {
+    canonicalClaims: { select: () => [claimRow({ id: 700, canonicalStatus: "submitted", attemptNumber: 1 })], onInsert: ins(701) },
+    canonicalFinancialTransitions: { select: () => (n2++ === 0 ? [] : [{ ...replayRow, commandFingerprint: "OTHER" }]), onInsert: () => { throw Object.assign(new Error("dup"), { code: "23505" }); } },
+  });
+  const r2 = await runWithDb(spec2, ALL, async () => c.createCanonicalClaimCorrection({ clinicId: 1, priorClaimId: 700, actorUserId: "u", actorRole: "biller", reason: "fix", idempotencyKey: "corr-r" }));
+  assert.equal(r2.status, "idempotency_conflict", "different-intent correction race → idempotency_conflict");
 }
 
 // ═══ Invoice commands ═══
@@ -299,15 +322,15 @@ async function testAllocateTargetUpdateFailClosed() {
 async function testRefundLimits() {
   const t = await loadCanonicalTables(); const p = await paymentCmd();
   // Parent apply-allocation 420 already fully refunded (a refund alloc of 420 naming it).
-  const spec = baseSpec(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800 })] }, canonicalPaymentAllocations: { select: () => [applyAlloc({ id: 950, amount: "420.00" }), negAlloc({ id: 951, eventType: "refund", parentAllocationId: 950, amount: "420.00" })] } });
+  const spec = baseSpec(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "partially_paid" })] }, canonicalPaymentAllocations: { select: () => [applyAlloc({ id: 950, amount: "420.00" }), negAlloc({ id: 951, eventType: "refund", parentAllocationId: 950, amount: "420.00" })] } });
   const r = await runWithDb(spec, ALL, async () => p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "10.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r1" }));
   assert.equal(r.status, "already_reversed", "(41/26) cumulative allocation-negation limit");
-  const ok = await runWithDb(baseSpec(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800 })], onUpdate: (v) => [{ ...v, id: 800 }] }, canonicalPaymentAllocations: { select: () => [applyAlloc({ id: 950, amount: "420.00" })], onInsert: ins(952) } }), ALL, async (calls: Call[]) => { const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "100.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r1" }); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 1, "(39) refund append-only allocation row"); return res; });
+  const ok = await runWithDb(baseSpec(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "partially_paid" })], onUpdate: (v) => [{ ...v, id: 800 }] }, canonicalPaymentAllocations: { select: () => [applyAlloc({ id: 950, amount: "420.00" })], onInsert: ins(952) } }), ALL, async (calls: Call[]) => { const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "100.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r1" }); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 1, "(39) refund append-only allocation row"); return res; });
   assert.ok(ok.status === "refunded" && ok.allocationId === 952, "(23) allocation-specific partial refund appends a new negation row");
 }
 async function testReverseDouble() {
   const t = await loadCanonicalTables(); const p = await paymentCmd();
-  const spec = baseSpec(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800 })] }, canonicalPaymentAllocations: { select: () => [applyAlloc({ id: 950, amount: "420.00" }), negAlloc({ id: 951, eventType: "reversal", parentAllocationId: 950, amount: "420.00" })] } });
+  const spec = baseSpec(t, { canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "partially_paid" })] }, canonicalPaymentAllocations: { select: () => [applyAlloc({ id: 950, amount: "420.00" }), negAlloc({ id: 951, eventType: "reversal", parentAllocationId: 950, amount: "420.00" })] } });
   const r = await runWithDb(spec, ALL, async () => p.reverseCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "420.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "rv1" }));
   assert.equal(r.status, "already_reversed", "(27/42) no double allocation reversal");
 }
@@ -316,7 +339,7 @@ async function testRefundLeavesOtherTargetUnchanged() {
   // Receipt split across invoice A(800) and B(801); refunding A's allocation must
   // name A's parent only and never touch B.
   const spec = baseSpec(t, {
-    canonicalInvoices: { select: () => [invoiceRow({ id: 800 })], onUpdate: (v) => [{ ...v, id: 800 }] },
+    canonicalInvoices: { select: () => [invoiceRow({ id: 800, canonicalStatus: "partially_paid" })], onUpdate: (v) => [{ ...v, id: 800 }] },
     canonicalPaymentAllocations: { select: () => [applyAlloc({ id: 950, targetId: 800, amount: "200.00" }), applyAlloc({ id: 951, targetId: 801, amount: "220.00" })], onInsert: ins(960) },
   });
   const r = await runWithDb(spec, ALL, async () => p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "200.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r1" }));
@@ -351,6 +374,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(16) submitted immutable", testClaimSubmittedImmutable],
   ["transition affected-row conflict", testClaimTransitionConflict],
   ["(17/18) correction retains submitted", testClaimCorrectionSubmittedRetained],
+  ["correction race replay + different-intent conflict", testClaimCorrectionRaceReplay],
   ["(20) invoice create from claim", testInvoiceCreate],
   ["invoice amount source required", testInvoiceAmountSource],
   ["(24/25) invoice issue + immutable", testInvoiceIssueAndImmutable],

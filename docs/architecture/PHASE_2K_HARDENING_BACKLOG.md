@@ -334,3 +334,13 @@ before the allocation insert. The following are deferred:
   a claim allocated while `accepted` is reopened to `submitted`, silently downgrading
   adjudication state. No false money (never creates `paid`). A future phase could reopen
   to the pre-payment status captured at allocation time.
+
+### Traceability-correction re-review item (MINOR)
+
+- **Stage vector assembles lineage context inline instead of importing the shared
+  builder.** `caseStageVector.ts` `claimLineageCtx`/`invoiceLineageCtx` re-implement the
+  per-entity context assembly that `financialLineageContext.buildClaimLineageContext`/
+  `buildInvoiceLineageContext` already provide. It is functionally equivalent and batched
+  (the fresh review confirmed no N+1 and identical validation), so there is no correctness
+  impact — but a future pass could import the shared builder to remove the duplication and
+  guarantee the two callers can never drift.

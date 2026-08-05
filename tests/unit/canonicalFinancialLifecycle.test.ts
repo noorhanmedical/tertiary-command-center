@@ -47,8 +47,10 @@ function claimCharge(o: Record<string, unknown> = {}) {
   };
 }
 function billingDocRow(o: Record<string, unknown> = {}) { return { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, procedureEventId: 400, globalPlexusPatientId: 900, patientClinicMembershipId: 800, sourceData: { claimCharge: claimCharge() }, ...o }; }
-function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", globalPlexusPatientId: 900, patientClinicMembershipId: 800, currency: "USD", chargeAmount: "420.00", claimSubmissionBlockers: [], warnings: [], submittedAt: null, submissionSource: null, updatedAt: OLD, ...o }; }
-function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", invoiceNumber: "INV-1", currency: "USD", totalAmount: "420.00", supersededAt: null, issuedAt: OLD, deliveredAt: null, warnings: [], ...o }; }
+const LINES = [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }];
+const PROV = Object.fromEntries(["service_code", "units", "place_of_service", "rendering_provider", "billing_provider", "facility", "payer", "coverage_reference"].map((f) => [f, { sourceType: "approved_source", sourceId: "s" }]));
+function claimRow(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, supersededAt: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13, globalPlexusPatientId: 900, patientClinicMembershipId: 800, currency: "USD", chargeAmount: "420.00", lineItems: LINES, fieldProvenance: PROV, claimSubmissionBlockers: [], warnings: [], submittedAt: null, submissionSource: null, submissionActorUserId: "u", submissionReference: "REF-1", updatedAt: OLD, ...o }; }
+function invoiceRow(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1", currency: "USD", totalAmount: "420.00", lineItems: LINES, supersedesInvoiceId: null, supersededAt: null, issuedAt: OLD, deliveredAt: null, deliveryEventReference: null, warnings: [], ...o }; }
 function paymentRow(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, invoiceId: 800, eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "100.00", externalTransactionId: null, reversesPaymentId: null, postedAt: OLD, ...o }; }
 function allocRow(o: Record<string, unknown> = {}) { return { id: 950, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "100.00", isOverpayment: 0, ...o }; }
 
@@ -62,8 +64,8 @@ function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: { claims?: 
     [t.ancillaryCases, { select: () => o.cases ?? [acase(), acase({ id: 6, ancillaryCaseId: 6 }), acase({ id: 9 })] }],
     [t.memberships, { select: () => o.memberships ?? [pcm()] }],
     [t.globalPatients, { select: () => o.globalPatients ?? [gpp()] }],
-    [t.billingReadinessChecks, { select: () => o.readiness ?? [] }],
-    [t.billingDocumentRequests, { select: () => o.docs ?? [] }],
+    [t.billingReadinessChecks, { select: () => o.readiness ?? [readinessRow()] }],
+    [t.billingDocumentRequests, { select: () => o.docs ?? [billingDocRow()] }],
   ]);
 }
 function pcm(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active", ...o }; }
@@ -213,10 +215,12 @@ async function testViewConflictAndBatch() {
   // duplicate current claim per case → conflict
   const dup = await runWithDb(spec(t, { claims: [claimRow({ id: 700 }), claimRow({ id: 701 })] }), ALL, async () => v.getCanonicalFinancialView({ clinicId: 1 }));
   assert.ok(dup.claims.rows.every((x) => x.integrity === "conflicting" && x.warnings.includes("duplicate_current_evidence")), "duplicate current claim → conflict, not first/newest");
-  // batched allocation read for invoice balances (one query for many invoices)
+  // batched allocation reads for invoice balances — CONSTANT count regardless of the
+  // invoice count (no per-invoice N+1): one target-scoped read for the page balances +
+  // one receipt-WIDE read for the referenced receipts' complete allocation sets.
   await runWithDb(spec(t, { invoices: [invoiceRow({ id: 800 }), invoiceRow({ id: 801 })], allocations: [allocRow({ targetId: 800 }), allocRow({ id: 951, targetId: 801 })] }), ALL, async (calls: Call[]) => {
     await v.getCanonicalFinancialView({ clinicId: 1 });
-    assert.equal(countOps(calls, "select", t.canonicalPaymentAllocations), 1, "(90) ONE batched allocation read for all invoices (no per-invoice N+1)");
+    assert.equal(countOps(calls, "select", t.canonicalPaymentAllocations), 2, "(90) two BATCHED allocation reads (target-wide + receipt-wide), not per-invoice N+1");
   });
 }
 async function testViewCrossClinic() {

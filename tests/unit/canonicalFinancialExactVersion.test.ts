@@ -164,7 +164,7 @@ function negBase(t: Awaited<ReturnType<typeof loadCanonicalTables>>, over: Parti
   const m = new Map<unknown, TableSpec>([
     [t.ancillaryCases, { select: () => [acase()] }], [t.memberships, { select: () => [pcm()] }], [t.globalPatients, { select: () => [gpp()] }],
     [t.canonicalPayments, { select: () => [paymentRow()] }],
-    [t.canonicalInvoices, { select: () => [invoiceRow({ id: 800, totalAmount: "420.00" })], onUpdate: (v) => [{ ...v, id: 800 }] }],
+    [t.canonicalInvoices, { select: () => [invoiceRow({ id: 800, totalAmount: "420.00", canonicalStatus: "paid" })], onUpdate: (v) => [{ ...v, id: 800 }] }],
     [t.canonicalPaymentAllocations, { select: () => [applyParent()], onInsert: ins(970) }],
     [t.canonicalFinancialTransitions, { select: () => [], onInsert: ins(1) }],
   ]);
@@ -248,8 +248,16 @@ async function testStageClaimScanOverflow() {
 async function testStageExactTarget() {
   const t = await loadCanonicalTables(); const { buildStageVectors } = await stageMod();
   const svcCase = { id: 5, clinicId: 1, serviceType: "BrainWave", globalPlexusPatientId: 900, patientClinicMembershipId: 800 };
-  const claimT = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, attemptNumber: 1, chargeAmount: "420.00", currency: "USD", updatedAt: OLD, submittedAt: OLD };
-  const invT = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "issued", supersededAt: null, invoiceNumber: "INV-1-800", totalAmount: "420.00", currency: "USD", issuedAt: OLD };
+  // Coherent evidence so the COMPLETE target lineage validator passes (else the payment
+  // stage gates to payment_target_lineage_conflict before any balance is derived).
+  const REFS = { procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13 };
+  const ID = { globalPlexusPatientId: 900, patientClinicMembershipId: 800 };
+  const LN = [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }];
+  const PV = Object.fromEntries(["service_code", "units", "place_of_service", "rendering_provider", "billing_provider", "facility", "payer", "coverage_reference"].map((f) => [f, { sourceType: "approved_source", sourceId: "s" }]));
+  const rd = { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", ...REFS, ...ID };
+  const bd = { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, ...ID };
+  const claimT = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, attemptNumber: 1, supersedesClaimId: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, ...ID, chargeAmount: "420.00", currency: "USD", lineItems: LN, fieldProvenance: PV, updatedAt: OLD, submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "REF-1" };
+  const invT = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", supersedesInvoiceId: null, supersededAt: null, invoiceNumber: "INV-1-800", totalAmount: "420.00", currency: "USD", lineItems: LN, issuedAt: OLD, deliveredAt: null, deliveryEventReference: null };
   const mig = () => { throw Object.assign(new Error("x"), { code: "42P01" }); };
   // Alloc to the CLAIM (799) and to a WRONG invoice (799) must be excluded when the
   // active target is invoice 800; only the 420 apply to invoice 800 counts → paid.
@@ -261,9 +269,10 @@ async function testStageExactTarget() {
   const spec = new Map<unknown, TableSpec>([
     [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }],
     [t.gse, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }],
-    [t.procedureEvents, { select: () => [] }], [t.billingReadinessChecks, { select: () => [] }], [t.billingDocumentRequests, { select: () => [] }],
+    [t.procedureEvents, { select: () => [] }], [t.billingReadinessChecks, { select: () => [rd] }], [t.billingDocumentRequests, { select: () => [bd] }],
     [t.canonicalClaims, { select: () => [claimT] }], [t.canonicalInvoices, { select: () => [invT] }], [t.canonicalPayments, { select: () => [paymentRow()] }],
     [t.canonicalPaymentAllocations, { select: () => allocs } ],
+    [t.memberships, { select: () => [pcm()] }], [t.globalPatients, { select: () => [gpp()] }],
   ]);
   void mig;
   const v = await runWithDb(spec, CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [svcCase as never] }))[0]);
