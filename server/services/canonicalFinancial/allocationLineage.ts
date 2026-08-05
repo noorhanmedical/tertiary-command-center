@@ -94,24 +94,48 @@ export function validateNegationLineage(args: {
   return { ok: true };
 }
 
-export type ReceiptWideRef = { clinicId: number | null; currency: string | null; ancillaryCaseId: number | null; serviceType: string | null; amount: string | null };
-/** Receipt-WIDE: a single receipt's COMPLETE allocation set (across ALL its targets)
- *  must agree with the receipt on clinic/currency/case/service, carry positive
- *  parseable amounts, and never APPLY more than the receipt amount (Σ apply ≤ receipt).
- *  A malformed or over-applied receipt conflicts every target it funds. */
+export type ReceiptWideRef = { id: number; clinicId: number | null; currency: string | null; ancillaryCaseId: number | null; serviceType: string | null; amount: string | null; eventType?: string | null; status?: string | null };
+/** Receipt-WIDE: a single POSTED receipt's COMPLETE allocation set (across ALL its
+ *  targets) must belong to this receipt and agree on clinic/currency/case/service with
+ *  positive parseable amounts; every refund/reversal must name an EXACT parent apply IN
+ *  THIS SET (same payment + target) and not cumulatively exceed it; and Σ apply must
+ *  never exceed the receipt amount (refunds are NOT subtracted — a historically
+ *  over-applied receipt stays a conflict). A malformed/over-applied/negation-broken
+ *  receipt conflicts every target it funds. */
 export function validateReceiptWide(receipt: ReceiptWideRef, allocs: AllocRow[]): LineageResult {
+  if (receipt.eventType != null && receipt.eventType !== "payment") return { ok: false, code: "receipt_not_payment" };
+  if (receipt.status != null && receipt.status !== "posted") return { ok: false, code: "receipt_not_posted" };
   const cap = cents(receipt.amount);
-  if (cap == null) return { ok: false, code: "receipt_amount_invalid" };
+  if (cap == null || cap <= 0) return { ok: false, code: "receipt_amount_invalid" };
+  const applyById = new Map<number, AllocRow>();
   let applied = 0;
   for (const a of allocs) {
+    if ((a.paymentId ?? null) !== receipt.id) return { ok: false, code: "receipt_allocation_wrong_payment" };
     if ((a.clinicId ?? null) !== (receipt.clinicId ?? null)) return { ok: false, code: "receipt_allocation_wrong_clinic" };
     if ((a.currency ?? null) !== (receipt.currency ?? null)) return { ok: false, code: "receipt_allocation_currency_mismatch" };
     if (receipt.ancillaryCaseId != null && a.ancillaryCaseId != null && a.ancillaryCaseId !== receipt.ancillaryCaseId) return { ok: false, code: "receipt_allocation_wrong_case" };
     if (receipt.serviceType != null && a.serviceType != null && a.serviceType !== receipt.serviceType) return { ok: false, code: "receipt_allocation_wrong_service" };
     const c = cents(a.amount);
     if (c == null || c <= 0) return { ok: false, code: "receipt_allocation_amount_invalid" };
-    if (a.eventType === "apply") applied += c;
+    if (a.eventType === "apply") { if (a.id != null) applyById.set(a.id, a); applied += c; }
     else if (a.eventType !== "refund" && a.eventType !== "reversal") return { ok: false, code: "receipt_allocation_event_type_invalid" };
+  }
+  // Every negation names an exact parent apply in this receipt, same payment + target,
+  // and the cumulative negation per parent never exceeds the parent's applied amount.
+  const negatedByParent = new Map<number, number>();
+  for (const a of allocs) {
+    if (a.eventType !== "refund" && a.eventType !== "reversal") continue;
+    const pid = a.parentAllocationId ?? null;
+    if (pid == null) return { ok: false, code: "receipt_negation_parent_missing" };
+    const parent = applyById.get(pid);
+    if (!parent) return { ok: false, code: "receipt_negation_parent_invalid" };
+    if ((parent.paymentId ?? null) !== receipt.id || (a.paymentId ?? null) !== receipt.id) return { ok: false, code: "receipt_negation_parent_payment_mismatch" };
+    if (a.targetType !== parent.targetType || a.targetId !== parent.targetId) return { ok: false, code: "receipt_negation_parent_target_mismatch" };
+    negatedByParent.set(pid, (negatedByParent.get(pid) ?? 0) + (cents(a.amount) ?? 0));
+  }
+  for (const [pid, negated] of negatedByParent) {
+    const parent = applyById.get(pid)!;
+    if (negated > (cents(parent.amount) ?? 0)) return { ok: false, code: "receipt_negation_exceeds_parent" };
   }
   if (applied > cap) return { ok: false, code: "receipt_over_allocated" };
   return { ok: true };

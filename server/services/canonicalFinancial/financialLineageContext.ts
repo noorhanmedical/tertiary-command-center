@@ -15,9 +15,12 @@ import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
 import { globalPlexusPatients, patientClinicMemberships } from "@shared/schema/plexusIdentity";
 import { canonicalBillingReadinessChecks } from "@shared/schema/billingReadiness";
 import { canonicalBillingDocumentRequests } from "@shared/schema/billingDocuments";
-import type { ClaimLineageCtx, InvoiceLineageCtx } from "./lineageValidators";
+import { canonicalFinancialTransitions } from "@shared/schema/canonicalFinancialTransitions";
+import type { DbLike } from "./commandSupport";
+import type { ClaimLineageCtx, InvoiceLineageCtx, DeliveryTransitionCtx } from "./lineageValidators";
 
 const SCAN = 2000;
+const dbh = db as unknown as DbLike;
 const uniq = (xs: (number | null | undefined)[]): number[] => [...new Set(xs.filter((x): x is number => x != null))];
 
 type EvidenceRow = {
@@ -63,7 +66,13 @@ export function buildClaimLineageContext(claim: ClaimRef, maps: ClaimCtxMaps): C
   };
 }
 
-export async function loadClaimLineageContexts(clinicId: number, claims: ClaimRef[]): Promise<Map<number, ClaimLineageCtx>> {
+/** Read-only convenience wrapper (uses the global db handle). */
+export function loadClaimLineageContexts(clinicId: number, claims: ClaimRef[]): Promise<Map<number, ClaimLineageCtx>> {
+  return loadClaimLineageContextsWithDb(dbh, clinicId, claims);
+}
+/** Handle-aware: every select uses `h` so a command can load the COMPLETE context
+ *  through its active transaction handle (after advisory locks). */
+export async function loadClaimLineageContextsWithDb(h: DbLike, clinicId: number, claims: ClaimRef[]): Promise<Map<number, ClaimLineageCtx>> {
   const caseIds = uniq(claims.map((c) => c.ancillaryCaseId));
   const memIds = uniq(claims.map((c) => c.patientClinicMembershipId));
   const gpIds = uniq(claims.map((c) => c.globalPlexusPatientId));
@@ -71,12 +80,12 @@ export async function loadClaimLineageContexts(clinicId: number, claims: ClaimRe
   const bdIds = uniq(claims.map((c) => c.billingDocumentId));
   const parentIds = uniq(claims.map((c) => c.supersedesClaimId));
   const [cases, mems, gps, rds, bds, parents] = await Promise.all([
-    caseIds.length ? db.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, clinicId), inArray(patientAncillaryCases.id, caseIds))).limit(SCAN) : Promise.resolve([]),
-    memIds.length ? db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), inArray(patientClinicMemberships.id, memIds))).limit(SCAN) : Promise.resolve([]),
-    gpIds.length ? db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gpIds)).limit(SCAN) : Promise.resolve([]),
-    rdIds.length ? db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), inArray(canonicalBillingReadinessChecks.id, rdIds))).limit(SCAN) : Promise.resolve([]),
-    bdIds.length ? db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), inArray(canonicalBillingDocumentRequests.id, bdIds))).limit(SCAN) : Promise.resolve([]),
-    parentIds.length ? db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), inArray(canonicalClaims.id, parentIds))).limit(SCAN) : Promise.resolve([]),
+    caseIds.length ? h.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, clinicId), inArray(patientAncillaryCases.id, caseIds))).limit(SCAN) : Promise.resolve([]),
+    memIds.length ? h.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), inArray(patientClinicMemberships.id, memIds))).limit(SCAN) : Promise.resolve([]),
+    gpIds.length ? h.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gpIds)).limit(SCAN) : Promise.resolve([]),
+    rdIds.length ? h.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), inArray(canonicalBillingReadinessChecks.id, rdIds))).limit(SCAN) : Promise.resolve([]),
+    bdIds.length ? h.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), inArray(canonicalBillingDocumentRequests.id, bdIds))).limit(SCAN) : Promise.resolve([]),
+    parentIds.length ? h.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), inArray(canonicalClaims.id, parentIds))).limit(SCAN) : Promise.resolve([]),
   ]);
   const maps: ClaimCtxMaps = {
     caseById: new Map((cases as { id: number; clinicId: number; serviceType: string }[]).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x])),
@@ -91,29 +100,60 @@ export async function loadClaimLineageContexts(clinicId: number, claims: ClaimRe
   return out;
 }
 
-export type InvoiceRef = { id: number; claimId: number | null; supersedesInvoiceId: number | null };
+export type InvoiceRef = { id: number; claimId: number | null; supersedesInvoiceId: number | null; canonicalStatus?: string | null };
+type TransitionRow = { entityType: string; entityId: number; clinicId: number; ancillaryCaseId: number | null; serviceType: string | null; toStatus: string; actorUserId: string | null; actorRole: string | null; reason: string | null; sourceType: string | null; sourceReference: string | null; createdAt: Date | null };
 export type InvoiceCtxMaps = {
   claimById: Map<number, { clinicId: number; ancillaryCaseId: number | null; serviceType: string; billingDocumentId: number | null; billingReadinessCheckId: number | null; evidenceFingerprint: string | null; currency: string; lineItems: unknown }>;
   parentById: Map<number, { clinicId: number; ancillaryCaseId: number | null; serviceType: string; claimId: number | null }>;
+  deliveryByInvoice?: Map<number, DeliveryTransitionCtx>;
 };
+
+function projectDelivery(t: TransitionRow): DeliveryTransitionCtx {
+  return { kind: "one", row: { entityType: t.entityType, entityId: t.entityId, clinicId: t.clinicId, ancillaryCaseId: t.ancillaryCaseId ?? null, serviceType: t.serviceType ?? null, toStatus: t.toStatus, actorUserId: t.actorUserId ?? null, actorRole: t.actorRole ?? null, reason: t.reason ?? null, sourceType: t.sourceType ?? null, sourceReference: t.sourceReference ?? null, createdAt: t.createdAt ?? null } };
+}
+/** Classify each delivered invoice's delivered-transition rows: 0 → missing, 1 → one,
+ *  >1 → conflict. A truncated set cannot be proven complete → fail closed (conflict). */
+export function classifyDeliveryTransitions(clinicId: number, deliveredIds: number[], rows: TransitionRow[], truncated: boolean): Map<number, DeliveryTransitionCtx> {
+  const grouped = new Map<number, TransitionRow[]>();
+  for (const t of rows.filter((x) => x.clinicId === clinicId && x.entityType === "invoice" && x.toStatus === "delivered" && x.entityId != null)) {
+    const arr = grouped.get(t.entityId) ?? []; arr.push(t); grouped.set(t.entityId, arr);
+  }
+  const out = new Map<number, DeliveryTransitionCtx>();
+  for (const id of deliveredIds) {
+    if (truncated) { out.set(id, { kind: "conflict" }); continue; }
+    const g = grouped.get(id) ?? [];
+    out.set(id, g.length === 0 ? { kind: "missing" } : g.length > 1 ? { kind: "conflict" } : projectDelivery(g[0]));
+  }
+  return out;
+}
 
 /** Assemble one invoice's full lineage context from already-loaded maps (pure). */
 export function buildInvoiceLineageContext(inv: InvoiceRef, maps: InvoiceCtxMaps): InvoiceLineageCtx {
   const claim = inv.claimId != null ? maps.claimById.get(inv.claimId) : undefined;
   const parent = inv.supersedesInvoiceId != null ? maps.parentById.get(inv.supersedesInvoiceId) : undefined;
-  return { claim: claim ?? null, parentInvoice: parent ?? null };
+  const delivery = inv.canonicalStatus === "delivered" ? (maps.deliveryByInvoice?.get(inv.id) ?? { kind: "missing" as const }) : undefined;
+  return { claim: claim ?? null, parentInvoice: parent ?? null, deliveryTransition: delivery };
 }
 
-export async function loadInvoiceLineageContexts(clinicId: number, invoices: InvoiceRef[]): Promise<Map<number, InvoiceLineageCtx>> {
+/** Read-only convenience wrapper (uses the global db handle). */
+export function loadInvoiceLineageContexts(clinicId: number, invoices: InvoiceRef[]): Promise<Map<number, InvoiceLineageCtx>> {
+  return loadInvoiceLineageContextsWithDb(dbh, clinicId, invoices);
+}
+export async function loadInvoiceLineageContextsWithDb(h: DbLike, clinicId: number, invoices: InvoiceRef[]): Promise<Map<number, InvoiceLineageCtx>> {
   const claimIds = uniq(invoices.map((i) => i.claimId));
   const parentIds = uniq(invoices.map((i) => i.supersedesInvoiceId));
-  const [claims, parents] = await Promise.all([
-    claimIds.length ? db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), inArray(canonicalClaims.id, claimIds))).limit(SCAN) : Promise.resolve([]),
-    parentIds.length ? db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), inArray(canonicalInvoices.id, parentIds))).limit(SCAN) : Promise.resolve([]),
+  const deliveredIds = uniq(invoices.filter((i) => i.canonicalStatus === "delivered").map((i) => i.id));
+  const [claims, parents, dtx] = await Promise.all([
+    claimIds.length ? h.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), inArray(canonicalClaims.id, claimIds))).limit(SCAN) : Promise.resolve([]),
+    parentIds.length ? h.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), inArray(canonicalInvoices.id, parentIds))).limit(SCAN) : Promise.resolve([]),
+    deliveredIds.length ? h.select().from(canonicalFinancialTransitions).where(and(eq(canonicalFinancialTransitions.clinicId, clinicId), eq(canonicalFinancialTransitions.entityType, "invoice"), eq(canonicalFinancialTransitions.toStatus, "delivered"), inArray(canonicalFinancialTransitions.entityId, deliveredIds))).limit(SCAN + 1) : Promise.resolve([]),
   ]);
+  const dtxRows = dtx as TransitionRow[];
+  const deliveryByInvoice = classifyDeliveryTransitions(clinicId, deliveredIds, dtxRows, dtxRows.length > SCAN);
   const maps: InvoiceCtxMaps = {
     claimById: new Map((claims as { id: number; clinicId: number; ancillaryCaseId: number | null; serviceType: string; billingDocumentId: number | null; billingReadinessCheckId: number | null; evidenceFingerprint: string | null; currency: string; lineItems: unknown }[]).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x])),
     parentById: new Map((parents as { id: number; clinicId: number; ancillaryCaseId: number | null; serviceType: string; claimId: number | null }[]).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x])),
+    deliveryByInvoice,
   };
   const out = new Map<number, InvoiceLineageCtx>();
   for (const i of invoices) out.set(i.id, buildInvoiceLineageContext(i, maps));

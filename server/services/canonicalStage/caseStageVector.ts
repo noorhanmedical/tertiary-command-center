@@ -35,9 +35,11 @@ import { canonicalClaims } from "@shared/schema/canonicalClaims";
 import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { canonicalPayments } from "@shared/schema/canonicalPayments";
 import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllocations";
-import { validateTargetAllocationSet } from "../canonicalFinancial/allocationLineage";
+import { canonicalFinancialTransitions } from "@shared/schema/canonicalFinancialTransitions";
+import { validateTargetAllocationSet, validateReceiptWide } from "../canonicalFinancial/allocationLineage";
+import { classifyDeliveryTransitions } from "../canonicalFinancial/financialLineageContext";
 import { selectStageClaim, selectStageInvoice } from "../canonicalFinancial/financialVersion";
-import { validateClaimLineage, validateInvoiceLineage, type ClaimLineageCtx, type InvoiceLineageCtx } from "../canonicalFinancial/lineageValidators";
+import { validateClaimLineage, validateInvoiceLineage, type ClaimLineageCtx, type InvoiceLineageCtx, type DeliveryTransitionCtx } from "../canonicalFinancial/lineageValidators";
 import { patientClinicMemberships, globalPlexusPatients } from "@shared/schema/plexusIdentity";
 import { toCents, sumCents } from "@shared/money";
 import {
@@ -217,10 +219,27 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const claimRdById = new Map((claimRdLoad?.ok ? claimRdLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
   const claimParentById = new Map((claimParentLoad?.ok ? claimParentLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
   const invParentById = new Map((invParentLoad?.ok ? invParentLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
+  // Delivered-invoice delivery-transition audit context (same classification the read
+  // model uses): 0 → missing, 1 → one, >1/truncated → conflict.
+  const deliveredInvIds = [...new Set(invoiceRows.filter((r) => r.canonicalStatus === "delivered").map((r) => r.id))];
+  const invDtxLoad = invoiceGate && deliveredInvIds.length ? await loadOrNull(() => db.select().from(canonicalFinancialTransitions).where(and(eq(canonicalFinancialTransitions.clinicId, clinicId), eq(canonicalFinancialTransitions.entityType, "invoice"), eq(canonicalFinancialTransitions.toStatus, "delivered"), inArray(canonicalFinancialTransitions.entityId, deliveredInvIds))).limit(SCAN_LIMIT + 1)) : null;
+  const invDeliveryById = classifyDeliveryTransitions(clinicId, deliveredInvIds, (invDtxLoad?.ok ? invDtxLoad.rows : []) as never, trunc(invDtxLoad));
+  // Receipt-WIDE context: for every payment referenced by this case set's allocations,
+  // load the receipt + its COMPLETE allocation set across ALL targets (cross-case),
+  // SCAN_LIMIT+1 truncation. The payment stage proves each receipt before deriving paid.
+  const allocRows = allocLoad?.ok ? allocLoad.rows : [];
+  const rwPayIds = [...new Set(allocRows.map((a) => a.paymentId).filter((x): x is number => x != null))];
+  const rwReceiptLoad = paymentGate && rwPayIds.length ? await loadOrNull(() => db.select().from(canonicalPayments).where(and(eq(canonicalPayments.clinicId, clinicId), inArray(canonicalPayments.id, rwPayIds))).limit(SCAN_LIMIT + 1)) : null;
+  const rwAllocLoad = paymentGate && rwPayIds.length ? await loadOrNull(() => db.select().from(canonicalPaymentAllocations).where(and(eq(canonicalPaymentAllocations.clinicId, clinicId), inArray(canonicalPaymentAllocations.paymentId, rwPayIds))).limit(SCAN_LIMIT + 1)) : null;
+  const rwReceiptById = new Map((rwReceiptLoad?.ok ? rwReceiptLoad.rows : []).filter((p) => p.clinicId === clinicId).map((p) => [p.id, p]));
+  const rwAllocByPayment = new Map<number, typeof canonicalPaymentAllocations.$inferSelect[]>();
+  for (const a of (rwAllocLoad?.ok ? rwAllocLoad.rows : []).filter((x) => x.clinicId === clinicId && x.paymentId != null)) { const arr = rwAllocByPayment.get(a.paymentId as number) ?? []; arr.push(a); rwAllocByPayment.set(a.paymentId as number, arr); }
+  const rwTruncated = trunc(rwReceiptLoad) || trunc(rwAllocLoad);
 
   const ctx: Ctx = {
-    memById, gpById, invoiceClaimById, claimBdById, claimRdById, claimParentById, invParentById,
-    claimTrunc: trunc(claimLoad) || trunc(memLoad) || trunc(gpLoad) || trunc(claimBdLoad) || trunc(claimRdLoad) || trunc(claimParentLoad), invoiceTrunc: trunc(invoiceLoad) || trunc(invClaimLoad) || trunc(invParentLoad), paymentTrunc: trunc(paymentLoad) || trunc(allocLoad),
+    memById, gpById, invoiceClaimById, claimBdById, claimRdById, claimParentById, invParentById, invDeliveryById,
+    rwReceiptById, rwAllocByPayment, rwTruncated,
+    claimTrunc: trunc(claimLoad) || trunc(memLoad) || trunc(gpLoad) || trunc(claimBdLoad) || trunc(claimRdLoad) || trunc(claimParentLoad), invoiceTrunc: trunc(invoiceLoad) || trunc(invClaimLoad) || trunc(invParentLoad) || trunc(invDtxLoad), paymentTrunc: trunc(paymentLoad) || trunc(allocLoad),
     clinicId, adminGate, adminByCase, adminOk: adminLoad?.ok ?? true,
     engagementGate, membershipsByCase,
     apptGate, apptOk: apptLoad?.ok ?? true, apptByCase,
@@ -258,6 +277,10 @@ type Ctx = {
   claimRdById: Map<number, typeof canonicalBillingReadinessChecks.$inferSelect>;
   claimParentById: Map<number, typeof canonicalClaims.$inferSelect>;
   invParentById: Map<number, typeof canonicalInvoices.$inferSelect>;
+  invDeliveryById: Map<number, DeliveryTransitionCtx>;
+  rwReceiptById: Map<number, typeof canonicalPayments.$inferSelect>;
+  rwAllocByPayment: Map<number, typeof canonicalPaymentAllocations.$inferSelect[]>;
+  rwTruncated: boolean;
 };
 
 // Assemble the SAME COMPLETE lineage contexts the read model uses, from the stage
@@ -287,6 +310,7 @@ function invoiceLineageCtx(ctx: Ctx, r: typeof canonicalInvoices.$inferSelect): 
   return {
     claim: claim ? { clinicId: claim.clinicId, ancillaryCaseId: claim.ancillaryCaseId ?? null, serviceType: claim.serviceType, billingDocumentId: claim.billingDocumentId ?? null, billingReadinessCheckId: claim.billingReadinessCheckId ?? null, evidenceFingerprint: claim.evidenceFingerprint ?? null, currency: claim.currency, lineItems: claim.lineItems } : null,
     parentInvoice: parent ? { clinicId: parent.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType, claimId: parent.claimId ?? null } : null,
+    deliveryTransition: r.canonicalStatus === "delivered" ? (ctx.invDeliveryById.get(r.id) ?? { kind: "missing" }) : undefined,
   };
 }
 
@@ -425,6 +449,18 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     if (targetType != null && targetId != null && allocs.length > 0) {
       const receipts = new Map(events.filter((e) => e.eventType === "payment").map((e) => [e.id, e] as const));
       if (!validateTargetAllocationSet(allocs as never, { clinicId: c.clinicId, targetType, targetId, currency: targetCurrency ?? "", ancillaryCaseId: c.id, serviceType: svc }, receipts as never).ok) return conflictStage("payment_allocation_lineage_conflict");
+    }
+    // Receipt-WIDE truth: every receipt funding the SELECTED target must be a posted
+    // payment whose COMPLETE cross-target allocation set (loaded across ALL targets, not
+    // just this case) is Σapply ≤ amount with valid negation parents — BEFORE deriving
+    // paid/partial/refunded/reversed. A receipt over-applied elsewhere conflicts here.
+    if (allocs.length > 0) {
+      if (ctx.rwTruncated) return unavailable("payment_receipt_wide_truncated");
+      const pids = [...new Set(allocs.map((a) => a.paymentId).filter((x): x is number => x != null))];
+      for (const pid of pids) {
+        const rcpt = ctx.rwReceiptById.get(pid);
+        if (!rcpt || !validateReceiptWide({ id: rcpt.id, clinicId: rcpt.clinicId, currency: rcpt.currency, ancillaryCaseId: rcpt.ancillaryCaseId ?? null, serviceType: rcpt.serviceType ?? null, amount: rcpt.amount, eventType: rcpt.eventType, status: rcpt.status }, (ctx.rwAllocByPayment.get(pid) ?? []) as never).ok) return conflictStage("payment_receipt_wide_conflict");
+      }
     }
     if (postedPayments.length === 0 && allocs.length === 0) return stage({ status: null, availability: "available", available: false });
     let appliedC = 0, refundedC = 0, totalC: number | null = null, bad = false;

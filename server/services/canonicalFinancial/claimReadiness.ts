@@ -33,6 +33,28 @@ const FIELD_SOURCE_ALLOW: Record<string, Set<string>> = {
   authorization: new Set(["payer_contract", "authorized_manual_entry"]),
 };
 
+/** Revalidate a PERSISTED claim's fields + provenance against the SAME per-field
+ *  approved-source rules used at create time (`FIELD_SOURCE_ALLOW`). For every required
+ *  field: the persisted value must be nonempty AND its provenance sourceType must be
+ *  approved for THAT exact field — a fee-schedule-sourced payer/provider is rejected,
+ *  and an arbitrary/nonempty source (e.g. "approved_source") never qualifies. Used by
+ *  the read-model / stage lineage validator so a persisted claim cannot silently carry
+ *  invalid provenance. (sourceId is not required — the create contract allows it null.) */
+export function validatePersistedClaimFieldsAndProvenance(args: { claimFields: unknown; fieldProvenance: unknown }): { ok: true } | { ok: false; code: string } {
+  const fields = (args.claimFields && typeof args.claimFields === "object") ? (args.claimFields as Record<string, unknown>) : {};
+  const prov = (args.fieldProvenance && typeof args.fieldProvenance === "object") ? (args.fieldProvenance as Record<string, { sourceType?: unknown }>) : {};
+  for (const f of CANONICAL_CLAIM_REQUIRED_FIELDS) {
+    const value = fields[f];
+    if (value == null || (typeof value === "string" && value.trim().length === 0)) return { ok: false, code: "claim_field_value_missing" };
+    const cell = prov[f];
+    const sourceType = cell && typeof cell.sourceType === "string" ? cell.sourceType : null;
+    if (sourceType == null) return { ok: false, code: "claim_field_provenance_missing" };
+    const allowed = FIELD_SOURCE_ALLOW[f];
+    if (!allowed || !allowed.has(sourceType)) return { ok: false, code: "claim_field_provenance_invalid" };
+  }
+  return { ok: true };
+}
+
 /** The EXACT approved claim-charge source carried on the Billing Document's
  *  source_data.claim_charge. Absent/partial → blockers (never invented). */
 type ClaimChargeSource = {

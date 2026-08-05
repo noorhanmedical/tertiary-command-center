@@ -158,17 +158,25 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     const receiptWideTruncated = rwRaw.length > SCAN;
     const rwByReceipt = new Map<number, typeof rwRaw>();
     for (const a of rwRaw) { if (a.paymentId == null) continue; const arr = rwByReceipt.get(a.paymentId) ?? []; arr.push(a); rwByReceipt.set(a.paymentId, arr); }
-    const receiptOk = (pid: number): boolean => {
+    // Classify a receipt's failure into a DISTINCT warning (never label everything
+    // over-allocated): identity/status/currency/case/service → receipt_identity_conflict;
+    // negation-lineage → receipt_negation_lineage_conflict; over-apply → receipt_over_allocated.
+    const receiptCode = (pid: number): string | null => {
       const rcpt = receiptById.get(pid);
-      if (!rcpt) return false;
-      return validateReceiptWide({ clinicId: rcpt.clinicId, currency: rcpt.currency, ancillaryCaseId: rcpt.ancillaryCaseId ?? null, serviceType: rcpt.serviceType ?? null, amount: rcpt.amount }, (rwByReceipt.get(pid) ?? []) as never).ok;
+      if (!rcpt) return "receipt_identity_conflict";        // referenced receipt not found
+      const res = validateReceiptWide({ id: rcpt.id, clinicId: rcpt.clinicId, currency: rcpt.currency, ancillaryCaseId: rcpt.ancillaryCaseId ?? null, serviceType: rcpt.serviceType ?? null, amount: rcpt.amount, eventType: rcpt.eventType, status: rcpt.status }, (rwByReceipt.get(pid) ?? []) as never);
+      if (res.ok) return null;
+      if (res.code === "receipt_over_allocated") return "receipt_over_allocated";
+      if (res.code.startsWith("receipt_negation")) return "receipt_negation_lineage_conflict";
+      return "receipt_identity_conflict";
     };
-    const receiptWideConflict = (invId: number): boolean => {
+    const receiptWideWarning = (invId: number): string | null => {
       const allocs = allocByInvoice.get(invId) ?? [];
-      if (allocs.length === 0) return false;
-      if (receiptWideTruncated) return true;               // completeness could not be proven
+      if (allocs.length === 0) return null;
+      if (receiptWideTruncated) return "receipt_wide_truncated"; // completeness could not be proven
       const pids = [...new Set(allocs.map((a) => a.paymentId).filter((x): x is number => x != null))];
-      return pids.some((pid) => !receiptOk(pid));
+      for (const pid of pids) { const code = receiptCode(pid); if (code) return code; }
+      return null;
     };
     const rows: CanonicalInvoiceRow[] = page.map((r) => {
       let originalCents = 0; let amountOk = true;
@@ -182,17 +190,18 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
       const synth = invAllocs.map((a) => ({ currency: a.currency, amount: a.amount, eventType: a.eventType === "apply" ? "payment" : a.eventType, status: "posted", claimId: null, invoiceId: r.id } as never));
       const derived = deriveBalance({ currency: r.currency, originalAmountCents: amountOk ? originalCents : 0, ledger: synth });
       const versionConflict = r.claimId != null && (claimConflict.get(r.claimId) ?? false);
-      const rwConflict = receiptWideConflict(r.id);
+      const rwWarn = receiptWideWarning(r.id);
+      const rwConflict = rwWarn != null;
       const conflict = !amountOk || truncated || versionConflict || !lineageOk || invLineageConflict(r) || rwConflict || derived.integrity === "conflicting";
       const balance = conflict
-        ? { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, ...(amountOk ? [] : ["invoice_amount_invalid"]), ...(truncated ? ["balance_ledger_truncated"] : []), ...(rwConflict ? [receiptWideTruncated ? "receipt_wide_truncated" : "receipt_over_allocated"] : [])] }
+        ? { ...derived, integrity: "conflicting" as const, warnings: [...derived.warnings, ...(amountOk ? [] : ["invoice_amount_invalid"]), ...(truncated ? ["balance_ledger_truncated"] : []), ...(rwWarn ? [rwWarn] : [])] }
         : derived;
       return {
         invoiceId: r.id, ancillaryCaseId: r.ancillaryCaseId ?? -1, serviceType: r.serviceType, patientDisplay: null,
         invoiceType: r.invoiceType, recipientType: r.recipientType ?? null, status: conflict ? null : r.canonicalStatus, invoiceNumber: r.invoiceNumber ?? null,
         claimId: r.claimId ?? null, currency: r.currency, totalAmount: typeof r.totalAmount === "string" ? r.totalAmount : null,
         balance, issuedAt: iso(r.issuedAt), deliveredAt: iso(r.deliveredAt),
-        warnings: [...(amountOk ? [] : ["invoice_amount_invalid"]), ...(versionConflict ? ["duplicate_active_invoice"] : []), ...(rwConflict ? [receiptWideTruncated ? "receipt_wide_truncated" : "receipt_over_allocated"] : [])], integrity: conflict ? "conflicting" : "resolved",
+        warnings: [...(amountOk ? [] : ["invoice_amount_invalid"]), ...(versionConflict ? ["duplicate_active_invoice"] : []), ...(rwWarn ? [rwWarn] : [])], integrity: conflict ? "conflicting" : "resolved",
       };
     });
     return { availability: invAggTruncated ? "unavailable" : "available", warnings: [...(truncated ? ["balance_ledger_truncated"] : []), ...(invAggTruncated ? ["duplicate_detection_truncated"] : [])], rows, pageInfo: { limit, nextCursor, returned: page.length } };

@@ -29,16 +29,22 @@ const CHAIN = {
 const REFS = { procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13 };
 const ID = { globalPlexusPatientId: 900, patientClinicMembershipId: 800 };
 const LINES = [{ lineId: "l1", amount: "300.00", source: "approved_fee_schedule", unit: 1 }, { lineId: "l2", amount: "120.00", source: "approved_fee_schedule", unit: 1 }];
-const PROV = Object.fromEntries(["service_code", "units", "place_of_service", "rendering_provider", "billing_provider", "facility", "payer", "coverage_reference"].map((f) => [f, { sourceType: "approved_source", sourceId: "s" }]));
+// REAL per-field approved sources (mirrors claimReadiness.FIELD_SOURCE_ALLOW) — a
+// fee schedule proves codes/units only, never payer/provider; "approved_source" is invalid.
+const FIELD_SRC: Record<string, string> = { service_code: "approved_fee_schedule", units: "approved_fee_schedule", place_of_service: "facility_registry", facility: "facility_registry", rendering_provider: "credentialing_registry", billing_provider: "credentialing_registry", payer: "payer_contract", coverage_reference: "payer_contract" };
+const PROV = Object.fromEntries(Object.entries(FIELD_SRC).map(([f, s]) => [f, { sourceType: s, sourceId: "s" }]));
+const CLAIMFIELDS = Object.fromEntries(Object.keys(FIELD_SRC).map((f) => [f, "v"]));
 const CASE = { clinicId: 1, serviceType: "BrainWave" };
 const MEM = { clinicId: 1, membershipStatus: "active", globalPlexusPatientId: 900 };
 const GP = { identityStatus: "active", mergedIntoPatientId: null };
 const RD = { clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", supersededAt: null, evidenceFingerprint: "fp-1", ...REFS, ...ID };
 const BD = { ...RD, billingReadinessCheckId: 500 };
-function claim(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", ...ID, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, currency: "USD", chargeAmount: "420.00", lineItems: LINES, fieldProvenance: PROV, submittedAt: null, submissionSource: null, submissionActorUserId: null, submissionReference: null, ...o }; }
+function claim(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", ...ID, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, currency: "USD", chargeAmount: "420.00", lineItems: LINES, claimFields: CLAIMFIELDS, fieldProvenance: PROV, submittedAt: null, submissionSource: null, submissionActorUserId: null, submissionReference: null, submissionReason: null, ...o }; }
 function cctx(o: Record<string, unknown> = {}) { return { case: CASE, membership: MEM, globalPatient: GP, readiness: RD, billingDocument: BD, parentClaim: null, ...o }; }
 const CLAIMCTX = { clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", currency: "USD", lineItems: LINES };
-function inv(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", currency: "USD", totalAmount: "420.00", lineItems: LINES, invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", supersedesInvoiceId: null, deliveredAt: null, deliveryEventReference: null, ...o }; }
+// A valid delivered-invoice transition audit row (matches invoiceCommands' delivered write).
+function deliveredTx(rowOverride: Record<string, unknown> = {}) { return { kind: "one" as const, row: { entityType: "invoice", entityId: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", toStatus: "delivered", actorUserId: "u", actorRole: "biller", reason: "delivered", sourceType: "imported_delivery_acknowledgment", sourceReference: "EVT-1", createdAt: OLD, ...rowOverride } }; }
+function inv(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", currency: "USD", totalAmount: "420.00", lineItems: LINES, invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1-800", issuedAt: OLD, supersedesInvoiceId: null, deliveredAt: null, deliveryEventReference: null, ...o }; }
 function ictx(o: Record<string, unknown> = {}) { return { claim: CLAIMCTX, parentInvoice: null, ...o }; }
 
 // ═══ direct claim-lineage conflict proofs ═══
@@ -58,12 +64,16 @@ async function testClaimLineageConflicts() {
   bad({}, { readiness: { ...RD, globalPlexusPatientId: 901 } }, "claim_readiness_identity_mismatch", "readiness identity");
   bad({ chargeAmount: "999.00" }, {}, "claim_total_mismatch", "line-reconcile ≠ chargeAmount");
   bad({ lineItems: [{ lineId: "l1", amount: "1.5x", source: "s" }] }, {}, "claim_line_items_invalid", "malformed lines");
-  bad({ fieldProvenance: { service_code: { sourceType: "s" } } }, {}, "claim_field_provenance_missing", "missing field provenance");
+  bad({ fieldProvenance: { ...PROV, service_code: { sourceType: "s" } } }, {}, "claim_field_provenance_invalid", "arbitrary field source rejected");
   bad({ attemptNumber: 0 }, {}, "claim_attempt_invalid", "attemptNumber ≤ 0");
   bad({ currency: "EUR" }, {}, "claim_currency_unsupported", "unsupported currency");
   bad({ supersedesClaimId: 699, attemptNumber: 2 }, { parentClaim: null }, "claim_parent_not_found", "missing parent claim");
   bad({ supersedesClaimId: 699, attemptNumber: 2 }, { parentClaim: { clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", attemptNumber: 2 } }, "claim_parent_attempt_invalid", "parent attempt not < child");
-  bad({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: null }, {}, "claim_submission_provenance_missing", "incomplete submitted provenance");
+  bad({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: null, submissionReason: "why" }, {}, "claim_submission_provenance_missing", "incomplete submitted provenance");
+  // D — persisted field value + submission vocabulary
+  bad({ claimFields: { ...CLAIMFIELDS, payer: "" } }, {}, "claim_field_value_missing", "missing persisted field value");
+  bad({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "bogus_source", submissionActorUserId: "u", submissionReference: "R", submissionReason: "why" }, {}, "claim_submission_source_invalid", "arbitrary submission source rejected");
+  bad({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "R", submissionReason: null }, {}, "claim_submission_provenance_missing", "missing submissionReason");
 }
 // ═══ direct invoice-lineage conflict proofs ═══
 async function testInvoiceLineageConflicts() {
@@ -80,17 +90,59 @@ async function testInvoiceLineageConflicts() {
   bad({ supersedesInvoiceId: 799 }, { parentInvoice: null }, "invoice_parent_not_found", "missing parent invoice");
   bad({ supersedesInvoiceId: 799 }, { parentInvoice: { clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 701 } }, "invoice_parent_mismatch", "parent invoice wrong claim");
   bad({ canonicalStatus: "delivered", deliveredAt: null, deliveryEventReference: null }, {}, "invoice_delivery_provenance_missing", "delivered without provenance");
+  // E — exact line equality (unit/source/amount) + duplicate + issued version identity
+  bad({ lineItems: [{ lineId: "l1", amount: "300.00", source: "approved_fee_schedule", unit: 2 }, { lineId: "l2", amount: "120.00", source: "approved_fee_schedule", unit: 1 }] }, {}, "invoice_lines_disagree_with_claim", "changed unit");
+  bad({ lineItems: [{ lineId: "l1", amount: "300.00", source: "OTHER", unit: 1 }, { lineId: "l2", amount: "120.00", source: "approved_fee_schedule", unit: 1 }] }, {}, "invoice_lines_disagree_with_claim", "changed source");
+  bad({ lineItems: [{ lineId: "l1", amount: "301.00", source: "approved_fee_schedule", unit: 1 }, { lineId: "l2", amount: "119.00", source: "approved_fee_schedule", unit: 1 }] }, {}, "invoice_lines_disagree_with_claim", "changed amount");
+  bad({ lineItems: [{ lineId: "l1", amount: "300.00", source: "approved_fee_schedule", unit: 1 }, { lineId: "l1", amount: "120.00", source: "approved_fee_schedule", unit: 1 }] }, {}, "invoice_line_items_invalid", "duplicate line id");
+  bad({ canonicalStatus: "issued", invoiceNumber: null }, {}, "invoice_number_missing", "issued without number");
+  bad({ canonicalStatus: "issued", issuedAt: null }, {}, "invoice_issued_at_missing", "issued without issuedAt");
+}
+// ═══ F — delivery provenance from the exact transition audit row ═══
+async function testDeliveryProvenance() {
+  const { validateInvoiceLineage } = await lineageMod();
+  const V = (i: unknown, x: unknown) => validateInvoiceLineage(i as never, x as never);
+  const dinv = (o: Record<string, unknown> = {}) => inv({ canonicalStatus: "delivered", deliveredAt: OLD, deliveryEventReference: "EVT-1", ...o });
+  assert.ok(V(dinv(), ictx({ deliveryTransition: deliveredTx() })).ok, "fully valid delivered invoice + exact transition resolves");
+  const manual = ictx({ deliveryTransition: deliveredTx({ sourceType: "authorized_manual_attestation", reason: "attested", sourceReference: "ATT-9" }) });
+  assert.ok(V(dinv(), manual).ok, "manual attestation with reason + actor resolves (ref may differ)");
+  const badc = (o: Record<string, unknown>, dtx: unknown, code: string, msg: string) => { const r = V(dinv(), ictx({ deliveryTransition: dtx, ...o })); assert.ok(!r.ok && r.code === code, `${msg} → ${code} (got ${JSON.stringify(r)})`); };
+  badc({}, { kind: "missing" }, "invoice_delivery_transition_missing", "no delivery transition");
+  badc({}, { kind: "conflict" }, "invoice_delivery_transition_conflicting", "two delivery transitions");
+  badc({}, deliveredTx({ entityId: 999 }), "invoice_delivery_transition_scope_mismatch", "wrong entity id");
+  badc({}, deliveredTx({ clinicId: 2 }), "invoice_delivery_transition_scope_mismatch", "wrong clinic");
+  badc({}, deliveredTx({ serviceType: "NerveGuard" }), "invoice_delivery_transition_scope_mismatch", "wrong service");
+  badc({}, deliveredTx({ sourceType: "bogus" }), "invoice_delivery_source_invalid", "invalid delivery source");
+  badc({}, deliveredTx({ actorUserId: null }), "invoice_delivery_actor_missing", "missing actor");
+  badc({}, deliveredTx({ sourceType: "authorized_manual_attestation", reason: null }), "invoice_delivery_reason_missing", "manual attestation missing reason");
+  // The delivery command persists `transition.sourceReference = input.sourceReference ??
+  // deliveryEventReference` with NO equality constraint, so an automated-source delivery
+  // whose acknowledgment/remittance reference legitimately DIFFERS from the invoice's
+  // deliveryEventReference is VALID — the read model must not be stricter than the write.
+  assert.ok(V(dinv(), ictx({ deliveryTransition: deliveredTx({ sourceReference: "REMIT-77" }) })).ok, "automated source with a distinct sourceReference resolves (command contract permits divergence)");
+  // A missing/empty transition reference is still a conflict.
+  badc({}, deliveredTx({ sourceReference: null }), "invoice_delivery_reference_mismatch", "empty delivery reference");
 }
 // ═══ receipt-wide direct proofs ═══
 async function testReceiptWide() {
   const { validateReceiptWide } = await allocMod();
-  const rcpt = { clinicId: 1, currency: "USD", ancillaryCaseId: 5, serviceType: "BrainWave", amount: "500.00" };
-  const a = (o: Record<string, unknown>) => ({ clinicId: 1, currency: "USD", ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", amount: "100.00", ...o });
-  assert.ok(validateReceiptWide(rcpt as never, [a({ targetId: 800 }), a({ targetId: 801, amount: "200.00" })] as never).ok, "Σapply ≤ receipt across targets resolves");
-  const over = validateReceiptWide(rcpt as never, [a({ amount: "300.00" }), a({ amount: "300.00" })] as never);
+  const rcpt = { id: 900, clinicId: 1, currency: "USD", ancillaryCaseId: 5, serviceType: "BrainWave", amount: "500.00", eventType: "payment", status: "posted" };
+  const a = (o: Record<string, unknown>) => ({ id: 1, paymentId: 900, clinicId: 1, currency: "USD", ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", amount: "100.00", ...o });
+  assert.ok(validateReceiptWide(rcpt as never, [a({ id: 1, targetId: 800 }), a({ id: 2, targetId: 801, amount: "200.00" })] as never).ok, "Σapply ≤ receipt across targets resolves");
+  const over = validateReceiptWide(rcpt as never, [a({ id: 1, targetId: 800, amount: "300.00" }), a({ id: 2, targetId: 801, amount: "300.00" })] as never);
   assert.ok(!over.ok && over.code === "receipt_over_allocated", "Σapply > receipt across targets conflicts");
-  const cur = validateReceiptWide(rcpt as never, [a({ currency: "EUR" })] as never);
+  const cur = validateReceiptWide(rcpt as never, [a({ id: 1, targetId: 800, currency: "EUR" })] as never);
   assert.ok(!cur.ok && cur.code === "receipt_allocation_currency_mismatch", "currency disagreement conflicts");
+  // Receipt not posted → conflict; not a payment → conflict.
+  assert.equal((validateReceiptWide({ ...rcpt, status: "pending" } as never, [] as never) as { code?: string }).code, "receipt_not_posted", "pending receipt conflicts");
+  assert.equal((validateReceiptWide({ ...rcpt, eventType: "adjustment" } as never, [] as never) as { code?: string }).code, "receipt_not_payment", "non-payment receipt conflicts");
+  // Negation parent lineage across the receipt.
+  const apply = a({ id: 10, targetId: 800, amount: "200.00" });
+  const neg = (o: Record<string, unknown>) => ({ ...a({ id: 11, targetId: 800, amount: "50.00", eventType: "refund", parentAllocationId: 10 }), ...o });
+  assert.ok(validateReceiptWide(rcpt as never, [apply, neg({})] as never).ok, "valid partial refund passes");
+  assert.equal((validateReceiptWide(rcpt as never, [apply, neg({ parentAllocationId: 999 })] as never) as { code?: string }).code, "receipt_negation_parent_invalid", "unknown parent conflicts");
+  assert.equal((validateReceiptWide(rcpt as never, [apply, neg({ targetId: 801 })] as never) as { code?: string }).code, "receipt_negation_parent_target_mismatch", "parent target mismatch conflicts");
+  assert.equal((validateReceiptWide(rcpt as never, [apply, neg({ amount: "300.00" })] as never) as { code?: string }).code, "receipt_negation_exceeds_parent", "over-negated parent conflicts");
 }
 
 // ═══ read-model integration: incomplete lineage → status null ═══
@@ -242,9 +294,65 @@ async function testNoNPlusOne() {
   }
 }
 
+// ═══ A — payment-command write-path uses the COMPLETE shared lineage context ═══
+async function testPaymentCommandFullLineage() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  const submittedClaim = claim({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "R", submissionReason: "why" });
+  const mk = (over: Partial<Record<string, TableSpec>> = {}) => {
+    const m = new Map<unknown, TableSpec>([
+      [t.ancillaryCases, { select: () => [{ id: 5, clinicId: 1, serviceType: "BrainWave", ...ID }] }],
+      [t.memberships, { select: () => [{ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }] }],
+      [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
+      [t.billingReadinessChecks, { select: () => [{ id: 500, ...RD }] }],
+      [t.billingDocumentRequests, { select: () => [{ id: 600, ...BD }] }],
+      [t.canonicalPayments, { select: () => [{ id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "420.00" }] }],
+      [t.canonicalClaims, { select: () => [submittedClaim], onUpdate: (v: Record<string, unknown>) => [{ ...v, id: 700 }] }],
+      [t.canonicalInvoices, { select: () => [] }],
+      [t.canonicalPaymentAllocations, { select: () => [], onInsert: (v: Record<string, unknown>) => [{ ...v, id: 960 }] }],
+      [t.canonicalFinancialTransitions, { select: () => [], onInsert: (v: Record<string, unknown>) => [{ ...v, id: 1 }] }],
+    ]);
+    for (const [k, v] of Object.entries(over)) m.set((t as Record<string, unknown>)[k], v);
+    return m;
+  };
+  const alloc = () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "claim", targetId: 700, amount: "420.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a" });
+  const okr = await runWithDb(mk(), CHAIN, async () => alloc());
+  assert.ok(okr.status === "allocated" && okr.targetStatus === "paid", `valid direct claim allocation → paid (got ${JSON.stringify(okr)})`);
+  const noRd = await runWithDb(mk({ billingReadinessChecks: { select: () => [] } }), CHAIN, async (calls: Call[]) => { const r = await alloc(); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "missing readiness → zero allocation inserts"); assert.equal(countOps(calls, "update", t.canonicalClaims), 0, "missing readiness → zero target updates"); assert.equal(countOps(calls, "insert", t.canonicalFinancialTransitions), 0, "missing readiness → zero audit inserts"); return r; });
+  assert.ok(noRd.status === "allocation_rejected" && noRd.code === "claim_readiness_not_found", `missing readiness rejected (got ${JSON.stringify(noRd)})`);
+  const staleBd = await runWithDb(mk({ billingDocumentRequests: { select: () => [{ id: 600, ...BD, evidenceFingerprint: "fp-2" }] } }), CHAIN, async (calls: Call[]) => { const r = await alloc(); assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "stale BD → zero writes"); return r; });
+  assert.ok(staleBd.status === "allocation_rejected" && staleBd.code === "claim_billing_document_fingerprint_mismatch", `stale Billing Document rejected (got ${JSON.stringify(staleBd)})`);
+}
+// ═══ B — payment STAGE proves receipt-wide truth across ALL targets ═══
+async function testStageReceiptWide() {
+  const t = await loadCanonicalTables(); const { buildStageVectors } = await stageMod();
+  const svcCase = { id: 5, clinicId: 1, serviceType: "BrainWave", ...ID };
+  const claimT = claim({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "R", submissionReason: "why" });
+  const invT = inv({ id: 800 });
+  const mkSpec = (payment: unknown, allocs: unknown[]) => new Map<unknown, TableSpec>([
+    [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }], [t.gse, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }], [t.procedureEvents, { select: () => [] }],
+    [t.billingReadinessChecks, { select: () => [{ id: 500, ...RD }] }], [t.billingDocumentRequests, { select: () => [{ id: 600, ...BD }] }],
+    [t.canonicalClaims, { select: () => [claimT] }], [t.canonicalInvoices, { select: () => [invT] }], [t.canonicalPayments, { select: () => [payment] }], [t.canonicalPaymentAllocations, { select: () => allocs }],
+    [t.memberships, { select: () => [{ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }] }], [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
+  ]);
+  const payment = { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", status: "posted", currency: "USD", amount: "420.00", postedAt: OLD };
+  const a800 = { id: 1, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00" };
+  const aOther = { id: 2, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "claim", targetId: 700, currency: "USD", amount: "100.00" };
+  // Selected invoice 800 is exactly funded (would be paid) — but the SAME receipt also
+  // funds claim 700 (100), so the receipt is over-allocated → conflict, never paid.
+  const over = await runWithDb(mkSpec(payment, [a800, aOther]), CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [svcCase as never] }))[0]);
+  assert.notEqual(over.payment.status, "paid", "receipt over-allocated across targets → not paid");
+  assert.ok(over.payment.integrity === "conflicting" && over.payment.warnings.includes("payment_receipt_wide_conflict"), `receipt-wide conflict fired (got ${JSON.stringify(over.payment.warnings)})`);
+  // Same receipt funding ONLY invoice 800 (exactly) → paid (control).
+  const okp = await runWithDb(mkSpec(payment, [a800]), CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [svcCase as never] }))[0]);
+  assert.equal(okp.payment.status, "paid", "single-target exactly-funded receipt → paid");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
   ["claim lineage conflicts (BD/readiness/lines/provenance/attempt/parent/submitted)", testClaimLineageConflicts],
-  ["invoice lineage conflicts (currency/lines/type/recipient/parent/delivery)", testInvoiceLineageConflicts],
+  ["invoice lineage conflicts (currency/lines/type/recipient/parent/delivery/version)", testInvoiceLineageConflicts],
+  ["delivery provenance from exact transition audit row", testDeliveryProvenance],
+  ["payment-command write-path uses complete lineage context", testPaymentCommandFullLineage],
+  ["payment stage receipt-wide truth across all targets", testStageReceiptWide],
   ["receipt-wide reconciliation direct", testReceiptWide],
   ["read model: incomplete claim lineage → status null", testReadModelClaimBdMismatchNull],
   ["read model: receipt-wide over-allocation conflicts funded invoices", testReadModelReceiptOverAllocated],

@@ -69,6 +69,31 @@ export function reconcileLines(lines: MoneyLine[], opts: { allowNegative?: boole
   catch { return { ok: false, code: "line_total_out_of_range" }; }
 }
 
+/** A deterministic normalized line set for EXACT equality comparison between a claim
+ *  and an invoice. Rejects duplicate line identity and malformed amounts, then returns
+ *  the lines sorted by lineId with amount in integer cents and unit normalized to a
+ *  stable `null` when absent — so two line sets that both omit unit still compare equal,
+ *  and a changed unit or source is detected. Compares lineId + amountCents + unit + source. */
+export function normalizeMoneyLinesForEquality(value: unknown):
+  | { ok: true; normalized: Array<{ lineId: string; amountCents: number; unit: number | null; source: string }> }
+  | { ok: false; code: string } {
+  if (!Array.isArray(value)) return { ok: false, code: "lines_invalid" };
+  const seen = new Set<string>();
+  const out: Array<{ lineId: string; amountCents: number; unit: number | null; source: string }> = [];
+  for (const l of value as MoneyLine[]) {
+    if (!l || typeof l.lineId !== "string" || l.lineId.length === 0) return { ok: false, code: "line_missing_id" };
+    if (seen.has(l.lineId)) return { ok: false, code: "line_duplicate_identity" };
+    seen.add(l.lineId);
+    if (typeof l.source !== "string" || l.source.length === 0) return { ok: false, code: "line_missing_source" };
+    if (l.unit != null && (!Number.isInteger(l.unit) || l.unit < 0)) return { ok: false, code: "line_negative_units" };
+    let c: number;
+    try { c = toCents(l.amount); } catch { return { ok: false, code: "line_amount_invalid" }; }
+    out.push({ lineId: l.lineId, amountCents: c, unit: l.unit ?? null, source: l.source });
+  }
+  out.sort((a, b) => (a.lineId < b.lineId ? -1 : a.lineId > b.lineId ? 1 : 0));
+  return { ok: true, normalized: out };
+}
+
 export class MoneyError extends Error {
   readonly code: string;
   constructor(code: string) { super(code); this.code = code; this.name = "MoneyError"; }

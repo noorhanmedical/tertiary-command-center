@@ -18,7 +18,7 @@ import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllo
 import { canonicalClaims } from "@shared/schema/canonicalClaims";
 import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
-import { patientClinicMemberships, globalPlexusPatients } from "@shared/schema/plexusIdentity";
+import { loadClaimLineageContextsWithDb, loadInvoiceLineageContextsWithDb } from "./financialLineageContext";
 import { canonicalPaymentsRuntimeEnabled } from "../../lib/featureFlags";
 import { toCents, sumCents } from "@shared/money";
 import { validateAllocation, netAppliedCents } from "./balance";
@@ -182,26 +182,26 @@ function targetChanged(a: TargetSnap, b: TargetSnap): boolean {
 
 /** §5 WRITE-PATH lineage gate. `loadTarget` proves only payable-status + non-
  *  supersession; it does NOT prove the target's identity/evidence lineage is still
- *  current. This reloads the EXACT target row + its current canonical context under
- *  the caller's lock and runs the SAME shared validators as the read model
- *  (`validateClaimLineage`/`validateInvoiceLineage`), so a still-payable-but-lineage-
- *  stale target (membership deactivated, global patient merged, evidence superseded,
- *  invoice↔claim drift) can never be driven to `paid` while the read model reports it
- *  `conflicting`. Batched exact-id lookups — no N+1. */
-async function validateTargetLineage(h: DbLike, targetType: "claim" | "invoice", clinicId: number, targetId: number): Promise<LineageVerdict> {
-  const first = <T,>(rows: unknown, pred: (r: T) => boolean): T | null => ((rows as T[]).find(pred) ?? null);
+ *  current. This reloads the EXACT target row and its COMPLETE canonical context via
+ *  the SAME shared `financialLineageContext` loader the read model uses — through the
+ *  active transaction handle `tx` (after advisory locks) — and runs the SAME
+ *  `validateClaimLineage`/`validateInvoiceLineage`. So a still-payable-but-lineage-stale
+ *  target (deactivated membership, merged global patient, superseded/ drifted Billing
+ *  Document or readiness, invoice↔claim drift, missing delivery transition) can never
+ *  be driven to `paid` while the read model reports it `conflicting`. */
+async function validateTargetLineage(tx: DbLike, targetType: "claim" | "invoice", clinicId: number, targetId: number): Promise<LineageVerdict> {
   if (targetType === "claim") {
-    const claim = first<typeof canonicalClaims.$inferSelect>(await h.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), eq(canonicalClaims.id, targetId))).limit(2), (r) => r.id === targetId && r.clinicId === clinicId);
+    const rows = await tx.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), eq(canonicalClaims.id, targetId))).limit(2);
+    const claim = (rows as (typeof canonicalClaims.$inferSelect)[]).find((r) => r.id === targetId && r.clinicId === clinicId);
     if (!claim) return { ok: false, code: "claim_case_not_found" };
-    const kase = claim.ancillaryCaseId == null ? null : first<typeof patientAncillaryCases.$inferSelect>(await h.select().from(patientAncillaryCases).where(and(eq(patientAncillaryCases.clinicId, clinicId), eq(patientAncillaryCases.id, claim.ancillaryCaseId))).limit(2), (r) => r.id === claim.ancillaryCaseId && r.clinicId === clinicId);
-    const mem = claim.patientClinicMembershipId == null ? null : first<typeof patientClinicMemberships.$inferSelect>(await h.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), eq(patientClinicMemberships.id, claim.patientClinicMembershipId))).limit(2), (r) => r.id === claim.patientClinicMembershipId && r.clinicId === clinicId);
-    const gp = claim.globalPlexusPatientId == null ? null : first<typeof globalPlexusPatients.$inferSelect>(await h.select().from(globalPlexusPatients).where(eq(globalPlexusPatients.id, claim.globalPlexusPatientId)).limit(2), (r) => r.id === claim.globalPlexusPatientId);
-    return validateClaimLineage(claim as never, { case: kase as never, membership: mem as never, globalPatient: gp as never });
+    const ctx = (await loadClaimLineageContextsWithDb(tx, clinicId, [{ id: claim.id, ancillaryCaseId: claim.ancillaryCaseId ?? null, patientClinicMembershipId: claim.patientClinicMembershipId ?? null, globalPlexusPatientId: claim.globalPlexusPatientId ?? null, billingReadinessCheckId: claim.billingReadinessCheckId ?? null, billingDocumentId: claim.billingDocumentId ?? null, supersedesClaimId: claim.supersedesClaimId ?? null }])).get(claim.id) ?? { case: null, membership: null, globalPatient: null, readiness: null, billingDocument: null, parentClaim: null };
+    return validateClaimLineage(claim as never, ctx);
   }
-  const inv = first<typeof canonicalInvoices.$inferSelect>(await h.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), eq(canonicalInvoices.id, targetId))).limit(2), (r) => r.id === targetId && r.clinicId === clinicId);
+  const rows = await tx.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), eq(canonicalInvoices.id, targetId))).limit(2);
+  const inv = (rows as (typeof canonicalInvoices.$inferSelect)[]).find((r) => r.id === targetId && r.clinicId === clinicId);
   if (!inv) return { ok: false, code: "invoice_claim_not_found" };
-  const claim = inv.claimId == null ? null : first<typeof canonicalClaims.$inferSelect>(await h.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), eq(canonicalClaims.id, inv.claimId))).limit(2), (r) => r.id === inv.claimId && r.clinicId === clinicId);
-  return validateInvoiceLineage(inv as never, claim as never);
+  const ctx = (await loadInvoiceLineageContextsWithDb(tx, clinicId, [{ id: inv.id, claimId: inv.claimId ?? null, supersedesInvoiceId: inv.supersedesInvoiceId ?? null, canonicalStatus: inv.canonicalStatus }])).get(inv.id) ?? { claim: null, parentInvoice: null };
+  return validateInvoiceLineage(inv as never, ctx);
 }
 
 export type AllocateInput = { clinicId: number; paymentId: number; targetType: "claim" | "invoice"; targetId: number; amount: string; isOverpayment?: boolean; reason?: string | null; actorUserId: string; actorRole: string; idempotencyKey: string };

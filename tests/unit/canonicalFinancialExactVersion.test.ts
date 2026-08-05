@@ -261,9 +261,11 @@ async function testStageExactTarget() {
   const mig = () => { throw Object.assign(new Error("x"), { code: "42P01" }); };
   // Alloc to the CLAIM (799) and to a WRONG invoice (799) must be excluded when the
   // active target is invoice 800; only the 420 apply to invoice 800 counts → paid.
+  // Excluded allocations live on OTHER receipts (901/902) so receipt 900 — the one
+  // funding the selected invoice 800 — is not receipt-wide over-allocated.
   const allocs = [
-    { id: 1, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "claim", targetId: 700, currency: "USD", amount: "999.00" },
-    { id: 2, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "invoice", targetId: 799, currency: "USD", amount: "999.00" },
+    { id: 1, clinicId: 1, paymentId: 901, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "claim", targetId: 700, currency: "USD", amount: "999.00" },
+    { id: 2, clinicId: 1, paymentId: 902, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "invoice", targetId: 799, currency: "USD", amount: "999.00" },
     { id: 3, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00" },
   ];
   const spec = new Map<unknown, TableSpec>([
