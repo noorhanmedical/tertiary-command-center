@@ -412,10 +412,45 @@ async function testStageClinicLevelReceipt() {
     assert.ok(pay.status !== "paid" && pay.integrity === "conflicting", `${label} receipt → conflicting, not paid (got ${JSON.stringify(pay)})`);
   }
 }
+async function testStageReceiptWideReadFailFailsClosed() {
+  const t = await loadCanonicalTables(); const { buildStageVectors } = await stageMod();
+  const svcCase = { id: 5, clinicId: 1, serviceType: "BrainWave", ...ID };
+  const claimT = claim({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "R", submissionReason: "why" });
+  const invT = inv({ id: 800 });
+  const alloc = { id: 1, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00" };
+  const receipt = [{ id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "420.00", postedAt: OLD }];
+  const boom = () => { throw new Error("db fail"); };
+  const base = (payments: TableSpec, allocsSpec: TableSpec) => new Map<unknown, TableSpec>([
+    [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }], [t.gse, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }], [t.procedureEvents, { select: () => [] }],
+    [t.ancillaryCases, { select: () => [svcCase] }],
+    [t.billingReadinessChecks, { select: () => [{ id: 500, ...RD }] }], [t.billingDocumentRequests, { select: () => [{ id: 600, ...BD }] }],
+    [t.canonicalClaims, { select: () => [claimT] }], [t.canonicalInvoices, { select: () => [invT] }],
+    [t.canonicalPayments, payments], [t.canonicalPaymentAllocations, allocsSpec],
+    [t.memberships, { select: () => [{ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }] }], [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
+  ]);
+  const runPay = async (spec: Map<unknown, TableSpec>) => (await runWithDb(spec, CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [svcCase as never] }))[0])).payment;
+  // Control: both receipt-wide loads succeed → exactly funded → paid.
+  const good = await runPay(base({ select: () => receipt }, { select: () => [alloc] }));
+  assert.equal(good.status, "paid", `control: receipt-wide loads succeed → paid (got ${JSON.stringify(good)})`);
+  // rwAllocLoad (2nd canonicalPaymentAllocations select) FAILS: an empty complete-allocation
+  // set must NOT let validateReceiptWide pass vacuously into a FALSE paid — fail closed.
+  let ap = 0;
+  const allocFail = await runPay(base({ select: () => receipt }, { select: () => { ap++; if (ap >= 2) boom(); return [alloc]; } }));
+  assert.equal(allocFail.availability, "unavailable", `receipt-wide allocation-query failure → unavailable, never a false paid (got ${JSON.stringify(allocFail)})`);
+  assert.notEqual(allocFail.status, "paid", "receipt-wide allocation-query failure never derives paid");
+  assert.ok(allocFail.warnings.includes("payment_read_failed"), "receipt-wide read failure surfaces payment_read_failed");
+  // rwReceiptLoad (2nd canonicalPayments select) FAILS: an empty receipt map must NOT mislabel
+  // a valid allocation as a data conflict — it is an unavailable read.
+  let pc = 0;
+  const rcptFail = await runPay(base({ select: () => { pc++; if (pc >= 2) boom(); return receipt; } }, { select: () => [alloc] }));
+  assert.equal(rcptFail.availability, "unavailable", `receipt-lookup failure → unavailable, not a false conflict (got ${JSON.stringify(rcptFail)})`);
+  assert.notEqual(rcptFail.status, "paid", "receipt-lookup failure never derives paid");
+}
 
 const tests: Array<[string, () => Promise<void>]> = [
   ["payment-command allocation to invoice over a stale claim rejected", testPaymentCommandInvoiceStaleClaim],
   ["stage: clinic-level case-less receipt resolves / invalid conflicts", testStageClinicLevelReceipt],
+  ["stage: receipt-wide read failure fails closed (no false paid/conflict)", testStageReceiptWideReadFailFailsClosed],
   ["claim lineage conflicts (BD/readiness/lines/provenance/attempt/parent/submitted)", testClaimLineageConflicts],
   ["invoice lineage conflicts (currency/lines/type/recipient/parent/delivery/version)", testInvoiceLineageConflicts],
   ["delivery provenance from exact transition audit row", testDeliveryProvenance],

@@ -233,6 +233,11 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const rwAllocByPayment = new Map<number, typeof canonicalPaymentAllocations.$inferSelect[]>();
   for (const a of (rwAllocLoad?.ok ? rwAllocLoad.rows : []).filter((x) => x.clinicId === clinicId && x.paymentId != null)) { const arr = rwAllocByPayment.get(a.paymentId as number) ?? []; arr.push(a); rwAllocByPayment.set(a.paymentId as number, arr); }
   const rwTruncated = trunc(rwReceiptLoad) || trunc(rwAllocLoad);
+  // A FAILED receipt-wide load (`{ok:false}`, not truncation) must fail closed: an empty
+  // receipt map would mislabel a valid allocation as a conflict, and — worse — an empty
+  // complete-allocation set would let `validateReceiptWide(receipt, [])` pass vacuously and
+  // the stage derive a FALSE `paid`. Folded into paymentOk → the stage reads `unavailable`.
+  const rwOk = (rwReceiptLoad?.ok ?? true) && (rwAllocLoad?.ok ?? true);
 
   const ctx: Ctx = {
     memById, gpById, claimBdById, claimRdById, claimParentById, invLineageCtxById, invCtxOk,
@@ -247,7 +252,7 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
     docGate, docOk: billingDocLoad?.ok ?? true, billingDocByCase,
     claimGate, claimOk: claimLoad?.ok ?? true, claimByCase,
     invoiceGate, invoiceOk: invoiceLoad?.ok ?? true, invoiceByCase,
-    paymentGate, paymentOk: (paymentLoad?.ok ?? true) && (allocLoad?.ok ?? true), paymentByCase, allocByCase,
+    paymentGate, paymentOk: (paymentLoad?.ok ?? true) && (allocLoad?.ok ?? true) && rwOk, paymentByCase, allocByCase,
   };
   return cases.map((c) => buildOne(c, ctx));
 }
