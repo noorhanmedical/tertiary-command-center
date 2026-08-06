@@ -120,12 +120,17 @@ export type FlagOverrides = {
   engagementRecentLists?: boolean;
   pcsCanonicalView?: boolean;
   acsCanonicalView?: boolean;
+  canonicalClaims?: boolean;
+  canonicalInvoices?: boolean;
+  canonicalPayments?: boolean;
+  canonicalClaimTransmission?: boolean;
 };
 
-// Additive Phase 2I flags toggled through the same save/restore mechanism.
+// Additive Phase 2I/2J flags toggled through the same save/restore mechanism.
 const EXTRA_FLAG_KEYS = [
   "serviceSpecificAdminReview", "engagementAdminReviewSync", "engagementMultiListRepository",
   "engagementRecentLists", "pcsCanonicalView", "acsCanonicalView",
+  "canonicalClaims", "canonicalInvoices", "canonicalPayments", "canonicalClaimTransmission",
 ] as const;
 
 export async function runWithDb<T>(
@@ -209,10 +214,21 @@ export async function loadCanonicalTables() {
   const billingReadiness = await import("../../shared/schema/billingReadiness");
   const billingDocs = await import("../../shared/schema/billingDocuments");
   const engagementLists = await import("../../shared/schema/engagementLists");
+  const canonClaims = await import("../../shared/schema/canonicalClaims");
+  const canonInvoices = await import("../../shared/schema/canonicalInvoices");
+  const canonPayments = await import("../../shared/schema/canonicalPayments");
+  const canonAllocations = await import("../../shared/schema/canonicalPaymentAllocations");
+  const canonTransitions = await import("../../shared/schema/canonicalFinancialTransitions");
   return {
     // Phase 2C engagement identity (Phase 2H list/membership wiring reads these).
     engagementLists: engagementLists.engagementLists,
     engagementMemberships: engagementLists.engagementListMemberships,
+    // Phase 2J canonical financial lifecycle.
+    canonicalClaims: canonClaims.canonicalClaims,
+    canonicalInvoices: canonInvoices.canonicalInvoices,
+    canonicalPayments: canonPayments.canonicalPayments,
+    canonicalPaymentAllocations: canonAllocations.canonicalPaymentAllocations,
+    canonicalFinancialTransitions: canonTransitions.canonicalFinancialTransitions,
     ancillaryCases: anc.patientAncillaryCases,
     ancillaryFailures: anc.ancillaryCaseReconciliationFailures,
     screenings: scr.patientScreenings,

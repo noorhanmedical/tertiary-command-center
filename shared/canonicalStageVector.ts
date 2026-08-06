@@ -62,7 +62,8 @@ export type CaseIdentity = {
   warnings: string[];
 };
 
-/** The 10-stage canonical vector for one distinct ancillary-case episode. */
+/** The canonical stage vector for one distinct ancillary-case episode (10 core
+ *  lifecycle stages + 3 additive Phase 2J financial stages, all flag-gated). */
 export type CaseStageVector = {
   ancillaryCaseId: number;
   serviceType: string;
@@ -79,13 +80,21 @@ export type CaseStageVector = {
   signature: StageStatus;
   billingReadiness: BillingReadinessStage;
   billingDocument: StageStatus;
+  // Phase 2J — additive canonical financial stages. Each is `upstream_flag_off`
+  // (and thus non-blocking / non-rendered) unless its 2J flag is ON, so with the
+  // 2J flags OFF the prior 10-stage truth and currentStage are byte-identical.
+  claim: StageStatus;
+  invoice: StageStatus;
+  payment: StageStatus;
   // Deterministic earliest-incomplete stage key, or null when evidence is
   // conflicting/incomplete (an explicit integrity state — never most-advanced).
   currentStage: CanonicalStageKey | null;
   currentStageIntegrity: "resolved" | "unresolved" | "conflicting";
 };
 
-/** Canonical stage order — the ONLY basis for a deterministic currentStage. */
+/** Canonical stage order — the ONLY basis for a deterministic currentStage. The
+ *  Phase 2J financial stages extend the lifecycle AFTER billingDocument; they are
+ *  skipped by deriveCurrentStage while `upstream_flag_off` (2J flags default OFF). */
 export const CANONICAL_STAGE_ORDER = [
   "adminReview",
   "engagement",
@@ -97,7 +106,13 @@ export const CANONICAL_STAGE_ORDER = [
   "signature",
   "billingReadiness",
   "billingDocument",
+  "claim",
+  "invoice",
+  "payment",
 ] as const;
+
+/** The Phase 2J financial stages (additive; rendered/blocking only when enabled). */
+export const CANONICAL_FINANCIAL_STAGE_KEYS = ["claim", "invoice", "payment"] as const;
 export type CanonicalStageKey = (typeof CANONICAL_STAGE_ORDER)[number];
 
 /** Shared paginated envelope for a canonical surface read model. */

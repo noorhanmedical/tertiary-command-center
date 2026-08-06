@@ -507,8 +507,12 @@ async function testMigration() {
   // Phase 2G adds migration 0055 (additive only). It exists now; no 0056 exists.
   const body55 = readFileSync(join(process.cwd(), "migrations/0055_add_canonical_billing_readiness_documents.sql"), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
   assert.ok(!/DROP TABLE/i.test(body55.toUpperCase()) && !/TRUNCATE/i.test(body55.toUpperCase()) && !/DROP COLUMN/i.test(body55.toUpperCase()), "(40) 0055 additive only");
-  const has56 = readdirSync(join(process.cwd(), "migrations")).some((f) => f.startsWith("0056"));
-  assert.ok(!has56, "(40) no migration 0056 exists");
+  // Phase 2J adds migration 0056 (canonical claim/invoice/payment lifecycle,
+  // additive only). It exists now; the forbidden-next boundary is 0057.
+  const body56 = readFileSync(join(process.cwd(), "migrations/0056_add_canonical_claim_invoice_payment_lifecycle.sql"), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  assert.ok(!/DROP TABLE/i.test(body56.toUpperCase()) && !/TRUNCATE/i.test(body56.toUpperCase()) && !/DROP COLUMN/i.test(body56.toUpperCase()), "(40) 0056 additive only");
+  const has57 = readdirSync(join(process.cwd(), "migrations")).some((f) => f.startsWith("0057"));
+  assert.ok(!has57, "(40) no migration 0057 exists");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [

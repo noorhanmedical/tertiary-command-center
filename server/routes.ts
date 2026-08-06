@@ -358,6 +358,11 @@ export async function registerRoutes(
   // FEATURE_PCS_CANONICAL_VIEW / FEATURE_ACS_CANONICAL_VIEW flag is OFF (zero
   // canonical reads).
   (await import("./routes/pcsAcsCanonical")).registerPcsAcsCanonicalRoutes(app);
+  // Phase 2J — canonical claim/invoice/payment read model. Registered
+  // unconditionally; returns an explicit disabled contract when all three
+  // FEATURE_CANONICAL_CLAIMS/INVOICES/PAYMENTS flags are OFF (zero migration-0056
+  // reads). READ-ONLY; no external financial operation is ever executed.
+  (await import("./routes/canonicalFinancial")).registerCanonicalFinancialRoutes(app);
   // Phase 2C — Engagement Repository + service-specific Admin Review.
   // Both route files are registered unconditionally. Each handler
   // returns 404 when its feature flag is OFF, preserving previous
