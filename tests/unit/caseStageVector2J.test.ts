@@ -74,6 +74,8 @@ function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts = {}) 
     [t.canonicalPaymentAllocations, { select: () => o.allocations ?? [] }],
     [t.memberships, { select: () => [pcm()] }],
     [t.globalPatients, { select: () => [gpp()] }],
+    // §A the invoice→claim shared loader resolves the referenced claim's case context.
+    [t.ancillaryCases, { select: () => [acase()] }],
   ]);
 }
 async function build(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts, flags: Record<string, boolean>, calls?: (c: Call[]) => void) {

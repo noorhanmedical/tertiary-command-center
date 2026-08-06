@@ -200,7 +200,7 @@ async function validateTargetLineage(tx: DbLike, targetType: "claim" | "invoice"
   const rows = await tx.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), eq(canonicalInvoices.id, targetId))).limit(2);
   const inv = (rows as (typeof canonicalInvoices.$inferSelect)[]).find((r) => r.id === targetId && r.clinicId === clinicId);
   if (!inv) return { ok: false, code: "invoice_claim_not_found" };
-  const ctx = (await loadInvoiceLineageContextsWithDb(tx, clinicId, [{ id: inv.id, claimId: inv.claimId ?? null, supersedesInvoiceId: inv.supersedesInvoiceId ?? null, canonicalStatus: inv.canonicalStatus }])).get(inv.id) ?? { claim: null, parentInvoice: null };
+  const ctx = (await loadInvoiceLineageContextsWithDb(tx, clinicId, [{ id: inv.id, claimId: inv.claimId ?? null, supersedesInvoiceId: inv.supersedesInvoiceId ?? null, canonicalStatus: inv.canonicalStatus }])).get(inv.id) ?? { claim: null, claimContext: null, parentInvoice: null };
   return validateInvoiceLineage(inv as never, ctx);
 }
 

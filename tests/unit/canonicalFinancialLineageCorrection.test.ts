@@ -41,11 +41,12 @@ const RD = { clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", supersed
 const BD = { ...RD, billingReadinessCheckId: 500 };
 function claim(o: Record<string, unknown> = {}) { return { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", ...ID, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, canonicalStatus: "ready", attemptNumber: 1, supersedesClaimId: null, currency: "USD", chargeAmount: "420.00", lineItems: LINES, claimFields: CLAIMFIELDS, fieldProvenance: PROV, submittedAt: null, submissionSource: null, submissionActorUserId: null, submissionReference: null, submissionReason: null, ...o }; }
 function cctx(o: Record<string, unknown> = {}) { return { case: CASE, membership: MEM, globalPatient: GP, readiness: RD, billingDocument: BD, parentClaim: null, ...o }; }
-const CLAIMCTX = { clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", currency: "USD", lineItems: LINES };
 // A valid delivered-invoice transition audit row (matches invoiceCommands' delivered write).
 function deliveredTx(rowOverride: Record<string, unknown> = {}) { return { kind: "one" as const, row: { entityType: "invoice", entityId: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", toStatus: "delivered", actorUserId: "u", actorRole: "biller", reason: "delivered", sourceType: "imported_delivery_acknowledgment", sourceReference: "EVT-1", createdAt: OLD, ...rowOverride } }; }
 function inv(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", currency: "USD", totalAmount: "420.00", lineItems: LINES, invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: "INV-1-800", issuedAt: OLD, supersedesInvoiceId: null, deliveredAt: null, deliveryEventReference: null, ...o }; }
-function ictx(o: Record<string, unknown> = {}) { return { claim: CLAIMCTX, parentInvoice: null, ...o }; }
+// §A The invoice ctx now carries the FULL referenced claim row + that claim's COMPLETE
+// lineage context — the invoice validator runs the claim's own validateClaimLineage.
+function ictx(o: Record<string, unknown> = {}) { return { claim: claim(), claimContext: cctx(), parentInvoice: null, ...o }; }
 
 // ═══ direct claim-lineage conflict proofs ═══
 async function testClaimLineageConflicts() {
@@ -81,7 +82,14 @@ async function testInvoiceLineageConflicts() {
   const V = (i: unknown, x: unknown) => validateInvoiceLineage(i as never, x as never);
   assert.ok(V(inv(), ictx()).ok, "baseline coherent invoice resolves");
   const bad = (i: Record<string, unknown>, x: Record<string, unknown>, code: string, msg: string) => { const r = V(inv(i), ictx(x)); assert.ok(!r.ok && r.code === code, `${msg} → ${code} (got ${JSON.stringify(r)})`); };
-  bad({ currency: "EUR" }, { claim: { ...CLAIMCTX, currency: "USD" } }, "invoice_currency_mismatch", "currency mismatch");
+  bad({ currency: "EUR" }, {}, "invoice_currency_mismatch", "invoice currency ≠ claim currency");
+  // §A the referenced claim must itself pass complete lineage — a stale/invalid claim
+  // (whose copied fields still match the invoice) conflicts the invoice, single PHI-free code.
+  bad({}, { claimContext: cctx({ billingDocument: { ...BD, evidenceFingerprint: "fp-2" } }) }, "invoice_claim_lineage_conflict", "stale claim BD fingerprint");
+  bad({}, { claimContext: cctx({ membership: { ...MEM, membershipStatus: "inactive" } }) }, "invoice_claim_lineage_conflict", "inactive claim membership");
+  bad({}, { claimContext: cctx({ globalPatient: { identityStatus: "active", mergedIntoPatientId: 901 } }) }, "invoice_claim_lineage_conflict", "merged claim global patient");
+  bad({}, { claim: claim({ fieldProvenance: { ...PROV, payer: { sourceType: "approved_fee_schedule", sourceId: "s" } } }) }, "invoice_claim_lineage_conflict", "invalid claim field provenance");
+  bad({}, { claim: null, claimContext: null }, "invoice_claim_not_found", "missing claim context fails closed");
   bad({ totalAmount: "999.00" }, {}, "invoice_total_mismatch", "line-reconcile ≠ total");
   bad({ lineItems: [{ lineId: "zzz", amount: "300.00", source: "s" }, { lineId: "l2", amount: "120.00", source: "s" }] }, {}, "invoice_lines_disagree_with_claim", "invoice lines ≠ claim lines");
   bad({ invoiceType: "bogus" }, {}, "invoice_type_invalid", "invalid type");
@@ -330,6 +338,7 @@ async function testStageReceiptWide() {
   const invT = inv({ id: 800 });
   const mkSpec = (payment: unknown, allocs: unknown[]) => new Map<unknown, TableSpec>([
     [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }], [t.gse, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }], [t.procedureEvents, { select: () => [] }],
+    [t.ancillaryCases, { select: () => [svcCase] }],
     [t.billingReadinessChecks, { select: () => [{ id: 500, ...RD }] }], [t.billingDocumentRequests, { select: () => [{ id: 600, ...BD }] }],
     [t.canonicalClaims, { select: () => [claimT] }], [t.canonicalInvoices, { select: () => [invT] }], [t.canonicalPayments, { select: () => [payment] }], [t.canonicalPaymentAllocations, { select: () => allocs }],
     [t.memberships, { select: () => [{ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }] }], [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
@@ -346,8 +355,67 @@ async function testStageReceiptWide() {
   const okp = await runWithDb(mkSpec(payment, [a800]), CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [svcCase as never] }))[0]);
   assert.equal(okp.payment.status, "paid", "single-target exactly-funded receipt → paid");
 }
+// §A payment-command allocation to an INVOICE whose referenced claim is lineage-stale.
+async function testPaymentCommandInvoiceStaleClaim() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  const submittedClaim = claim({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "R", submissionReason: "why" });
+  const invT = inv({ id: 800, canonicalStatus: "issued", totalAmount: "420.00" });
+  const mk = (over: Partial<Record<string, TableSpec>> = {}) => {
+    const m = new Map<unknown, TableSpec>([
+      [t.ancillaryCases, { select: () => [{ id: 5, clinicId: 1, serviceType: "BrainWave", ...ID }] }],
+      [t.memberships, { select: () => [{ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }] }],
+      [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
+      [t.billingReadinessChecks, { select: () => [{ id: 500, ...RD }] }],
+      [t.billingDocumentRequests, { select: () => [{ id: 600, ...BD }] }],
+      [t.canonicalPayments, { select: () => [{ id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "420.00" }] }],
+      [t.canonicalClaims, { select: () => [submittedClaim] }],
+      [t.canonicalInvoices, { select: () => [invT], onUpdate: (v: Record<string, unknown>) => [{ ...v, id: 800 }] }],
+      [t.canonicalPaymentAllocations, { select: () => [], onInsert: (v: Record<string, unknown>) => [{ ...v, id: 960 }] }],
+      [t.canonicalFinancialTransitions, { select: () => [], onInsert: (v: Record<string, unknown>) => [{ ...v, id: 1 }] }],
+    ]);
+    for (const [k, v] of Object.entries(over)) m.set((t as Record<string, unknown>)[k], v);
+    return m;
+  };
+  const alloc = () => p.allocateCanonicalPayment({ clinicId: 1, paymentId: 900, targetType: "invoice", targetId: 800, amount: "420.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "a" });
+  const okr = await runWithDb(mk(), CHAIN, async () => alloc());
+  assert.ok(okr.status === "allocated" && okr.targetStatus === "paid", `valid invoice + valid claim allocates → paid (got ${JSON.stringify(okr)})`);
+  const stale = await runWithDb(mk({ billingDocumentRequests: { select: () => [{ id: 600, ...BD, evidenceFingerprint: "fp-2" }] } }), CHAIN, async (calls: Call[]) => {
+    const r = await alloc();
+    assert.equal(countOps(calls, "insert", t.canonicalPaymentAllocations), 0, "stale referenced claim → zero allocation inserts");
+    assert.equal(countOps(calls, "update", t.canonicalInvoices), 0, "stale referenced claim → zero invoice updates");
+    assert.equal(countOps(calls, "insert", t.canonicalFinancialTransitions), 0, "stale referenced claim → zero audit inserts");
+    return r;
+  });
+  assert.ok(stale.status === "allocation_rejected" && stale.code === "invoice_claim_lineage_conflict", `allocation to invoice over a stale claim rejected (got ${JSON.stringify(stale)})`);
+}
+// §B a posted clinic-level CASE-LESS receipt allocated to the case resolves in the stage.
+async function testStageClinicLevelReceipt() {
+  const t = await loadCanonicalTables(); const { buildStageVectors } = await stageMod();
+  const svcCase = { id: 5, clinicId: 1, serviceType: "BrainWave", ...ID };
+  const claimT = claim({ canonicalStatus: "submitted", submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "R", submissionReason: "why" });
+  const invT = inv({ id: 800 });
+  const alloc = { id: 1, paymentId: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00" };
+  const clinicReceipt = (o: Record<string, unknown> = {}) => [{ id: 900, clinicId: 1, ancillaryCaseId: null, serviceType: null, eventType: "payment", paymentType: "processor_import", status: "posted", currency: "USD", amount: "420.00", postedAt: OLD, ...o }];
+  const mkSpec = (receiptRows: unknown[]) => new Map<unknown, TableSpec>([
+    [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }], [t.gse, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }], [t.procedureEvents, { select: () => [] }],
+    [t.ancillaryCases, { select: () => [svcCase] }],
+    [t.billingReadinessChecks, { select: () => [{ id: 500, ...RD }] }], [t.billingDocumentRequests, { select: () => [{ id: 600, ...BD }] }],
+    [t.canonicalClaims, { select: () => [claimT] }], [t.canonicalInvoices, { select: () => [invT] }], [t.canonicalPayments, { select: () => receiptRows }], [t.canonicalPaymentAllocations, { select: () => [alloc] }],
+    [t.memberships, { select: () => [{ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }] }], [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
+  ]);
+  const runPay = async (rows: unknown[]) => (await runWithDb(mkSpec(rows), CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [svcCase as never] }))[0])).payment;
+  const ok = await runPay(clinicReceipt());
+  assert.equal(ok.status, "paid", `posted clinic-level case-less receipt allocated to the case → paid (got ${JSON.stringify(ok)})`);
+  assert.ok(!ok.warnings.includes("allocation_receipt_missing"), "no allocation_receipt_missing for a valid clinic-level receipt");
+  for (const [rows, label] of [[[], "missing"], [clinicReceipt({ status: "pending" }), "pending"], [clinicReceipt({ status: "failed" }), "failed"], [clinicReceipt({ clinicId: 2 }), "wrong-clinic"]] as [unknown[], string][]) {
+    const pay = await runPay(rows);
+    assert.ok(pay.status !== "paid" && pay.integrity === "conflicting", `${label} receipt → conflicting, not paid (got ${JSON.stringify(pay)})`);
+  }
+}
 
 const tests: Array<[string, () => Promise<void>]> = [
+  ["payment-command allocation to invoice over a stale claim rejected", testPaymentCommandInvoiceStaleClaim],
+  ["stage: clinic-level case-less receipt resolves / invalid conflicts", testStageClinicLevelReceipt],
   ["claim lineage conflicts (BD/readiness/lines/provenance/attempt/parent/submitted)", testClaimLineageConflicts],
   ["invoice lineage conflicts (currency/lines/type/recipient/parent/delivery/version)", testInvoiceLineageConflicts],
   ["delivery provenance from exact transition audit row", testDeliveryProvenance],

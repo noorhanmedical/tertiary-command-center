@@ -253,10 +253,12 @@ async function testStageExactTarget() {
   const REFS = { procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13 };
   const ID = { globalPlexusPatientId: 900, patientClinicMembershipId: 800 };
   const LN = [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }];
-  const PV = Object.fromEntries(["service_code", "units", "place_of_service", "rendering_provider", "billing_provider", "facility", "payer", "coverage_reference"].map((f) => [f, { sourceType: "approved_source", sourceId: "s" }]));
+  const FSRC: Record<string, string> = { service_code: "approved_fee_schedule", units: "approved_fee_schedule", place_of_service: "facility_registry", facility: "facility_registry", rendering_provider: "credentialing_registry", billing_provider: "credentialing_registry", payer: "payer_contract", coverage_reference: "payer_contract" };
+  const PV = Object.fromEntries(Object.entries(FSRC).map(([f, s]) => [f, { sourceType: s, sourceId: "s" }]));
+  const CF = Object.fromEntries(Object.keys(FSRC).map((f) => [f, "v"]));
   const rd = { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "ready_to_generate", supersededAt: null, evidenceFingerprint: "fp-1", ...REFS, ...ID };
   const bd = { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, ...ID };
-  const claimT = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, attemptNumber: 1, supersedesClaimId: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, ...ID, chargeAmount: "420.00", currency: "USD", lineItems: LN, fieldProvenance: PV, updatedAt: OLD, submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "REF-1" };
+  const claimT = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "submitted", supersededAt: null, attemptNumber: 1, supersedesClaimId: null, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, ...ID, chargeAmount: "420.00", currency: "USD", lineItems: LN, claimFields: CF, fieldProvenance: PV, updatedAt: OLD, submittedAt: OLD, submissionSource: "manual_attestation", submissionActorUserId: "u", submissionReference: "REF-1", submissionReason: "attested" };
   const invT = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", supersedesInvoiceId: null, supersededAt: null, invoiceNumber: "INV-1-800", totalAmount: "420.00", currency: "USD", lineItems: LN, issuedAt: OLD, deliveredAt: null, deliveryEventReference: null };
   const mig = () => { throw Object.assign(new Error("x"), { code: "42P01" }); };
   // Alloc to the CLAIM (799) and to a WRONG invoice (799) must be excluded when the
@@ -275,6 +277,7 @@ async function testStageExactTarget() {
     [t.canonicalClaims, { select: () => [claimT] }], [t.canonicalInvoices, { select: () => [invT] }], [t.canonicalPayments, { select: () => [paymentRow()] }],
     [t.canonicalPaymentAllocations, { select: () => allocs } ],
     [t.memberships, { select: () => [pcm()] }], [t.globalPatients, { select: () => [gpp()] }],
+    [t.ancillaryCases, { select: () => [svcCase] }],
   ]);
   void mig;
   const v = await runWithDb(spec, CHAIN, async () => (await buildStageVectors({ clinicId: 1, cases: [svcCase as never] }))[0]);

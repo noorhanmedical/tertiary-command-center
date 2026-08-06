@@ -35,11 +35,11 @@ import { canonicalClaims } from "@shared/schema/canonicalClaims";
 import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { canonicalPayments } from "@shared/schema/canonicalPayments";
 import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllocations";
-import { canonicalFinancialTransitions } from "@shared/schema/canonicalFinancialTransitions";
 import { validateTargetAllocationSet, validateReceiptWide } from "../canonicalFinancial/allocationLineage";
-import { classifyDeliveryTransitions } from "../canonicalFinancial/financialLineageContext";
+import { loadInvoiceLineageContextsWithDb } from "../canonicalFinancial/financialLineageContext";
+import type { DbLike } from "../canonicalFinancial/commandSupport";
 import { selectStageClaim, selectStageInvoice } from "../canonicalFinancial/financialVersion";
-import { validateClaimLineage, validateInvoiceLineage, type ClaimLineageCtx, type InvoiceLineageCtx, type DeliveryTransitionCtx } from "../canonicalFinancial/lineageValidators";
+import { validateClaimLineage, validateInvoiceLineage, type ClaimLineageCtx, type InvoiceLineageCtx } from "../canonicalFinancial/lineageValidators";
 import { patientClinicMemberships, globalPlexusPatients } from "@shared/schema/plexusIdentity";
 import { toCents, sumCents } from "@shared/money";
 import {
@@ -197,33 +197,31 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const invoiceRows = invoiceLoad?.ok ? invoiceLoad.rows : [];
   const memIds = [...new Set(claimRows.map((r) => r.patientClinicMembershipId).filter((x): x is number => x != null))];
   const gpIds = [...new Set(claimRows.map((r) => r.globalPlexusPatientId).filter((x): x is number => x != null))];
-  const invoiceClaimIds = [...new Set(invoiceRows.map((r) => r.claimId).filter((x): x is number => x != null))];
   const memLoad = claimGate && memIds.length ? await loadOrNull(() => db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), inArray(patientClinicMemberships.id, memIds))).limit(SCAN_LIMIT + 1)) : null;
   const gpLoad = claimGate && gpIds.length ? await loadOrNull(() => db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gpIds)).limit(SCAN_LIMIT + 1)) : null;
-  const invClaimLoad = invoiceGate && invoiceClaimIds.length ? await loadOrNull(() => db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), inArray(canonicalClaims.id, invoiceClaimIds))).limit(SCAN_LIMIT + 1)) : null;
   const memById = new Map((memLoad?.ok ? memLoad.rows : []).filter((m) => m.clinicId === clinicId).map((m) => [m.id, m]));
   const gpById = new Map((gpLoad?.ok ? gpLoad.rows : []).map((g) => [g.id, g]));
-  const invoiceClaimById = new Map((invClaimLoad?.ok ? invClaimLoad.rows : []).filter((c) => c.clinicId === clinicId).map((c) => [c.id, c]));
+  // §A The invoice→claim lineage context is loaded via the SAME shared loader the read
+  // model uses — the FULL referenced claim + that claim's COMPLETE lineage context +
+  // parent invoice + delivery transition — so the invoice stage and payment target run
+  // the referenced claim's complete `validateClaimLineage` (never a reduced projection).
+  let invLineageCtxById = new Map<number, InvoiceLineageCtx>(); let invCtxOk = true;
+  if (invoiceGate && invoiceRows.length) {
+    try { invLineageCtxById = await loadInvoiceLineageContextsWithDb(db as unknown as DbLike, clinicId, invoiceRows.map((r) => ({ id: r.id, claimId: r.claimId ?? null, supersedesInvoiceId: r.supersedesInvoiceId ?? null, canonicalStatus: r.canonicalStatus }))); }
+    catch { invCtxOk = false; }
+  }
   // §2 exact Billing Document / readiness / parent-version context for the SAME
   // COMPLETE lineage validators the read model uses (loaded by the claim/invoice's own
   // id references, NOT by case), so stage and read model agree exactly.
   const claimBdIds = [...new Set(claimRows.map((r) => r.billingDocumentId).filter((x): x is number => x != null))];
   const claimRdIds = [...new Set(claimRows.map((r) => r.billingReadinessCheckId).filter((x): x is number => x != null))];
   const claimParentIds = [...new Set(claimRows.map((r) => r.supersedesClaimId).filter((x): x is number => x != null))];
-  const invParentIds = [...new Set(invoiceRows.map((r) => r.supersedesInvoiceId).filter((x): x is number => x != null))];
   const claimBdLoad = claimGate && claimBdIds.length ? await loadOrNull(() => db.select().from(canonicalBillingDocumentRequests).where(and(eq(canonicalBillingDocumentRequests.clinicId, clinicId), inArray(canonicalBillingDocumentRequests.id, claimBdIds))).limit(SCAN_LIMIT + 1)) : null;
   const claimRdLoad = claimGate && claimRdIds.length ? await loadOrNull(() => db.select().from(canonicalBillingReadinessChecks).where(and(eq(canonicalBillingReadinessChecks.clinicId, clinicId), inArray(canonicalBillingReadinessChecks.id, claimRdIds))).limit(SCAN_LIMIT + 1)) : null;
   const claimParentLoad = claimGate && claimParentIds.length ? await loadOrNull(() => db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, clinicId), inArray(canonicalClaims.id, claimParentIds))).limit(SCAN_LIMIT + 1)) : null;
-  const invParentLoad = invoiceGate && invParentIds.length ? await loadOrNull(() => db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, clinicId), inArray(canonicalInvoices.id, invParentIds))).limit(SCAN_LIMIT + 1)) : null;
   const claimBdById = new Map((claimBdLoad?.ok ? claimBdLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
   const claimRdById = new Map((claimRdLoad?.ok ? claimRdLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
   const claimParentById = new Map((claimParentLoad?.ok ? claimParentLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
-  const invParentById = new Map((invParentLoad?.ok ? invParentLoad.rows : []).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x]));
-  // Delivered-invoice delivery-transition audit context (same classification the read
-  // model uses): 0 → missing, 1 → one, >1/truncated → conflict.
-  const deliveredInvIds = [...new Set(invoiceRows.filter((r) => r.canonicalStatus === "delivered").map((r) => r.id))];
-  const invDtxLoad = invoiceGate && deliveredInvIds.length ? await loadOrNull(() => db.select().from(canonicalFinancialTransitions).where(and(eq(canonicalFinancialTransitions.clinicId, clinicId), eq(canonicalFinancialTransitions.entityType, "invoice"), eq(canonicalFinancialTransitions.toStatus, "delivered"), inArray(canonicalFinancialTransitions.entityId, deliveredInvIds))).limit(SCAN_LIMIT + 1)) : null;
-  const invDeliveryById = classifyDeliveryTransitions(clinicId, deliveredInvIds, (invDtxLoad?.ok ? invDtxLoad.rows : []) as never, trunc(invDtxLoad));
   // Receipt-WIDE context: for every payment referenced by this case set's allocations,
   // load the receipt + its COMPLETE allocation set across ALL targets (cross-case),
   // SCAN_LIMIT+1 truncation. The payment stage proves each receipt before deriving paid.
@@ -237,9 +235,9 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   const rwTruncated = trunc(rwReceiptLoad) || trunc(rwAllocLoad);
 
   const ctx: Ctx = {
-    memById, gpById, invoiceClaimById, claimBdById, claimRdById, claimParentById, invParentById, invDeliveryById,
+    memById, gpById, claimBdById, claimRdById, claimParentById, invLineageCtxById, invCtxOk,
     rwReceiptById, rwAllocByPayment, rwTruncated,
-    claimTrunc: trunc(claimLoad) || trunc(memLoad) || trunc(gpLoad) || trunc(claimBdLoad) || trunc(claimRdLoad) || trunc(claimParentLoad), invoiceTrunc: trunc(invoiceLoad) || trunc(invClaimLoad) || trunc(invParentLoad) || trunc(invDtxLoad), paymentTrunc: trunc(paymentLoad) || trunc(allocLoad),
+    claimTrunc: trunc(claimLoad) || trunc(memLoad) || trunc(gpLoad) || trunc(claimBdLoad) || trunc(claimRdLoad) || trunc(claimParentLoad), invoiceTrunc: trunc(invoiceLoad), paymentTrunc: trunc(paymentLoad) || trunc(allocLoad),
     clinicId, adminGate, adminByCase, adminOk: adminLoad?.ok ?? true,
     engagementGate, membershipsByCase,
     apptGate, apptOk: apptLoad?.ok ?? true, apptByCase,
@@ -272,12 +270,11 @@ type Ctx = {
   claimTrunc: boolean; invoiceTrunc: boolean; paymentTrunc: boolean;
   memById: Map<number, typeof patientClinicMemberships.$inferSelect>;
   gpById: Map<number, typeof globalPlexusPatients.$inferSelect>;
-  invoiceClaimById: Map<number, typeof canonicalClaims.$inferSelect>;
   claimBdById: Map<number, typeof canonicalBillingDocumentRequests.$inferSelect>;
   claimRdById: Map<number, typeof canonicalBillingReadinessChecks.$inferSelect>;
   claimParentById: Map<number, typeof canonicalClaims.$inferSelect>;
-  invParentById: Map<number, typeof canonicalInvoices.$inferSelect>;
-  invDeliveryById: Map<number, DeliveryTransitionCtx>;
+  invLineageCtxById: Map<number, InvoiceLineageCtx>;
+  invCtxOk: boolean;
   rwReceiptById: Map<number, typeof canonicalPayments.$inferSelect>;
   rwAllocByPayment: Map<number, typeof canonicalPaymentAllocations.$inferSelect[]>;
   rwTruncated: boolean;
@@ -304,14 +301,12 @@ function claimLineageCtx(ctx: Ctx, c: PatientAncillaryCase, r: typeof canonicalC
     parentClaim: parent ? { clinicId: parent.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType, attemptNumber: parent.attemptNumber ?? null } : null,
   };
 }
+/** The invoice's COMPLETE lineage context (full referenced claim + that claim's own
+ *  context + parent invoice + delivery transition), from the shared loader — identical
+ *  to the read model, so the invoice stage / payment target run the referenced claim's
+ *  full `validateClaimLineage`. */
 function invoiceLineageCtx(ctx: Ctx, r: typeof canonicalInvoices.$inferSelect): InvoiceLineageCtx {
-  const claim = r.claimId != null ? ctx.invoiceClaimById.get(r.claimId) : undefined;
-  const parent = r.supersedesInvoiceId != null ? ctx.invParentById.get(r.supersedesInvoiceId) : undefined;
-  return {
-    claim: claim ? { clinicId: claim.clinicId, ancillaryCaseId: claim.ancillaryCaseId ?? null, serviceType: claim.serviceType, billingDocumentId: claim.billingDocumentId ?? null, billingReadinessCheckId: claim.billingReadinessCheckId ?? null, evidenceFingerprint: claim.evidenceFingerprint ?? null, currency: claim.currency, lineItems: claim.lineItems } : null,
-    parentInvoice: parent ? { clinicId: parent.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType, claimId: parent.claimId ?? null } : null,
-    deliveryTransition: r.canonicalStatus === "delivered" ? (ctx.invDeliveryById.get(r.id) ?? { kind: "missing" }) : undefined,
-  };
+  return ctx.invLineageCtxById.get(r.id) ?? { claim: null, claimContext: null };
 }
 
 function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
@@ -398,7 +393,7 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
       return lin.ok ? stage({ status: r.canonicalStatus, availability: "available", sourceId: r.id, at: iso(r.submittedAt ?? r.updatedAt), available: r.canonicalStatus != null }) : conflictStage("claim_lineage_conflict");
     }, wrongSvc, wrongCode: "claim_wrong_service" };
   });
-  const invoice = ctx.invoiceTrunc ? unavailable("financial_stage_data_truncated") : resolveSourceStage(ctx.invoiceGate, ctx.invoiceOk, "canonical_invoices_flag_off", "invoice_read_failed", () => {
+  const invoice = ctx.invoiceTrunc ? unavailable("financial_stage_data_truncated") : (ctx.invoiceGate && !ctx.invCtxOk) ? unavailable("invoice_lineage_context_unavailable") : resolveSourceStage(ctx.invoiceGate, ctx.invoiceOk, "canonical_invoices_flag_off", "invoice_read_failed", () => {
     const all = ctx.invoiceByCase.get(c.id) ?? [];
     const wrongSvc = all.some((r) => r.serviceType !== svc);
     const svcRows = all.filter((r) => r.serviceType === svc);
@@ -442,12 +437,20 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     // §4 payment-target lineage gate — run the COMPLETE target lineage validator on the
     // selected target BEFORE reading allocations or deriving any balance. A lineage-stale
     // target can never yield paid/partial/refunded/reversed (status null, conflicting).
+    // A genuine invoice-context load failure is unavailable (not a false resolve).
+    if (selectedInvoice != null && !ctx.invCtxOk) return unavailable("invoice_lineage_context_unavailable");
     if (selectedInvoice != null && !validateInvoiceLineage(selectedInvoice as never, invoiceLineageCtx(ctx, selectedInvoice)).ok) return conflictStage("payment_target_lineage_conflict");
     if (selectedClaim != null && !validateClaimLineage(selectedClaim as never, claimLineageCtx(ctx, c, selectedClaim)).ok) return conflictStage("payment_target_lineage_conflict");
     const allocs = targetType != null && targetId != null ? caseAllocs.filter((a) => a.targetType === targetType && a.targetId === targetId) : [];
     // §4/§5 receipt-aware allocation lineage for the exact target → conflict (never a balance).
+    // §B The receipt map is sourced from the SELECTED-target allocations' payment IDs via
+    // the receipt-by-id map (which includes valid clinic-level CASE-LESS receipts), NOT
+    // from the case-scoped payment map — a posted clinic-level receipt allocated to this
+    // case is proven by its allocation row, never dropped as `allocation_receipt_missing`.
     if (targetType != null && targetId != null && allocs.length > 0) {
-      const receipts = new Map(events.filter((e) => e.eventType === "payment").map((e) => [e.id, e] as const));
+      const paymentIds = [...new Set(allocs.map((a) => a.paymentId).filter((x): x is number => x != null))];
+      const receipts = new Map<number, typeof canonicalPayments.$inferSelect>();
+      for (const pid of paymentIds) { const rc = ctx.rwReceiptById.get(pid); if (rc) receipts.set(pid, rc); }
       if (!validateTargetAllocationSet(allocs as never, { clinicId: c.clinicId, targetType, targetId, currency: targetCurrency ?? "", ancillaryCaseId: c.id, serviceType: svc }, receipts as never).ok) return conflictStage("payment_allocation_lineage_conflict");
     }
     // Receipt-WIDE truth: every receipt funding the SELECTED target must be a posted

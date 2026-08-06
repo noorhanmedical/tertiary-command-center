@@ -133,7 +133,7 @@ async function buildInvoices(clinicId: number, cursor: string | null | undefined
     // §2 revalidate each page invoice against its exact CLAIM + parent version + exact
     // authorized lines + type/recipient/delivery provenance (batched — no N+1).
     const invCtxById = await loadInvoiceLineageContexts(input.clinicId, page as never);
-    const invLineageConflict = (r: typeof page[number]): boolean => !validateInvoiceLineage(r as never, invCtxById.get(r.id) ?? { claim: null }).ok;
+    const invLineageConflict = (r: typeof page[number]): boolean => !validateInvoiceLineage(r as never, invCtxById.get(r.id) ?? { claim: null, claimContext: null }).ok;
     // Balance derives from the COMPLETE allocation set for this bounded invoice
     // page (batched — one query, no per-invoice N+1). If the read could be
     // truncated (hits the cap), the affected balances are marked CONFLICTING rather

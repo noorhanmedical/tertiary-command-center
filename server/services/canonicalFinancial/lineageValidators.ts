@@ -147,28 +147,31 @@ export type DeliveryTransitionCtx =
   | { kind: "missing" }
   | { kind: "one"; row: { entityType: string; entityId: number; clinicId: number; ancillaryCaseId: number | null; serviceType: string | null; toStatus: string; actorUserId: string | null; actorRole: string | null; reason: string | null; sourceType: string | null; sourceReference: string | null; createdAt: Date | null } }
   | { kind: "conflict" };
-export type InvoiceClaimRow = {
-  clinicId: number; ancillaryCaseId: number | null; serviceType: string;
-  billingDocumentId: number | null; billingReadinessCheckId: number | null; evidenceFingerprint: string | null;
-  currency: string; lineItems: unknown;
-} | null;
+/** The invoice's referenced claim is carried as the FULL claim row plus that claim's
+ *  own complete lineage context, so the invoice can require the claim to pass the SAME
+ *  `validateClaimLineage` the read model / stage apply — a stale/invalid claim can never
+ *  support a resolved invoice. */
 export type InvoiceLineageCtx = {
-  claim: InvoiceClaimRow;
+  claim: ClaimLineageRow | null;
+  claimContext?: ClaimLineageCtx | null;
   parentInvoice?: { clinicId: number; ancillaryCaseId: number | null; serviceType: string; claimId: number | null } | null;
   deliveryTransition?: DeliveryTransitionCtx;
 };
 
-/** Revalidate one invoice against its exact claim (clinic/case/service + evidence
- *  version + currency + exact authorized lines) + type/recipient vocabulary +
- *  parent-invoice family + delivery provenance. Accepts the legacy flat claim ctx
- *  (a bare claim row) OR the new `{ claim, parentInvoice }` shape. */
-export function validateInvoiceLineage(inv: InvoiceLineageRow, ctxOrClaim: InvoiceLineageCtx | InvoiceClaimRow): LineageVerdict {
-  const ctx: InvoiceLineageCtx = (ctxOrClaim && typeof ctxOrClaim === "object" && "claim" in ctxOrClaim)
-    ? (ctxOrClaim as InvoiceLineageCtx)
-    : { claim: (ctxOrClaim as InvoiceClaimRow) ?? null, parentInvoice: null };
+/** Revalidate one invoice against its exact claim's COMPLETE lineage (the same
+ *  `validateClaimLineage` verdict) FIRST, then clinic/case/service + evidence version +
+ *  currency + exact authorized lines + type/recipient vocabulary + issued identity +
+ *  parent-invoice family + delivery provenance. */
+export function validateInvoiceLineage(inv: InvoiceLineageRow, ctx: InvoiceLineageCtx): LineageVerdict {
   const claim = ctx.claim;
   if (inv.claimId == null) return { ok: false, code: "invoice_claim_missing" };
   if (!claim) return { ok: false, code: "invoice_claim_not_found" };
+  // §A The referenced claim must ITSELF pass complete lineage — a stale/invalid claim
+  // (bad BD fingerprint, inactive membership, merged global patient, invalid provenance)
+  // can never support a resolved invoice. Missing context → fail closed. The nested
+  // claim code is not surfaced (PHI-free single invoice-level conflict).
+  if (!ctx.claimContext) return { ok: false, code: "invoice_claim_not_found" };
+  if (!validateClaimLineage(claim, ctx.claimContext).ok) return { ok: false, code: "invoice_claim_lineage_conflict" };
   if (claim.clinicId !== inv.clinicId || (claim.ancillaryCaseId ?? null) !== (inv.ancillaryCaseId ?? null) || claim.serviceType !== inv.serviceType) return { ok: false, code: "invoice_claim_mismatch" };
   if ((claim.billingDocumentId ?? null) !== (inv.billingDocumentId ?? null)) return { ok: false, code: "invoice_billing_document_mismatch" };
   if ((claim.billingReadinessCheckId ?? null) !== (inv.billingReadinessCheckId ?? null)) return { ok: false, code: "invoice_readiness_mismatch" };

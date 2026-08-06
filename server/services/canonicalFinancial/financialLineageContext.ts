@@ -17,7 +17,7 @@ import { canonicalBillingReadinessChecks } from "@shared/schema/billingReadiness
 import { canonicalBillingDocumentRequests } from "@shared/schema/billingDocuments";
 import { canonicalFinancialTransitions } from "@shared/schema/canonicalFinancialTransitions";
 import type { DbLike } from "./commandSupport";
-import type { ClaimLineageCtx, InvoiceLineageCtx, DeliveryTransitionCtx } from "./lineageValidators";
+import type { ClaimLineageCtx, ClaimLineageRow, InvoiceLineageCtx, DeliveryTransitionCtx } from "./lineageValidators";
 
 const SCAN = 2000;
 const dbh = db as unknown as DbLike;
@@ -103,7 +103,10 @@ export async function loadClaimLineageContextsWithDb(h: DbLike, clinicId: number
 export type InvoiceRef = { id: number; claimId: number | null; supersedesInvoiceId: number | null; canonicalStatus?: string | null };
 type TransitionRow = { entityType: string; entityId: number; clinicId: number; ancillaryCaseId: number | null; serviceType: string | null; toStatus: string; actorUserId: string | null; actorRole: string | null; reason: string | null; sourceType: string | null; sourceReference: string | null; createdAt: Date | null };
 export type InvoiceCtxMaps = {
-  claimById: Map<number, { clinicId: number; ancillaryCaseId: number | null; serviceType: string; billingDocumentId: number | null; billingReadinessCheckId: number | null; evidenceFingerprint: string | null; currency: string; lineItems: unknown }>;
+  // The FULL referenced claim row (a ClaimLineageRow) + that claim's COMPLETE lineage
+  // context, so the invoice validator can require the claim's own validateClaimLineage.
+  claimById: Map<number, ClaimLineageRow>;
+  claimCtxById: Map<number, ClaimLineageCtx>;
   parentById: Map<number, { clinicId: number; ancillaryCaseId: number | null; serviceType: string; claimId: number | null }>;
   deliveryByInvoice?: Map<number, DeliveryTransitionCtx>;
 };
@@ -130,9 +133,10 @@ export function classifyDeliveryTransitions(clinicId: number, deliveredIds: numb
 /** Assemble one invoice's full lineage context from already-loaded maps (pure). */
 export function buildInvoiceLineageContext(inv: InvoiceRef, maps: InvoiceCtxMaps): InvoiceLineageCtx {
   const claim = inv.claimId != null ? maps.claimById.get(inv.claimId) : undefined;
+  const claimContext = inv.claimId != null ? maps.claimCtxById.get(inv.claimId) : undefined;
   const parent = inv.supersedesInvoiceId != null ? maps.parentById.get(inv.supersedesInvoiceId) : undefined;
   const delivery = inv.canonicalStatus === "delivered" ? (maps.deliveryByInvoice?.get(inv.id) ?? { kind: "missing" as const }) : undefined;
-  return { claim: claim ?? null, parentInvoice: parent ?? null, deliveryTransition: delivery };
+  return { claim: claim ?? null, claimContext: claimContext ?? null, parentInvoice: parent ?? null, deliveryTransition: delivery };
 }
 
 /** Read-only convenience wrapper (uses the global db handle). */
@@ -150,8 +154,15 @@ export async function loadInvoiceLineageContextsWithDb(h: DbLike, clinicId: numb
   ]);
   const dtxRows = dtx as TransitionRow[];
   const deliveryByInvoice = classifyDeliveryTransitions(clinicId, deliveredIds, dtxRows, dtxRows.length > SCAN);
+  // §A The referenced claims are carried as FULL rows, and each claim's OWN complete
+  // lineage context is loaded (batched — one query set for all referenced claims) so the
+  // invoice validator can require the claim's validateClaimLineage.
+  const claimRows = (claims as (ClaimLineageRow & { id: number; clinicId: number })[]).filter((x) => x.clinicId === clinicId);
+  const refClaims: ClaimRef[] = claimRows.map((c) => ({ id: c.id, ancillaryCaseId: c.ancillaryCaseId ?? null, patientClinicMembershipId: c.patientClinicMembershipId ?? null, globalPlexusPatientId: c.globalPlexusPatientId ?? null, billingReadinessCheckId: c.billingReadinessCheckId ?? null, billingDocumentId: c.billingDocumentId ?? null, supersedesClaimId: c.supersedesClaimId ?? null }));
+  const claimCtxById = refClaims.length ? await loadClaimLineageContextsWithDb(h, clinicId, refClaims) : new Map<number, ClaimLineageCtx>();
   const maps: InvoiceCtxMaps = {
-    claimById: new Map((claims as { id: number; clinicId: number; ancillaryCaseId: number | null; serviceType: string; billingDocumentId: number | null; billingReadinessCheckId: number | null; evidenceFingerprint: string | null; currency: string; lineItems: unknown }[]).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x])),
+    claimById: new Map(claimRows.map((x) => [x.id, x])),
+    claimCtxById,
     parentById: new Map((parents as { id: number; clinicId: number; ancillaryCaseId: number | null; serviceType: string; claimId: number | null }[]).filter((x) => x.clinicId === clinicId).map((x) => [x.id, x])),
     deliveryByInvoice,
   };
