@@ -344,3 +344,39 @@ before the allocation insert. The following are deferred:
   (the fresh review confirmed no N+1 and identical validation), so there is no correctness
   impact — but a future pass could import the shared builder to remove the duplication and
   guarantee the two callers can never drift.
+
+---
+
+## Phase 2K resolution status (do not delete the historical explanation above)
+
+Resolved in `phase/2k-enterprise-hardening` (stacked on Phase 2J HEAD
+`8276cb9b`). See `PHASE_2K_EXECUTION_MATRIX.md` for full traceability and
+`POST_2K_PRODUCT_DECISIONS.md` for the deferred semantic decisions.
+
+**RESOLVED_IN_2K** (implemented + behavioral tests, VERIFIED):
+- Reference creation on a generated note with no reference → deterministic ensure-or-create (K1).
+- Lineage retry service-type re-validation → explicit `note.serviceType` gate, wrong-service zero mutation (K2).
+- Report-acceptance status set drift → classifier reuses the live `ACCEPTABLE_REPORT_STATUSES` (K3).
+- Generator `not_yet_eligible` records no generate retry → durable self-healing generate retry (K5).
+- Reference supersession best-effort + dead `supersede_billing_document` retry → durable supersession, retry now WIRED (K7).
+- `retrySupersede` resolves on 0-row / non-committed re-eval → resolves only on a proven committed post-condition (K8).
+- `ensureBillingReferenceDurability` counts superseded refs → requires `supersededAt IS NULL`; only-superseded/dup/wrong-owner fail closed (K10).
+- Report `documentType` rejection untested → dedicated behavioral test + fail-closed matrix (K11; guard pre-existed).
+- Finance `evaluated` assumes one readiness row → dedupe by `ancillaryCaseId`, duplicate-current excluded/conflicting (K12).
+- `counts_truncated` post-filter basis → RAW fetched count (K13).
+- Client migration-vs-generic error message inspection → structured `ApiError { status, code }` (behavior unchanged) (K16).
+- PCS identity-display reads not migration-wrapped → ordinary failure degrades to display-unavailable, migration still 503 (K18).
+- Billing Document fingerprint null-null equality → null on either side is unverifiable, fail closed (K20; stage pre-existed, read-model hardened + tested).
+- Stage-vector identity `available` default loose → `available=false` unless canonically verified (K21).
+- Stage assembles lineage inline → single shared `buildClaimLineageContext`/loader across read-model, stage, write-path (K37).
+- Replay response `from: ""` → resolver returns exact prior from/to from the audit row, advancement-stable (K33).
+- Enterprise proofs added: query-bounds 1/25/100 (K30), overflow/truncation (K31), failure-injection (K38), concurrency (K39), tenancy assertions (K40).
+
+**PRODUCT_DECISION_REQUIRED** (behavior preserved; see `POST_2K_PRODUCT_DECISIONS.md`):
+Deterministic-link apply telemetry granularity (K4); backfill apply re-evaluation of stale-but-existing rows (K6); admin canonical-overview / PCS / ACS clinic-scope (K14, K17); report↔case exact schema identity (K15); refund receipt-capacity (K26); `adjustment` command path (K27); overpayment/credit ledger (K29); refunded-then-repaid stage signal (K34); imported-receipt lifecycle (K35); full-refund reopening status (K36).
+
+**UI_REDESIGN_DEFERRED**: unified canonical Finance surface (K32).
+
+**NO_LONGER_APPLICABLE / ALREADY_FIXED**: `iso()` double-wrap (K19); `isTerminalHalt` cosmetic (K22); `loadUnresolvedStream` bound (K25); report source-row validation (K9, already implemented); appointment blocked/pending_sync coverage (K23, already covered).
+
+**Migration**: No Phase 2K migration required (0057 not created) — provenance/idempotency/positive-amount CHECKs on entity tables would reject valid correction/backfill/draft rows (nullable `idempotency_key`/`charge_amount`); current-row uniqueness already in 0056; indexes are not a correctness requirement given proven query bounds.

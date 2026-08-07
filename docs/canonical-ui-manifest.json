@@ -2555,7 +2555,7 @@
     },
     {
       "path": "client/src/lib/queryClient.ts",
-      "blob": "f315a142495772235f6e5324668ce3bc34ef1871",
+      "blob": "57bce2cad26eced5cb3280f9546a463de102d56a",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true

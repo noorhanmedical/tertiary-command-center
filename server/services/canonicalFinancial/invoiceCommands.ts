@@ -131,7 +131,7 @@ export async function transitionCanonicalInvoice(input: InvoiceTransitionInput):
   try {
     const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "invoice", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
-    if (replay.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from: "", to: input.transition };
+    if (replay.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from: replay.fromStatus ?? "", to: replay.toStatus ?? input.transition };
     const rows = await db.select().from(canonicalInvoices).where(and(eq(canonicalInvoices.clinicId, input.clinicId), eq(canonicalInvoices.id, input.invoiceId))).limit(2);
     const inv = rows.find((r) => r.id === input.invoiceId && r.clinicId === input.clinicId);
     if (!inv) return { status: "not_found" };
@@ -160,7 +160,7 @@ export async function transitionCanonicalInvoice(input: InvoiceTransitionInput):
     if (!done) {
       // §7 zero-row update: an identical racing command may have already applied it.
       const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "invoice", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
-      if (post.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from, to };
+      if (post.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from: post.fromStatus ?? from, to: post.toStatus ?? to };
       if (post.kind === "conflict") return { status: "idempotency_conflict" };
       return { status: "conflict" };
     }
@@ -169,7 +169,7 @@ export async function transitionCanonicalInvoice(input: InvoiceTransitionInput):
     // §7 unique violation: a racing identical command won — resolve by fingerprint.
     if (isUnique(e)) {
       const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "invoice", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
-      if (post.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from: "", to: input.transition };
+      if (post.kind === "replay") return { status: "transitioned", invoiceId: input.invoiceId, from: post.fromStatus ?? "", to: post.toStatus ?? input.transition };
       if (post.kind === "conflict") return { status: "idempotency_conflict" };
       return { status: "conflict" };
     }

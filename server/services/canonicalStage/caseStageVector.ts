@@ -36,7 +36,7 @@ import { canonicalInvoices } from "@shared/schema/canonicalInvoices";
 import { canonicalPayments } from "@shared/schema/canonicalPayments";
 import { canonicalPaymentAllocations } from "@shared/schema/canonicalPaymentAllocations";
 import { validateTargetAllocationSet, validateReceiptWide } from "../canonicalFinancial/allocationLineage";
-import { loadInvoiceLineageContextsWithDb } from "../canonicalFinancial/financialLineageContext";
+import { loadInvoiceLineageContextsWithDb, buildClaimLineageContext, type ClaimCtxMaps } from "../canonicalFinancial/financialLineageContext";
 import type { DbLike } from "../canonicalFinancial/commandSupport";
 import { selectStageClaim, selectStageInvoice } from "../canonicalFinancial/financialVersion";
 import { validateClaimLineage, validateInvoiceLineage, type ClaimLineageCtx, type InvoiceLineageCtx } from "../canonicalFinancial/lineageValidators";
@@ -195,10 +195,14 @@ export async function buildStageVectors(input: StageVectorInput): Promise<CaseSt
   // history for a live invoice), mirroring financialView.buildInvoices.
   const claimRows = claimLoad?.ok ? claimLoad.rows : [];
   const invoiceRows = invoiceLoad?.ok ? invoiceLoad.rows : [];
-  const memIds = [...new Set(claimRows.map((r) => r.patientClinicMembershipId).filter((x): x is number => x != null))];
-  const gpIds = [...new Set(claimRows.map((r) => r.globalPlexusPatientId).filter((x): x is number => x != null))];
-  const memLoad = claimGate && memIds.length ? await loadOrNull(() => db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), inArray(patientClinicMemberships.id, memIds))).limit(SCAN_LIMIT + 1)) : null;
-  const gpLoad = claimGate && gpIds.length ? await loadOrNull(() => db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gpIds)).limit(SCAN_LIMIT + 1)) : null;
+  // Identity (membership + global patient) is loaded for BOTH claim-referenced ids AND
+  // the cases' own identities, so `identity.available` is VERIFIED (K21) rather than
+  // presumed from non-null ids — independent of the 2J claims flag. Bounded batched
+  // loads; when unverifiable (not loaded / not found) the identity fails closed.
+  const memIds = [...new Set([...claimRows.map((r) => r.patientClinicMembershipId), ...cases.map((c) => c.patientClinicMembershipId)].filter((x): x is number => x != null))];
+  const gpIds = [...new Set([...claimRows.map((r) => r.globalPlexusPatientId), ...cases.map((c) => c.globalPlexusPatientId)].filter((x): x is number => x != null))];
+  const memLoad = memIds.length ? await loadOrNull(() => db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), inArray(patientClinicMemberships.id, memIds))).limit(SCAN_LIMIT + 1)) : null;
+  const gpLoad = gpIds.length ? await loadOrNull(() => db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, gpIds)).limit(SCAN_LIMIT + 1)) : null;
   const memById = new Map((memLoad?.ok ? memLoad.rows : []).filter((m) => m.clinicId === clinicId).map((m) => [m.id, m]));
   const gpById = new Map((gpLoad?.ok ? gpLoad.rows : []).map((g) => [g.id, g]));
   // §A The invoice→claim lineage context is loaded via the SAME shared loader the read
@@ -287,24 +291,38 @@ type Ctx = {
 
 // Assemble the SAME COMPLETE lineage contexts the read model uses, from the stage
 // vector's by-id maps (identical validators → stage and read model agree exactly).
+const STAGE_ACTIVE_IDENTITY = new Set(["active", "current"]);
+/** §K21 — verify the case identity from the loaded maps (NOT presumed from non-null
+ *  ids): the membership exists under this clinic, is active, and points at the case's
+ *  global patient; the global patient exists, is active/current, and is not merged away.
+ *  PHI-free (id-only). Fails closed when the identity is not loaded/found. */
+function identityVerified(ctx: Ctx, c: PatientAncillaryCase): boolean {
+  const gpId = c.globalPlexusPatientId ?? null, memId = c.patientClinicMembershipId ?? null;
+  if (gpId == null || memId == null) return false;
+  const m = ctx.memById.get(memId);
+  if (!m || m.clinicId !== c.clinicId || m.membershipStatus !== "active" || (m.globalPlexusPatientId ?? null) !== gpId) return false;
+  const g = ctx.gpById.get(gpId);
+  if (!g || !STAGE_ACTIVE_IDENTITY.has(g.identityStatus ?? "") || g.mergedIntoPatientId != null) return false;
+  return true;
+}
+
+// §K37 The claim-lineage context is assembled by the SHARED `buildClaimLineageContext`
+// (the ONE canonical builder the read model + write-path use) from the stage's already-
+// loaded batched maps — no reimplemented field mapping, no new reads, no per-row N+1.
 function claimLineageCtx(ctx: Ctx, c: PatientAncillaryCase, r: typeof canonicalClaims.$inferSelect): ClaimLineageCtx {
-  const bd = r.billingDocumentId != null ? ctx.claimBdById.get(r.billingDocumentId) : undefined;
-  const rd = r.billingReadinessCheckId != null ? ctx.claimRdById.get(r.billingReadinessCheckId) : undefined;
-  const parent = r.supersedesClaimId != null ? ctx.claimParentById.get(r.supersedesClaimId) : undefined;
-  const ev = (x: typeof canonicalBillingDocumentRequests.$inferSelect | typeof canonicalBillingReadinessChecks.$inferSelect) => ({
-    clinicId: x.clinicId ?? null, ancillaryCaseId: x.ancillaryCaseId ?? null, serviceType: x.serviceType, supersededAt: x.supersededAt,
-    evidenceFingerprint: x.evidenceFingerprint ?? null, procedureEventId: x.procedureEventId ?? null,
-    orderNoteDocumentReferenceId: x.orderNoteDocumentReferenceId ?? null, reportDocumentReferenceId: x.reportDocumentReferenceId ?? null, procedureNoteDocumentReferenceId: x.procedureNoteDocumentReferenceId ?? null,
-    globalPlexusPatientId: x.globalPlexusPatientId ?? null, patientClinicMembershipId: x.patientClinicMembershipId ?? null,
-  });
-  return {
-    case: { clinicId: c.clinicId, serviceType: c.serviceType },
-    membership: (r.patientClinicMembershipId != null ? ctx.memById.get(r.patientClinicMembershipId) : null) ?? null,
-    globalPatient: (r.globalPlexusPatientId != null ? ctx.gpById.get(r.globalPlexusPatientId) : null) ?? null,
-    readiness: rd ? ev(rd) : null,
-    billingDocument: bd ? { ...ev(bd), billingReadinessCheckId: bd.billingReadinessCheckId ?? null } : null,
-    parentClaim: parent ? { clinicId: parent.clinicId, ancillaryCaseId: parent.ancillaryCaseId ?? null, serviceType: parent.serviceType, attemptNumber: parent.attemptNumber ?? null } : null,
+  const maps: ClaimCtxMaps = {
+    caseById: new Map([[c.id, { clinicId: c.clinicId, serviceType: c.serviceType }]]),
+    memById: ctx.memById,
+    gpById: ctx.gpById,
+    rdById: ctx.claimRdById as never,
+    bdById: ctx.claimBdById as never,
+    parentById: ctx.claimParentById,
   };
+  return buildClaimLineageContext({
+    id: r.id, ancillaryCaseId: r.ancillaryCaseId ?? null, patientClinicMembershipId: r.patientClinicMembershipId ?? null,
+    globalPlexusPatientId: r.globalPlexusPatientId ?? null, billingReadinessCheckId: r.billingReadinessCheckId ?? null,
+    billingDocumentId: r.billingDocumentId ?? null, supersedesClaimId: r.supersedesClaimId ?? null,
+  }, maps);
 }
 /** The invoice's COMPLETE lineage context (full referenced claim + that claim's own
  *  context + parent invoice + delivery transition), from the shared loader — identical
@@ -502,8 +520,10 @@ function buildOne(c: PatientAncillaryCase, ctx: Ctx): CaseStageVector {
     identity: {
       globalPlexusPatientId: c.globalPlexusPatientId ?? null, patientClinicMembershipId: c.patientClinicMembershipId ?? null,
       patientDisplay: null, patientDob: null, clinicMrn: null,
-      available: c.globalPlexusPatientId != null && c.patientClinicMembershipId != null,
-      warnings: (c.globalPlexusPatientId == null || c.patientClinicMembershipId == null) ? ["identity_incomplete"] : [],
+      // §K21 available ONLY when the canonical identity is actually verified — never
+      // presumed from non-null ids. PCS overwrites this block after its own verification.
+      available: identityVerified(ctx, c),
+      warnings: identityVerified(ctx, c) ? [] : [(c.globalPlexusPatientId == null || c.patientClinicMembershipId == null) ? "identity_incomplete" : "identity_unverified"],
     },
     adminReview, engagement, appointment, orderNote, procedure, report, procedureNote, signature, billingReadiness, billingDocument,
     claim, invoice, payment,

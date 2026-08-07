@@ -55,10 +55,39 @@ export type ProcedureNoteEligibilityResult = {
   migrationMissing?: boolean;
 };
 
+// K5 — classify WHY the generator's fresh eligibility read deferred, so the generator
+// records a durable `generate_procedure_note` retry ONLY for genuinely retryable
+// deferrals (report/procedure will legitimately arrive later). A missing migration,
+// cross-clinic, missing case, or corrupt/ambiguous evidence must NOT become an endless
+// generic generate retry (they belong to 503 / denial / reconciliation, not retry).
+export type GeneratorEligibilityDeferral =
+  | "retryable" | "terminal" | "integrity_conflict" | "migration_missing" | "cross_clinic" | "case_missing";
+// Deferrals that can legitimately resolve on their own later (no evidence corruption).
+const RETRYABLE_ELIGIBILITY_REASONS = new Set([
+  "procedure_event_missing", "procedure_not_complete", "report_missing", "report_not_current",
+]);
+// Corrupt / wrong / ambiguous evidence — belongs to reconciliation, never a generic retry.
+const INTEGRITY_ELIGIBILITY_REASONS = new Set([
+  "procedure_event_ambiguous", "report_case_mismatch", "report_service_mismatch",
+]);
+export function classifyGeneratorEligibilityDeferral(elig: ProcedureNoteEligibilityResult): GeneratorEligibilityDeferral {
+  if (elig.migrationMissing) return "migration_missing";
+  if (elig.caseNotFound) return "case_missing";
+  if (elig.clinicMismatch) return "cross_clinic";
+  // Corrupt/ambiguous evidence takes precedence over a coincidental retryable reason.
+  if (elig.reasons.some((r) => INTEGRITY_ELIGIBILITY_REASONS.has(r))) return "integrity_conflict";
+  if (elig.reasons.some((r) => RETRYABLE_ELIGIBILITY_REASONS.has(r))) return "retryable";
+  return "terminal"; // unknown/other → truthful defer, never an infinite generic retry
+}
+
 // A report reference is "current" for eligibility only when it is not
 // superseded AND carries an acceptable positive status. pending /
 // pending_signature / superseded / voided are NOT current.
-const ACCEPTABLE_REPORT_STATUSES = new Set(["uploaded", "completed", "approved"]);
+// K3 — the SINGLE source of truth for which report document statuses the live
+// eligibility service accepts. The backfill DRY-RUN classifier imports this exact set
+// so its plan reports precisely what APPLY (the live ensure) would consider eligible —
+// never a broader set that overstates applicability.
+export const ACCEPTABLE_REPORT_STATUSES = new Set(["uploaded", "completed", "approved"]);
 
 // Schema-element-absent codes → truthful migration_missing (never a false
 // "no evidence"). 42P01 undefined_table, 42703 undefined_column.

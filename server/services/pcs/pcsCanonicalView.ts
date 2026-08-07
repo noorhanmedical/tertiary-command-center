@@ -84,7 +84,7 @@ async function loadVerifiedStream(clinicId: number, afterMemberId: number | null
   const members = filtered.slice(0, limit);
   const memberIds = members.map((m) => m.id);
   if (!memberIds.length) return { rows: [] as PcsPatientGroup[], pageInfo: { limit, nextCursor: null, returned: 0 } };
-  const gppById = await loadGpps([...new Set(members.map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))]);
+  const idById = await loadIdentities([...new Set(members.map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))]);
 
   // Bounded shared window over the paged memberships' cases, ordered by
   // (membership, id). The completeness/lossless guarantee below is contingent on
@@ -119,15 +119,15 @@ async function loadVerifiedStream(clinicId: number, afterMemberId: number | null
   // here — collect every valid episode case for ALL returned memberships so the
   // stage vectors can be built in ONE batched call (no per-membership / per-case
   // N+1).
-  type Plan = { m: typeof members[number]; gpp: typeof globalPlexusPatients.$inferSelect; pageValid: PatientAncillaryCase[]; episodesNextCursor: string | null };
+  type Plan = { m: typeof members[number]; pageValid: PatientAncillaryCase[]; episodesNextCursor: string | null };
   const plans: Plan[] = [];
   const allValidCases: PatientAncillaryCase[] = [];
   for (const m of returnMembers) {
-    const gpp = m.globalPlexusPatientId != null ? gppById.get(m.globalPlexusPatientId) : undefined;
+    const id = m.globalPlexusPatientId != null ? idById.get(m.globalPlexusPatientId) : undefined;
     // A membership yields a VERIFIED patient only when its global patient is
     // current (active, not merged). Otherwise its cases flow to the unresolved
     // stream (never a verified group with fabricated identity).
-    if (!isCurrentPatient(gpp, m.globalPlexusPatientId)) continue;
+    if (!isCurrentPatient(id, m.globalPlexusPatientId)) continue;
     const memberCases = byMember.get(m.id) ?? []; // raw window cases (id order)
     const validCases = memberCases.filter((c) => c.globalPlexusPatientId === m.globalPlexusPatientId); // exact episodes
     const pageValid = validCases.slice(0, PCS_MAX_EPISODES_PER_PATIENT);
@@ -138,7 +138,7 @@ async function loadVerifiedStream(clinicId: number, afterMemberId: number | null
     // Only materialize a patient with at least one in-window episode OR a
     // continuation to its later valid episodes (never a permanently empty group).
     if (pageValid.length === 0 && !episodesNextCursor) continue;
-    plans.push({ m, gpp: gpp!, pageValid, episodesNextCursor });
+    plans.push({ m, pageValid, episodesNextCursor });
     allValidCases.push(...pageValid);
   }
 
@@ -147,23 +147,32 @@ async function loadVerifiedStream(clinicId: number, afterMemberId: number | null
   const vectors = await buildStageVectors({ clinicId, cases: allValidCases });
   const vectorByCase = new Map(vectors.map((v) => [v.ancillaryCaseId, v]));
 
-  const rows: PcsPatientGroup[] = plans.map((p) => assembleVerifiedGroup(p.m, p.gpp, p.pageValid, vectorByCase, p.episodesNextCursor));
+  // OPTIONAL display projection — loaded ONLY for already identity-proven patients.
+  // A failure here degrades display, never identity (K18).
+  const display = await loadDisplays([...new Set(plans.map((p) => p.m.globalPlexusPatientId).filter((x): x is number => x != null))]);
+  const rows: PcsPatientGroup[] = plans.map((p) => assembleVerifiedGroup(p.m, display, p.pageValid, vectorByCase, p.episodesNextCursor));
   return { rows, pageInfo: { limit, nextCursor: membershipNextCursor, returned: rows.length } };
 }
 
 // Assemble a verified patient group from PRE-BUILT stage vectors (no DB reads).
-function assembleVerifiedGroup(m: typeof patientClinicMemberships.$inferSelect, gpp: typeof globalPlexusPatients.$inferSelect, pageValid: PatientAncillaryCase[], vectorByCase: Map<number, PcsPatientGroup["episodes"][number]>, episodesNextCursor: string | null): PcsPatientGroup {
+// Identity is already proven; display comes from the OPTIONAL projection — if it is
+// degraded, display is null and `identity_display_degraded` is surfaced, but the
+// patient stays verified with identityAvailable=true and its exact IDs/episodes.
+function assembleVerifiedGroup(m: typeof patientClinicMemberships.$inferSelect, display: DisplayLoad, pageValid: PatientAncillaryCase[], vectorByCase: Map<number, PcsPatientGroup["episodes"][number]>, episodesNextCursor: string | null): PcsPatientGroup {
+  const d = m.globalPlexusPatientId != null ? display.byId.get(m.globalPlexusPatientId) : undefined;
+  const patientDisplay = d?.displayName ?? null, patientDob = d?.dob ?? null;
+  const warnings = display.degraded ? ["identity_display_degraded"] : [];
   const episodes: PcsPatientGroup["episodes"] = [];
   for (const c of pageValid) {
     const v = vectorByCase.get(c.id);
     if (!v) continue;
-    v.identity.patientDisplay = gpp.displayName ?? null; v.identity.patientDob = gpp.dob ?? null; v.identity.clinicMrn = m.clinicMrn ?? null; v.identity.available = true; v.identity.warnings = [];
+    v.identity.patientDisplay = patientDisplay; v.identity.patientDob = patientDob; v.identity.clinicMrn = m.clinicMrn ?? null; v.identity.available = true; v.identity.warnings = warnings;
     episodes.push(v);
   }
   return {
     globalPlexusPatientId: m.globalPlexusPatientId, patientClinicMembershipId: m.id,
-    patientDisplay: gpp.displayName ?? null, patientDob: gpp.dob ?? null, clinicMrn: m.clinicMrn ?? null,
-    identityAvailable: true, identityWarnings: [], episodes, episodesNextCursor,
+    patientDisplay, patientDob, clinicMrn: m.clinicMrn ?? null,
+    identityAvailable: true, identityWarnings: warnings, episodes, episodesNextCursor,
   };
 }
 
@@ -174,8 +183,8 @@ async function loadPatientEpisodeContinuation(clinicId: number, membershipId: nu
   const memRaw = await db.select().from(patientClinicMemberships).where(and(eq(patientClinicMemberships.clinicId, clinicId), eq(patientClinicMemberships.id, membershipId))).limit(2);
   const m = memRaw.find((x) => x.id === membershipId && x.clinicId === clinicId && x.membershipStatus === "active");
   if (!m) return null;
-  const gpp = m.globalPlexusPatientId != null ? (await loadGpps([m.globalPlexusPatientId])).get(m.globalPlexusPatientId) : undefined;
-  if (!isCurrentPatient(gpp, m.globalPlexusPatientId)) return null;
+  const id = m.globalPlexusPatientId != null ? (await loadIdentities([m.globalPlexusPatientId])).get(m.globalPlexusPatientId) : undefined;
+  if (!isCurrentPatient(id, m.globalPlexusPatientId)) return null;
   const conds = [eq(patientAncillaryCases.clinicId, clinicId), eq(patientAncillaryCases.patientClinicMembershipId, membershipId)];
   if (afterCaseId != null) conds.push(gt(patientAncillaryCases.id, afterCaseId));
   applyCaseFilters(conds, filters);
@@ -188,20 +197,24 @@ async function loadPatientEpisodeContinuation(clinicId: number, membershipId: nu
   const next = validCases.length > PCS_MAX_EPISODES_PER_PATIENT
     ? encodeCursor(pageValid[pageValid.length - 1].id)
     : (scanFull && window.length ? encodeCursor(window[window.length - 1].id) : null); // more raw cases to scan for later valid episodes
-  return buildVerifiedGroup(clinicId, m, gpp!, pageValid, next);
+  const display = await loadDisplays(m.globalPlexusPatientId != null ? [m.globalPlexusPatientId] : []);
+  return buildVerifiedGroup(clinicId, m, display, pageValid, next);
 }
 
-function isCurrentPatient(gpp: typeof globalPlexusPatients.$inferSelect | undefined, expectedId: number | null): boolean {
-  return !!gpp && expectedId != null && gpp.id === expectedId && gpp.identityStatus === "active" && gpp.mergedIntoPatientId == null;
+function isCurrentPatient(id: IdentityRow | undefined, expectedId: number | null): boolean {
+  return !!id && expectedId != null && id.id === expectedId && id.identityStatus === "active" && id.mergedIntoPatientId == null;
 }
 
-async function buildVerifiedGroup(clinicId: number, m: typeof patientClinicMemberships.$inferSelect, gpp: typeof globalPlexusPatients.$inferSelect, validCases: PatientAncillaryCase[], episodesNextCursor: string | null): Promise<PcsPatientGroup> {
+async function buildVerifiedGroup(clinicId: number, m: typeof patientClinicMemberships.$inferSelect, display: DisplayLoad, validCases: PatientAncillaryCase[], episodesNextCursor: string | null): Promise<PcsPatientGroup> {
   const vectors = await buildStageVectors({ clinicId, cases: validCases });
-  for (const v of vectors) { v.identity.patientDisplay = gpp.displayName ?? null; v.identity.patientDob = gpp.dob ?? null; v.identity.clinicMrn = m.clinicMrn ?? null; v.identity.available = true; v.identity.warnings = []; }
+  const d = m.globalPlexusPatientId != null ? display.byId.get(m.globalPlexusPatientId) : undefined;
+  const patientDisplay = d?.displayName ?? null, patientDob = d?.dob ?? null;
+  const warnings = display.degraded ? ["identity_display_degraded"] : [];
+  for (const v of vectors) { v.identity.patientDisplay = patientDisplay; v.identity.patientDob = patientDob; v.identity.clinicMrn = m.clinicMrn ?? null; v.identity.available = true; v.identity.warnings = warnings; }
   return {
     globalPlexusPatientId: m.globalPlexusPatientId, patientClinicMembershipId: m.id,
-    patientDisplay: gpp.displayName ?? null, patientDob: gpp.dob ?? null, clinicMrn: m.clinicMrn ?? null,
-    identityAvailable: true, identityWarnings: [], episodes: vectors, episodesNextCursor,
+    patientDisplay, patientDob, clinicMrn: m.clinicMrn ?? null,
+    identityAvailable: true, identityWarnings: warnings, episodes: vectors, episodesNextCursor,
   };
 }
 
@@ -225,14 +238,17 @@ async function loadUnresolvedStream(clinicId: number, afterCaseId: number | null
   const memRows = memIds.length ? await db.select().from(patientClinicMemberships).where(inArray(patientClinicMemberships.id, memIds)).limit(PCS_UNRESOLVED_MAX_LIMIT * 2) : [];
   const memById = new Map(memRows.map((m) => [m.id, m]));
   const gppIds = [...new Set(memRows.filter((m) => m.clinicId === clinicId && m.membershipStatus === "active").map((m) => m.globalPlexusPatientId).filter((x): x is number => x != null))];
-  const gppById = await loadGpps(gppIds);
+  // K18 — verified/unresolved classification is REQUIRED identity truth: use the
+  // required identity loader (an ordinary failure propagates, never silently moving a
+  // verified case into the unresolved stream). Display is null for unresolved rows.
+  const idById = await loadIdentities(gppIds);
 
   // Classify: keep only cases that do NOT resolve to a verified patient.
   const unresolvedCases: PatientAncillaryCase[] = [];
   const idresByCase = new Map<number, ReturnType<typeof verifyCaseIdentity>>();
   for (const c of page) {
     const membership = c.patientClinicMembershipId != null ? memById.get(c.patientClinicMembershipId) : undefined;
-    const globalPatient = membership?.clinicId === clinicId && membership?.membershipStatus === "active" && membership?.globalPlexusPatientId != null ? gppById.get(membership.globalPlexusPatientId) : undefined;
+    const globalPatient = membership?.clinicId === clinicId && membership?.membershipStatus === "active" && membership?.globalPlexusPatientId != null ? idById.get(membership.globalPlexusPatientId) : undefined;
     const idres = verifyCaseIdentity({ clinicId, caseGlobalPatientId: c.globalPlexusPatientId ?? null, caseMembershipId: c.patientClinicMembershipId ?? null, membership, globalPatient });
     if (idres.resolved) continue; // belongs to the verified stream
     unresolvedCases.push(c); idresByCase.set(c.id, idres);
@@ -255,10 +271,38 @@ async function loadUnresolvedStream(clinicId: number, afterCaseId: number | null
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
-async function loadGpps(ids: number[]): Promise<Map<number, typeof globalPlexusPatients.$inferSelect>> {
+const PCS_DISPLAY_MIGRATION_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
+
+// K18 — canonical IDENTITY truth (id + identityStatus + mergedIntoPatientId) is a
+// REQUIRED read: it drives verified/unresolved classification and merged/active
+// validation. An ordinary failure must PROPAGATE (fail closed) — never fabricate an
+// empty map that would silently move a verified patient to unresolved or null its
+// identity IDs. Migration-missing propagates too → the route answers 503.
+type IdentityRow = { id: number; identityStatus: string; mergedIntoPatientId: number | null };
+async function loadIdentities(ids: number[]): Promise<Map<number, IdentityRow>> {
   if (!ids.length) return new Map();
-  const rows = await db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, ids)).limit(PCS_MAX_LIMIT * 4);
-  return new Map(rows.map((r) => [r.id, r]));
+  const rows = await db.select({ id: globalPlexusPatients.id, identityStatus: globalPlexusPatients.identityStatus, mergedIntoPatientId: globalPlexusPatients.mergedIntoPatientId })
+    .from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, ids)).limit(PCS_MAX_LIMIT * 4);
+  return new Map(rows.map((r) => [r.id, { id: r.id, identityStatus: r.identityStatus, mergedIntoPatientId: r.mergedIntoPatientId }]));
+}
+
+// K18 — display projection (display name / DOB) is OPTIONAL and is loaded ONLY AFTER
+// identity is already proven. An ordinary failure degrades to "display unavailable"
+// (empty map → null display, `identity_display_degraded` warning) WITHOUT changing
+// identity truth: the patient stays verified, its IDs/episodes/identityAvailable are
+// preserved. Migration-missing still propagates → 503. Never infer identity from PHI.
+type DisplayRow = { displayName: string | null; dob: string | null };
+type DisplayLoad = { byId: Map<number, DisplayRow>; degraded: boolean };
+async function loadDisplays(ids: number[]): Promise<DisplayLoad> {
+  if (!ids.length) return { byId: new Map(), degraded: false };
+  try {
+    const rows = await db.select({ id: globalPlexusPatients.id, displayName: globalPlexusPatients.displayName, dob: globalPlexusPatients.dob })
+      .from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, ids)).limit(PCS_MAX_LIMIT * 4);
+    return { byId: new Map(rows.map((r) => [r.id, { displayName: r.displayName ?? null, dob: r.dob ?? null }])), degraded: false };
+  } catch (e) {
+    if (PCS_DISPLAY_MIGRATION_CODES.has((e as { code?: string })?.code ?? "")) throw e;
+    return { byId: new Map(), degraded: true };
+  }
 }
 function matchesFilters(c: PatientAncillaryCase, f: ReturnType<typeof loadCaseFilters>): boolean {
   if (f.serviceType && c.serviceType !== f.serviceType) return false;

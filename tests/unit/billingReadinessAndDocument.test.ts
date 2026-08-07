@@ -11,6 +11,7 @@ const evaluator = () => import("../../server/services/billingLifecycle/billingRe
 const generator = () => import("../../server/services/billingLifecycle/billingDocumentGenerator");
 const orchestration = () => import("../../server/services/billingLifecycle/billingLifecycleOrchestration");
 const worker = () => import("../../server/services/ancillaryDocuments/retryWorker");
+const handlers = () => import("../../server/services/billingLifecycle/billingRetryHandlers");
 const backfill = () => import("../../script/backfillCanonicalBillingReadiness");
 
 const OLD = new Date("2027-06-10T09:00:00Z");
@@ -348,7 +349,154 @@ async function testWorkerExactResolution() {
   assert.equal(staleResolves, 0);
 }
 
+// K11 — report source validation (loadExactReportEvidence) is fail-closed on each
+// exact-ownership dimension, including a dedicated `documentType !== "report"` case.
+async function testK11ReportSourceValidationFailClosed() {
+  const t = await loadCanonicalTables(); const e = await evaluator();
+  const run = async (srcOverride: Record<string, unknown>) => {
+    const spec = evalSpec(t);
+    spec.set(t.caseDocumentReadiness, { select: () => [reportSourceRow(srcOverride)] });
+    const r = await runWithDb(spec, READY, async () => e.evaluateCanonicalBillingReadiness({ clinicId: 1, ancillaryCaseId: 5, source: "test" }));
+    return { ready: r.status === "ready_to_generate", blob: JSON.stringify(r.billingBlockers ?? []) };
+  };
+  // Dedicated documentType rejection (the previously-untested guard).
+  const dt = await run({ documentType: "consent" });
+  assert.ok(!dt.ready && dt.blob.includes("report_source_ownership_mismatch"), `K11: documentType !== report fails closed (got ${dt.blob})`);
+  // Fail-closed matrix over the other exact-ownership dimensions.
+  const wrongService = await run({ serviceType: "NerveGuard" });
+  assert.ok(!wrongService.ready && wrongService.blob.includes("report_source_ownership_mismatch"), "K11: wrong service fails closed");
+  const wrongClinic = await run({ clinicId: 2 });
+  assert.ok(!wrongClinic.ready && wrongClinic.blob.includes("report_source_ownership_mismatch"), "K11: wrong clinic fails closed");
+  const noExecNoScreening = await run({ executionCaseId: null, patientScreeningId: null });
+  assert.ok(!noExecNoScreening.ready && noExecNoScreening.blob.includes("report_source_ownership_mismatch"), "K11: missing execution+screening linkage fails closed");
+  const unsupportedStatus = await run({ documentStatus: "draft" });
+  assert.ok(!unsupportedStatus.ready && unsupportedStatus.blob.includes("report_source_status_mismatch"), `K11: unsupported source status fails closed (got ${unsupportedStatus.blob})`);
+}
+
+// ── Phase 2K billing hardening (K7/K8/K10) ──
+function bref(o: Record<string, unknown> = {}) { return { id: 40, clinicId: 1, ancillaryCaseId: 5, documentKind: "billing_document", sourceTable: "canonical_billing_document_requests", sourceId: 70, documentStatus: "generated", supersededAt: null, ...o }; }
+function bdoc(o: Record<string, unknown> = {}) { return { id: 70, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", evidenceFingerprint: "bef_x", supersededAt: null, ...o }; }
+
+async function testK10ReferenceDurability() {
+  const t = await loadCanonicalTables(); const g = await generator();
+  const args = { clinicId: 1, ancillaryCaseId: 5, billingDocumentId: 70, source: "test" };
+  const run = (refs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }]]), DOC, async (calls: Call[]) => ({ r: await g.ensureBillingReferenceDurability(args), inserts: countOps(calls, "insert", t.documentFailures) }));
+  const present = await run([bref()]);
+  assert.equal(present.r, "reference_present", "K10: exactly one current owned reference is durable");
+  const superseded = await run([bref({ supersededAt: OLD })]);
+  assert.ok(superseded.r === "link_retry_recorded" && superseded.inserts === 1, "K10: only a superseded reference → NOT durable → link retry recorded");
+  const dup = await run([bref({ id: 40 }), bref({ id: 41 })]);
+  assert.equal(dup.r, "duplicate_current_reference", "K10: duplicate current references → conflict");
+  const wrong = await run([bref({ clinicId: 2 })]);
+  assert.equal(wrong.r, "ownership_conflict", "K10: mismatched owner → ownership conflict");
+}
+async function testK7SupersedeReferenceDurable() {
+  const t = await loadCanonicalTables(); const o = await orchestration();
+  const mk = (refs: unknown[], refUpdate?: (v: any) => unknown[], failInsert?: (v: any) => unknown[]) => new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [bdoc({ evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
+    [t.documentReferences, { select: () => refs, onUpdate: refUpdate ?? ((v) => [{ ...v }]) }],
+    [t.documentFailures, { select: () => [], onInsert: failInsert ?? ((v) => [{ ...v, id: 1 }]) }],
+  ]);
+  // (1) clean: exact reference superseded, no residual → DURABLE, no retry.
+  const clean = await runWithDb(mk([]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
+  assert.ok(clean.r.status === "superseded" && clean.r.referenceDurable === true && clean.retries === 0, `K7 (1): clean supersede → durable, no retry (got ${JSON.stringify(clean.r)})`);
+  // (2) residual current reference + retry insert succeeds → NOT durable, retry RECORDED.
+  const retry = await runWithDb(mk([bref()]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
+  assert.ok(retry.r.status === "superseded_reference_retry_recorded" && retry.r.retryRecorded === true && retry.retries === 1, `K7 (2): residual ref → retry recorded (got ${JSON.stringify(retry.r)})`);
+  // (3) reference update throws AND the retry insert ALSO throws → the document ROW stays
+  // superseded, but the RESULT is `superseded_reference_not_durable` — never a clean lie.
+  const notDurable = await runWithDb(mk([bref()], () => { throw new Error("ref update down"); }, () => { throw new Error("failure ledger down"); }), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), docUpdates: countOps(calls, "update", t.billingDocumentRequests) }));
+  assert.ok(notDurable.r.status === "superseded_reference_not_durable" && notDurable.r.referenceDurable === false && notDurable.r.retryRecorded === false, `K7 (3): ref+retry both fail → not durable, never clean success (got ${JSON.stringify(notDurable.r)})`);
+  assert.ok(notDurable.docUpdates >= 1, "K7 (3): the committed document row stays superseded (not rolled back)");
+}
+async function testK8SupersessionDurablePostcondition() {
+  const t = await loadCanonicalTables(); const o = await orchestration();
+  // EXACT source-bound durability for document 70.
+  const run = (refs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }]]), DOC, async () => o.billingReferenceSupersessionDurableForDocument(1, 5, 70));
+  assert.equal(await run([bref({ sourceId: 70 })]), false, "K8: a current EXACT reference for doc 70 → NOT durable");
+  assert.equal(await run([]), true, "K8: no current exact reference → durable");
+  assert.equal(await run([bref({ id: 41, sourceId: 71 })]), true, "K8: a current reference for ANOTHER document (71) does not block doc 70");
+  assert.equal(await run([bref({ sourceId: 70, supersededAt: OLD })]), true, "K8: only a superseded exact reference → durable");
+  const many = Array.from({ length: 201 }, (_, i) => bref({ id: 1000 + i, sourceId: 70 }));
+  assert.equal(await run(many), false, "K8: > bounded scan of current exact references → cannot prove complete → non-durable");
+}
+async function testK8ExactSourceBoundRetry() {
+  const t = await loadCanonicalTables(); const h = await handlers();
+  const fail = (o: Record<string, unknown> = {}) => ({ id: 10, clinicId: 1, ancillaryCaseId: 5, documentKind: "billing_document", sourceTable: "billing_document_requests", sourceId: 70, requestedAction: "supersede_billing_document", resolvedAt: null, attemptCount: 1, ...o });
+  const run = async (failure: Record<string, unknown>, docs: unknown[], refs: unknown[] = []) => {
+    let resolved = false;
+    const spec = new Map<unknown, TableSpec>([
+      [t.billingDocumentRequests, { select: () => docs, onUpdate: (v) => [{ ...v, id: 70 }] }],
+      [t.documentReferences, { select: () => refs, onUpdate: (v) => [{ ...v }] }],
+      [t.documentFailures, { onUpdate: (v: any) => { if ("resolvedAt" in v) resolved = true; return [{ id: 10 }]; }, onInsert: (v) => [{ ...v, id: 1 }] }],
+    ]);
+    const out = await runWithDb(spec, DOC, async (calls: Call[]) => { const o = await h.retryBillingFailure(failure as never); return { status: o.status, message: o.message, docMut: countOps(calls, "update", t.billingDocumentRequests) }; });
+    return { ...out, resolved };
+  };
+  // wrong sourceTable → invalid_source, zero mutation, unresolved.
+  const wrongTable = await run(fail({ sourceTable: "billing_readiness_checks" }), [bdoc()]);
+  assert.ok(wrongTable.status === "still_deferred" && !wrongTable.resolved, "K8: wrong sourceTable → unresolved, zero mutation");
+  // wrong sourceId (document not found) → unresolved, zero mutation.
+  const notFound = await run(fail({ sourceId: 999 }), []);
+  assert.ok(notFound.status === "still_deferred" && !notFound.resolved, "K8: unknown sourceId → unresolved");
+  // doc A retry while the loaded document is B (id 71) → ownership conflict, cannot resolve A from B.
+  const crossDoc = await run(fail(), [bdoc({ id: 71 })]);
+  assert.ok(crossDoc.status === "still_deferred" && !crossDoc.resolved && crossDoc.docMut === 0, "K8: cannot resolve document A from document B (ownership conflict, zero mutation)");
+  // wrong clinic → ownership conflict, zero mutation.
+  const wrongClinic = await run(fail(), [bdoc({ clinicId: 2 })]);
+  assert.ok(wrongClinic.status === "still_deferred" && !wrongClinic.resolved && wrongClinic.docMut === 0, "K8: wrong clinic → unresolved, zero mutation");
+  // wrong case → ownership conflict, zero mutation.
+  const wrongCase = await run(fail(), [bdoc({ ancillaryCaseId: 6 })]);
+  assert.ok(wrongCase.status === "still_deferred" && !wrongCase.resolved && wrongCase.docMut === 0, "K8: wrong case → unresolved, zero mutation");
+  // exact doc already superseded + exact reference non-current → idempotent RESOLVE.
+  const idempotent = await run(fail(), [bdoc({ id: 70, canonicalStatus: "superseded", supersededAt: OLD })], []);
+  assert.ok(idempotent.status === "resolved" && idempotent.resolved, "K8: exact already-superseded document + no current exact reference → idempotent resolve");
+  // exact doc already superseded + residual current exact reference → stays OPEN.
+  const residual = await run(fail(), [bdoc({ id: 70, canonicalStatus: "superseded", supersededAt: OLD })], [bref({ sourceId: 70 })]);
+  assert.ok(residual.status === "still_deferred" && !residual.resolved, "K8: residual current exact reference → retry stays open");
+}
+
+async function testK8RawTruncationAndCaseScope() {
+  const t = await loadCanonicalTables(); const o = await orchestration();
+  const dur = (refs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }]]), DOC, async () => o.billingReferenceSupersessionDurableForDocument(1, 5, 70));
+  // K8-A: 201 RAW exact-source (doc 70) current references, ALL under the WRONG case (6);
+  // the target case (5) has zero. The OLD post-filter helper would compute current(case 5)=[]
+  // → durable=true (fail OPEN). The RAW set is truncated (201 > SCAN 200) → non-durable.
+  const rawTrunc = Array.from({ length: 201 }, (_, i) => bref({ id: 2000 + i, sourceId: 70, ancillaryCaseId: 6 }));
+  assert.equal(await dur(rawTrunc), false, "K8-A: raw truncation checked BEFORE case filter → non-durable (never fail open)");
+  // K8-B: one current exact-source reference under the WRONG case (6); target case 5 has none.
+  // OLD filter would drop the case-6 row → current=[] → durable=true. New: wrong-case current
+  // exact reference is an integrity conflict → non-durable.
+  assert.equal(await dur([bref({ sourceId: 70, ancillaryCaseId: 6 })]), false, "K8-B: wrong-case current exact reference → integrity conflict, never durable");
+  // K8-C: supersede document 70 for case 5 while a malformed same-source (sourceId 70)
+  // reference belongs to case 6. The foreign-case reference must block clean durability
+  // (durability helper treats it as an integrity conflict → non-durable → retry recorded).
+  // Real-DB zero-mutation of the case-6 row is enforced by the `ancillaryCaseId = case 5`
+  // predicate on the reference UPDATE (code-level; the fake harness does not apply WHERE).
+  const foreignRef = bref({ id: 55, sourceId: 70, ancillaryCaseId: 6 });
+  const c = await runWithDb(new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [bdoc({ id: 70, ancillaryCaseId: 5, evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
+    [t.documentReferences, { select: () => [foreignRef], onUpdate: (v) => [{ ...v }] }],
+    [t.documentFailures, { onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]), DOC, async () => o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"));
+  assert.ok(c.status !== "superseded", `K8-C: a foreign-case same-source reference blocks clean durability (got ${JSON.stringify(c)})`);
+  assert.ok(!("referenceDurable" in c) || c.referenceDurable === false, "K8-C: never reports referenceDurable:true while a foreign-case reference remains current");
+  // K8-D: a normal exact-case supersession with no residual reference → durable success.
+  const d = await runWithDb(new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [bdoc({ id: 70, ancillaryCaseId: 5, evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
+    [t.documentReferences, { select: () => [], onUpdate: (v) => [{ ...v }] }],
+    [t.documentFailures, { onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]), DOC, async () => o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"));
+  assert.ok(d.status === "superseded" && d.referenceDurable === true, `K8-D: normal exact-case supersession → durable (got ${JSON.stringify(d)})`);
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["K8 raw-truncation + wrong-case exact durability + case-scoped mutation", testK8RawTruncationAndCaseScope],
+  ["K11 report source validation fail-closed (documentType + matrix)", testK11ReportSourceValidationFailClosed],
+  ["K10 billing reference durability (current/superseded/dup/owner)", testK10ReferenceDurability],
+  ["K7 supersede reference durability + exact retry", testK7SupersedeReferenceDurable],
+  ["K8 supersession durable post-condition (exact source)", testK8SupersessionDurablePostcondition],
+  ["K8 exact source-bound supersede retry", testK8ExactSourceBoundRetry],
   ["(1) exact readiness happy path", testReadyHappyPath],
   ["(2/6) cross-clinic + nullable fail closed", testCrossClinicAndNullable],
   ["(3/4/9) snapshot exact identity + DOS", testSnapshotExactIdentityAndDos],

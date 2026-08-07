@@ -14,7 +14,7 @@
  */
 
 import { db } from "../../db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, inArray } from "drizzle-orm";
 import { canonicalBillingDocumentRequests as billingDocumentRequests } from "@shared/schema/billingDocuments";
 import { ancillaryDocumentReferences, BILLING_DOCUMENT_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
@@ -73,8 +73,8 @@ export async function ensureCanonicalBillingDocumentForAncillaryCase(input: Ensu
       case "missing_requirements": {
         // Not (or no longer) ready — a stale current Billing Document whose evidence
         // no longer supports it must be superseded/voided (never silently kept).
-        const superseded = await supersedeStaleBillingDocument(input, evalResult.evidenceFingerprint ?? null);
-        if (superseded) return { status: "superseded_stale_document", readinessCheckId: evalResult.readinessCheckId };
+        const sup = await supersedeStaleBillingDocument(input, evalResult.evidenceFingerprint ?? null);
+        if (supersedeDidSupersede(sup)) return { status: "superseded_stale_document", readinessCheckId: evalResult.readinessCheckId, ...(sup.status === "superseded_reference_not_durable" ? { warnings: ["reconciliation_not_recorded"] } : {}) };
         return { status: "missing_requirements", readinessCheckId: evalResult.readinessCheckId };
       }
       case "ready_to_generate": break;
@@ -149,20 +149,117 @@ async function queueGenerate(input: EnsureBillingDocumentInput, billingDocumentI
  * NEVER rewritten — only stamped superseded + their reference marked superseded.
  * Returns true iff a stale document was superseded.
  */
-export async function supersedeStaleBillingDocument(input: { clinicId: number; ancillaryCaseId: number }, currentFingerprint: string | null): Promise<boolean> {
+/** K7: a TRUTHFUL structured supersession result — the bare boolean overstated
+ *  durability (it returned `true` even when reference supersession AND the retry-record
+ *  both failed). Callers must be able to distinguish a durable supersession from one
+ *  whose reference reconciliation could not be persisted. */
+export type SupersedeBillingDocumentResult =
+  | { status: "not_stale" }
+  | { status: "superseded"; billingDocumentId: number; referenceDurable: true; retryRecorded: false }
+  | { status: "superseded_reference_retry_recorded"; billingDocumentId: number; referenceDurable: false; retryRecorded: true }
+  | { status: "superseded_reference_not_durable"; billingDocumentId: number; referenceDurable: false; retryRecorded: false }
+  | { status: "conflict" };
+
+/** True iff the result superseded a stale document (any reference-durability variant). */
+export function supersedeDidSupersede(r: SupersedeBillingDocumentResult): boolean {
+  return r.status === "superseded" || r.status === "superseded_reference_retry_recorded" || r.status === "superseded_reference_not_durable";
+}
+
+export async function supersedeStaleBillingDocument(input: { clinicId: number; ancillaryCaseId: number }, currentFingerprint: string | null): Promise<SupersedeBillingDocumentResult> {
   const doc = await currentBillingDocument(input.clinicId, input.ancillaryCaseId);
-  if (!doc) return false;
+  if (!doc) return { status: "not_stale" };
   // Keep the document if its evidence version still matches the current readiness.
-  if (currentFingerprint != null && doc.evidenceFingerprint === currentFingerprint) return false;
+  if (currentFingerprint != null && doc.evidenceFingerprint === currentFingerprint) return { status: "not_stale" };
   const now = new Date();
   const rows = await db.update(billingDocumentRequests)
     .set({ canonicalStatus: "superseded", supersededAt: now, updatedAt: now })
     .where(and(eq(billingDocumentRequests.id, doc.id), eq(billingDocumentRequests.clinicId, input.clinicId), eq(billingDocumentRequests.ancillaryCaseId, input.ancillaryCaseId), isNull(billingDocumentRequests.supersededAt)))
     .returning();
-  if (rows.length !== 1) return false;
-  // Supersede the exact reference too (best-effort; a missing ref is left for retry).
-  await db.update(ancillaryDocumentReferences)
-    .set({ documentStatus: "superseded", supersededAt: now, updatedAt: now })
-    .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId)));
+  if (rows.length !== 1) return { status: "conflict" };
+  // K7: DURABLE reference supersession. Supersede the exact current reference; if the
+  // update fails OR a current (non-superseded) reference still remains for this now-
+  // superseded document, record an exact `supersede_billing_document` retry. The
+  // document ROW stays superseded regardless (fail-closed), but the RESULT tells the
+  // truth: durable, retry-recorded, or not-durable-and-not-recorded (never a clean lie).
+  let referenceDurable = false;
+  let retryRecorded = false;
+  try {
+    // Supersede ONLY this exact case's current reference — a malformed same-source
+    // reference belonging to ANOTHER case must never be mutated by this case's supersession.
+    await db.update(ancillaryDocumentReferences)
+      .set({ documentStatus: "superseded", supersededAt: now, updatedAt: now })
+      .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId), eq(ancillaryDocumentReferences.ancillaryCaseId, input.ancillaryCaseId), isNull(ancillaryDocumentReferences.supersededAt)));
+    // Prove durability via the exact-source post-condition: RAW-truncation-safe, and a
+    // wrong-case same-source current reference is an integrity conflict → non-durable
+    // (never a clean `superseded` result while a foreign-case reference remains current).
+    referenceDurable = await billingReferenceSupersessionDurableForDocument(input.clinicId, input.ancillaryCaseId, doc.id);
+    if (!referenceDurable) retryRecorded = await recordSupersedeReferenceRetry(input, doc.id);
+  } catch {
+    retryRecorded = await recordSupersedeReferenceRetry(input, doc.id);
+  }
+  if (referenceDurable) return { status: "superseded", billingDocumentId: doc.id, referenceDurable: true, retryRecorded: false };
+  if (retryRecorded) return { status: "superseded_reference_retry_recorded", billingDocumentId: doc.id, referenceDurable: false, retryRecorded: true };
+  return { status: "superseded_reference_not_durable", billingDocumentId: doc.id, referenceDurable: false, retryRecorded: false };
+}
+
+/** K7: record an exact PHI-free `supersede_billing_document` retry (the writer that
+ *  wires this previously-dead action) targeting the exact Billing Document lineage.
+ *  Returns whether the retry was DURABLY persisted — the caller must not overstate
+ *  reconciliation durability when this is false. */
+async function recordSupersedeReferenceRetry(input: { clinicId: number; ancillaryCaseId: number }, billingDocumentId: number): Promise<boolean> {
+  try {
+    await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "billing_document", sourceTable: BILLING_DOCUMENT_SOURCE_TABLE, sourceId: billingDocumentId, requestedAction: "supersede_billing_document", sourceSystem: "billing_lifecycle_orchestration", errorCode: "billing_reference_supersession_deferred" });
+    return true;
+  } catch { return false; }
+}
+
+/** K8/K12 exact-source post-condition: reference supersession is DURABLE for the EXACT
+ *  named document only when the COMPLETE bounded set of its current (non-superseded)
+ *  `billing_document` references is empty. Loads LIMIT+1 — a truncated set cannot be
+ *  proven complete → non-durable; any current exact reference → non-durable. */
+export async function billingReferenceSupersessionDurableForDocument(clinicId: number, ancillaryCaseId: number, billingDocumentId: number): Promise<boolean> {
+  const SCAN = 200;
+  const refs = await db.select().from(ancillaryDocumentReferences).where(and(
+    eq(ancillaryDocumentReferences.clinicId, clinicId),
+    eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE),
+    eq(ancillaryDocumentReferences.sourceId, billingDocumentId),
+    eq(ancillaryDocumentReferences.documentKind, "billing_document"),
+    isNull(ancillaryDocumentReferences.supersededAt),
+  )).limit(SCAN + 1);
+  // RAW query truncation FIRST — before ANY in-memory filter. If the bounded query hit its
+  // limit the exact current set cannot be proven complete → non-durable (never fail OPEN).
+  if (refs.length > SCAN) return false;
+  // Re-apply the exact SQL scope in memory (clinic / sourceTable / exact sourceId /
+  // documentKind / current) — the exact current `billing_document` reference set for THIS
+  // document, independent of ancillary case.
+  const exact = refs.filter((r) => r.clinicId === clinicId && r.sourceId === billingDocumentId && r.supersededAt == null);
+  // RAW truncation of the exact current set, checked BEFORE narrowing to the case — a
+  // truncated set that would filter to zero rows for THIS case must never fail OPEN.
+  if (exact.length > SCAN) return false;
+  // Any current exact reference under a DIFFERENT ancillary case is a same-source
+  // ownership/integrity conflict — never filter it away and call the set durable.
+  if (exact.some((r) => (r.ancillaryCaseId ?? null) !== ancillaryCaseId)) return false;
+  // Durable only when NO current exact reference remains for this exact document.
+  return exact.length === 0;
+}
+
+/** K8 post-condition: reference supersession is DURABLE only when no current
+ *  (non-superseded) `billing_document` reference points at a superseded/voided
+ *  document for this case. Batched (one docs read via inArray) — never per-ref N+1. */
+export async function billingReferenceSupersessionDurable(clinicId: number, ancillaryCaseId: number): Promise<boolean> {
+  const refs = await db.select().from(ancillaryDocumentReferences).where(and(
+    eq(ancillaryDocumentReferences.clinicId, clinicId),
+    eq(ancillaryDocumentReferences.ancillaryCaseId, ancillaryCaseId),
+    eq(ancillaryDocumentReferences.documentKind, "billing_document"),
+    isNull(ancillaryDocumentReferences.supersededAt),
+  )).limit(200);
+  const srcIds = [...new Set(refs.map((r) => r.sourceId).filter((x): x is number => x != null))];
+  if (srcIds.length === 0) return true;
+  const docs = await db.select().from(billingDocumentRequests).where(and(eq(billingDocumentRequests.clinicId, clinicId), inArray(billingDocumentRequests.id, srcIds))).limit(200);
+  const docById = new Map(docs.filter((d) => d.clinicId === clinicId).map((d) => [d.id, d]));
+  for (const ref of refs) {
+    const doc = ref.sourceId != null ? docById.get(ref.sourceId) : undefined;
+    if (doc && (doc.supersededAt != null || doc.canonicalStatus === "superseded" || doc.canonicalStatus === "voided")) return false;
+  }
   return true;
 }

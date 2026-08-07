@@ -391,8 +391,64 @@ async function testRouteMigration503() {
   }
 }
 
+// ── Phase 2K K18: REQUIRED canonical identity vs OPTIONAL display projection ──
+async function testK18DisplayFailureDegrades() {
+  const t = await loadCanonicalTables(); const p = await pcs();
+  const verified = (o: Record<string, unknown> = {}) => ({ cases: [acase({ id: 5, patientClinicMembershipId: 800, globalPlexusPatientId: 900 })], pcms: [pcm({ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" })], gpps: [gpp({ id: 900 })], ...o });
+  // (1) Baseline verified patient — identity proven, display present.
+  const ok = await runPcs(t, verified());
+  assert.equal(ok.rows.length, 1, "K18(1) verified.rows = 1");
+  assert.equal(ok.unresolved.rows.length, 0, "K18(1) unresolved = 0");
+  assert.equal(ok.rows[0].globalPlexusPatientId, 900, "K18(1) exact gpId");
+  assert.equal(ok.rows[0].patientClinicMembershipId, 800, "K18(1) exact membershipId");
+  assert.equal(ok.rows[0].identityAvailable, true, "K18(1) identityAvailable");
+  assert.equal(ok.rows[0].patientDisplay, "Jane Doe", "K18(1) display present");
+
+  // (2) OPTIONAL display read fails ordinarily (2nd gpp select = the display load):
+  // the SAME patient stays verified; identity IDs/episodes preserved; display null;
+  // identity_display_degraded surfaced. Identity classification is UNCHANGED.
+  // Fail ONLY the OPTIONAL display projection (the read whose columns include
+  // `displayName`); every REQUIRED identity read (id/identityStatus/mergedIntoPatientId)
+  // succeeds. This proves a display failure never changes identity classification.
+  const isDisplayRead = (cols: unknown): boolean => !!cols && typeof cols === "object" && "displayName" in (cols as object);
+  const dispFail = spec(t, verified());
+  dispFail.set(t.globalPatients, { select: (cols?: unknown) => { if (isDisplayRead(cols)) throw new Error("display read down"); return [gpp({ id: 900 })]; } });
+  const degraded = await runWithDb(dispFail, ALL, async () => p.getPcsCanonicalView({ clinicId: 1 }));
+  assert.equal(degraded.rows.length, 1, "K18(2) same patient stays verified");
+  assert.equal(degraded.unresolved.rows.length, 0, "K18(2) unresolved unchanged");
+  assert.equal(degraded.rows[0].globalPlexusPatientId, 900, "K18(2) gpId preserved");
+  assert.equal(degraded.rows[0].patientClinicMembershipId, 800, "K18(2) membershipId preserved");
+  assert.deepEqual(degraded.rows[0].episodes.map((e) => e.ancillaryCaseId), [5], "K18(2) episode caseIds preserved");
+  assert.equal(degraded.rows[0].identityAvailable, true, "K18(2) identityAvailable stays true");
+  assert.equal(degraded.rows[0].patientDisplay, null, "K18(2) patientDisplay null");
+  assert.equal(degraded.rows[0].patientDob, null, "K18(2) patientDob null");
+  assert.ok(degraded.rows[0].identityWarnings.includes("identity_display_degraded"), "K18(2) identity_display_degraded warning");
+
+  // (3) REQUIRED canonical identity read fails ordinarily (1st gpp select) → fail
+  // closed/unavailable; the patient does NOT silently move to unresolved; no fallback.
+  const idFail = spec(t, verified()); idFail.set(t.globalPatients, { select: () => { throw new Error("identity read down"); } });
+  await assert.rejects(async () => { await runWithDb(idFail, ALL, async () => p.getPcsCanonicalView({ clinicId: 1 })); }, "K18(3) required identity read failure fails closed (never unresolved)");
+
+  // (4) migration-missing on the identity read still propagates → 503.
+  const migSpec = spec(t, verified()); migSpec.set(t.globalPatients, { select: () => { throw Object.assign(new Error("relation does not exist"), { code: "42P01" }); } });
+  await assert.rejects(async () => { await runWithDb(migSpec, ALL, async () => p.getPcsCanonicalView({ clinicId: 1 })); }, "K18(4) migration-missing → 503");
+
+  // (5) merged global patient → unresolved (not verified).
+  const merged = await runPcs(t, verified({ gpps: [gpp({ id: 900, mergedIntoPatientId: 901 })] }));
+  assert.equal(merged.rows.length, 0, "K18(5) merged patient not verified");
+  assert.ok(merged.unresolved.rows.some((g) => g.episodes.some((e) => e.ancillaryCaseId === 5)), "K18(5) merged → unresolved");
+  // (6) inactive membership → unresolved.
+  const inactive = await runPcs(t, verified({ pcms: [pcm({ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "inactive" })] }));
+  assert.equal(inactive.rows.length, 0, "K18(6) inactive membership not verified");
+  // (7) wrong clinic → fail closed (case surfaces unresolved with no cross-clinic PHI).
+  const wrongClinic = await runPcs(t, verified({ pcms: [pcm({ id: 800, clinicId: 2, globalPlexusPatientId: 900, membershipStatus: "active" })] }));
+  assert.equal(wrongClinic.rows.length, 0, "K18(7) wrong-clinic membership not verified");
+  assert.ok(wrongClinic.unresolved.rows.every((g) => g.patientDisplay == null), "K18(7) no cross-clinic display");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
   ["ACS stage-vector truth", testAcsStageVectorTruth],
+  ["K18 PCS display-failure degradation", testK18DisplayFailureDegrades],
   ["(1-9) identity resolver", testIdentityResolver],
   ["(1-9) invalid-membership cases surfaced", testInvalidMembershipCasesSurfaced],
   ["(10/11) verified episode continuation", testEpisodeContinuation],

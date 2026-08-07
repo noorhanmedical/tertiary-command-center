@@ -97,10 +97,16 @@ export function commandFingerprint(intent: Record<string, unknown>): string {
   return JSON.stringify(norm(intent));
 }
 
-export type ReplayResult = { kind: "none" } | { kind: "replay"; entityId: number } | { kind: "conflict" };
+// A replay carries the EXACT prior transition's from/to read from the audit row, so
+// callers reconstruct the ORIGINAL command's response (never a fabricated `from: ""`,
+// never inferred from the current entity row — which may have advanced since).
+export type ReplayResult =
+  | { kind: "none" }
+  | { kind: "replay"; entityId: number; fromStatus: string | null; toStatus: string | null }
+  | { kind: "conflict" };
 /** Idempotent-replay detection bound to command INTENT: no prior → none; same key +
- *  same fingerprint → replay (return the prior result); same key + DIFFERENT
- *  fingerprint → conflict (a different command reused a key). */
+ *  same fingerprint → replay (return the prior result + its exact from/to); same key +
+ *  DIFFERENT fingerprint → conflict (a different command reused a key). */
 export async function idempotentReplay(db: DbLike, entityType: CanonicalFinancialEntityType, clinicId: number, idempotencyKey: string | null | undefined, fingerprint: string): Promise<ReplayResult> {
   if (!idempotencyKey) return { kind: "none" };
   const rows = await db.select().from(canonicalFinancialTransitions).where(and(
@@ -108,11 +114,11 @@ export async function idempotentReplay(db: DbLike, entityType: CanonicalFinancia
     eq(canonicalFinancialTransitions.clinicId, clinicId),
     eq(canonicalFinancialTransitions.idempotencyKey, idempotencyKey),
   )).limit(1);
-  const hit = (rows as { entityType: string; clinicId: number; idempotencyKey: string | null; entityId: number; commandFingerprint: string | null }[])
+  const hit = (rows as { entityType: string; clinicId: number; idempotencyKey: string | null; entityId: number; commandFingerprint: string | null; fromStatus: string | null; toStatus: string | null }[])
     .find((r) => r.entityType === entityType && r.clinicId === clinicId && r.idempotencyKey === idempotencyKey);
   if (!hit) return { kind: "none" };
   if ((hit.commandFingerprint ?? null) !== fingerprint) return { kind: "conflict" };
-  return { kind: "replay", entityId: hit.entityId };
+  return { kind: "replay", entityId: hit.entityId, fromStatus: hit.fromStatus ?? null, toStatus: hit.toStatus ?? null };
 }
 
 /** §8 The ONE shared post-race resolver, used after every unique violation, zero-row

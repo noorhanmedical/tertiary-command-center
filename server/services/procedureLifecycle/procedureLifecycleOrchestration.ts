@@ -136,12 +136,16 @@ export function classifyGeneratorOutcome(
     // Deferred generation with a DURABLE exact retry.
     case "failed_retry_recorded":
     case "report_content_unavailable_retry_recorded":
+    // K5 — generator `not_yet_eligible` for an existing note now records a durable
+    // exact generate retry, so the deferral is self-healing (no external re-drive).
+    case "not_yet_eligible_retry_recorded":
       warnings.push(`generation_deferred_${outcome}`);
       return { generationDeferred: true, generationRetryRecorded: true };
     // Deferred generation whose retry could NOT be persisted → non-durable.
     case "generated_reference_retry_not_recorded":
     case "failed_retry_not_recorded":
     case "report_content_unavailable_retry_not_recorded":
+    case "not_yet_eligible_retry_not_recorded":
       warnings.push("reconciliation_not_recorded");
       return { generationDeferred: true, generationRetryRecorded: false };
     // Concurrency / eligibility / migration / verification — visible, no new retry.
@@ -153,6 +157,7 @@ export function classifyGeneratorOutcome(
     case "note_not_found":
     case "not_pending":
     case "cross_clinic_denied":
+    case "case_not_found":
       warnings.push(`generation_${outcome}`);
       return { generationDeferred: true, generationRetryRecorded: undefined };
     default:

@@ -566,8 +566,42 @@ async function testPagesBranchOnFlag() {
   }
 }
 
+// ── Phase 2K clinician-portal finance hardening (K12/K13) ──
+async function testK12DuplicateCurrentReadiness() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const dup = await runWithDb(spec(t, { readiness: [readiness({ id: 1, ancillaryCaseId: 5, canonicalStatus: "ready_to_generate" }), readiness({ id: 2, ancillaryCaseId: 5, canonicalStatus: "ready_to_generate" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(dup.finance.counts.evaluated, 0, "K12: two current readiness rows for one case are NOT double-counted (no newest-wins)");
+  assert.equal(dup.finance.counts.readyToGenerate, 0, "K12: duplicate-current case excluded from status buckets");
+  assert.ok(dup.finance.warnings.includes("duplicate_current_readiness"), "K12: duplicate current readiness surfaced as a warning");
+  const one = await runWithDb(spec(t, { readiness: [readiness({ ancillaryCaseId: 5, canonicalStatus: "ready_to_generate" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(one.finance.counts.evaluated, 1, "K12: exactly one current readiness → counted once");
+}
+async function testK13RawTruncation() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const SCAN = 2000; // must match SCAN_LIMIT in canonicalOverview.ts
+  const rdy = (n: number, clinicMix = false) => Array.from({ length: n }, (_, i) => readiness({ id: i + 1, ancillaryCaseId: i + 1, clinicId: clinicMix ? (i % 2 === 0 ? 1 : 2) : 1 }));
+  const docs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i + 1, clinicId: 1, ancillaryCaseId: i + 1, canonicalStatus: "generated", supersededAt: null }));
+  const run = (specOpts: Record<string, unknown>) => runWithDb(spec(t, specOpts), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  // (1) EXACTLY SCAN_LIMIT readiness rows → a full page is NOT truncation.
+  assert.ok(!(await run({ readiness: rdy(SCAN) })).finance.warnings.includes("counts_truncated"), "K13 (1): exactly SCAN_LIMIT readiness rows → NOT truncated");
+  // (2) SCAN_LIMIT+1 readiness rows → truncated.
+  assert.ok((await run({ readiness: rdy(SCAN + 1) })).finance.warnings.includes("counts_truncated"), "K13 (2): SCAN_LIMIT+1 readiness rows → counts_truncated");
+  // (3) EXACTLY SCAN_LIMIT Billing Document rows → no false truncation.
+  assert.ok(!(await run({ readiness: [readiness()], docs: docs(SCAN) })).finance.warnings.includes("counts_truncated"), "K13 (3): exactly SCAN_LIMIT Billing Document rows → NOT truncated");
+  // (4) SCAN_LIMIT+1 Billing Document rows → truncated.
+  assert.ok((await run({ readiness: [readiness()], docs: docs(SCAN + 1) })).finance.warnings.includes("counts_truncated"), "K13 (4): SCAN_LIMIT+1 Billing Document rows → counts_truncated");
+  // (5) SCAN_LIMIT+1 RAW where half are cross-clinic (dropped in memory) → truncation is
+  // still proven from the RAW fetched count; an in-memory drop can never hide it.
+  assert.ok((await run({ readiness: rdy(SCAN + 1, true) })).finance.warnings.includes("counts_truncated"), "K13 (5): in-memory clinic drops cannot hide RAW truncation");
+  // (6) duplicate current readiness still excluded (K12 unchanged) with no false truncation.
+  const dup = await run({ readiness: [readiness({ id: 1, ancillaryCaseId: 5 }), readiness({ id: 2, ancillaryCaseId: 5 })] });
+  assert.ok(dup.finance.counts.evaluated === 0 && dup.finance.warnings.includes("duplicate_current_readiness") && !dup.finance.warnings.includes("counts_truncated"), "K13 (6): duplicate current readiness excluded, no false truncation");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
   ["finance counts + claim blockers + rows", testFinanceCounts],
+  ["K12 duplicate current readiness not double-counted", testK12DuplicateCurrentReadiness],
+  ["K13 truncation from raw fetched count", testK13RawTruncation],
   ["superseded readiness excluded", testSupersededExcluded],
   ["(11-13) cross-clinic excluded", testCrossClinicExcluded],
   ["(33) partial failure unavailable not zero", testPartialFailureUnavailable],
