@@ -456,7 +456,42 @@ async function testK8ExactSourceBoundRetry() {
   assert.ok(residual.status === "still_deferred" && !residual.resolved, "K8: residual current exact reference → retry stays open");
 }
 
+async function testK8RawTruncationAndCaseScope() {
+  const t = await loadCanonicalTables(); const o = await orchestration();
+  const dur = (refs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }]]), DOC, async () => o.billingReferenceSupersessionDurableForDocument(1, 5, 70));
+  // K8-A: 201 RAW exact-source (doc 70) current references, ALL under the WRONG case (6);
+  // the target case (5) has zero. The OLD post-filter helper would compute current(case 5)=[]
+  // → durable=true (fail OPEN). The RAW set is truncated (201 > SCAN 200) → non-durable.
+  const rawTrunc = Array.from({ length: 201 }, (_, i) => bref({ id: 2000 + i, sourceId: 70, ancillaryCaseId: 6 }));
+  assert.equal(await dur(rawTrunc), false, "K8-A: raw truncation checked BEFORE case filter → non-durable (never fail open)");
+  // K8-B: one current exact-source reference under the WRONG case (6); target case 5 has none.
+  // OLD filter would drop the case-6 row → current=[] → durable=true. New: wrong-case current
+  // exact reference is an integrity conflict → non-durable.
+  assert.equal(await dur([bref({ sourceId: 70, ancillaryCaseId: 6 })]), false, "K8-B: wrong-case current exact reference → integrity conflict, never durable");
+  // K8-C: supersede document 70 for case 5 while a malformed same-source (sourceId 70)
+  // reference belongs to case 6. The foreign-case reference must block clean durability
+  // (durability helper treats it as an integrity conflict → non-durable → retry recorded).
+  // Real-DB zero-mutation of the case-6 row is enforced by the `ancillaryCaseId = case 5`
+  // predicate on the reference UPDATE (code-level; the fake harness does not apply WHERE).
+  const foreignRef = bref({ id: 55, sourceId: 70, ancillaryCaseId: 6 });
+  const c = await runWithDb(new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [bdoc({ id: 70, ancillaryCaseId: 5, evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
+    [t.documentReferences, { select: () => [foreignRef], onUpdate: (v) => [{ ...v }] }],
+    [t.documentFailures, { onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]), DOC, async () => o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"));
+  assert.ok(c.status !== "superseded", `K8-C: a foreign-case same-source reference blocks clean durability (got ${JSON.stringify(c)})`);
+  assert.ok(!("referenceDurable" in c) || c.referenceDurable === false, "K8-C: never reports referenceDurable:true while a foreign-case reference remains current");
+  // K8-D: a normal exact-case supersession with no residual reference → durable success.
+  const d = await runWithDb(new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [bdoc({ id: 70, ancillaryCaseId: 5, evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
+    [t.documentReferences, { select: () => [], onUpdate: (v) => [{ ...v }] }],
+    [t.documentFailures, { onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]), DOC, async () => o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"));
+  assert.ok(d.status === "superseded" && d.referenceDurable === true, `K8-D: normal exact-case supersession → durable (got ${JSON.stringify(d)})`);
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["K8 raw-truncation + wrong-case exact durability + case-scoped mutation", testK8RawTruncationAndCaseScope],
   ["K11 report source validation fail-closed (documentType + matrix)", testK11ReportSourceValidationFailClosed],
   ["K10 billing reference durability (current/superseded/dup/owner)", testK10ReferenceDurability],
   ["K7 supersede reference durability + exact retry", testK7SupersedeReferenceDurable],

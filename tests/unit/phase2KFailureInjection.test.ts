@@ -175,18 +175,26 @@ async function p7_portalFinanceFailure() {
   const fin = (r as { finance?: { availability?: string } }).finance;
   assert.ok(fin && fin.availability === "unavailable", `portal finance read failure → unavailable, never a false zero (got ${JSON.stringify(fin?.availability)})`);
 }
-// P8 ── retry resolution update failure → failure remains unresolved (no false resolved).
+// P8 ── retry RESOLUTION update failure → failure remains unresolved (no false resolved).
+// Drives the REAL worker entry `retryAncillaryDocumentFailure`, which (unlike the generator
+// directly) actually calls `resolveAncillaryDocumentFailureById`. A superseded note reaches
+// the resolve immediately; the resolve UPDATE (documentFailures.resolvedAt) throws — proving
+// `resolutionAttempted` was reached AND the worker never returns a false `resolved`.
 async function p8_retryResolutionFailure() {
-  const t = await loadCanonicalTables(); const g = await import("../../server/services/procedureLifecycle/procedureNoteGenerator");
+  const t = await loadCanonicalTables(); const worker = await import("../../server/services/ancillaryDocuments/retryWorker");
+  let resolutionAttempted = false;
   const spec = new Map<unknown, TableSpec>([
-    [t.procedureNotes, { select: () => [noteRow({ generationStatus: "failed" })], onUpdate: (v) => [{ ...v, generationStatus: "generated" }] }],
-    [t.ancillaryCases, { select: () => [caseRow()] }], [t.procedureEvents, { select: () => [peRow()] }],
-    [t.documentReferences, { select: () => [reportRef()], onUpdate: (v) => [{ ...v }] }],
-    [t.caseDocumentReadiness, { select: () => [readinessRow()] }],
-    [t.documentFailures, { select: () => [failRow()], onUpdate: boom, onInsert: (v) => [{ ...v, id: 1 }] }], // the resolve UPDATE throws
+    [t.procedureNotes, { select: () => [noteRow({ supersededAt: OLD })] }], // superseded → generate-retry worker resolves immediately
+    [t.documentFailures, {
+      select: () => [],
+      onUpdate: (v) => { if ("resolvedAt" in (v as object)) { resolutionAttempted = true; throw new Error("resolve update down"); } return [{ ...(v as object), id: 1 }]; }, // the resolve UPDATE throws
+      onInsert: (v) => [{ ...(v as object), id: 1 }],
+    }],
   ]);
-  const r = await runWithDb(spec, GEN, async () => g.retryFailedProcedureNoteGeneration({ clinicId: 1, ancillaryCaseId: 5, noteId: 900, failureId: 1 }));
-  assert.notEqual((r as { status: string }).status, "resolved", "retry-resolution update failure → not falsely resolved");
+  const r = await runWithDb(spec, GEN, async () => worker.retryAncillaryDocumentFailure(failRow() as never));
+  assert.equal(resolutionAttempted, true, "P8: the retry RESOLUTION update was actually reached (resolutionAttempted)");
+  assert.notEqual((r as { status: string }).status, "resolved", "P8: resolution-write failure → never a false resolved");
+  assert.equal((r as { status: string }).status, "error", "P8: worker surfaces error, not a false resolved");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [

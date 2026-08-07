@@ -77,6 +77,29 @@ This closeout re-opened **9 MANDATORY rows** found incomplete on re-audit; each 
 implemented with real behavioral proof and is now **VERIFIED** (25/25 mandatory; 0 PARTIAL).
 Coverage: **K31 12/12** overflow windows · **K38 8/8** failure-injection paths · **K39 7/7**
 concurrency areas (incl. claim+invoice corrections) · **K41 19/19** retry enum coverage.
+
+**Evidence-correction pass (second re-audit):** a follow-up review found FIVE false-positive
+proofs in the first closeout; all fixed and re-verified with real production paths:
+- **K8** — `billingReferenceSupersessionDurableForDocument` checked truncation AFTER the case
+  filter (a truncated raw set that filtered to zero failed OPEN). Now checks RAW truncation
+  FIRST and treats any wrong-case current exact reference as an integrity conflict; the
+  `supersedeStaleBillingDocument` reference UPDATE is now `ancillaryCaseId`-scoped (a foreign-case
+  same-source reference is never mutated). Tests K8-A/B/C/D.
+- **K38 P8** — previously called the generator directly, never reaching `resolveAncillaryDocumentFailureById`.
+  Now calls the real worker (`retryAncillaryDocumentFailure`) and proves `resolutionAttempted===true`
+  with no false `resolved`.
+- **K39 A1/A3/A4/A5** — previously used `recordAncillaryDocumentFailure` stand-ins / entry-gate replay.
+  Now each invokes the real production flow: `ensureProcedureNoteReferenceForNote`,
+  `supersedeStaleBillingDocument` retry race, and POST-START `createCanonicalClaimCorrection` /
+  `createCanonicalInvoiceCorrection` race recovery.
+- **K41** — inventory rebuilt from repository truth (the fictional `legacyProjection.ts` ancillary
+  writer removed; `refresh_projection`/`create_reference`/`supersede_reference` are writer=null/
+  worker=null in the ancillary ledger — `legacyProjection` records into the SEPARATE appointment
+  ledger). Coverage test now verifies file/symbol existence via `fs`.
+- **K31 W8** — previously a synthetic missing-parent case (not overflow). Now exercises the real
+  `loadInvoiceLineageContextsWithDb` parent bound (SCAN+1 distinct parents → over-bound parent
+  omitted → `invoice_parent_not_found` fail-closed).
+
 The 9 re-opened rows and their fixes:
 - **K5** — generator records a retry for ALL non-eligible reasons (incl. migration_missing / cross_clinic / case_not_found); must classify and retry ONLY genuinely retryable deferrals.
 - **K7** — `supersedeStaleBillingDocument` returns a bare boolean; when the retry-record itself fails it still reports success (overstates durability); must return a structured result and surface `reconciliation_not_recorded`.

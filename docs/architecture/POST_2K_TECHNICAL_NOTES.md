@@ -24,5 +24,15 @@ Resolved in the closeout (no longer deferred):
   `identity_display_degraded` warning is part of the mandatory K18 contract, not a
   deferred hardening item.
 
+2. **K8 durability-helper comment overstates the in-memory re-filter facets.**
+   `server/services/billingLifecycle/billingLifecycleOrchestration.ts`
+   `billingReferenceSupersessionDurableForDocument` — the comment says the in-memory
+   re-filter re-applies the "exact SQL scope (clinic / sourceTable / exact sourceId /
+   documentKind / current)", but the in-memory `exact` filter only re-checks `clinicId`,
+   `sourceId`, and `supersededAt`. `sourceTable` and `documentKind` remain enforced by the
+   SQL `WHERE` (so there is NO functional durability gap — the raw-truncation-first check
+   and the wrong-case integrity check are both correct). Cosmetic comment accuracy only
+   (HARDENING); left unchanged to avoid an unnecessary code-review cycle for a comment.
+
 See `PHASE_2K_EXECUTION_MATRIX.md` (25/25 MANDATORY VERIFIED) and
 `POST_2K_PRODUCT_DECISIONS.md` (deferred product/semantic decisions).

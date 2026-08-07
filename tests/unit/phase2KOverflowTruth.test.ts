@@ -7,8 +7,9 @@
 // cursor so no patient is silently dropped). Each test triggers the REAL production
 // truncation branch. Numbered windows:
 //   1 claim stage rows          7 parent-claim context
-//   2 invoice stage rows        8 parent-invoice context (fail-closed via not-found→conflict;
-//   3 payment allocations         the by-id parent load is page-bounded so +1 is unreachable)
+//   2 invoice stage rows        8 parent-invoice context (REAL loader bound: parent load
+//   3 payment allocations         `.limit(SCAN=2000)` < stage cap 5000 → SCAN+1 distinct
+//                                 parents drops the over-bound one → fails closed)
 //   4 receipt-wide allocations  9 Billing Document context
 //   5 membership context       10 readiness context
 //   6 global-patient context   11 PCS verified window (lossless cursor)
@@ -128,17 +129,59 @@ async function w7_parentClaim() {
   const v = await stageOne(stageBase(t, { canonicalClaims: { select: () => (n++ === 0 ? [child] : many(STAGE_SCAN + 1, (i) => claimRow({ id: 699 - i }))) } }));
   assert.equal(v.claim.availability, "unavailable", "parent-claim-context overflow → claim unavailable");
 }
-// 8 ── parent-invoice context: the by-id parent load is page-bounded (no +1), so a
-//      truncated/missing parent fails closed via not-found → conflict (never resolved).
+// 8 ── parent-invoice context OVERFLOW (real loader bound). `loadInvoiceLineageContextsWithDb`
+//      loads parent invoices by `inArray(supersedesInvoiceId).limit(SCAN=2000)`. The STAGE can
+//      pass up to STAGE_SCAN(5000) invoices, so the parent set CAN exceed the 2000 bound. This
+//      drives the production loader directly with SCAN+1 distinct-parent invoices and a parent
+//      select capped at SCAN (modelling the `.limit(SCAN)` DB cap): the over-bound invoice's
+//      parent is OMITTED → `ctx.parentInvoice === null` → `validateInvoiceLineage` fails closed
+//      (`invoice_parent_not_found`), while an in-bound invoice's parent resolves. Never a false paid.
 async function w8_parentInvoice() {
   const t = await loadCanonicalTables();
-  const claim = claimRow({ canonicalStatus: "submitted", submittedAt: OLD, evidenceFingerprint: "fp" });
-  const inv = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "issued", currency: "USD", totalAmount: "1.00", supersededAt: null, evidenceFingerprint: "fp", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M", invoiceNumber: "INV", issuedAt: OLD, lineItems: [], billingDocumentId: 600, billingReadinessCheckId: 500, supersedesInvoiceId: 799 };
-  // canonicalInvoices returns only the child (id 800); parent 799 is absent → not-found.
-  const v = await stageOne(stageBase(t, { canonicalClaims: { select: () => [claim] }, canonicalInvoices: { select: () => [inv] } }));
-  assert.equal(v.invoice.integrity, "conflicting", "missing/truncated parent invoice → invoice conflicting");
-  assert.equal(v.invoice.status, null, "missing/truncated parent invoice → status null");
-  assert.notEqual(v.payment.status, "paid", "missing/truncated parent invoice → never a false paid");
+  const lineage = await import("../../server/services/canonicalFinancial/financialLineageContext");
+  const { validateInvoiceLineage } = await import("../../server/services/canonicalFinancial/lineageValidators");
+  const PARENT_SCAN = 2000;
+  // Coherent referenced claim + identity/evidence so validateClaimLineage passes and the
+  // parent check is actually REACHED (claim conflicts would short-circuit before it).
+  const REFS = { procedureEventId: 400, orderNoteDocumentReferenceId: 11, reportDocumentReferenceId: 12, procedureNoteDocumentReferenceId: 13 };
+  const FIELD_SRC: Record<string, string> = { service_code: "approved_fee_schedule", units: "approved_fee_schedule", place_of_service: "facility_registry", facility: "facility_registry", rendering_provider: "credentialing_registry", billing_provider: "credentialing_registry", payer: "payer_contract", coverage_reference: "payer_contract" };
+  const PROV = Object.fromEntries(Object.entries(FIELD_SRC).map(([f, s]) => [f, { sourceType: s, sourceId: "s" }]));
+  const CLAIMFIELDS = Object.fromEntries(Object.keys(FIELD_SRC).map((f) => [f, "v"]));
+  const LINES = [{ lineId: "l1", amount: "1.00", source: "approved_fee_schedule", unit: 1 }];
+  const claim = { id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", globalPlexusPatientId: 900, patientClinicMembershipId: 800, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", ...REFS, canonicalStatus: "issued", attemptNumber: 1, supersedesClaimId: null, currency: "USD", chargeAmount: "1.00", lineItems: LINES, claimFields: CLAIMFIELDS, fieldProvenance: PROV, submittedAt: null, submissionSource: null, submissionActorUserId: null, submissionReference: null, submissionReason: null };
+  const rd = { id: 500, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", supersededAt: null, evidenceFingerprint: "fp-1", ...REFS, globalPlexusPatientId: 900, patientClinicMembershipId: 800 };
+  const bd = { ...rd, id: 600, billingReadinessCheckId: 500 };
+  // A parent invoice row that matches the child (clinic/case/service/claim).
+  const parentRow = (id: number) => ({ id, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700 });
+  const fullInv = (id: number, supersedesInvoiceId: number) => ({ id, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, billingDocumentId: 600, billingReadinessCheckId: 500, evidenceFingerprint: "fp-1", canonicalStatus: "issued", currency: "USD", totalAmount: "1.00", lineItems: LINES, invoiceType: "patient", recipientType: "patient_membership", recipientId: "M-1", invoiceNumber: `INV-${id}`, issuedAt: OLD, supersedesInvoiceId, deliveredAt: null, deliveryEventReference: null });
+  // SCAN+1 invoices, each with a DISTINCT supersedesInvoiceId in [3000 .. 3000+SCAN].
+  const invoices = many(PARENT_SCAN + 1, (i) => fullInv(5000 + i, 3000 + i)) as ReturnType<typeof fullInv>[];
+  const inBound = invoices[0];            // parent 3000 (within the first SCAN)
+  const overBound = invoices[PARENT_SCAN]; // parent 3000+SCAN (the (SCAN+1)th → dropped by the bound)
+  const spec = new Map<unknown, TableSpec>([
+    [t.canonicalClaims, { select: () => [claim] }],
+    [t.ancillaryCases, { select: () => [{ id: 5, clinicId: 1, serviceType: "BrainWave" }] }],
+    [t.memberships, { select: () => [{ id: 800, clinicId: 1, membershipStatus: "active", globalPlexusPatientId: 900 }] }],
+    [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
+    [t.billingReadinessChecks, { select: () => [rd] }],
+    [t.billingDocumentRequests, { select: () => [bd] }],
+    // Parent-invoice load: model `.limit(SCAN)` — return ONLY the first SCAN parents (3000..3000+SCAN-1),
+    // OMITTING the (SCAN+1)th (3000+SCAN), exactly as the production bound would.
+    [t.canonicalInvoices, { select: () => many(PARENT_SCAN, (i) => parentRow(3000 + i)) }],
+    [t.canonicalFinancialTransitions, { select: () => [] }],
+  ]);
+  const ctxById = await runWithDb(spec, CHAIN, async () => (await lineage.loadInvoiceLineageContextsWithDb((await import("../../server/db")).db as never, 1, invoices as never)));
+  const ctxOver = ctxById.get(overBound.id)!;
+  const ctxIn = ctxById.get(inBound.id)!;
+  // The bounded parent load OMITTED the over-bound parent → parentInvoice null (never fabricated).
+  assert.equal(ctxOver.parentInvoice, null, "over-bound parent invoice dropped by the loader bound → parentInvoice null");
+  assert.notEqual(ctxIn.parentInvoice, null, "in-bound parent invoice present");
+  // FAIL CLOSED: the omitted parent (with supersedesInvoiceId set) → invoice_parent_not_found.
+  const rOver = validateInvoiceLineage(overBound as never, ctxOver as never);
+  assert.ok(!rOver.ok && rOver.code === "invoice_parent_not_found", `over-bound parent omitted → fails closed (got ${JSON.stringify(rOver)})`);
+  // The in-bound invoice reaches the parent check with a resolved parent (no parent-not-found).
+  const rIn = validateInvoiceLineage(inBound as never, ctxIn as never);
+  assert.ok(rIn.ok || (rIn as { code?: string }).code !== "invoice_parent_not_found", "in-bound invoice parent resolved (not a parent-not-found)");
 }
 // 9 ── Billing Document context (claimBdLoad by id)
 async function w9_billingDocument() {

@@ -184,13 +184,16 @@ export async function supersedeStaleBillingDocument(input: { clinicId: number; a
   let referenceDurable = false;
   let retryRecorded = false;
   try {
+    // Supersede ONLY this exact case's current reference — a malformed same-source
+    // reference belonging to ANOTHER case must never be mutated by this case's supersession.
     await db.update(ancillaryDocumentReferences)
       .set({ documentStatus: "superseded", supersededAt: now, updatedAt: now })
-      .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId), isNull(ancillaryDocumentReferences.supersededAt)));
-    const [stillCurrent] = await db.select().from(ancillaryDocumentReferences)
-      .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId), isNull(ancillaryDocumentReferences.supersededAt))).limit(1);
-    if (!stillCurrent) referenceDurable = true;
-    else retryRecorded = await recordSupersedeReferenceRetry(input, doc.id);
+      .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId), eq(ancillaryDocumentReferences.ancillaryCaseId, input.ancillaryCaseId), isNull(ancillaryDocumentReferences.supersededAt)));
+    // Prove durability via the exact-source post-condition: RAW-truncation-safe, and a
+    // wrong-case same-source current reference is an integrity conflict → non-durable
+    // (never a clean `superseded` result while a foreign-case reference remains current).
+    referenceDurable = await billingReferenceSupersessionDurableForDocument(input.clinicId, input.ancillaryCaseId, doc.id);
+    if (!referenceDurable) retryRecorded = await recordSupersedeReferenceRetry(input, doc.id);
   } catch {
     retryRecorded = await recordSupersedeReferenceRetry(input, doc.id);
   }
@@ -223,9 +226,21 @@ export async function billingReferenceSupersessionDurableForDocument(clinicId: n
     eq(ancillaryDocumentReferences.documentKind, "billing_document"),
     isNull(ancillaryDocumentReferences.supersededAt),
   )).limit(SCAN + 1);
-  const current = refs.filter((r) => r.clinicId === clinicId && r.sourceId === billingDocumentId && r.ancillaryCaseId === ancillaryCaseId && r.supersededAt == null);
-  if (current.length > SCAN) return false;   // truncated → cannot prove complete → non-durable
-  return current.length === 0;                // durable only when NO current exact reference remains
+  // RAW query truncation FIRST — before ANY in-memory filter. If the bounded query hit its
+  // limit the exact current set cannot be proven complete → non-durable (never fail OPEN).
+  if (refs.length > SCAN) return false;
+  // Re-apply the exact SQL scope in memory (clinic / sourceTable / exact sourceId /
+  // documentKind / current) — the exact current `billing_document` reference set for THIS
+  // document, independent of ancillary case.
+  const exact = refs.filter((r) => r.clinicId === clinicId && r.sourceId === billingDocumentId && r.supersededAt == null);
+  // RAW truncation of the exact current set, checked BEFORE narrowing to the case — a
+  // truncated set that would filter to zero rows for THIS case must never fail OPEN.
+  if (exact.length > SCAN) return false;
+  // Any current exact reference under a DIFFERENT ancillary case is a same-source
+  // ownership/integrity conflict — never filter it away and call the set durable.
+  if (exact.some((r) => (r.ancillaryCaseId ?? null) !== ancillaryCaseId)) return false;
+  // Durable only when NO current exact reference remains for this exact document.
+  return exact.length === 0;
 }
 
 /** K8 post-condition: reference supersession is DURABLE only when no current

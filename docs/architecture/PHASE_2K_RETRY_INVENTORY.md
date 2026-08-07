@@ -5,6 +5,12 @@ Rebuilt from the ACTUAL `ANCILLARY_DOCUMENT_FAILURE_ACTIONS` enum in
 row. Final status ∈ {WIRED, INTENTIONALLY_NOT_QUEUED, REMOVED}. This table is kept
 honest by the executable `tests/unit/phase2KRetryInventoryCoverage.test.ts`
 (K41: 19/19; WIRED=16, INTENTIONALLY_NOT_QUEUED=3) — no future-tense placeholders.
+Where a WIRED action is enqueued from more than one real writer, the executable
+`RETRY_META` pins and verifies ONE canonical writer file+symbol per action (asserting
+its source contains the exact `requestedAction`); any additional writer files named in
+the human-readable Writer column below are further real enqueue sites (a verified
+superset), not the pinned canonical one — an `INTENTIONALLY_NOT_QUEUED` action always
+has writer=null.
 
 Invariant: no action may be dead, queued-but-unhandled, handled-but-never-queued, or
 resolving without proving its post-condition. Dedupe identity for every action is
@@ -31,12 +37,12 @@ races converge via the repo's 23505 unique-violation recovery in
 | `supersede_billing_document` | `billingLifecycleOrchestration.ts` | `billingRetryHandlers.ts` (`retrySupersede`, K8 exact source-bound) | billing_document / clinic+case+**exact** sourceId=billingDocumentId | no stale current document AND exact reference durably superseded | WIRED |
 | `sync_billing_document_reference` | `billingDocumentGenerator.ts` (`recordBillingRefRetry`) | `billingRetryHandlers.ts` | billing_document / clinic+case+billingDocumentId | existing BD reference status mirrored | WIRED |
 | `create_reference` | — | — | — | — | INTENTIONALLY_NOT_QUEUED |
-| `refresh_projection` | `legacyProjection.ts` | — | — | — | INTENTIONALLY_NOT_QUEUED |
+| `refresh_projection` | — | — | — | — | INTENTIONALLY_NOT_QUEUED |
 | `supersede_reference` | — | — | — | — | INTENTIONALLY_NOT_QUEUED |
 
 ### INTENTIONALLY_NOT_QUEUED — documented reasons
 - **`create_reference`** — enum-reserved reference-lifecycle verb; no active writer enqueues it and no worker dispatches it. Reference creation is driven by the exact `link_*` actions (`link_report`/`link_procedure_note`/`link_billing_document`), so a generic `create_reference` retry would be redundant. Not dead (never queued, never handled — nothing to resolve).
-- **`refresh_projection`** — legacy projection-refresh verb (`legacyProjection.ts`); not dispatched by a canonical retry worker. Superseded by the exact `link_*`/`generate_*` canonical paths. Retained in the enum for historical rows only.
+- **`refresh_projection`** — reserved projection-refresh verb with **no** `recordAncillaryDocumentFailure` writer and **no** ancillary worker dispatch (retryWorker deliberately skips it: "driven by their originating source path"). The `refresh_projection` in `server/services/canonicalAppointments/legacyProjection.ts` belongs to the SEPARATE canonical-appointment failure ledger (`resolveCanonicalAppointmentFailure`) — it is not recorded into this ancillary ledger. Retained in the enum for historical rows only.
 - **`supersede_reference`** — enum-reserved reference-supersession verb; the canonical supersession path uses `supersede_billing_document` + the exact reference-durability helper (K7/K8/K12). No active writer/worker.
 
 No action is dead-with-a-handler-but-no-writer or written-but-never-handled: every
