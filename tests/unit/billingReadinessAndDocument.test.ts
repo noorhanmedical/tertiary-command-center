@@ -11,6 +11,7 @@ const evaluator = () => import("../../server/services/billingLifecycle/billingRe
 const generator = () => import("../../server/services/billingLifecycle/billingDocumentGenerator");
 const orchestration = () => import("../../server/services/billingLifecycle/billingLifecycleOrchestration");
 const worker = () => import("../../server/services/ancillaryDocuments/retryWorker");
+const handlers = () => import("../../server/services/billingLifecycle/billingRetryHandlers");
 const backfill = () => import("../../script/backfillCanonicalBillingReadiness");
 
 const OLD = new Date("2027-06-10T09:00:00Z");
@@ -391,32 +392,76 @@ async function testK10ReferenceDurability() {
 }
 async function testK7SupersedeReferenceDurable() {
   const t = await loadCanonicalTables(); const o = await orchestration();
-  const clean = await runWithDb(new Map<unknown, TableSpec>([
+  const mk = (refs: unknown[], refUpdate?: (v: any) => unknown[], failInsert?: (v: any) => unknown[]) => new Map<unknown, TableSpec>([
     [t.billingDocumentRequests, { select: () => [bdoc({ evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
-    [t.documentReferences, { select: () => [], onUpdate: (v) => [{ ...v }] }],
-    [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
-  ]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
-  assert.ok(clean.r === true && clean.retries === 0, "K7: stale doc superseded + reference superseded cleanly → no retry");
-  const miss = await runWithDb(new Map<unknown, TableSpec>([
-    [t.billingDocumentRequests, { select: () => [bdoc({ evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
-    [t.documentReferences, { select: () => [bref()], onUpdate: (v) => [{ ...v }] }],
-    [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
-  ]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
-  assert.ok(miss.r === true && miss.retries === 1, "K7: residual current reference → durable supersede retry recorded (not fire-and-forget)");
+    [t.documentReferences, { select: () => refs, onUpdate: refUpdate ?? ((v) => [{ ...v }]) }],
+    [t.documentFailures, { select: () => [], onInsert: failInsert ?? ((v) => [{ ...v, id: 1 }]) }],
+  ]);
+  // (1) clean: exact reference superseded, no residual → DURABLE, no retry.
+  const clean = await runWithDb(mk([]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
+  assert.ok(clean.r.status === "superseded" && clean.r.referenceDurable === true && clean.retries === 0, `K7 (1): clean supersede → durable, no retry (got ${JSON.stringify(clean.r)})`);
+  // (2) residual current reference + retry insert succeeds → NOT durable, retry RECORDED.
+  const retry = await runWithDb(mk([bref()]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
+  assert.ok(retry.r.status === "superseded_reference_retry_recorded" && retry.r.retryRecorded === true && retry.retries === 1, `K7 (2): residual ref → retry recorded (got ${JSON.stringify(retry.r)})`);
+  // (3) reference update throws AND the retry insert ALSO throws → the document ROW stays
+  // superseded, but the RESULT is `superseded_reference_not_durable` — never a clean lie.
+  const notDurable = await runWithDb(mk([bref()], () => { throw new Error("ref update down"); }, () => { throw new Error("failure ledger down"); }), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), docUpdates: countOps(calls, "update", t.billingDocumentRequests) }));
+  assert.ok(notDurable.r.status === "superseded_reference_not_durable" && notDurable.r.referenceDurable === false && notDurable.r.retryRecorded === false, `K7 (3): ref+retry both fail → not durable, never clean success (got ${JSON.stringify(notDurable.r)})`);
+  assert.ok(notDurable.docUpdates >= 1, "K7 (3): the committed document row stays superseded (not rolled back)");
 }
 async function testK8SupersessionDurablePostcondition() {
   const t = await loadCanonicalTables(); const o = await orchestration();
-  const run = (refs: unknown[], docs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }], [t.billingDocumentRequests, { select: () => docs }]]), DOC, async () => o.billingReferenceSupersessionDurable(1, 5));
-  assert.equal(await run([bref({ sourceId: 70 })], [bdoc({ id: 70, supersededAt: OLD })]), false, "K8 post-condition: a current reference pointing at a superseded document → NOT durable");
-  assert.equal(await run([bref({ sourceId: 70 })], [bdoc({ id: 70, supersededAt: null })]), true, "K8 post-condition: current reference points at a current document → durable");
-  assert.equal(await run([], []), true, "K8 post-condition: no current billing_document reference → durable");
+  // EXACT source-bound durability for document 70.
+  const run = (refs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }]]), DOC, async () => o.billingReferenceSupersessionDurableForDocument(1, 5, 70));
+  assert.equal(await run([bref({ sourceId: 70 })]), false, "K8: a current EXACT reference for doc 70 → NOT durable");
+  assert.equal(await run([]), true, "K8: no current exact reference → durable");
+  assert.equal(await run([bref({ id: 41, sourceId: 71 })]), true, "K8: a current reference for ANOTHER document (71) does not block doc 70");
+  assert.equal(await run([bref({ sourceId: 70, supersededAt: OLD })]), true, "K8: only a superseded exact reference → durable");
+  const many = Array.from({ length: 201 }, (_, i) => bref({ id: 1000 + i, sourceId: 70 }));
+  assert.equal(await run(many), false, "K8: > bounded scan of current exact references → cannot prove complete → non-durable");
+}
+async function testK8ExactSourceBoundRetry() {
+  const t = await loadCanonicalTables(); const h = await handlers();
+  const fail = (o: Record<string, unknown> = {}) => ({ id: 10, clinicId: 1, ancillaryCaseId: 5, documentKind: "billing_document", sourceTable: "billing_document_requests", sourceId: 70, requestedAction: "supersede_billing_document", resolvedAt: null, attemptCount: 1, ...o });
+  const run = async (failure: Record<string, unknown>, docs: unknown[], refs: unknown[] = []) => {
+    let resolved = false;
+    const spec = new Map<unknown, TableSpec>([
+      [t.billingDocumentRequests, { select: () => docs, onUpdate: (v) => [{ ...v, id: 70 }] }],
+      [t.documentReferences, { select: () => refs, onUpdate: (v) => [{ ...v }] }],
+      [t.documentFailures, { onUpdate: (v: any) => { if ("resolvedAt" in v) resolved = true; return [{ id: 10 }]; }, onInsert: (v) => [{ ...v, id: 1 }] }],
+    ]);
+    const out = await runWithDb(spec, DOC, async (calls: Call[]) => { const o = await h.retryBillingFailure(failure as never); return { status: o.status, message: o.message, docMut: countOps(calls, "update", t.billingDocumentRequests) }; });
+    return { ...out, resolved };
+  };
+  // wrong sourceTable → invalid_source, zero mutation, unresolved.
+  const wrongTable = await run(fail({ sourceTable: "billing_readiness_checks" }), [bdoc()]);
+  assert.ok(wrongTable.status === "still_deferred" && !wrongTable.resolved, "K8: wrong sourceTable → unresolved, zero mutation");
+  // wrong sourceId (document not found) → unresolved, zero mutation.
+  const notFound = await run(fail({ sourceId: 999 }), []);
+  assert.ok(notFound.status === "still_deferred" && !notFound.resolved, "K8: unknown sourceId → unresolved");
+  // doc A retry while the loaded document is B (id 71) → ownership conflict, cannot resolve A from B.
+  const crossDoc = await run(fail(), [bdoc({ id: 71 })]);
+  assert.ok(crossDoc.status === "still_deferred" && !crossDoc.resolved && crossDoc.docMut === 0, "K8: cannot resolve document A from document B (ownership conflict, zero mutation)");
+  // wrong clinic → ownership conflict, zero mutation.
+  const wrongClinic = await run(fail(), [bdoc({ clinicId: 2 })]);
+  assert.ok(wrongClinic.status === "still_deferred" && !wrongClinic.resolved && wrongClinic.docMut === 0, "K8: wrong clinic → unresolved, zero mutation");
+  // wrong case → ownership conflict, zero mutation.
+  const wrongCase = await run(fail(), [bdoc({ ancillaryCaseId: 6 })]);
+  assert.ok(wrongCase.status === "still_deferred" && !wrongCase.resolved && wrongCase.docMut === 0, "K8: wrong case → unresolved, zero mutation");
+  // exact doc already superseded + exact reference non-current → idempotent RESOLVE.
+  const idempotent = await run(fail(), [bdoc({ id: 70, canonicalStatus: "superseded", supersededAt: OLD })], []);
+  assert.ok(idempotent.status === "resolved" && idempotent.resolved, "K8: exact already-superseded document + no current exact reference → idempotent resolve");
+  // exact doc already superseded + residual current exact reference → stays OPEN.
+  const residual = await run(fail(), [bdoc({ id: 70, canonicalStatus: "superseded", supersededAt: OLD })], [bref({ sourceId: 70 })]);
+  assert.ok(residual.status === "still_deferred" && !residual.resolved, "K8: residual current exact reference → retry stays open");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [
   ["K11 report source validation fail-closed (documentType + matrix)", testK11ReportSourceValidationFailClosed],
   ["K10 billing reference durability (current/superseded/dup/owner)", testK10ReferenceDurability],
   ["K7 supersede reference durability + exact retry", testK7SupersedeReferenceDurable],
-  ["K8 supersession durable post-condition", testK8SupersessionDurablePostcondition],
+  ["K8 supersession durable post-condition (exact source)", testK8SupersessionDurablePostcondition],
+  ["K8 exact source-bound supersede retry", testK8ExactSourceBoundRetry],
   ["(1) exact readiness happy path", testReadyHappyPath],
   ["(2/6) cross-clinic + nullable fail closed", testCrossClinicAndNullable],
   ["(3/4/9) snapshot exact identity + DOS", testSnapshotExactIdentityAndDos],

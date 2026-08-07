@@ -463,23 +463,48 @@ export async function recordAncillaryDocumentFailure(
       .returning();
     return updated;
   }
-  const [inserted] = await db
-    .insert(ancillaryDocumentReconciliationFailures)
-    .values({
-      clinicId: input.clinicId,
-      ancillaryCaseId: input.ancillaryCaseId ?? null,
-      patientScreeningId: input.patientScreeningId ?? null,
-      executionCaseId: input.executionCaseId ?? null,
-      documentKind: input.documentKind ?? null,
-      sourceTable: input.sourceTable ?? null,
-      sourceId: input.sourceId ?? null,
-      requestedAction: input.requestedAction,
-      sourceSystem: input.sourceSystem ?? null,
-      errorCode: input.errorCode ?? null,
-      attemptCount: 1,
-    })
-    .returning();
-  return inserted;
+  try {
+    const [inserted] = await db
+      .insert(ancillaryDocumentReconciliationFailures)
+      .values({
+        clinicId: input.clinicId,
+        ancillaryCaseId: input.ancillaryCaseId ?? null,
+        patientScreeningId: input.patientScreeningId ?? null,
+        executionCaseId: input.executionCaseId ?? null,
+        documentKind: input.documentKind ?? null,
+        sourceTable: input.sourceTable ?? null,
+        sourceId: input.sourceId ?? null,
+        requestedAction: input.requestedAction,
+        sourceSystem: input.sourceSystem ?? null,
+        errorCode: input.errorCode ?? null,
+        attemptCount: 1,
+      })
+      .returning();
+    return inserted;
+  } catch (e) {
+    // K5 concurrency — a racing writer won the exact unresolved slot (0053 partial-
+    // unique index). CONVERGE on the winner instead of surfacing a failure: re-read the
+    // exact unresolved failure and bump it, so the loser returns the DURABLE winner
+    // (never a false "retry_not_recorded" merely because the other writer won).
+    if ((e as { code?: string })?.code !== PG_UNIQUE_VIOLATION) throw e;
+    const [winner] = await db
+      .select()
+      .from(ancillaryDocumentReconciliationFailures)
+      .where(and(...dedupeConds))
+      .limit(1);
+    if (!winner) throw e;
+    const [converged] = await db
+      .update(ancillaryDocumentReconciliationFailures)
+      .set({
+        attemptCount: (winner.attemptCount ?? 0) + 1,
+        lastAttemptedAt: sql`CURRENT_TIMESTAMP`,
+        errorCode: input.errorCode ?? winner.errorCode,
+        sourceSystem: input.sourceSystem ?? winner.sourceSystem,
+      })
+      .where(eq(ancillaryDocumentReconciliationFailures.id, winner.id))
+      .returning();
+    return converged ?? winner;
+  }
 }
 
 export async function resolveAncillaryDocumentFailure(args: {

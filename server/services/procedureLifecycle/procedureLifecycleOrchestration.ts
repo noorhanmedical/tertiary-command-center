@@ -157,6 +157,7 @@ export function classifyGeneratorOutcome(
     case "note_not_found":
     case "not_pending":
     case "cross_clinic_denied":
+    case "case_not_found":
       warnings.push(`generation_${outcome}`);
       return { generationDeferred: true, generationRetryRecorded: undefined };
     default:

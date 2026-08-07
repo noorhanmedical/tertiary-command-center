@@ -15,7 +15,7 @@ import { resolveAncillaryDocumentFailureById } from "../../repositories/ancillar
 import { procedureNoteRuntimeEnabled, billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled, billingDocumentGeneratorEnabled } from "../../lib/featureFlags";
 import { evaluateCanonicalBillingReadiness } from "./billingReadinessEvaluator";
 import { generateBillingDocument, retryFailedBillingDocumentGeneration, syncBillingDocumentReference, projectExactBillingDocumentReference, ensureBillingReferenceDurability } from "./billingDocumentGenerator";
-import { supersedeStaleBillingDocument, billingReferenceSupersessionDurable } from "./billingLifecycleOrchestration";
+import { supersedeStaleBillingDocument, billingReferenceSupersessionDurableForDocument } from "./billingLifecycleOrchestration";
 
 // Mirror of the worker's outcome shape (kept structural to avoid a cross-import).
 export type BillingRetryOutcome = { failureId: number; requestedAction: string; status: string; message?: string };
@@ -132,19 +132,33 @@ async function retrySyncReference(failure: AncillaryDocumentReconciliationFailur
 async function retrySupersede(failure: AncillaryDocumentReconciliationFailure): Promise<BillingRetryOutcome> {
   const base = { failureId: failure.id, requestedAction: failure.requestedAction };
   if (!procedureNoteRuntimeEnabled() || !billingDocumentRuntimeEnabled()) return { ...base, status: "skipped_flag_off" };
-  if (failure.ancillaryCaseId == null) return { ...base, status: "still_deferred", message: "missing_ancillary_case" };
-  // Re-evaluate to establish the CURRENT evidence version, then supersede any
-  // current document whose evidence no longer matches.
+  // K8: this retry is EXACT source-bound — it may only ever act on / resolve the exact
+  // Billing Document named by `failure.sourceId`. Never resolve document A from document
+  // B's clean state.
+  if (failure.ancillaryCaseId == null || failure.sourceId == null || failure.sourceTable !== BILLING_DOCUMENT_SOURCE_TABLE) return { ...base, status: "still_deferred", message: "invalid_source" };
+  const [doc] = await db.select().from(billingDocumentRequests).where(eq(billingDocumentRequests.id, failure.sourceId)).limit(1);
+  if (!doc) return { ...base, status: "still_deferred", message: "document_not_found" };
+  // Exact ownership: wrong sourceTable/sourceId/clinic/case → ZERO mutation, unresolved.
+  if (doc.id !== failure.sourceId || doc.clinicId !== failure.clinicId || doc.ancillaryCaseId !== failure.ancillaryCaseId) return { ...base, status: "still_deferred", message: "source_ownership_conflict" };
+  // If the EXACT document is already superseded/voided, resolve ONLY when the exact
+  // reference is proven non-current (idempotent). Otherwise keep the exact retry OPEN.
+  if (doc.supersededAt != null || doc.canonicalStatus === "superseded" || doc.canonicalStatus === "voided") {
+    if (await billingReferenceSupersessionDurableForDocument(failure.clinicId, failure.ancillaryCaseId, failure.sourceId)) {
+      await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
+      return { ...base, status: "resolved", message: "already_superseded" };
+    }
+    return { ...base, status: "still_deferred", message: "reference_supersession_deferred" };
+  }
+  // The exact document is CURRENT but stale — re-evaluate to establish the current
+  // evidence version. Resolve ONLY on a COMMITTED re-evaluation; a transient status
+  // (requirements_unavailable_* / override_not_recorded / tenancy) leaves it UNRESOLVED.
   const evalResult = await evaluateCanonicalBillingReadiness({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, source: "billing_retry_worker" });
   if (evalResult.status === "migration_missing") return { ...base, status: "migration_missing" };
-  // K8: resolve ONLY on a COMMITTED re-evaluation. A transient status (e.g.
-  // requirements_unavailable_retry_recorded / override_not_recorded / tenancy) leaves
-  // the retry UNRESOLVED — the post-condition cannot be proven from a transient read.
   if (evalResult.status !== "ready_to_generate" && evalResult.status !== "missing_requirements") return { ...base, status: "still_deferred", message: evalResult.status };
-  const superseded = await supersedeStaleBillingDocument({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId }, evalResult.evidenceFingerprint ?? null);
-  // K8 post-condition: resolve ONLY when reference supersession is DURABLE (no current
-  // reference points at a superseded document). Otherwise keep the exact retry OPEN.
-  if (!(await billingReferenceSupersessionDurable(failure.clinicId, failure.ancillaryCaseId))) return { ...base, status: "still_deferred", message: "reference_supersession_deferred" };
+  await supersedeStaleBillingDocument({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId }, evalResult.evidenceFingerprint ?? null);
+  // K8 post-condition: resolve ONLY when reference supersession is DURABLE for the EXACT
+  // named document. Otherwise keep the exact retry OPEN.
+  if (!(await billingReferenceSupersessionDurableForDocument(failure.clinicId, failure.ancillaryCaseId, failure.sourceId))) return { ...base, status: "still_deferred", message: "reference_supersession_deferred" };
   await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
-  return { ...base, status: "resolved", message: superseded ? "superseded" : "no_stale_document" };
+  return { ...base, status: "resolved", message: "superseded" };
 }

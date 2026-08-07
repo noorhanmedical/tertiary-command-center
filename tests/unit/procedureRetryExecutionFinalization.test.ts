@@ -485,6 +485,65 @@ async function testK5ClassifyDurable() {
   const w2: string[] = []; const c2 = orch.classifyGeneratorOutcome("not_yet_eligible_retry_not_recorded" as any, w2);
   assert.ok(c2.generationDeferred === true && c2.generationRetryRecorded === false, "K5: retry_not_recorded → non-durable");
 }
+// K5 — the generator records a `generate_procedure_note` retry ONLY for genuinely
+// retryable deferrals. migration_missing / cross_clinic / case_missing / corrupt
+// evidence must NOT become a generic generate retry; a retry-ledger failure never
+// overstates durability. The note ALWAYS stays truthfully pending (never generated).
+async function testK5GeneratorDeferralClassification() {
+  const t = await loadCanonicalTables(); const g = await gen();
+  const run = async (mutate: (spec: Map<unknown, TableSpec>) => void) => {
+    const inserts: Record<string, unknown>[] = [];
+    const spec = genSpec(t, noteRow({ generationStatus: "pending" }), { docFailInsert: (v) => { inserts.push(v); return [{ ...v, id: 1 }]; }, failuresSelect: () => [] });
+    mutate(spec);
+    let noteUpdates = 0;
+    const res = await runWithDb(spec, GEN, async (calls: Call[]) => { const r = await g.generateProcedureNote({ clinicId: 1, ancillaryCaseId: 5, noteId: 900 }); noteUpdates = countOps(calls, "update", t.procedureNotes); return r; });
+    return { res, genRetries: inserts.filter((i) => i.requestedAction === "generate_procedure_note").length, noteUpdates };
+  };
+  // (4) migration-missing in the eligibility read → migration_missing, ZERO retry.
+  const mig = await run((spec) => spec.set(t.procedureEvents, { select: () => { throw migErr(); } }));
+  assert.equal(mig.res.status, "migration_missing", "K5(4) migration → migration_missing");
+  assert.equal(mig.genRetries, 0, "K5(4) migration → zero generate retry insert");
+  assert.equal(mig.noteUpdates, 0, "K5(4) note untouched");
+  // (5) cross-clinic (case belongs to another clinic) → cross_clinic_denied, ZERO retry.
+  const xc = await run((spec) => spec.set(t.ancillaryCases, { select: () => [caseRow({ clinicId: 2 })] }));
+  assert.equal(xc.res.status, "cross_clinic_denied", "K5(5) cross-clinic → denied");
+  assert.equal(xc.genRetries, 0, "K5(5) cross-clinic → zero retry insert");
+  // (6) missing case → case_not_found, ZERO retry.
+  const cmiss = await run((spec) => spec.set(t.ancillaryCases, { select: () => [] }));
+  assert.equal(cmiss.res.status, "case_not_found", "K5(6) missing case → case_not_found");
+  assert.equal(cmiss.genRetries, 0, "K5(6) missing case → zero retry insert");
+  // (7) corrupt/ambiguous evidence (report from another case) → not_yet_eligible, ZERO
+  //     generic retry (reconciliation territory, never an endless generate retry).
+  const integ = await run((spec) => spec.set(t.documentReferences, { select: () => [reportRef({ ancillaryCaseId: 6 })], onUpdate: (v) => [{ ...v }] }));
+  assert.equal(integ.res.status, "not_yet_eligible", "K5(7) corrupt evidence → not_yet_eligible (no generic retry)");
+  assert.equal(integ.genRetries, 0, "K5(7) corrupt evidence → zero generate retry insert");
+  assert.equal(integ.noteUpdates, 0, "K5(7) note stays pending");
+  // (8) retryable deferral but the retry-ledger insert FAILS → not_recorded, note stays
+  //     pending, NO false self-healing durability claim.
+  const rf = await run((spec) => { spec.set(t.documentReferences, { select: () => [], onUpdate: (v) => [{ ...v }] }); spec.set(t.caseDocumentReadiness, { select: () => [] }); spec.set(t.documentFailures, { select: () => [], onInsert: () => { throw new Error("ledger down"); } }); });
+  assert.equal(rf.res.status, "not_yet_eligible_retry_not_recorded", "K5(8) retry-record failure → not_recorded");
+  assert.equal(rf.noteUpdates, 0, "K5(8) note stays pending on retry-record failure");
+}
+// K5 concurrency — two writers race to record the SAME unresolved exact failure. The
+// loser hits the partial-unique index (23505) and must CONVERGE on the durable winner,
+// never surface a false "not recorded".
+async function testK5RetryConvergesOnUniqueRace() {
+  const t = await loadCanonicalTables();
+  const repo = await import("../../server/repositories/ancillaryDocuments.repo");
+  const winner = { id: 77, clinicId: 1, ancillaryCaseId: 5, documentKind: "procedure_note", sourceTable: "procedure_notes", sourceId: 900, requestedAction: "generate_procedure_note", resolvedAt: null, attemptCount: 1 };
+  let selectCall = 0;
+  const spec = new Map<unknown, TableSpec>([
+    // Entry dedupe select sees none (loser thinks it must insert); the insert loses the
+    // race (23505); the post-catch re-read finds the winner → converge (bump, return it).
+    [t.documentFailures, {
+      select: () => (selectCall++ === 0 ? [] : [winner]),
+      onInsert: () => { throw Object.assign(new Error("dup"), { code: "23505" }); },
+      onUpdate: (v) => [{ ...winner, ...v }],
+    }],
+  ]);
+  const r = await runWithDb(spec, ALL, async () => repo.recordAncillaryDocumentFailure({ clinicId: 1, ancillaryCaseId: 5, documentKind: "procedure_note", sourceTable: "procedure_notes", sourceId: 900, requestedAction: "generate_procedure_note", sourceSystem: "test", errorCode: "generator_not_yet_eligible" }));
+  assert.equal((r as { id: number }).id, 77, "K5: unique-race loser converges on the durable winner (id 77), never a false failure");
+}
 // K1 — the signature-sync retry ENSURES-OR-CREATES the reference (no dependence on a
 // separate link_procedure_note failure), then mirrors the signature → resolved.
 async function testK1SignatureSyncEnsuresReference() {
@@ -577,6 +636,8 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(1c) onProcedureCompleted forwards suppression", testOnProcedureCompletedForwardsSuppression],
   ["(22/23) amendment retry truth + exact source", testAmendmentRetryTruth],
   ["(18/19) siblings untouched, no broad resolution", testSiblingsUntouched],
+  ["K5 generator deferral classification (only retryable → retry)", testK5GeneratorDeferralClassification],
+  ["K5 retry converges on unique-violation race", testK5RetryConvergesOnUniqueRace],
 ];
 
 async function run() {

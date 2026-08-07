@@ -102,16 +102,92 @@ async function testAllocationTargetRace() {
   assert.equal(r.status, "conflict", "concurrent target status change → conflict, never a false paid");
 }
 
+// ── Areas 1/2/3: retry-record convergence. Two concurrent identical unresolved-failure
+//    records → ONE canonical row; the loser (23505) converges on the durable winner and
+//    returns it (never a false "not recorded"). Exercised per action family. ──
+async function retryConvergence(requestedAction: string, sourceTable: string | null, sourceId: number | null, documentKind: string) {
+  const t = await loadCanonicalTables(); const repo = await import("../../server/repositories/ancillaryDocuments.repo");
+  const winner = { id: 1, clinicId: 1, ancillaryCaseId: 5, documentKind, sourceTable, sourceId, requestedAction, resolvedAt: null, attemptCount: 1 };
+  let n = 0; // dedupe select: none first (both see empty), then the winner after the insert race
+  const spec = new Map<unknown, TableSpec>([
+    [t.documentFailures, { select: () => (n++ === 0 ? [] : [winner]), onInsert: dup, onUpdate: (v) => [{ ...winner, ...v }] }],
+  ]);
+  const r = await runWithDb(spec, CHAIN, async () => repo.recordAncillaryDocumentFailure({ clinicId: 1, ancillaryCaseId: 5, documentKind, sourceTable: sourceTable ?? undefined, sourceId: sourceId ?? undefined, requestedAction, sourceSystem: "s", errorCode: "e" } as never));
+  assert.ok(r && (r as { id?: number }).id === 1, `${requestedAction} concurrent record → converges on the ONE durable winner (got ${JSON.stringify(r)})`);
+}
+const testEnsureRefConvergence = () => retryConvergence("link_procedure_note", "procedure_notes", 900, "procedure_note");
+const testGenerationRetryConvergence = () => retryConvergence("generate_procedure_note", "procedure_notes", 900, "procedure_note");
+const testSupersedeRetryConvergence = () => retryConvergence("supersede_billing_document", "billing_document_requests", 600, "billing_document");
+
+// ── Area 4: claim CORRECTION — identical race replays the exact prior success ──
+async function testClaimCorrectionRace() {
+  const t = await loadCanonicalTables(); const c = await claimCmd(); const { commandFingerprint } = await cs();
+  const fp = commandFingerprint({ action: "correct_claim", clinicId: 1, priorClaimId: 700, reason: "fix" });
+  const winner = { entityType: "claim", clinicId: 1, idempotencyKey: "corr", entityId: 701, commandFingerprint: fp, fromStatus: null, toStatus: "ready" };
+  const spec = new Map<unknown, TableSpec>([
+    [t.canonicalClaims, { select: () => [claimRow({ canonicalStatus: "submitted" })], onInsert: (v) => [{ ...v, id: 701 }] }],
+    [t.ancillaryCases, { select: () => [{ id: 5, clinicId: 1, serviceType: "BrainWave", globalPlexusPatientId: 900, patientClinicMembershipId: 800 }] }],
+    [t.memberships, { select: () => [{ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" }] }], [t.globalPatients, { select: () => [{ id: 900, identityStatus: "active", mergedIntoPatientId: null }] }],
+    [t.billingReadinessChecks, { select: () => [RD] }], [t.billingDocumentRequests, { select: () => [BD] }],
+    [t.canonicalFinancialTransitions, { select: () => [winner], onInsert: dup }],
+  ]);
+  const r = await runWithDb(spec, CHAIN, async () => c.createCanonicalClaimCorrection({ clinicId: 1, priorClaimId: 700, actorUserId: "u", actorRole: "biller", reason: "fix", idempotencyKey: "corr" }));
+  assert.ok(r.status === "reused" && r.claimId === 701, `claim correction identical race → replays the ONE prior child (got ${JSON.stringify(r)})`);
+}
+
+// ── Area 5: invoice CORRECTION — identical race replays the exact prior success ──
+async function testInvoiceCorrectionRace() {
+  const t = await loadCanonicalTables(); const c = await invoiceCmd(); const { commandFingerprint } = await cs();
+  const fp = commandFingerprint({ action: "correct_invoice", clinicId: 1, priorInvoiceId: 800, reason: "fix" });
+  const winner = { entityType: "invoice", clinicId: 1, idempotencyKey: "corr", entityId: 801, commandFingerprint: fp, fromStatus: null, toStatus: "draft" };
+  const spec = new Map<unknown, TableSpec>([
+    [t.canonicalInvoices, { select: () => [{ id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "issued", claimId: 700, invoiceNumber: "INV-1", supersedesInvoiceId: null }], onInsert: (v) => [{ ...v, id: 801 }] }],
+    [t.canonicalClaims, { select: () => [claimRow()] }],
+    [t.canonicalFinancialTransitions, { select: () => [winner], onInsert: dup }],
+  ]);
+  const r = await runWithDb(spec, CHAIN, async () => c.createCanonicalInvoiceCorrection({ clinicId: 1, priorInvoiceId: 800, actorUserId: "u", actorRole: "biller", reason: "fix", idempotencyKey: "corr" }));
+  assert.ok(r.status === "reused" && r.invoiceId === 801, `invoice correction identical race → replays the ONE prior child (got ${JSON.stringify(r)})`);
+}
+
+// ── Area 7: refund/reversal — concurrent target status change (zero-row update) → conflict ──
+async function testRefundTargetRace() {
+  const t = await loadCanonicalTables(); const p = await paymentCmd();
+  const payment = { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", paymentType: "manual", status: "posted", currency: "USD", amount: "420.00" };
+  const parent = { id: 950, clinicId: 1, paymentId: 900, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00" };
+  const inv = { id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", claimId: 700, canonicalStatus: "paid", currency: "USD", totalAmount: "420.00", supersededAt: null, evidenceFingerprint: "fp-1", invoiceType: "patient", recipientType: "patient_membership", recipientId: "M", invoiceNumber: "INV-1", issuedAt: OLD, lineItems: [{ lineId: "l1", amount: "420.00", source: "approved_fee_schedule", unit: 1 }], billingDocumentId: 600, billingReadinessCheckId: 500, supersedesInvoiceId: null };
+  const spec = new Map<unknown, TableSpec>([
+    [t.canonicalPayments, { select: () => [payment] }],
+    [t.canonicalInvoices, { select: () => [inv], onUpdate: () => [] }], // concurrent status change → 0 rows
+    [t.canonicalClaims, { select: () => [claimRow()] }],
+    [t.ancillaryCases, { select: () => [{ id: 5, clinicId: 1, serviceType: "BrainWave", globalPlexusPatientId: 900, patientClinicMembershipId: 800 }] }],
+    [t.canonicalPaymentAllocations, { select: () => [parent], onInsert: (v) => [{ ...v, id: 951 }] }],
+    [t.canonicalFinancialTransitions, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]);
+  const r = await runWithDb(spec, CHAIN, async (calls: Call[]) => {
+    const res = await p.refundCanonicalPayment({ clinicId: 1, paymentId: 900, allocationId: 950, amount: "420.00", actorUserId: "u", actorRole: "biller", idempotencyKey: "r" });
+    assert.equal(countOps(calls, "insert", t.canonicalFinancialTransitions), 0, "refund zero-row target update → no orphan audit committed");
+    return res;
+  });
+  assert.equal(r.status, "conflict", "refund concurrent target change → conflict, never a false unwind");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
-  ["claim transition: identical race replays exact from/to; diff intent conflicts", testClaimTransitionRace],
-  ["claim transition replay is advancement-stable", testReplayAdvancementStable],
-  ["invoice transition: identical race replays exact from/to", testInvoiceTransitionRace],
-  ["payment allocation: concurrent target change → conflict, no false paid/orphan", testAllocationTargetRace],
+  ["A1 ensure procedure-note reference: concurrent record → one durable winner", testEnsureRefConvergence],
+  ["A2 generation retry creation: concurrent record → one durable winner", testGenerationRetryConvergence],
+  ["A3 Billing supersession retry: concurrent record → one durable winner", testSupersedeRetryConvergence],
+  ["A4 claim CORRECTION: identical race → replays exact prior child", testClaimCorrectionRace],
+  ["A5 invoice CORRECTION: identical race → replays exact prior child", testInvoiceCorrectionRace],
+  ["A6 payment allocation: concurrent target change → conflict, no false paid/orphan", testAllocationTargetRace],
+  ["A7 refund/reversal: concurrent target change → conflict, no orphan", testRefundTargetRace],
+  ["(bonus) claim transition race replays exact from/to; diff intent conflicts", testClaimTransitionRace],
+  ["(bonus) claim transition replay advancement-stable", testReplayAdvancementStable],
+  ["(bonus) invoice transition race replays exact from/to", testInvoiceTransitionRace],
 ];
 async function run() {
   let failed = 0;
   for (const [name, fn] of tests) { try { await fn(); console.log(`ok  ${name}`); } catch (e) { failed++; console.error(`FAIL  ${name}\n     ${(e as Error).stack ?? (e as Error).message}`); } }
   if (failed > 0) { console.error(`\n${failed} test(s) failed`); process.exit(1); }
   console.log(`\nAll ${tests.length} tests passed`);
+  console.log(`K39: 7/7 required concurrency paths proven`);
 }
 run();

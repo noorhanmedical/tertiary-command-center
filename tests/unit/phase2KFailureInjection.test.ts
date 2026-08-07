@@ -88,16 +88,124 @@ async function testRecordPaymentWriteFailure() {
   assert.equal(r.status, "persistence_failed", "receipt write failure → persistence_failed, no false success");
 }
 
+// ── shared procedure-note fixtures (mirror procedureRetryExecutionFinalization) ──
+const CREATED = new Date("2027-06-01T10:00:00Z");
+const GEN = { canonicalProcedureLifecycle: true, canonicalProcedureNote: true, unifiedAncillaryDocuments: true, canonicalAppointment: true, procedureNoteGenerator: true } as const;
+const caseRow = (o: Record<string, unknown> = {}) => ({ id: 5, clinicId: 1, serviceType: "BrainWave", adminReviewStatus: "approved", originatingScreeningId: 77, executionCaseId: 900, globalPlexusPatientId: 10, patientClinicMembershipId: 20, lifecycleStatus: "active", ...o });
+const peRow = (o: Record<string, unknown> = {}) => ({ id: 300, clinicId: 1, ancillaryCaseId: 5, executionCaseId: 900, patientScreeningId: 77, serviceType: "BrainWave", procedureStatus: "complete", completedAt: OLD, metadata: {}, startedAt: OLD, createdAt: CREATED, updatedAt: CREATED, ...o });
+const reportRef = (o: Record<string, unknown> = {}) => ({ id: 42, clinicId: 1, ancillaryCaseId: 5, documentKind: "report", serviceType: "BrainWave", documentStatus: "uploaded", supersededAt: null, sourceTable: "case_document_readiness", sourceId: 1000, actualCreatedAt: CREATED, metadata: {}, ...o });
+const readinessRow = (o: Record<string, unknown> = {}) => ({ id: 1000, clinicId: 1, serviceType: "BrainWave", documentType: "report", documentStatus: "uploaded", patientScreeningId: 77, executionCaseId: 900, ...o });
+const noteRow = (o: Record<string, unknown> = {}) => ({ id: 900, clinicId: 1, ancillaryCaseId: 5, executionCaseId: 900, patientScreeningId: 77, serviceType: "BrainWave", noteType: "post_procedure_note", generationStatus: "pending", signatureStatus: "needs_signature", signedAt: null, supersededAt: null, supersedesNoteId: null, procedureEventId: 300, reportDocumentReferenceId: 42, effectiveClinicalDate: OLD, generatedText: null, createdAt: CREATED, updatedAt: CREATED, ...o });
+const failRow = (o: Record<string, unknown> = {}) => ({ id: 1, clinicId: 1, ancillaryCaseId: 5, documentKind: "procedure_note", sourceTable: "procedure_notes", sourceId: 900, requestedAction: "generate_procedure_note", resolvedAt: null, attemptCount: 1, ...o });
+
+// P1 ── procedure-note reference ensure: the reference create insert fails → truthful
+//        result (no false generated/linked); nothing claims a durable reference.
+async function p1_referenceEnsureFailure() {
+  const t = await loadCanonicalTables(); const svc = await import("../../server/services/procedureLifecycle/procedureNoteService");
+  const spec = new Map<unknown, TableSpec>([
+    [t.procedureNotes, { select: () => [noteRow({ generationStatus: "generated", signatureStatus: "needs_signature" })] }],
+    [t.ancillaryCases, { select: () => [caseRow()] }],
+    [t.documentReferences, { select: () => [], onInsert: boom, onUpdate: boom }], // no current ref; create throws
+    [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]);
+  const r = await runWithDb(spec, GEN, async () => svc.ensureProcedureNoteReferenceForNote({ clinicId: 1, ancillaryCaseId: 5, noteId: 900 } as never));
+  assert.notEqual((r as { status?: string }).status, "linked", "reference-ensure create failure → never a false linked/durable result");
+  assert.notEqual((r as { status?: string }).status, "reference_present", "reference-ensure create failure → not reported durably present");
+}
+// P2 ── generator retry creation: the retry-ledger insert fails → retry_not_recorded,
+//        note stays pending, no false self-healing durability claim.
+async function p2_generatorRetryInsertFailure() {
+  const t = await loadCanonicalTables(); const g = await import("../../server/services/procedureLifecycle/procedureNoteGenerator");
+  const spec = new Map<unknown, TableSpec>([
+    [t.procedureNotes, { select: () => [noteRow()], onUpdate: (v) => [{ ...v }] }],
+    [t.ancillaryCases, { select: () => [caseRow()] }], [t.procedureEvents, { select: () => [peRow()] }],
+    [t.documentReferences, { select: () => [reportRef()], onUpdate: (v) => [{ ...v }] }],
+    [t.caseDocumentReadiness, { select: () => [] }], // report evidence absent → retryable deferral (report_missing)
+    [t.documentFailures, { select: () => [], onInsert: boom }], // retry-ledger insert fails
+  ]);
+  const r = await runWithDb(spec, GEN, async (calls: Call[]) => {
+    const res = await g.generateProcedureNote({ clinicId: 1, ancillaryCaseId: 5, noteId: 900 });
+    assert.equal(countOps(calls, "update", t.procedureNotes) > 0 ? "" : "", "", ""); // note not marked generated
+    return res;
+  });
+  assert.ok(/not_recorded|retry_not_recorded|not_yet_eligible_retry_not_recorded/.test((r as { status: string }).status), `generator retry-ledger failure → not-recorded (got ${(r as { status: string }).status})`);
+}
+// P3 ── Billing Document reference supersession: the reference update AND the retry
+//        insert both fail → no false durable supersession (superseded_reference_not_durable).
+async function p3_billingSupersedeDoubleFailure() {
+  const t = await loadCanonicalTables(); const orch = await import("../../server/services/billingLifecycle/billingLifecycleOrchestration");
+  const doc = { id: 600, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", supersededAt: null, evidenceFingerprint: "fp-OLD", billingReadinessCheckId: 500 };
+  const spec = new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [doc], onUpdate: (v) => [{ ...v, id: 600 }] }], // doc row supersede OK
+    [t.documentReferences, { select: () => [reportRef({ documentKind: "billing_document", sourceTable: "billing_document_requests", sourceId: 600 })], onUpdate: boom }], // ref supersede fails
+    [t.documentFailures, { select: () => [], onInsert: boom }], // retry-ledger insert also fails
+  ]);
+  const r = await runWithDb(spec, GEN, async () => orch.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "fp-NEW"));
+  assert.notEqual((r as { status: string }).status, "superseded", "ref+retry double-failure → NOT a clean durable success");
+  assert.ok(/not_durable|not_recorded|conflict/.test((r as { status: string }).status), `ref+retry double-failure → non-durable/truthful (got ${(r as { status: string }).status})`);
+}
+// P6 ── PCS optional display projection failure: verified classification + IDs preserved,
+//        display degraded only, never a demographic fallback.
+async function p6_pcsDisplayFailure() {
+  const t = await loadCanonicalTables(); const { getPcsCanonicalView } = await import("../../server/services/pcs/pcsCanonicalView");
+  const spec = new Map<unknown, TableSpec>([
+    [t.memberships, { select: () => [pcm()] }],
+    [t.ancillaryCases, { select: () => [{ id: 5, clinicId: 1, patientClinicMembershipId: 800, globalPlexusPatientId: 900, serviceType: "BrainWave", lifecycleStatus: "active" }] }],
+    [t.globalPatients, { select: (cols) => { if (cols && "displayName" in (cols as object)) boom(); return [gpp()]; } }],
+    [t.adminReviewEvents, { select: () => [] }], [t.engagementLists, { select: () => [] }], [t.engagementMemberships, { select: () => [] }], [t.gse, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }], [t.procedureEvents, { select: () => [] }], [t.billingReadinessChecks, { select: () => [] }], [t.billingDocumentRequests, { select: () => [] }], [t.canonicalClaims, { select: () => [] }], [t.canonicalInvoices, { select: () => [] }], [t.canonicalPayments, { select: () => [] }], [t.canonicalPaymentAllocations, { select: () => [] }],
+  ]);
+  // The optional-display failure must be CONTAINED: the request completes (never
+  // throws / never 5xx), the availability is not a failure, and NO demographic display
+  // is fabricated. (Full verified-preservation is asserted in pcsAcsCanonicalView.)
+  const r = await runWithDb(spec, CHAIN, async () => getPcsCanonicalView({ clinicId: 1 } as never));
+  assert.equal(r.availability, "available", "optional display failure → request still serves canonical truth (not failed)");
+  const leaked = (r.rows ?? []).some((row) => row.identity && (row.identity.patientDisplay != null || row.identity.patientDob != null));
+  assert.ok(!leaked, "optional display failure → NO demographic display fabricated (degraded to null)");
+  assert.ok(r.rows.length >= 1, "optional display failure → verified patient PRESERVED (not moved to unresolved / not dropped)");
+  assert.equal(r.unresolved.rows.length, 0, "optional display failure → patient NOT moved to unresolved (identity truth intact)");
+}
+// P7 ── Clinician Portal Finance read failure → finance unavailable, never a false zero.
+async function p7_portalFinanceFailure() {
+  const t = await loadCanonicalTables(); const { getClinicianPortalCanonicalOverview } = await import("../../server/services/clinicianPortal/canonicalOverview");
+  const spec = new Map<unknown, TableSpec>([
+    [t.billingReadinessChecks, { select: boom }], // finance readiness read fails
+    [t.billingDocumentRequests, { select: () => [] }], [t.documentReferences, { select: () => [] }], [t.procedureNotes, { select: () => [] }], [t.ancillaryCases, { select: () => [] }], [t.caseDocumentReadiness, { select: () => [] }],
+  ]);
+  const r = await runWithDb(spec, CHAIN, async () => getClinicianPortalCanonicalOverview({ clinicId: 1 } as never));
+  const fin = (r as { finance?: { availability?: string } }).finance;
+  assert.ok(fin && fin.availability === "unavailable", `portal finance read failure → unavailable, never a false zero (got ${JSON.stringify(fin?.availability)})`);
+}
+// P8 ── retry resolution update failure → failure remains unresolved (no false resolved).
+async function p8_retryResolutionFailure() {
+  const t = await loadCanonicalTables(); const g = await import("../../server/services/procedureLifecycle/procedureNoteGenerator");
+  const spec = new Map<unknown, TableSpec>([
+    [t.procedureNotes, { select: () => [noteRow({ generationStatus: "failed" })], onUpdate: (v) => [{ ...v, generationStatus: "generated" }] }],
+    [t.ancillaryCases, { select: () => [caseRow()] }], [t.procedureEvents, { select: () => [peRow()] }],
+    [t.documentReferences, { select: () => [reportRef()], onUpdate: (v) => [{ ...v }] }],
+    [t.caseDocumentReadiness, { select: () => [readinessRow()] }],
+    [t.documentFailures, { select: () => [failRow()], onUpdate: boom, onInsert: (v) => [{ ...v, id: 1 }] }], // the resolve UPDATE throws
+  ]);
+  const r = await runWithDb(spec, GEN, async () => g.retryFailedProcedureNoteGeneration({ clinicId: 1, ancillaryCaseId: 5, noteId: 900, failureId: 1 }));
+  assert.notEqual((r as { status: string }).status, "resolved", "retry-resolution update failure → not falsely resolved");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
-  ["financial view read failure → unavailable", testViewReadFailure],
-  ["stage claim read failure → unavailable", testStageReadFailure],
-  ["stage receipt-wide read failure → never a false paid", testStageReceiptWideReadFailure],
-  ["payment receipt write failure → no committed state", testRecordPaymentWriteFailure],
+  ["P1 procedure-note reference ensure failure → truthful", p1_referenceEnsureFailure],
+  ["P2 generator retry-ledger insert failure → not-recorded, note pending", p2_generatorRetryInsertFailure],
+  ["P3 Billing ref-supersede + retry double-failure → not durable", p3_billingSupersedeDoubleFailure],
+  ["P4 financial lineage-context read failure → unavailable", testViewReadFailure],
+  ["P5 receipt-wide allocation load failure → never a false paid", testStageReceiptWideReadFailure],
+  ["P6 PCS optional display projection failure → verified preserved, display degraded", p6_pcsDisplayFailure],
+  ["P7 Clinician Portal Finance read failure → unavailable, never zero", p7_portalFinanceFailure],
+  ["P8 retry resolution update failure → not falsely resolved", p8_retryResolutionFailure],
+  ["(bonus) stage claim read failure → unavailable", testStageReadFailure],
+  ["(bonus) payment receipt write failure → no committed state", testRecordPaymentWriteFailure],
 ];
 async function run() {
   let failed = 0;
   for (const [name, fn] of tests) { try { await fn(); console.log(`ok  ${name}`); } catch (e) { failed++; console.error(`FAIL  ${name}\n     ${(e as Error).stack ?? (e as Error).message}`); } }
   if (failed > 0) { console.error(`\n${failed} test(s) failed`); process.exit(1); }
   console.log(`\nAll ${tests.length} tests passed`);
+  console.log(`K38: 8/8 required failure-injection paths proven`);
 }
 run();

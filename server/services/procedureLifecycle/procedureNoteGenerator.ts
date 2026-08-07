@@ -30,7 +30,7 @@ import { procedureNoteGeneratorEnabled } from "../../lib/featureFlags";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { getProcedureEventById } from "../../repositories/procedureEvents.repo";
 import { recordAncillaryDocumentFailure, getUnresolvedAncillaryDocumentFailureById } from "../../repositories/ancillaryDocuments.repo";
-import { evaluateProcedureNoteEligibility } from "./procedureNoteEligibility";
+import { evaluateProcedureNoteEligibility, classifyGeneratorEligibilityDeferral } from "./procedureNoteEligibility";
 import { syncProcedureNoteReferenceSignature } from "./procedureNoteService";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
@@ -39,7 +39,7 @@ const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
 export type GenerateProcedureNoteResult = {
   status:
     | "skipped_flag_off" | "note_not_found" | "not_pending" | "already_claimed"
-    | "cross_clinic_denied" | "not_yet_eligible"
+    | "cross_clinic_denied" | "case_not_found" | "not_yet_eligible"
     | "not_yet_eligible_retry_recorded" | "not_yet_eligible_retry_not_recorded"
     | "report_content_unavailable_retry_recorded" | "report_content_unavailable_retry_not_recorded"
     | "generated" | "generated_reference_retry_recorded" | "generated_reference_retry_not_recorded"
@@ -67,13 +67,21 @@ export async function generateProcedureNote(input: GenInput): Promise<GeneratePr
     // Two-condition eligibility must hold with EXACT evidence.
     const elig = await evaluateProcedureNoteEligibility({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
     if (!elig.eligible) {
-      // K5 (self-healing): the note EXISTS and is pending, but the generator's fresh
-      // eligibility read cannot proceed (TOCTOU after create/reuse, or evidence
-      // regressed). Record ONE durable exact `generate_procedure_note` retry (deduped
-      // by clinic+case+source+action) so a later worker re-runs the exact
-      // eligibility/generator path — recovery no longer depends on an external re-drive.
-      // The note stays truthfully `pending` (never marked generated); the retry worker
-      // re-drives this same generator, and a later eligible read generates + resolves it.
+      // K5 — the note EXISTS + is pending, but the generator's fresh eligibility read
+      // cannot proceed. NOT every deferral warrants a durable generic generate retry:
+      // classify WHY first so a missing migration / cross-clinic / missing case /
+      // corrupt-or-ambiguous evidence never becomes an endless generic retry.
+      const kind = classifyGeneratorEligibilityDeferral(elig);
+      if (kind === "migration_missing") return { status: "migration_missing" };   // → 503, zero retry
+      if (kind === "cross_clinic") return { status: "cross_clinic_denied" };       // denial, zero retry
+      if (kind === "case_missing") return { status: "case_not_found" };            // truthful, zero retry
+      if (kind !== "retryable") return { status: "not_yet_eligible" };             // terminal / integrity → reconciliation, no generic retry
+      // ONLY a genuinely retryable deferral (report/procedure will arrive later)
+      // records ONE durable exact `generate_procedure_note` retry (deduped by
+      // clinic+case+source+action). The note stays truthfully `pending` (never
+      // generated); a later worker re-runs the exact eligibility/generator path and a
+      // later eligible read generates + resolves the exact retry — self-healing without
+      // an external re-drive.
       const rec = await recordGenerateRetry(input.clinicId, input.ancillaryCaseId, input.noteId, "generator_not_yet_eligible");
       return { status: rec ? "not_yet_eligible_retry_recorded" : "not_yet_eligible_retry_not_recorded" };
     }

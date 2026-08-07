@@ -19,7 +19,7 @@ Source Phase 2J HEAD: `8276cb9bb68d46555df291ddda206551be18edab`. Branch:
 | K5 | 2F | Generator `not_yet_eligible` records no generate retry | `procedureNoteGenerator` · `classifyGeneratorOutcome` | TOCTOU: generator re-read `not_yet_eligible` → no durable `generate_procedure_note` retry | record one exact durable generation retry when retryable; converge; later eligible generates + resolves | recovery may need external re-drive | MANDATORY_HARDENING | yes | no | created/reused+not_yet_eligible→retry; no dup; later eligible resolves | VERIFIED |
 | K6 | 2G | Backfill apply skips stale-but-existing readiness | `backfillCanonicalBillingReadiness` | apply only for no-current-row candidates | (whether apply always re-evaluates) | one-time seeding under-report; live hook supersedes | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
 | K7 | 2G | Reference supersession best-effort | `billingLifecycleOrchestration` · `supersedeStaleBillingDocument` | doc row superseded (checked); ref supersede fire-and-forget; `supersede_billing_document` retry never queued (dead) | deterministic durable ref supersession; on miss record exact retry targeting the exact BD/ref lineage; wire or remove the dead action | window where ref not superseded | MANDATORY_HARDENING | yes | no | ref succeeds / ref misses→retry durable / dup fail-closed | VERIFIED |
-| K8 | 2G | `retrySupersede` resolves on 0-row / non-committed re-eval | `billingLifecycleOrchestration` · `retrySupersede` | resolves even on 0-row or transient re-eval | resolve only when the required post-condition is proven | retry resolves without proving post-condition | MANDATORY_HARDENING | yes | no | transient re-eval → retry unresolved | VERIFIED |
+| K8 | 2G | `retrySupersede` resolves on 0-row / non-committed re-eval; ignores exact source id | `billingRetryHandlers` · `retrySupersede` | resolves even on transient re-eval; does not require `failure.sourceId`/`sourceTable` match (could resolve doc A from doc B's clean state) | resolve only on an exact source-bound (`sourceId`/`sourceTable`/clinic/case) committed post-condition; wrong source → zero mutation | retry resolves without proving post-condition / cross-document | MANDATORY_HARDENING | yes | no | transient re-eval unresolved / exact-source resolve / wrong-source zero-mutation | VERIFIED |
 | K9 | 2G | Report source-row validation | `loadExactReportEvidence` | re-loads `case_document_readiness`, re-asserts clinic/service/documentType + linkage + status | (met) | — | ALREADY_FIXED | no | no | (exists) | already-fixed |
 | K10 | 2G | `ensureBillingReferenceDurability` doesn't filter superseded refs | `billingLifecycleSupport` · `ensureBillingReferenceDurability` | returns `reference_present` for any owned row incl. superseded | require `supersededAt IS NULL` for a current ref; only-superseded → repair; dup current → conflict | superseded ref counted as durable | MANDATORY_HARDENING | yes | no | current/only-superseded/wrong-src/dup | VERIFIED |
 | K11 | 2G | Report `documentType` rejection untested | report source-validation | guard present, untested | dedicated `documentType !== "report"` test + wrong clinic/service/exec/screening/superseded/status | coverage gap | MANDATORY_HARDENING | no | no | documentType + fail-closed matrix | VERIFIED |
@@ -35,11 +35,11 @@ Source Phase 2J HEAD: `8276cb9bb68d46555df291ddda206551be18edab`. Branch:
 | K21 | 2I | Stage-vector identity `available` default loose | `caseStageVector` · `buildOne` identity | `available = ids != null` | `available=false` unless verified by canonical identity validator; PCS overwrites after its verify | flag reads available without proof | MANDATORY_HARDENING | yes | no | ids-present-unverified→false / verified→true / missing / merged-inactive | VERIFIED |
 | K22 | 2I | `isTerminalHalt` lists only `procedure` | `caseStageVector` | implicit appointment halt | (cosmetic; correct+tested) | none | NO_LONGER_APPLICABLE | no | no | — | n/a |
 | K23 | 2I | Appointment blocked/pending_sync coverage | `caseStageVector` | covered by terminal loop | (met) | — | ALREADY_FIXED | no | no | (covered) | already-fixed |
-| K24 | 2I | Verified-window ordering-contingent / covering index | `pcs` · `loadVerifiedStream` | ORDER BY + LIMIT window+1; comment added | covering index makes ordering cheap (0057 candidate) | none (correct today) | MANDATORY_HARDENING (index eval) | maybe (0057) | maybe | schema↔migration parity if 0057 | VERIFIED |
+| K24 | 2I | Verified-window ordering-contingent / covering index | `pcs` · `loadVerifiedStream` | ORDER BY + LIMIT window+1; comment added | covering index makes ordering cheap (0057 candidate) | none (correct today) | MANDATORY_HARDENING | maybe (0057) | maybe | schema↔migration parity if 0057 | VERIFIED |
 | K25 | 2I | `loadUnresolvedStream` membership bound | `pcs` | `.limit(MAX*2)` safe under ≤1-membership invariant | (met) | — | NO_LONGER_APPLICABLE | no | no | — | n/a |
 | K26 | 2J | Refund does not free receipt capacity | `paymentCommands` · `receiptApplied` | apply-only sum; refund doesn't add back | (return refunded capacity) — changes accepted semantics | conservative (under-allocates only) | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
 | K27 | 2J | `adjustment` allocation event type has no command path | `allocationLineage` | schema allows; fail-closed | new approved adjustment command | none (fail-closed) | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
-| K28 | 2J | DB-level provenance CHECKs on entity tables | schema/migrations | only transitions has `ck_cft_command_provenance` | additive CHECKs on claim/invoice/payment/allocation IF all command paths + fixtures satisfy them | defense-in-depth gap | MANDATORY_HARDENING (0057 eval) | maybe | maybe (0057) | schema↔migration parity | VERIFIED |
+| K28 | 2J | DB-level provenance CHECKs on entity tables | schema/migrations | only transitions has `ck_cft_command_provenance` | additive CHECKs on claim/invoice/payment/allocation IF all command paths + fixtures satisfy them | defense-in-depth gap | MANDATORY_HARDENING | maybe | maybe (0057) | schema↔migration parity | VERIFIED |
 | K29 | 2J | Explicit overpayment / credit ledger | financial | `is_overpayment` flag only | first-class overpayment surface | none | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
 | K30 | 2J | Exhaustive N+1 matrix at 1/25/100 | tests | batched (proven by count test) | explicit 1/25/100 matrix across all read models | none (already batched) | MANDATORY_HARDENING | no (test) | no | phase2KQueryBoundaries | VERIFIED |
 | K31 | 2J | Dedicated overflow test for stage identity/parent-claim loads | tests | SCAN+1 folds into truncation | targeted overflow matrix | none (page-bounded) | MANDATORY_HARDENING | no (test) | no | phase2KOverflowTruth | VERIFIED |
@@ -54,27 +54,41 @@ Source Phase 2J HEAD: `8276cb9bb68d46555df291ddda206551be18edab`. Branch:
 
 | ID | Area | Requirement | Classification | Verdict |
 |----|------|-------------|----------------|---------|
-| K38 | tests | Failure-injection matrix (read/write/post-insert/retry-record failures fail closed) | MANDATORY_HARDENING | VERIFIED |
-| K39 | tests | Concurrency hardening matrix (ensure/retry/correction/allocation/negation converge, no dup, exact replay) | MANDATORY_HARDENING | VERIFIED |
+| K38 | tests | Failure-injection matrix (read/write/post-insert/retry-record failures fail closed) — 8 explicit paths | MANDATORY_HARDENING | VERIFIED |
+| K39 | tests | Concurrency hardening matrix (ensure/retry/correction/allocation/negation converge, no dup, exact replay) — 7 explicit areas incl. claim+invoice CORRECTION | MANDATORY_HARDENING | VERIFIED |
 | K40 | security | Tenancy/identity regression across all 2K-touched paths (server/session scope only; never name/DOB/MRN/fuzzy) | MANDATORY_HARDENING | VERIFIED |
-| K41 | retries | System-wide retry inventory (`PHASE_2K_RETRY_INVENTORY.md`); no dead/queued-unhandled/handled-unqueued/resolve-without-postcondition | MANDATORY_HARDENING | VERIFIED |
-| K42 | migrations | 0057 policy — create ONLY if genuinely needed for safe additive defense-in-depth (indexes/CHECKs); else "No Phase 2K migration required" | MANDATORY_HARDENING (eval) | VERIFIED |
+| K41 | retries | System-wide retry inventory (`PHASE_2K_RETRY_INVENTORY.md`) rebuilt from `ANCILLARY_DOCUMENT_FAILURE_ACTIONS` (19 values) + enum coverage test; no dead/queued-unhandled/handled-unqueued/resolve-without-postcondition | MANDATORY_HARDENING | VERIFIED |
+| K42 | migrations | 0057 policy — create ONLY if genuinely needed for safe additive defense-in-depth (indexes/CHECKs); else "No Phase 2K migration required" | MANDATORY_HARDENING | VERIFIED |
 
-## Totals (pre-implementation)
-- MANDATORY_HARDENING: 22 (K1,K2,K3,K5,K7,K8,K10,K11,K12,K13,K16,K18,K20,K21,K24,K28,K30,K31,K33,K37,K38–K42 grouped)
-- PRODUCT_DECISION_REQUIRED: 11 (K4,K6,K14,K15,K17,K26,K27,K29,K34,K35,K36) → `POST_2K_PRODUCT_DECISIONS.md`
-- UI_REDESIGN_DEFERRED: 1 (K32)
-- ALREADY_FIXED: 2 (K9,K23)
-- NO_LONGER_APPLICABLE: 3 (K19,K22,K25)
+## Totals (recounted from the actual rows above)
+Mechanically counted from the table rows (`| Kn |`), not from prose:
+- **MANDATORY_HARDENING: 25** — K1,K2,K3,K5,K7,K8,K10,K11,K12,K13,K16,K18,K20,K21,K24,K28,K30,K31,K33,K37 (20 in the main table) + K38,K39,K40,K41,K42 (5 additional).
+- **PRODUCT_DECISION_REQUIRED: 11** — K4,K6,K14,K15,K17,K26,K27,K29,K34,K35,K36 → `POST_2K_PRODUCT_DECISIONS.md`.
+- **UI_REDESIGN_DEFERRED: 1** — K32.
+- **ALREADY_FIXED: 2** — K9,K23.
+- **NO_LONGER_APPLICABLE: 3** — K19,K22,K25.
+- Total rows: 42 (K1–K42, all present).
 
-A row reaches **VERIFIED** only after its implementation + behavioral test land and the
-fresh-context adversarial review passes. `PRODUCT_DECISION_REQUIRED` rows do **not**
-block Phase 2K PASS (2K is behavior-preserving); each is recorded with its tradeoff in
-`POST_2K_PRODUCT_DECISIONS.md`.
+## Consolidated-closeout status (post-fix)
+The initial Phase 2K PASS overstated completion (it claimed 22/22 while the true mandatory
+total is **25**, several matrix rows were missing/duplicated, and the `canonicalUiManifest`
+was actually failing at `858ab0bc` because the K16 `queryClient.ts` change was not recorded).
+This closeout re-opened **9 MANDATORY rows** found incomplete on re-audit; each was then
+implemented with real behavioral proof and is now **VERIFIED** (25/25 mandatory; 0 PARTIAL).
+Coverage: **K31 12/12** overflow windows · **K38 8/8** failure-injection paths · **K39 7/7**
+concurrency areas (incl. claim+invoice corrections) · **K41 19/19** retry enum coverage.
+The 9 re-opened rows and their fixes:
+- **K5** — generator records a retry for ALL non-eligible reasons (incl. migration_missing / cross_clinic / case_not_found); must classify and retry ONLY genuinely retryable deferrals.
+- **K7** — `supersedeStaleBillingDocument` returns a bare boolean; when the retry-record itself fails it still reports success (overstates durability); must return a structured result and surface `reconciliation_not_recorded`.
+- **K8** — `retrySupersede` ignores `failure.sourceId`/`sourceTable` (could resolve document A from document B) and resolves on transient re-eval; must be exact source-bound + prove the post-condition.
+- **K13** — `.limit(SCAN_LIMIT)` + `length >= SCAN_LIMIT` cannot distinguish a full page from truncation; must use SCAN_LIMIT+1.
+- **K18** — `loadGpps` couples canonical identity verification with optional display; an ordinary display read failure changes canonical classification (verified→unresolved, IDs null); must separate a REQUIRED identity loader from an OPTIONAL display loader.
+- **K31** — overflow matrix needs 12 explicit production windows (currently 5).
+- **K38** — failure-injection needs 8 explicit critical paths (currently 4).
+- **K39** — concurrency needs 7 areas incl. claim + invoice CORRECTION (currently transitions only).
+- **K41** — retry inventory must be rebuilt from the actual `ANCILLARY_DOCUMENT_FAILURE_ACTIONS` enum (19 values) + an executable enum-coverage test.
+- **Migration 0057: not required** — provenance/idempotency/positive-amount CHECKs on entity tables would reject valid correction/backfill/draft rows (nullable `idempotency_key`/`charge_amount`); current-row uniqueness already in 0056; indexes not a correctness requirement given proven query bounds (K30).
 
-## Post-implementation outcome (Phase 2K)
-- **MANDATORY_HARDENING: 22 / 22 VERIFIED** · unresolved MANDATORY_HARDENING: 0.
-- **PRODUCT_DECISION_REQUIRED: 11** (recorded in `POST_2K_PRODUCT_DECISIONS.md`; do not block 2K PASS — behavior preserved).
-- **UI_REDESIGN_DEFERRED: 1** (K32 unified Finance surface) · **ALREADY_FIXED: 2** (K9, K23) · **NO_LONGER_APPLICABLE: 3** (K19, K22, K25).
-- **Migration 0057: not required** — provenance/idempotency/positive-amount CHECKs on entity tables are UNSAFE (correction/backfill inserts legitimately set `idempotencyKey ?? null`; draft claims carry null `charge_amount`), so they would reject valid Phase-2J rows; current-row uniqueness already exists in 0056; performance indexes are not a correctness requirement given the read models are provably query-bounded (K30). No 0057 created.
-- Evidence: financial/stage cluster (K33 replay from/to truth, K37 single shared lineage builder, K20 null-fingerprint fail-closed, K21 verified-identity default); procedure-lifecycle cluster (K1 ensure-or-create reference, K2 retry service-type revalidation, K5 generator self-healing retry, K11 report-documentType tests, K3 classifier↔live-eligibility parity); billing/read-model cluster (K7 durable reference supersession + wired retry, K8 post-condition-proven resolution, K10 non-superseded-only durability, K12 finance dedup, K13 raw-count truncation, K16 structured client error, K18 PCS display degradation); enterprise matrices (K30 query bounds 1/25/100, K31 overflow/truncation, K38 failure-injection, K39 concurrency; K40 tenancy assertions folded in).
+Rows return to VERIFIED only after implementation + real behavioral tests land and BOTH
+independent reviewers (adversarial + accounting) return 0 BLOCKER / 0 MAJOR. The
+post-fix outcome is recorded here once complete.

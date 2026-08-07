@@ -113,19 +113,25 @@ async function buildFinance(clinicId: number): Promise<FinanceOverview> {
   const shell = (availability: SectionAvailability, warnings: string[] = []): FinanceOverview => ({ availability, warnings, counts: { ...empty }, billingBlockersByCode: [], claimBlockersByCode: [], lastEvaluatedAt: null, rows: [] });
   if (!billingReadinessRuntimeEnabled()) return shell("upstream_flag_off", ["canonical_billing_flags_off"]);
   try {
-    // Current (non-superseded) canonical readiness per exact case.
-    const readiness = await db.select().from(canonicalBillingReadinessChecks).where(and(
+    // K13: fetch SCAN_LIMIT+1 so an EXACTLY-full page is distinguishable from a truncated
+    // one; determine truncation from the RAW fetched counts (before any in-memory filter),
+    // then process only the bounded first SCAN_LIMIT rows.
+    const readinessRaw = await db.select().from(canonicalBillingReadinessChecks).where(and(
       eq(canonicalBillingReadinessChecks.clinicId, clinicId),
       isNull(canonicalBillingReadinessChecks.supersededAt),
-    )).limit(SCAN_LIMIT);
+    )).limit(SCAN_LIMIT + 1);
+    const readinessTruncated = readinessRaw.length > SCAN_LIMIT;
+    const readiness = readinessRaw.slice(0, SCAN_LIMIT);
     // Exact clinic + current (non-superseded) + canonical — enforced in SQL AND
     // in memory (defense-in-depth; superseded snapshots are never current).
     const current = readiness.filter((r) => r.clinicId === clinicId && r.supersededAt == null && r.ancillaryCaseId != null && r.canonicalStatus != null);
     // Current (non-superseded) active canonical Billing Documents per exact case.
-    const docs = await db.select().from(canonicalBillingDocumentRequests).where(and(
+    const docsRaw = await db.select().from(canonicalBillingDocumentRequests).where(and(
       eq(canonicalBillingDocumentRequests.clinicId, clinicId),
       isNull(canonicalBillingDocumentRequests.supersededAt),
-    )).limit(SCAN_LIMIT);
+    )).limit(SCAN_LIMIT + 1);
+    const docsTruncated = docsRaw.length > SCAN_LIMIT;
+    const docs = docsRaw.slice(0, SCAN_LIMIT);
     const docByCase = new Map<number, string>();
     for (const d of docs) {
       if (d.clinicId !== clinicId || d.supersededAt != null) continue;
@@ -173,10 +179,11 @@ async function buildFinance(clinicId: number): Promise<FinanceOverview> {
         claimBlockerCount: ((r.claimBlockers as unknown[] | null) ?? []).length,
         evaluatedAt: iso(r.evaluatedAt),
       }));
-    // K13: truncation is detected from the RAW fetched row counts (before the in-memory
-    // clinic/superseded filter) so an in-memory drop can never hide truncation.
+    // K13: truncation is proven by SCAN_LIMIT+1 on the RAW fetch (before the in-memory
+    // clinic/superseded filter) — an exactly-full page is NOT flagged, and an in-memory
+    // drop can never hide a genuine truncation.
     const warnings = [
-      ...(readiness.length >= SCAN_LIMIT || docs.length >= SCAN_LIMIT ? ["counts_truncated"] : []),
+      ...(readinessTruncated || docsTruncated ? ["counts_truncated"] : []),
       ...(duplicateCurrentReadiness > 0 ? ["duplicate_current_readiness"] : []),
     ];
     return { availability: "available", warnings, counts, billingBlockersByCode: tally(billingBlockers), claimBlockersByCode: tally(claimBlockers), lastEvaluatedAt, rows };

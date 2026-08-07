@@ -8,7 +8,16 @@
 // and the case is NEVER grouped with another patient (it stays keyed by its own
 // ancillaryCaseId).
 
-import type { PatientClinicMembership, GlobalPlexusPatient } from "@shared/schema/plexusIdentity";
+import type { PatientClinicMembership } from "@shared/schema/plexusIdentity";
+
+// Identity truth is proven from these fields ONLY — never from display name / DOB.
+// Display fields are optional so the REQUIRED canonical-identity loader can be
+// separated from the OPTIONAL display projection (K18): a display read failure must
+// never change identity classification.
+export type IdentityPatient = {
+  id: number; identityStatus: string; mergedIntoPatientId: number | null;
+  displayName?: string | null; dob?: string | null;
+};
 
 export type IdentityResolution = {
   resolved: boolean;
@@ -29,7 +38,7 @@ export function verifyCaseIdentity(args: {
   caseGlobalPatientId: number | null;
   caseMembershipId: number | null;
   membership?: PatientClinicMembership;
-  globalPatient?: GlobalPlexusPatient;
+  globalPatient?: IdentityPatient;
 }): IdentityResolution {
   if (args.caseMembershipId == null) return unresolved(["identity_membership_missing"]);
   const m = args.membership;

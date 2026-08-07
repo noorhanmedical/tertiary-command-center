@@ -11,7 +11,7 @@
 process.env.DATABASE_URL ??= "postgres://placeholder@localhost:5432/placeholder";
 
 export type TableSpec = {
-  select?: () => unknown[];
+  select?: (cols?: unknown) => unknown[];
   onInsert?: (v: Record<string, unknown>) => unknown[];
   onUpdate?: (v: Record<string, unknown>) => unknown[];
   onDelete?: () => unknown[];
@@ -20,13 +20,17 @@ export type Call = { op: string; table: unknown; payload?: unknown };
 
 export function buildFakeDb(spec: Map<unknown, TableSpec>) {
   const calls: Call[] = [];
-  function selectResult(t: unknown): unknown[] {
+  // The projection columns passed to `db.select({...})` are forwarded to the table
+  // spec's `select(cols?)` so a test can distinguish two reads of the SAME table by
+  // their projection (e.g. a REQUIRED identity read vs an OPTIONAL display read).
+  // Additive: existing `() => rows` specs ignore the argument.
+  function selectResult(t: unknown, cols?: unknown): unknown[] {
     calls.push({ op: "select", table: t });
     const s = spec.get(t);
-    return s?.select ? s.select() : [];
+    return s?.select ? s.select(cols) : [];
   }
   const fake = {
-    select(_cols?: unknown) {
+    select(cols?: unknown) {
       let t: unknown = null;
       const chain: Record<string, unknown> = {
         from(x: unknown) { t = x; return chain; },
@@ -35,10 +39,10 @@ export function buildFakeDb(spec: Map<unknown, TableSpec>) {
         where() { return chain; },
         orderBy() { return chain; },
         groupBy() { return chain; },
-        limit(_n: number) { return Promise.resolve(selectResult(t)); },
+        limit(_n: number) { return Promise.resolve(selectResult(t, cols)); },
         $dynamic() { return chain; },
         then(res: (v: unknown[]) => void, rej?: (e: unknown) => void) {
-          Promise.resolve().then(() => selectResult(t)).then(res, rej);
+          Promise.resolve().then(() => selectResult(t, cols)).then(res, rej);
         },
       };
       return chain;

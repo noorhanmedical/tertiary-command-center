@@ -578,11 +578,24 @@ async function testK12DuplicateCurrentReadiness() {
 }
 async function testK13RawTruncation() {
   const t = await loadCanonicalTables(); const o = await overview();
-  // RAW fetch returns SCAN_LIMIT (2000) rows; half are cross-clinic (dropped in memory).
-  // Truncation must be detected from the RAW count, not the post-filter count.
-  const raw = Array.from({ length: 2000 }, (_, i) => readiness({ id: i + 1, ancillaryCaseId: i + 1, clinicId: i % 2 === 0 ? 1 : 2 }));
-  const r = await runWithDb(spec(t, { readiness: raw }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
-  assert.ok(r.finance.warnings.includes("counts_truncated"), "K13: truncation detected from RAW fetched length even after the in-memory clinic filter drops rows");
+  const SCAN = 2000; // must match SCAN_LIMIT in canonicalOverview.ts
+  const rdy = (n: number, clinicMix = false) => Array.from({ length: n }, (_, i) => readiness({ id: i + 1, ancillaryCaseId: i + 1, clinicId: clinicMix ? (i % 2 === 0 ? 1 : 2) : 1 }));
+  const docs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i + 1, clinicId: 1, ancillaryCaseId: i + 1, canonicalStatus: "generated", supersededAt: null }));
+  const run = (specOpts: Record<string, unknown>) => runWithDb(spec(t, specOpts), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  // (1) EXACTLY SCAN_LIMIT readiness rows → a full page is NOT truncation.
+  assert.ok(!(await run({ readiness: rdy(SCAN) })).finance.warnings.includes("counts_truncated"), "K13 (1): exactly SCAN_LIMIT readiness rows → NOT truncated");
+  // (2) SCAN_LIMIT+1 readiness rows → truncated.
+  assert.ok((await run({ readiness: rdy(SCAN + 1) })).finance.warnings.includes("counts_truncated"), "K13 (2): SCAN_LIMIT+1 readiness rows → counts_truncated");
+  // (3) EXACTLY SCAN_LIMIT Billing Document rows → no false truncation.
+  assert.ok(!(await run({ readiness: [readiness()], docs: docs(SCAN) })).finance.warnings.includes("counts_truncated"), "K13 (3): exactly SCAN_LIMIT Billing Document rows → NOT truncated");
+  // (4) SCAN_LIMIT+1 Billing Document rows → truncated.
+  assert.ok((await run({ readiness: [readiness()], docs: docs(SCAN + 1) })).finance.warnings.includes("counts_truncated"), "K13 (4): SCAN_LIMIT+1 Billing Document rows → counts_truncated");
+  // (5) SCAN_LIMIT+1 RAW where half are cross-clinic (dropped in memory) → truncation is
+  // still proven from the RAW fetched count; an in-memory drop can never hide it.
+  assert.ok((await run({ readiness: rdy(SCAN + 1, true) })).finance.warnings.includes("counts_truncated"), "K13 (5): in-memory clinic drops cannot hide RAW truncation");
+  // (6) duplicate current readiness still excluded (K12 unchanged) with no false truncation.
+  const dup = await run({ readiness: [readiness({ id: 1, ancillaryCaseId: 5 }), readiness({ id: 2, ancillaryCaseId: 5 })] });
+  assert.ok(dup.finance.counts.evaluated === 0 && dup.finance.warnings.includes("duplicate_current_readiness") && !dup.finance.warnings.includes("counts_truncated"), "K13 (6): duplicate current readiness excluded, no false truncation");
 }
 
 const tests: Array<[string, () => Promise<void>]> = [
