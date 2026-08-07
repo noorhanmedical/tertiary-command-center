@@ -161,7 +161,7 @@ export async function transitionCanonicalClaim(input: TransitionInput2): Promise
   try {
     const replay = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
     if (replay.kind === "conflict") return { status: "idempotency_conflict" };
-    if (replay.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: "", to: input.transition };
+    if (replay.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: replay.fromStatus ?? "", to: replay.toStatus ?? input.transition };
     const rows = await db.select().from(canonicalClaims).where(and(eq(canonicalClaims.clinicId, input.clinicId), eq(canonicalClaims.id, input.claimId))).limit(2);
     const claim = rows.find((r) => r.id === input.claimId && r.clinicId === input.clinicId);
     if (!claim) return { status: "not_found" };
@@ -186,7 +186,7 @@ export async function transitionCanonicalClaim(input: TransitionInput2): Promise
     if (!done) {
       // §7 zero-row update: an identical racing command may have already applied it.
       const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
-      if (post.kind === "replay") return { status: "transitioned", claimId: input.claimId, from, to };
+      if (post.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: post.fromStatus ?? from, to: post.toStatus ?? to };
       if (post.kind === "conflict") return { status: "idempotency_conflict" };
       return { status: "conflict" };
     }
@@ -196,7 +196,7 @@ export async function transitionCanonicalClaim(input: TransitionInput2): Promise
     // (replay the exact prior success; different intent → idempotency_conflict).
     if (isUnique(e)) {
       const post = await resolveFinancialCommandRace(db as unknown as DbLike, { entityType: "claim", clinicId: input.clinicId, idempotencyKey: input.idempotencyKey, commandFingerprint: fp });
-      if (post.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: "", to: input.transition };
+      if (post.kind === "replay") return { status: "transitioned", claimId: input.claimId, from: post.fromStatus ?? "", to: post.toStatus ?? input.transition };
       if (post.kind === "conflict") return { status: "idempotency_conflict" };
       return { status: "conflict" };
     }

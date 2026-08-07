@@ -24,6 +24,7 @@ import { onProcedureCompleted, ensureCanonicalProcedureNoteForAncillaryCase } fr
 import { generateProcedureNote, retryFailedProcedureNoteGeneration } from "../procedureLifecycle/procedureNoteGenerator";
 import { voidProcedureNoteLineageForCase, reconcileVoidedProcedureNoteReference } from "../procedureLifecycle/procedureNoteLineage";
 import { getProcedureNoteByIdForClinic } from "../../repositories/physicianPortal.repo";
+import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { featureFlags as flags, procedureNoteRuntimeEnabled, procedureNoteGeneratorEnabled } from "../../lib/featureFlags";
 import {
   loadCanonicalDocumentSource,
@@ -433,7 +434,9 @@ async function retryGenerateProcedureNote(failure: AncillaryDocumentReconciliati
   if (r.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
   if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
   if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
-  if (r.status === "not_yet_eligible") return { ...base, status: "not_yet_eligible" };
+  // K5 — `not_yet_eligible` (with or without a re-recorded durable retry, which dedups
+  // to THIS same failure): keep this exact failure open so a later pass re-drives it.
+  if (r.status === "not_yet_eligible" || r.status === "not_yet_eligible_retry_recorded" || r.status === "not_yet_eligible_retry_not_recorded") return { ...base, status: "not_yet_eligible" };
   // generated_reference_retry_not_recorded, failed_retry_*, report_content_unavailable_*,
   // already_claimed, not_pending, failure_not_verified → NEVER resolve.
   return { ...base, status: "still_deferred", message: r.status };
@@ -459,9 +462,17 @@ async function retryProcedureNoteLineage(failure: AncillaryDocumentReconciliatio
     if (!note) return { ...base, status: "source_not_found" };
     if (note.ancillaryCaseId !== failure.ancillaryCaseId) return { ...base, status: "case_mismatch" };
     if (note.noteType !== "post_procedure_note") return { ...base, status: "source_type_mismatch" };
-    // `note` is a post_procedure_note for the exact case — a genuine lineage node
-    // (current stale note or a superseded predecessor). Re-driving the case-scoped
-    // ensure reconciles exactly this lineage (service is validated within ensure).
+    // K2 (defense-in-depth): explicitly revalidate the SERVICE before any mutation —
+    // the bound lineage note must belong to the exact service episode of the case being
+    // reconciled. A wrong-service note must NEVER be attached to another service's
+    // episode; reject with zero mutation (do not re-drive ensure). The failure's own
+    // serviceType (when recorded) must agree too.
+    const acase = await getAncillaryCaseById(failure.ancillaryCaseId);
+    if (!acase || acase.clinicId !== failure.clinicId) return { ...base, status: "cross_clinic_denied" };
+    if (note.serviceType !== acase.serviceType) return { ...base, status: "source_type_mismatch", message: "lineage_service_mismatch" };
+    // `note` is a post_procedure_note for the exact case + service — a genuine lineage
+    // node (current stale note or a superseded predecessor). Re-driving the case-scoped
+    // ensure reconciles exactly this lineage.
   } else if (failure.sourceTable != null) {
     // Lineage work is only ever keyed to procedure_notes (or source-less).
     return { ...base, status: "source_type_mismatch", message: "lineage_source_must_be_procedure_notes" };
@@ -531,7 +542,23 @@ async function retryProcedureNoteSignatureSync(failure: AncillaryDocumentReconci
   if (r.status === "case_mismatch") return { ...base, status: "case_mismatch" };
   if (r.status === "migration_missing") return { ...base, status: "migration_missing" };
   if (r.status === "skipped_flag_off") return { ...base, status: "skipped_flag_off" };
-  if (r.status === "no_reference") return { ...base, status: "reference_missing" };
+  if (r.status === "no_reference") {
+    // K1 (ensure-or-create): the generated note has NO canonical reference yet.
+    // Deterministically ensure-or-create the EXACT reference here (idempotent, scope-
+    // validated, signed note never rewritten) rather than depending on a separate
+    // `link_procedure_note` failure existing — then re-mirror the signature. A wrong
+    // clinic/case/service or a still-missing reference stays unresolved (truthful).
+    if (note.ancillaryCaseId == null) return { ...base, status: "reference_missing" };
+    const ensured = await ensureProcedureNoteReferenceForNote({ clinicId: failure.clinicId, ancillaryCaseId: note.ancillaryCaseId, noteId: note.id, source: "procedure_note_signature_sync" });
+    if (ensured.status === "cross_clinic_denied") return { ...base, status: "cross_clinic_denied" };
+    if (ensured.status === "note_case_mismatch") return { ...base, status: "case_mismatch" };
+    if (ensured.status === "migration_missing") return { ...base, status: "migration_missing" };
+    if (ensured.status === "resolved") {
+      const r2 = await syncProcedureNoteReferenceSignature({ clinicId: failure.clinicId, ancillaryCaseId: note.ancillaryCaseId, noteId: note.id, documentStatus, signedAt: note.signedAt ?? null });
+      if (r2.status === "synced") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
+    }
+    return { ...base, status: "reference_missing" };
+  }
   return { ...base, status: "still_deferred" };
 }
 

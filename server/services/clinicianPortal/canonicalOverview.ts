@@ -136,7 +136,19 @@ async function buildFinance(clinicId: number): Promise<FinanceOverview> {
     const billingBlockers: { code: string }[] = [];
     const claimBlockers: { code: string }[] = [];
     let lastEvaluatedAt: string | null = null;
-    for (const r of current) {
+    // K12: count each exact case at most ONCE. The Phase 2G evaluator supersedes on
+    // write (≤1 current readiness per case); if two current rows ever coexist for one
+    // ancillaryCaseId that is an upstream integrity violation — never double-count and
+    // never silently newest-wins. Such a case is excluded from the status buckets and
+    // surfaced via a `duplicate_current_readiness` warning (no canonical count until
+    // integrity is resolved). readyToGenerate / missingRequirements / the row list all
+    // consume the same deduped set.
+    const byCase = new Map<number, typeof current>();
+    for (const r of current) { const arr = byCase.get(r.ancillaryCaseId!) ?? []; arr.push(r); byCase.set(r.ancillaryCaseId!, arr); }
+    let duplicateCurrentReadiness = 0;
+    const cleanCases: typeof current = [];
+    for (const rows of byCase.values()) { if (rows.length > 1) { duplicateCurrentReadiness++; continue; } cleanCases.push(rows[0]); }
+    for (const r of cleanCases) {
       counts.evaluated++;
       const bb = (r.billingBlockers as { code: string }[] | null) ?? [];
       const cb = (r.claimBlockers as { code: string }[] | null) ?? [];
@@ -151,7 +163,7 @@ async function buildFinance(clinicId: number): Promise<FinanceOverview> {
       if (status === "pending" || status === "generating") counts.billingDocumentPending++;
       else if (status === "generated" || status === "approved") counts.billingDocumentGenerated++;
     }
-    const rows = current
+    const rows = cleanCases
       .slice().sort((a, b) => (a.ancillaryCaseId! - b.ancillaryCaseId!))
       .slice(0, ROW_LIMIT)
       .map((r) => ({
@@ -161,7 +173,12 @@ async function buildFinance(clinicId: number): Promise<FinanceOverview> {
         claimBlockerCount: ((r.claimBlockers as unknown[] | null) ?? []).length,
         evaluatedAt: iso(r.evaluatedAt),
       }));
-    const warnings = current.length >= SCAN_LIMIT ? ["counts_truncated"] : [];
+    // K13: truncation is detected from the RAW fetched row counts (before the in-memory
+    // clinic/superseded filter) so an in-memory drop can never hide truncation.
+    const warnings = [
+      ...(readiness.length >= SCAN_LIMIT || docs.length >= SCAN_LIMIT ? ["counts_truncated"] : []),
+      ...(duplicateCurrentReadiness > 0 ? ["duplicate_current_readiness"] : []),
+    ];
     return { availability: "available", warnings, counts, billingBlockersByCode: tally(billingBlockers), claimBlockersByCode: tally(claimBlockers), lastEvaluatedAt, rows };
   } catch (e) {
     return sectionFailure(e, () => shell("unavailable", ["finance_read_failed"]));

@@ -58,7 +58,11 @@ export type ProcedureNoteEligibilityResult = {
 // A report reference is "current" for eligibility only when it is not
 // superseded AND carries an acceptable positive status. pending /
 // pending_signature / superseded / voided are NOT current.
-const ACCEPTABLE_REPORT_STATUSES = new Set(["uploaded", "completed", "approved"]);
+// K3 — the SINGLE source of truth for which report document statuses the live
+// eligibility service accepts. The backfill DRY-RUN classifier imports this exact set
+// so its plan reports precisely what APPLY (the live ensure) would consider eligible —
+// never a broader set that overstates applicability.
+export const ACCEPTABLE_REPORT_STATUSES = new Set(["uploaded", "completed", "approved"]);
 
 // Schema-element-absent codes → truthful migration_missing (never a false
 // "no evidence"). 42P01 undefined_table, 42703 undefined_column.

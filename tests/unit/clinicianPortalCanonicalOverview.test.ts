@@ -566,8 +566,29 @@ async function testPagesBranchOnFlag() {
   }
 }
 
+// ── Phase 2K clinician-portal finance hardening (K12/K13) ──
+async function testK12DuplicateCurrentReadiness() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  const dup = await runWithDb(spec(t, { readiness: [readiness({ id: 1, ancillaryCaseId: 5, canonicalStatus: "ready_to_generate" }), readiness({ id: 2, ancillaryCaseId: 5, canonicalStatus: "ready_to_generate" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(dup.finance.counts.evaluated, 0, "K12: two current readiness rows for one case are NOT double-counted (no newest-wins)");
+  assert.equal(dup.finance.counts.readyToGenerate, 0, "K12: duplicate-current case excluded from status buckets");
+  assert.ok(dup.finance.warnings.includes("duplicate_current_readiness"), "K12: duplicate current readiness surfaced as a warning");
+  const one = await runWithDb(spec(t, { readiness: [readiness({ ancillaryCaseId: 5, canonicalStatus: "ready_to_generate" })] }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.equal(one.finance.counts.evaluated, 1, "K12: exactly one current readiness → counted once");
+}
+async function testK13RawTruncation() {
+  const t = await loadCanonicalTables(); const o = await overview();
+  // RAW fetch returns SCAN_LIMIT (2000) rows; half are cross-clinic (dropped in memory).
+  // Truncation must be detected from the RAW count, not the post-filter count.
+  const raw = Array.from({ length: 2000 }, (_, i) => readiness({ id: i + 1, ancillaryCaseId: i + 1, clinicId: i % 2 === 0 ? 1 : 2 }));
+  const r = await runWithDb(spec(t, { readiness: raw }), ALL, async () => o.getClinicianPortalCanonicalOverview({ clinicId: 1 }));
+  assert.ok(r.finance.warnings.includes("counts_truncated"), "K13: truncation detected from RAW fetched length even after the in-memory clinic filter drops rows");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
   ["finance counts + claim blockers + rows", testFinanceCounts],
+  ["K12 duplicate current readiness not double-counted", testK12DuplicateCurrentReadiness],
+  ["K13 truncation from raw fetched count", testK13RawTruncation],
   ["superseded readiness excluded", testSupersededExcluded],
   ["(11-13) cross-clinic excluded", testCrossClinicExcluded],
   ["(33) partial failure unavailable not zero", testPartialFailureUnavailable],

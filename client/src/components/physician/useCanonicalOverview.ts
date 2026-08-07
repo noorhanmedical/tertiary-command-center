@@ -6,16 +6,19 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { isClinicianPortalCanonicalDataEnabled } from "@/lib/clinicianPortalCanonicalFlag";
+import { ApiError } from "@/lib/queryClient";
 import type { ClinicianPortalCanonicalOverview } from "@shared/clinicianPortalOverview";
 
 export const CANONICAL_OVERVIEW_QUERY_KEY = ["/api/clinician-portal/canonical-overview"] as const;
 
 const MIGRATION_MISSING_CODE = "ANCILLARY_DOCUMENT_MIGRATION_MISSING";
 
-/** The batched query surfaces a 503 migration-missing failure as an Error whose
- *  message carries the server code. Detected here so the tiles can render the
+/** K16: a 503 migration-missing failure is detected from the STRUCTURED `ApiError`
+ *  (HTTP status + stable server `code`) rather than by parsing the error message; the
+ *  message fallback is retained only for non-ApiError inputs. The tiles render the
  *  dedicated migration state (never canonical zero counts under an error). */
 export function isMigrationMissingError(error: unknown): boolean {
+  if (error instanceof ApiError) return error.status === 503 || error.code === MIGRATION_MISSING_CODE;
   const msg = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   return msg.includes(MIGRATION_MISSING_CODE) || /^503:/.test(msg);
 }

@@ -327,18 +327,22 @@ export async function syncBillingDocumentReference(args: { clinicId: number; anc
  * is durably recorded. A missing reference whose link retry cannot be persisted
  * keeps the generation failure OPEN (never erases the only recovery path).
  */
-export async function ensureBillingReferenceDurability(args: { clinicId: number; ancillaryCaseId: number; billingDocumentId: number; source: string }): Promise<"reference_present" | "link_retry_recorded" | "link_retry_not_recorded" | "ownership_conflict" | "migration_missing"> {
+export async function ensureBillingReferenceDurability(args: { clinicId: number; ancillaryCaseId: number; billingDocumentId: number; source: string }): Promise<"reference_present" | "link_retry_recorded" | "link_retry_not_recorded" | "ownership_conflict" | "duplicate_current_reference" | "migration_missing"> {
   try {
-    const [ref] = await db.select().from(ancillaryDocumentReferences).where(and(
+    // K10: current-reference durability requires exactly ONE non-superseded owned row.
+    // A superseded reference NEVER satisfies durability; a mismatched owner or a duplicate
+    // current row is a fail-closed integrity conflict (never resolves the generate failure).
+    const refs = await db.select().from(ancillaryDocumentReferences).where(and(
       eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE),
       eq(ancillaryDocumentReferences.sourceId, args.billingDocumentId),
       eq(ancillaryDocumentReferences.documentKind, "billing_document"),
-    )).limit(1);
-    if (ref) {
-      if (ref.clinicId !== args.clinicId || ref.ancillaryCaseId !== args.ancillaryCaseId) return "ownership_conflict";
-      return "reference_present";
-    }
-    // No reference → the only recovery is a durable link_billing_document failure.
+    )).limit(50);
+    if (refs.some((r) => r.clinicId !== args.clinicId || r.ancillaryCaseId !== args.ancillaryCaseId)) return "ownership_conflict";
+    const current = refs.filter((r) => r.supersededAt == null);
+    if (current.length > 1) return "duplicate_current_reference";
+    if (current.length === 1) return "reference_present";
+    // 0 current (none, or ONLY superseded) → the exact recovery is a link_billing_document
+    // failure that (re)creates the current reference. A superseded-only ref is NOT durable.
     return (await recordBillingRefRetry(args, "link_billing_document")) ? "link_retry_recorded" : "link_retry_not_recorded";
   } catch (e) {
     if (MIGRATION_MISSING_CODES.has((e as { code?: string })?.code ?? "")) return "migration_missing";

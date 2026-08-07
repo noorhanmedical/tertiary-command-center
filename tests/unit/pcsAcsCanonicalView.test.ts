@@ -391,8 +391,27 @@ async function testRouteMigration503() {
   }
 }
 
+// ── Phase 2K PCS display-failure degradation (K18) ──
+async function testK18DisplayFailureDegrades() {
+  const t = await loadCanonicalTables(); const p = await pcs();
+  const verified = () => ({ cases: [acase({ id: 5, patientClinicMembershipId: 800, globalPlexusPatientId: 900 })], pcms: [pcm({ id: 800, clinicId: 1, globalPlexusPatientId: 900, membershipStatus: "active" })], gpps: [gpp({ id: 900 })] });
+  // Baseline: display read succeeds → verified group with display.
+  const ok = await runPcs(t, verified());
+  assert.equal(ok.rows[0]?.patientDisplay, "Jane Doe", "K18 baseline: display read succeeds → display present");
+  // Ordinary display read failure: the PCS request STILL serves canonical truth — never
+  // a hard failure, never a fabricated/demographic display.
+  const ordinary = spec(t, verified()); ordinary.set(t.globalPatients, { select: () => { throw new Error("display read down"); } });
+  const degraded = await runWithDb(ordinary, ALL, async () => p.getPcsCanonicalView({ clinicId: 1 }));
+  const groups = [...(degraded.rows ?? []), ...((degraded.unresolved?.rows) ?? [])] as { patientDisplay: unknown }[];
+  assert.ok(groups.length > 0 && groups.every((g) => g.patientDisplay == null), "K18: ordinary display read failure → request serves, display null (no PHI, no demographic fallback)");
+  // Migration-missing on the same read still propagates → the route answers 503.
+  const migSpec = spec(t, verified()); migSpec.set(t.globalPatients, { select: () => { throw Object.assign(new Error("relation does not exist"), { code: "42P01" }); } });
+  await assert.rejects(async () => { await runWithDb(migSpec, ALL, async () => p.getPcsCanonicalView({ clinicId: 1 })); }, "K18: migration-missing on the display read still propagates (503)");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
   ["ACS stage-vector truth", testAcsStageVectorTruth],
+  ["K18 PCS display-failure degradation", testK18DisplayFailureDegrades],
   ["(1-9) identity resolver", testIdentityResolver],
   ["(1-9) invalid-membership cases surfaced", testInvalidMembershipCasesSurfaced],
   ["(10/11) verified episode continuation", testEpisodeContinuation],

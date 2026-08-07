@@ -457,7 +457,98 @@ async function testSiblingsUntouched() {
   assert.equal(resolves, 1, "exactly one resolution");
 }
 
+// ── Phase 2K hardening ──
+// K5 — a PENDING note whose fresh eligibility read fails records a durable exact
+// generate retry (self-healing), stays pending, and dedups; later eligible resolves.
+async function testK5GeneratorNotYetEligibleRecordsRetry() {
+  const t = await loadCanonicalTables(); const g = await gen();
+  const inserts: Record<string, unknown>[] = [];
+  const spec = genSpec(t, noteRow({ generationStatus: "pending" }), {
+    readiness: [], // no acceptable report → eligibility fails
+    failuresSelect: () => [],
+    docFailInsert: (v) => { inserts.push(v); return [{ ...v, id: 1 }]; },
+  });
+  spec.set(t.documentReferences, { select: () => [], onUpdate: (v) => [{ ...v }] }); // no current report reference
+  const r = await runWithDb(spec, GEN, async (calls: Call[]) => {
+    const res = await g.generateProcedureNote({ clinicId: 1, ancillaryCaseId: 5, noteId: 900 });
+    assert.equal(countOps(calls, "update", t.procedureNotes), 0, "K5: note stays pending — never claimed/generated on not_yet_eligible");
+    return res;
+  });
+  assert.equal(r.status, "not_yet_eligible_retry_recorded", "K5: durable generate retry recorded on not_yet_eligible");
+  assert.ok(inserts.some((i) => i.requestedAction === "generate_procedure_note"), "K5: exact generate_procedure_note retry queued");
+}
+// K5 — classifyGeneratorOutcome treats the retry-recorded status as durable.
+async function testK5ClassifyDurable() {
+  const orch = await import("../../server/services/procedureLifecycle/procedureLifecycleOrchestration");
+  const w1: string[] = []; const c1 = orch.classifyGeneratorOutcome("not_yet_eligible_retry_recorded" as any, w1);
+  assert.ok(c1.generationDeferred === true && c1.generationRetryRecorded === true, "K5: retry_recorded → durable deferral");
+  const w2: string[] = []; const c2 = orch.classifyGeneratorOutcome("not_yet_eligible_retry_not_recorded" as any, w2);
+  assert.ok(c2.generationDeferred === true && c2.generationRetryRecorded === false, "K5: retry_not_recorded → non-durable");
+}
+// K1 — the signature-sync retry ENSURES-OR-CREATES the reference (no dependence on a
+// separate link_procedure_note failure), then mirrors the signature → resolved.
+async function testK1SignatureSyncEnsuresReference() {
+  const t = await loadCanonicalTables(); const w = await worker();
+  const note = noteRow({ generationStatus: "generated", signatureStatus: "signed", signedAt: OLD });
+  let refCreated = false;
+  // First reference lookup (sync) → none; ensure creates it; second lookup → present.
+  const spec = new Map<unknown, TableSpec>([
+    [t.procedureNotes, { select: () => [note] }],
+    [t.ancillaryCases, { select: () => [caseRow()] }],
+    [t.documentReferences, { select: () => (refCreated ? [procRef({ documentStatus: "signed" })] : []), onInsert: (v) => { refCreated = true; return [{ ...v, id: 55 }]; }, onUpdate: (v) => [{ ...v }] }],
+    [t.documentFailures, { select: () => [failRow({ id: 30, requestedAction: "sync_procedure_note_signature" })], onInsert: (v) => [{ ...v, id: 2 }] }],
+  ]);
+  const r = await runWithDb(spec, ALL, async (calls: Call[]) => {
+    const res = await w.retryAncillaryDocumentFailure(failRow({ id: 30, requestedAction: "sync_procedure_note_signature" }) as any);
+    assert.ok(countOps(calls, "insert", t.documentReferences) >= 1, "K1: reference deterministically created (ensure-or-create), not left missing");
+    return res;
+  });
+  assert.equal(r.status, "resolved", "K1: reference ensured + signature synced → resolved (no dependence on a separate link failure)");
+}
+// K2 — a wrong-service lineage retry performs ZERO mutation (never attaches to another
+// service episode).
+async function testK2LineageWrongServiceZeroMutation() {
+  const t = await loadCanonicalTables(); const w = await worker();
+  const failure = failRow({ id: 40, requestedAction: "reconcile_procedure_note_lineage" });
+  const spec = new Map<unknown, TableSpec>([
+    // Note is NerveGuard; the case (reconciliation target) is BrainWave → mismatch.
+    [t.procedureNotes, { select: () => [noteRow({ serviceType: "NerveGuard" })], onUpdate: () => { throw new Error("K2: wrong-service lineage must not mutate the note"); } }],
+    [t.ancillaryCases, { select: () => [caseRow({ serviceType: "BrainWave" })] }],
+    [t.documentReferences, { select: () => [], onInsert: () => { throw new Error("K2: wrong-service lineage must not create a reference"); } }],
+    [t.documentFailures, { select: () => [failure], onInsert: (v) => [{ ...v, id: 3 }] }],
+  ]);
+  const r = await runWithDb(spec, ALL, async (calls: Call[]) => {
+    const res = await w.retryAncillaryDocumentFailure(failure as any);
+    assert.equal(countOps(calls, "update", t.procedureNotes), 0, "K2: zero note mutation");
+    return res;
+  });
+  assert.equal(r.status, "source_type_mismatch", "K2: wrong-service lineage retry rejected, never re-driving ensure");
+}
+// K3 — the backfill DRY-RUN classifier's report acceptance EXACTLY matches the live
+// eligibility service's status set (no broader vocabulary that overstates applicability).
+async function testK3ClassifierEligibilityParity() {
+  const t = await loadCanonicalTables(); const b = await backfill();
+  const elig = await import("../../server/services/procedureLifecycle/procedureNoteEligibility");
+  for (const status of ["uploaded", "completed", "approved", "generated", "signed", "pending", "voided"]) {
+    const spec = new Map<unknown, TableSpec>([
+      [t.ancillaryCases, { select: () => [caseRow()] }],
+      [t.documentReferences, { select: () => [reportRef({ documentStatus: status })] }],
+      [t.procedureNotes, { select: () => [] }],
+      [t.caseDocumentReadiness, { select: () => [readinessRow({ documentStatus: status })] }],
+    ]);
+    const outcomes = await runWithDb(spec, ALL, async () => b.classify(peRow({ ancillaryCaseId: 5, procedureStatus: "complete" }) as any));
+    const eligible = elig.ACCEPTABLE_REPORT_STATUSES.has(status);
+    assert.equal(outcomes.includes("exact_report_evidence_available"), eligible, `K3: report '${status}' classifier availability == live eligibility (${eligible})`);
+    assert.equal(outcomes.includes("note_generation_candidate"), eligible, `K3: report '${status}' generation-candidate == live eligibility`);
+  }
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["K5 generator not_yet_eligible records durable retry", testK5GeneratorNotYetEligibleRecordsRetry],
+  ["K5 classifyGeneratorOutcome durability", testK5ClassifyDurable],
+  ["K1 signature-sync ensures-or-creates reference", testK1SignatureSyncEnsuresReference],
+  ["K2 lineage wrong-service zero mutation", testK2LineageWrongServiceZeroMutation],
+  ["K3 backfill classifier ↔ eligibility parity", testK3ClassifierEligibilityParity],
   ["(17) verified exact failed-note regeneration succeeds", testVerifiedFailedRetrySucceeds],
   ["(16) unverified failed-note retry cannot execute", testUnverifiedFailedRetryRejected],
   ["(2) pending generator never reclaims a failed note", testPendingGeneratorSkipsFailed],

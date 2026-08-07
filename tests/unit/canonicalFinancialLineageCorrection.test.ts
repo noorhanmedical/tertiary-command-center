@@ -447,7 +447,64 @@ async function testStageReceiptWideReadFailFailsClosed() {
   assert.notEqual(rcptFail.status, "paid", "receipt-lookup failure never derives paid");
 }
 
+// §K33 — an idempotent transition replay returns the EXACT prior from/to from the audit
+// row (never `from:""`, never inferred from the current entity, which may have advanced).
+async function testReplayResponseTruth() {
+  const t = await loadCanonicalTables(); const c = await claimCmd(); const ic = await invoiceCmd(); const { commandFingerprint } = await cs();
+  const cfp = commandFingerprint({ action: "transition_claim", clinicId: 1, claimId: 700, transition: "submitted", sourceType: "manual_attestation", sourceReference: "R", reason: "why" });
+  const cAudit = { entityType: "claim", clinicId: 1, idempotencyKey: "k", entityId: 700, commandFingerprint: cfp, fromStatus: "queued", toStatus: "submitted" };
+  // The current claim row has ADVANCED to `paid`; the entry-gate replay must report the
+  // AUDIT's queued→submitted, not the advanced entity.
+  const cspec = new Map<unknown, TableSpec>([
+    [t.canonicalClaims, { select: () => [{ id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "paid", attemptNumber: 1 }], onUpdate: (v: Record<string, unknown>) => [{ ...v, id: 700 }] }],
+    [t.canonicalFinancialTransitions, { select: () => [cAudit], onInsert: (v: Record<string, unknown>) => [{ ...v, id: 1 }] }],
+  ]);
+  const cr = await runWithDb(cspec, CHAIN, async () => c.transitionCanonicalClaim({ clinicId: 1, claimId: 700, actorUserId: "u", actorRole: "biller", transition: "submitted", sourceType: "manual_attestation", sourceReference: "R", reason: "why", idempotencyKey: "k" }));
+  assert.ok(cr.status === "transitioned" && (cr as { from: string }).from === "queued" && (cr as { to: string }).to === "submitted", `claim replay returns EXACT audit from/to, not the advanced entity (got ${JSON.stringify(cr)})`);
+  const ifp = commandFingerprint({ action: "transition_invoice", clinicId: 1, invoiceId: 800, transition: "issued", deliveryEventReference: undefined, sourceType: undefined, sourceReference: undefined, reason: undefined });
+  const iAudit = { entityType: "invoice", clinicId: 1, idempotencyKey: "k", entityId: 800, commandFingerprint: ifp, fromStatus: "draft", toStatus: "issued" };
+  const ispec = new Map<unknown, TableSpec>([
+    [t.canonicalInvoices, { select: () => [{ id: 800, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "paid", claimId: 700, invoiceNumber: "INV-1-800" }], onUpdate: (v: Record<string, unknown>) => [{ ...v, id: 800 }] }],
+    [t.canonicalFinancialTransitions, { select: () => [iAudit], onInsert: (v: Record<string, unknown>) => [{ ...v, id: 1 }] }],
+  ]);
+  const ir = await runWithDb(ispec, CHAIN, async () => ic.transitionCanonicalInvoice({ clinicId: 1, invoiceId: 800, transition: "issued", actorUserId: "u", actorRole: "biller", idempotencyKey: "k" }));
+  assert.ok(ir.status === "transitioned" && (ir as { from: string }).from === "draft" && (ir as { to: string }).to === "issued", `invoice replay returns EXACT audit from/to (got ${JSON.stringify(ir)})`);
+  const cspec2 = new Map<unknown, TableSpec>([
+    [t.canonicalClaims, { select: () => [{ id: 700, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "queued", attemptNumber: 1 }] }],
+    [t.canonicalFinancialTransitions, { select: () => [{ ...cAudit, commandFingerprint: "OTHER" }] }],
+  ]);
+  const cr2 = await runWithDb(cspec2, CHAIN, async () => c.transitionCanonicalClaim({ clinicId: 1, claimId: 700, actorUserId: "u", actorRole: "biller", transition: "submitted", sourceType: "manual_attestation", sourceReference: "R", reason: "why", idempotencyKey: "k" }));
+  assert.equal(cr2.status, "idempotency_conflict", "different-intent same-key replay → idempotency_conflict");
+}
+// §K37 — the ONE shared `buildClaimLineageContext` (read model + stage + write-path) yields
+// identical claim-lineage verdicts for the same persisted claim across valid/stale variants.
+async function testClaimLineageBuilderParity() {
+  const { validateClaimLineage } = await lineageMod();
+  const { buildClaimLineageContext } = await import("../../server/services/canonicalFinancial/financialLineageContext");
+  const mk = (over: Record<string, unknown> = {}) => ({
+    caseById: new Map([[5, { clinicId: 1, serviceType: "BrainWave" }]]),
+    memById: new Map([[800, MEM]]), gpById: new Map([[900, GP]]),
+    rdById: new Map([[500, RD]]), bdById: new Map([[600, BD]]), parentById: new Map(),
+    ...over,
+  });
+  const cref = (o: Record<string, unknown>) => { const cc = claim(o) as Record<string, unknown>; return { id: cc.id, ancillaryCaseId: cc.ancillaryCaseId, patientClinicMembershipId: cc.patientClinicMembershipId, globalPlexusPatientId: cc.globalPlexusPatientId, billingReadinessCheckId: cc.billingReadinessCheckId, billingDocumentId: cc.billingDocumentId, supersedesClaimId: cc.supersedesClaimId }; };
+  const verdict = (maps: unknown) => validateClaimLineage(claim() as never, buildClaimLineageContext(cref({}) as never, maps as never)).ok;
+  assert.equal(verdict(mk()), true, "valid claim resolves via shared builder");
+  assert.equal(verdict(mk({ bdById: new Map([[600, { ...BD, evidenceFingerprint: "fp-2" }]]) })), false, "stale BD fingerprint → conflict");
+  assert.equal(verdict(mk({ memById: new Map([[800, { ...MEM, membershipStatus: "inactive" }]]) })), false, "inactive membership → conflict");
+  assert.equal(verdict(mk({ gpById: new Map([[900, { ...GP, mergedIntoPatientId: 901 }]]) })), false, "merged global patient → conflict");
+}
+// §K20 — the read-model invoice validator's fingerprint check is non-vacuous.
+async function testInvoiceNullFingerprint() {
+  const { validateInvoiceLineage } = await lineageMod();
+  assert.ok(!validateInvoiceLineage(inv({ evidenceFingerprint: null }) as never, ictx() as never).ok, "null invoice fingerprint (claim non-null) → conflict, never vacuous");
+  assert.ok(validateInvoiceLineage(inv() as never, ictx() as never).ok, "nonempty equal fingerprints → resolves");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["K33 replay response returns exact prior from/to", testReplayResponseTruth],
+  ["K37 shared claim-lineage builder parity", testClaimLineageBuilderParity],
+  ["K20 read-model invoice null fingerprint non-vacuous", testInvoiceNullFingerprint],
   ["payment-command allocation to invoice over a stale claim rejected", testPaymentCommandInvoiceStaleClaim],
   ["stage: clinic-level case-less receipt resolves / invalid conflicts", testStageClinicLevelReceipt],
   ["stage: receipt-wide read failure fails closed (no false paid/conflict)", testStageReceiptWideReadFailFailsClosed],

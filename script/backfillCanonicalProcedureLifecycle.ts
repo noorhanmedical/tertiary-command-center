@@ -26,12 +26,15 @@ import { patientAncillaryCases, ANCILLARY_ACTIVE_LIFECYCLE_STATUSES } from "@sha
 import { featureFlags } from "../server/lib/featureFlags";
 import { recordAncillaryDocumentFailure } from "../server/repositories/ancillaryDocuments.repo";
 import { onProcedureCompleted, ensureCanonicalProcedureNoteForAncillaryCase } from "../server/services/procedureLifecycle/procedureLifecycleOrchestration";
+import { ACCEPTABLE_REPORT_STATUSES } from "../server/services/procedureLifecycle/procedureNoteEligibility";
 
 const APPLY = process.env.BACKFILL_CANONICAL_PROCEDURE_LIFECYCLE_APPLY === "YES";
 const LIMIT = Math.min(Math.max(1, parseInt(process.env.BACKFILL_CANONICAL_PROCEDURE_LIFECYCLE_LIMIT ?? "200", 10) || 200), 1000);
 const ACTIVE = new Set<string>(ANCILLARY_ACTIVE_LIFECYCLE_STATUSES as unknown as string[]);
 const TERMINAL = new Set<string>(PROCEDURE_TERMINAL_STATUSES as unknown as string[]);
-const ACCEPTABLE_REPORT = new Set(["uploaded", "generated", "approved", "completed", "signed"]);
+// K3 — reuse the LIVE eligibility service's exact report-status set (no duplicated
+// vocabulary), so DRY-RUN reports precisely what APPLY would consider eligible.
+const ACCEPTABLE_REPORT = ACCEPTABLE_REPORT_STATUSES;
 
 // Every dry-run classification the contract requires.
 type Outcome =
@@ -50,7 +53,7 @@ function canApply(): boolean {
 
 /** Read-only classification. Returns the primary event→case outcome plus any
  *  applicable secondary note/report classifications (never writes). */
-async function classify(pe: typeof procedureEvents.$inferSelect): Promise<Outcome[]> {
+export async function classify(pe: typeof procedureEvents.$inferSelect): Promise<Outcome[]> {
   const out: Outcome[] = [];
   try {
     // ── procedure event already canonical (has a case) — probe note/report ──

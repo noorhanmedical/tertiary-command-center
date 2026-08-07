@@ -54,7 +54,7 @@ function invoice(o: Record<string, unknown> = {}) { return { id: 800, clinicId: 
 function payment(o: Record<string, unknown> = {}) { return { id: 900, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", eventType: "payment", status: "posted", currency: "USD", postedAt: OLD, receivedAt: OLD, amount: "420.00", ...o }; }
 function alloc(o: Record<string, unknown> = {}) { return { id: 950, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", paymentId: 900, eventType: "apply", parentAllocationId: null, targetType: "invoice", targetId: 800, currency: "USD", amount: "420.00", ...o }; }
 
-type Opts = { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; claimsMig?: boolean };
+type Opts = { claims?: unknown[]; invoices?: unknown[]; payments?: unknown[]; allocations?: unknown[]; claimsMig?: boolean; readiness?: unknown[]; billingDocs?: unknown[]; memberships?: unknown[]; globalPatients?: unknown[] };
 function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts = {}) {
   const mig = () => { throw Object.assign(new Error("relation does not exist"), { code: "42P01" }); };
   return new Map<unknown, TableSpec>([
@@ -66,21 +66,50 @@ function spec(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts = {}) 
     [t.procedureNotes, { select: () => [orderNote(), procNote()] }],
     [t.caseDocumentReadiness, { select: () => [cdr()] }],
     [t.procedureEvents, { select: () => [proc()] }],
-    [t.billingReadinessChecks, { select: () => [readiness()] }],
-    [t.billingDocumentRequests, { select: () => [billingDoc()] }],
+    [t.billingReadinessChecks, { select: () => o.readiness ?? [readiness()] }],
+    [t.billingDocumentRequests, { select: () => o.billingDocs ?? [billingDoc()] }],
     [t.canonicalClaims, { select: () => { if (o.claimsMig) return mig(); return o.claims ?? []; } }],
     [t.canonicalInvoices, { select: () => o.invoices ?? [] }],
     [t.canonicalPayments, { select: () => o.payments ?? [] }],
     [t.canonicalPaymentAllocations, { select: () => o.allocations ?? [] }],
-    [t.memberships, { select: () => [pcm()] }],
-    [t.globalPatients, { select: () => [gpp()] }],
+    [t.memberships, { select: () => o.memberships ?? [pcm()] }],
+    [t.globalPatients, { select: () => o.globalPatients ?? [gpp()] }],
     // §A the invoice→claim shared loader resolves the referenced claim's case context.
     [t.ancillaryCases, { select: () => [acase()] }],
   ]);
 }
-async function build(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts, flags: Record<string, boolean>, calls?: (c: Call[]) => void) {
+async function build(t: Awaited<ReturnType<typeof loadCanonicalTables>>, o: Opts, flags: Record<string, boolean>, calls?: (c: Call[]) => void, caseRow?: unknown) {
   const { buildStageVectors } = await stageMod();
-  return runWithDb(spec(t, o), flags, async (c: Call[]) => { const v = await buildStageVectors({ clinicId: 1, cases: [acase() as never] }); calls?.(c); return v[0]; });
+  return runWithDb(spec(t, o), flags, async (c: Call[]) => { const v = await buildStageVectors({ clinicId: 1, cases: [(caseRow ?? acase()) as never] }); calls?.(c); return v[0]; });
+}
+// §K20 — a NULL/empty evidence fingerprint on either side is unverifiable; two absent
+// fingerprints must never satisfy the version proof (no vacuous null===null advance).
+async function testBillingDocNullFingerprint() {
+  const t = await loadCanonicalTables();
+  const nn = await build(t, { readiness: [readiness({ evidenceFingerprint: null })], billingDocs: [billingDoc({ evidenceFingerprint: null })] }, CORE);
+  assert.ok(nn.billingDocument.status === null && nn.billingDocument.warnings.includes("billing_document_fingerprint_unresolved"), `null both fingerprints → unverifiable, never a vacuous match (got ${JSON.stringify(nn.billingDocument)})`);
+  const nr = await build(t, { readiness: [readiness({ evidenceFingerprint: null })] }, CORE);
+  assert.equal(nr.billingDocument.status, null, "null readiness fingerprint only → unverifiable");
+  const nd = await build(t, { billingDocs: [billingDoc({ evidenceFingerprint: null })] }, CORE);
+  assert.equal(nd.billingDocument.status, null, "null Billing Document fingerprint only → unverifiable");
+  const eq = await build(t, {}, CORE);
+  assert.ok(eq.billingDocument.status != null, `nonempty equal fingerprints → resolved (got ${JSON.stringify(eq.billingDocument)})`);
+  const ne = await build(t, { billingDocs: [billingDoc({ evidenceFingerprint: "fp-2" })] }, CORE);
+  assert.ok(ne.billingDocument.status === null && ne.billingDocument.warnings.includes("billing_document_stale_fingerprint"), "nonempty unequal fingerprints → stale");
+}
+// §K21 — identity.available is VERIFIED, never presumed from non-null ids.
+async function testStageIdentityVerified() {
+  const t = await loadCanonicalTables();
+  const av = await build(t, {}, CORE);
+  assert.equal(av.identity.available, true, "verified identity (active membership + current non-merged global patient) → available true");
+  const inact = await build(t, { memberships: [pcm({ membershipStatus: "inactive" })] }, CORE);
+  assert.ok(inact.identity.available === false && inact.identity.warnings.includes("identity_unverified"), "inactive membership → available false + identity_unverified");
+  const merged = await build(t, { globalPatients: [gpp({ mergedIntoPatientId: 901 })] }, CORE);
+  assert.equal(merged.identity.available, false, "merged global patient → available false");
+  const noMem = await build(t, { memberships: [] }, CORE);
+  assert.equal(noMem.identity.available, false, "ids present but membership not found → available false (never presumed)");
+  const noIds = await build(t, {}, CORE, undefined, acase({ globalPlexusPatientId: null, patientClinicMembershipId: null }));
+  assert.ok(noIds.identity.available === false && noIds.identity.warnings.includes("identity_incomplete"), "missing identity → available false + identity_incomplete");
 }
 
 async function testFlagsOffNonBlocking() {
@@ -182,6 +211,8 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["posted event alone never paid", testPaymentPostedNotPaid],
   ["missing claim table → 503", testClaimMigration503],
   ["wrong-service claim not used", testWrongServiceClaimNotUsed],
+  ["K20 billing-document null fingerprint → unverifiable", testBillingDocNullFingerprint],
+  ["K21 identity available only when verified", testStageIdentityVerified],
 ];
 async function run() {
   let failed = 0;

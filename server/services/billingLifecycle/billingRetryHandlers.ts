@@ -15,7 +15,7 @@ import { resolveAncillaryDocumentFailureById } from "../../repositories/ancillar
 import { procedureNoteRuntimeEnabled, billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled, billingDocumentGeneratorEnabled } from "../../lib/featureFlags";
 import { evaluateCanonicalBillingReadiness } from "./billingReadinessEvaluator";
 import { generateBillingDocument, retryFailedBillingDocumentGeneration, syncBillingDocumentReference, projectExactBillingDocumentReference, ensureBillingReferenceDurability } from "./billingDocumentGenerator";
-import { supersedeStaleBillingDocument } from "./billingLifecycleOrchestration";
+import { supersedeStaleBillingDocument, billingReferenceSupersessionDurable } from "./billingLifecycleOrchestration";
 
 // Mirror of the worker's outcome shape (kept structural to avoid a cross-import).
 export type BillingRetryOutcome = { failureId: number; requestedAction: string; status: string; message?: string };
@@ -89,6 +89,7 @@ async function resolveIfReferenceDurable(failure: AncillaryDocumentReconciliatio
   const d = await ensureBillingReferenceDurability({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId!, billingDocumentId: failure.sourceId!, source: "billing_retry_worker" });
   if (d === "reference_present" || d === "link_retry_recorded") { await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId }); return { ...base, status: "resolved" }; }
   if (d === "ownership_conflict") return { ...base, status: "ownership_conflict" };
+  if (d === "duplicate_current_reference") return { ...base, status: "reference_conflict", message: "duplicate_current_reference" };
   if (d === "migration_missing") return { ...base, status: "migration_missing" };
   // link_retry_not_recorded — missing reference AND no durable recovery → keep open.
   return { ...base, status: "reference_missing", message: "reference_retry_not_recorded" };
@@ -136,9 +137,14 @@ async function retrySupersede(failure: AncillaryDocumentReconciliationFailure): 
   // current document whose evidence no longer matches.
   const evalResult = await evaluateCanonicalBillingReadiness({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId, source: "billing_retry_worker" });
   if (evalResult.status === "migration_missing") return { ...base, status: "migration_missing" };
+  // K8: resolve ONLY on a COMMITTED re-evaluation. A transient status (e.g.
+  // requirements_unavailable_retry_recorded / override_not_recorded / tenancy) leaves
+  // the retry UNRESOLVED — the post-condition cannot be proven from a transient read.
+  if (evalResult.status !== "ready_to_generate" && evalResult.status !== "missing_requirements") return { ...base, status: "still_deferred", message: evalResult.status };
   const superseded = await supersedeStaleBillingDocument({ clinicId: failure.clinicId, ancillaryCaseId: failure.ancillaryCaseId }, evalResult.evidenceFingerprint ?? null);
-  // Resolve whether or not a stale doc existed — the invariant (no stale current
-  // doc for changed evidence) now holds either way.
+  // K8 post-condition: resolve ONLY when reference supersession is DURABLE (no current
+  // reference points at a superseded document). Otherwise keep the exact retry OPEN.
+  if (!(await billingReferenceSupersessionDurable(failure.clinicId, failure.ancillaryCaseId))) return { ...base, status: "still_deferred", message: "reference_supersession_deferred" };
   await resolveAncillaryDocumentFailureById({ id: failure.id, clinicId: failure.clinicId });
-  return { ...base, status: superseded ? "resolved" : "resolved", message: superseded ? "superseded" : "no_stale_document" };
+  return { ...base, status: "resolved", message: superseded ? "superseded" : "no_stale_document" };
 }

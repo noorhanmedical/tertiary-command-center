@@ -40,6 +40,7 @@ export type GenerateProcedureNoteResult = {
   status:
     | "skipped_flag_off" | "note_not_found" | "not_pending" | "already_claimed"
     | "cross_clinic_denied" | "not_yet_eligible"
+    | "not_yet_eligible_retry_recorded" | "not_yet_eligible_retry_not_recorded"
     | "report_content_unavailable_retry_recorded" | "report_content_unavailable_retry_not_recorded"
     | "generated" | "generated_reference_retry_recorded" | "generated_reference_retry_not_recorded"
     | "failed_retry_recorded" | "failed_retry_not_recorded" | "migration_missing"
@@ -65,7 +66,17 @@ export async function generateProcedureNote(input: GenInput): Promise<GeneratePr
 
     // Two-condition eligibility must hold with EXACT evidence.
     const elig = await evaluateProcedureNoteEligibility({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
-    if (!elig.eligible) return { status: "not_yet_eligible" };
+    if (!elig.eligible) {
+      // K5 (self-healing): the note EXISTS and is pending, but the generator's fresh
+      // eligibility read cannot proceed (TOCTOU after create/reuse, or evidence
+      // regressed). Record ONE durable exact `generate_procedure_note` retry (deduped
+      // by clinic+case+source+action) so a later worker re-runs the exact
+      // eligibility/generator path — recovery no longer depends on an external re-drive.
+      // The note stays truthfully `pending` (never marked generated); the retry worker
+      // re-drives this same generator, and a later eligible read generates + resolves it.
+      const rec = await recordGenerateRetry(input.clinicId, input.ancillaryCaseId, input.noteId, "generator_not_yet_eligible");
+      return { status: rec ? "not_yet_eligible_retry_recorded" : "not_yet_eligible_retry_not_recorded" };
+    }
 
     // Atomically CLAIM the pending note → generating (second worker gets 0 rows).
     const claimed = await claimForGeneration(input, "pending");
@@ -233,6 +244,16 @@ async function catchToResult(input: GenInput, e: unknown): Promise<GenerateProce
  * truthfully `failed` even when persistence fails; durability is never
  * overstated (§2/§7).
  */
+/** K5 — record a durable exact `generate_procedure_note` retry WITHOUT changing the
+ *  note's generation state (the note stays truthfully pending). Deduped by
+ *  clinic+case+source+action. Returns whether the ledger row persisted. */
+async function recordGenerateRetry(clinicId: number, ancillaryCaseId: number, noteId: number, code: string): Promise<boolean> {
+  try {
+    await recordAncillaryDocumentFailure({ clinicId, ancillaryCaseId, documentKind: "procedure_note", sourceTable: PROCEDURE_NOTE_SOURCE_TABLE, sourceId: noteId, requestedAction: "generate_procedure_note", sourceSystem: "procedure_note_generator", errorCode: code });
+    return true;
+  } catch { return false; }
+}
+
 async function failNote(noteId: number, clinicId: number, ancillaryCaseId: number, code: string): Promise<boolean> {
   await db.update(procedureNotes)
     .set({ generationStatus: "failed", errorMessage: code, updatedAt: new Date() })

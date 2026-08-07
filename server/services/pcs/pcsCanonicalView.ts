@@ -255,10 +255,22 @@ async function loadUnresolvedStream(clinicId: number, afterCaseId: number | null
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+const PCS_DISPLAY_MIGRATION_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 async function loadGpps(ids: number[]): Promise<Map<number, typeof globalPlexusPatients.$inferSelect>> {
   if (!ids.length) return new Map();
-  const rows = await db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, ids)).limit(PCS_MAX_LIMIT * 4);
-  return new Map(rows.map((r) => [r.id, r]));
+  try {
+    const rows = await db.select().from(globalPlexusPatients).where(inArray(globalPlexusPatients.id, ids)).limit(PCS_MAX_LIMIT * 4);
+    return new Map(rows.map((r) => [r.id, r]));
+  } catch (e) {
+    // K18: identity DISPLAY is not allowed to fail canonical case truth. A missing
+    // canonical table (migration) MUST still propagate → the route answers 503. An
+    // ORDINARY read failure degrades to "display unavailable": return an empty map so
+    // every affected group falls back to unverified identity (fail-closed) with a null
+    // display — the verified identity IDs on the case/vector are preserved, and identity
+    // is NEVER inferred from demographics.
+    if (PCS_DISPLAY_MIGRATION_CODES.has((e as { code?: string })?.code ?? "")) throw e;
+    return new Map();
+  }
 }
 function matchesFilters(c: PatientAncillaryCase, f: ReturnType<typeof loadCaseFilters>): boolean {
   if (f.serviceType && c.serviceType !== f.serviceType) return false;

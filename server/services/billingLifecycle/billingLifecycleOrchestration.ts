@@ -14,7 +14,7 @@
  */
 
 import { db } from "../../db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, inArray } from "drizzle-orm";
 import { canonicalBillingDocumentRequests as billingDocumentRequests } from "@shared/schema/billingDocuments";
 import { ancillaryDocumentReferences, BILLING_DOCUMENT_SOURCE_TABLE } from "@shared/schema/ancillaryDocuments";
 import { recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
@@ -160,9 +160,48 @@ export async function supersedeStaleBillingDocument(input: { clinicId: number; a
     .where(and(eq(billingDocumentRequests.id, doc.id), eq(billingDocumentRequests.clinicId, input.clinicId), eq(billingDocumentRequests.ancillaryCaseId, input.ancillaryCaseId), isNull(billingDocumentRequests.supersededAt)))
     .returning();
   if (rows.length !== 1) return false;
-  // Supersede the exact reference too (best-effort; a missing ref is left for retry).
-  await db.update(ancillaryDocumentReferences)
-    .set({ documentStatus: "superseded", supersededAt: now, updatedAt: now })
-    .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId)));
+  // K7: DURABLE reference supersession. Supersede the exact current reference; if the
+  // update fails OR a current (non-superseded) reference still remains for this now-
+  // superseded document, record an exact `supersede_billing_document` retry so the
+  // reference lineage is reconciled deterministically (never fire-and-forget).
+  try {
+    await db.update(ancillaryDocumentReferences)
+      .set({ documentStatus: "superseded", supersededAt: now, updatedAt: now })
+      .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId), isNull(ancillaryDocumentReferences.supersededAt)));
+    const [stillCurrent] = await db.select().from(ancillaryDocumentReferences)
+      .where(and(eq(ancillaryDocumentReferences.sourceTable, BILLING_DOCUMENT_SOURCE_TABLE), eq(ancillaryDocumentReferences.sourceId, doc.id), eq(ancillaryDocumentReferences.documentKind, "billing_document"), eq(ancillaryDocumentReferences.clinicId, input.clinicId), isNull(ancillaryDocumentReferences.supersededAt))).limit(1);
+    if (stillCurrent) await recordSupersedeReferenceRetry(input, doc.id);
+  } catch {
+    await recordSupersedeReferenceRetry(input, doc.id);
+  }
+  return true;
+}
+
+/** K7: record an exact PHI-free `supersede_billing_document` retry (the writer that
+ *  wires this previously-dead action) targeting the exact Billing Document lineage. */
+async function recordSupersedeReferenceRetry(input: { clinicId: number; ancillaryCaseId: number }, billingDocumentId: number): Promise<void> {
+  try {
+    await recordAncillaryDocumentFailure({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId, documentKind: "billing_document", sourceTable: BILLING_DOCUMENT_SOURCE_TABLE, sourceId: billingDocumentId, requestedAction: "supersede_billing_document", sourceSystem: "billing_lifecycle_orchestration", errorCode: "billing_reference_supersession_deferred" });
+  } catch { /* best-effort: the document row is already truthfully superseded; the next evaluate re-drives */ }
+}
+
+/** K8 post-condition: reference supersession is DURABLE only when no current
+ *  (non-superseded) `billing_document` reference points at a superseded/voided
+ *  document for this case. Batched (one docs read via inArray) — never per-ref N+1. */
+export async function billingReferenceSupersessionDurable(clinicId: number, ancillaryCaseId: number): Promise<boolean> {
+  const refs = await db.select().from(ancillaryDocumentReferences).where(and(
+    eq(ancillaryDocumentReferences.clinicId, clinicId),
+    eq(ancillaryDocumentReferences.ancillaryCaseId, ancillaryCaseId),
+    eq(ancillaryDocumentReferences.documentKind, "billing_document"),
+    isNull(ancillaryDocumentReferences.supersededAt),
+  )).limit(200);
+  const srcIds = [...new Set(refs.map((r) => r.sourceId).filter((x): x is number => x != null))];
+  if (srcIds.length === 0) return true;
+  const docs = await db.select().from(billingDocumentRequests).where(and(eq(billingDocumentRequests.clinicId, clinicId), inArray(billingDocumentRequests.id, srcIds))).limit(200);
+  const docById = new Map(docs.filter((d) => d.clinicId === clinicId).map((d) => [d.id, d]));
+  for (const ref of refs) {
+    const doc = ref.sourceId != null ? docById.get(ref.sourceId) : undefined;
+    if (doc && (doc.supersededAt != null || doc.canonicalStatus === "superseded" || doc.canonicalStatus === "voided")) return false;
+  }
   return true;
 }

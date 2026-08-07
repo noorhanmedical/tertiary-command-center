@@ -348,7 +348,75 @@ async function testWorkerExactResolution() {
   assert.equal(staleResolves, 0);
 }
 
+// K11 — report source validation (loadExactReportEvidence) is fail-closed on each
+// exact-ownership dimension, including a dedicated `documentType !== "report"` case.
+async function testK11ReportSourceValidationFailClosed() {
+  const t = await loadCanonicalTables(); const e = await evaluator();
+  const run = async (srcOverride: Record<string, unknown>) => {
+    const spec = evalSpec(t);
+    spec.set(t.caseDocumentReadiness, { select: () => [reportSourceRow(srcOverride)] });
+    const r = await runWithDb(spec, READY, async () => e.evaluateCanonicalBillingReadiness({ clinicId: 1, ancillaryCaseId: 5, source: "test" }));
+    return { ready: r.status === "ready_to_generate", blob: JSON.stringify(r.billingBlockers ?? []) };
+  };
+  // Dedicated documentType rejection (the previously-untested guard).
+  const dt = await run({ documentType: "consent" });
+  assert.ok(!dt.ready && dt.blob.includes("report_source_ownership_mismatch"), `K11: documentType !== report fails closed (got ${dt.blob})`);
+  // Fail-closed matrix over the other exact-ownership dimensions.
+  const wrongService = await run({ serviceType: "NerveGuard" });
+  assert.ok(!wrongService.ready && wrongService.blob.includes("report_source_ownership_mismatch"), "K11: wrong service fails closed");
+  const wrongClinic = await run({ clinicId: 2 });
+  assert.ok(!wrongClinic.ready && wrongClinic.blob.includes("report_source_ownership_mismatch"), "K11: wrong clinic fails closed");
+  const noExecNoScreening = await run({ executionCaseId: null, patientScreeningId: null });
+  assert.ok(!noExecNoScreening.ready && noExecNoScreening.blob.includes("report_source_ownership_mismatch"), "K11: missing execution+screening linkage fails closed");
+  const unsupportedStatus = await run({ documentStatus: "draft" });
+  assert.ok(!unsupportedStatus.ready && unsupportedStatus.blob.includes("report_source_status_mismatch"), `K11: unsupported source status fails closed (got ${unsupportedStatus.blob})`);
+}
+
+// ── Phase 2K billing hardening (K7/K8/K10) ──
+function bref(o: Record<string, unknown> = {}) { return { id: 40, clinicId: 1, ancillaryCaseId: 5, documentKind: "billing_document", sourceTable: "canonical_billing_document_requests", sourceId: 70, documentStatus: "generated", supersededAt: null, ...o }; }
+function bdoc(o: Record<string, unknown> = {}) { return { id: 70, clinicId: 1, ancillaryCaseId: 5, serviceType: "BrainWave", canonicalStatus: "generated", evidenceFingerprint: "bef_x", supersededAt: null, ...o }; }
+
+async function testK10ReferenceDurability() {
+  const t = await loadCanonicalTables(); const g = await generator();
+  const args = { clinicId: 1, ancillaryCaseId: 5, billingDocumentId: 70, source: "test" };
+  const run = (refs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }], [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }]]), DOC, async (calls: Call[]) => ({ r: await g.ensureBillingReferenceDurability(args), inserts: countOps(calls, "insert", t.documentFailures) }));
+  const present = await run([bref()]);
+  assert.equal(present.r, "reference_present", "K10: exactly one current owned reference is durable");
+  const superseded = await run([bref({ supersededAt: OLD })]);
+  assert.ok(superseded.r === "link_retry_recorded" && superseded.inserts === 1, "K10: only a superseded reference → NOT durable → link retry recorded");
+  const dup = await run([bref({ id: 40 }), bref({ id: 41 })]);
+  assert.equal(dup.r, "duplicate_current_reference", "K10: duplicate current references → conflict");
+  const wrong = await run([bref({ clinicId: 2 })]);
+  assert.equal(wrong.r, "ownership_conflict", "K10: mismatched owner → ownership conflict");
+}
+async function testK7SupersedeReferenceDurable() {
+  const t = await loadCanonicalTables(); const o = await orchestration();
+  const clean = await runWithDb(new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [bdoc({ evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
+    [t.documentReferences, { select: () => [], onUpdate: (v) => [{ ...v }] }],
+    [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
+  assert.ok(clean.r === true && clean.retries === 0, "K7: stale doc superseded + reference superseded cleanly → no retry");
+  const miss = await runWithDb(new Map<unknown, TableSpec>([
+    [t.billingDocumentRequests, { select: () => [bdoc({ evidenceFingerprint: "old_fp" })], onUpdate: (v) => [{ ...v, id: 70 }] }],
+    [t.documentReferences, { select: () => [bref()], onUpdate: (v) => [{ ...v }] }],
+    [t.documentFailures, { select: () => [], onInsert: (v) => [{ ...v, id: 1 }] }],
+  ]), DOC, async (calls: Call[]) => ({ r: await o.supersedeStaleBillingDocument({ clinicId: 1, ancillaryCaseId: 5 }, "new_fp"), retries: countOps(calls, "insert", t.documentFailures) }));
+  assert.ok(miss.r === true && miss.retries === 1, "K7: residual current reference → durable supersede retry recorded (not fire-and-forget)");
+}
+async function testK8SupersessionDurablePostcondition() {
+  const t = await loadCanonicalTables(); const o = await orchestration();
+  const run = (refs: unknown[], docs: unknown[]) => runWithDb(new Map<unknown, TableSpec>([[t.documentReferences, { select: () => refs }], [t.billingDocumentRequests, { select: () => docs }]]), DOC, async () => o.billingReferenceSupersessionDurable(1, 5));
+  assert.equal(await run([bref({ sourceId: 70 })], [bdoc({ id: 70, supersededAt: OLD })]), false, "K8 post-condition: a current reference pointing at a superseded document → NOT durable");
+  assert.equal(await run([bref({ sourceId: 70 })], [bdoc({ id: 70, supersededAt: null })]), true, "K8 post-condition: current reference points at a current document → durable");
+  assert.equal(await run([], []), true, "K8 post-condition: no current billing_document reference → durable");
+}
+
 const tests: Array<[string, () => Promise<void>]> = [
+  ["K11 report source validation fail-closed (documentType + matrix)", testK11ReportSourceValidationFailClosed],
+  ["K10 billing reference durability (current/superseded/dup/owner)", testK10ReferenceDurability],
+  ["K7 supersede reference durability + exact retry", testK7SupersedeReferenceDurable],
+  ["K8 supersession durable post-condition", testK8SupersessionDurablePostcondition],
   ["(1) exact readiness happy path", testReadyHappyPath],
   ["(2/6) cross-clinic + nullable fail closed", testCrossClinicAndNullable],
   ["(3/4/9) snapshot exact identity + DOS", testSnapshotExactIdentityAndDos],

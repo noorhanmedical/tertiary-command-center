@@ -175,7 +175,10 @@ export function validateInvoiceLineage(inv: InvoiceLineageRow, ctx: InvoiceLinea
   if (claim.clinicId !== inv.clinicId || (claim.ancillaryCaseId ?? null) !== (inv.ancillaryCaseId ?? null) || claim.serviceType !== inv.serviceType) return { ok: false, code: "invoice_claim_mismatch" };
   if ((claim.billingDocumentId ?? null) !== (inv.billingDocumentId ?? null)) return { ok: false, code: "invoice_billing_document_mismatch" };
   if ((claim.billingReadinessCheckId ?? null) !== (inv.billingReadinessCheckId ?? null)) return { ok: false, code: "invoice_readiness_mismatch" };
-  if ((claim.evidenceFingerprint ?? null) !== (inv.evidenceFingerprint ?? null)) return { ok: false, code: "invoice_fingerprint_mismatch" };
+  // §K20 a null/empty fingerprint on EITHER side is unverifiable — never a vacuous
+  // null===null match (the claim-lineage gate above already requires the claim's own
+  // fingerprint non-empty; this makes the invoice side explicit + fail-closed).
+  if (!nonEmptyStr(claim.evidenceFingerprint) || !nonEmptyStr(inv.evidenceFingerprint) || claim.evidenceFingerprint !== inv.evidenceFingerprint) return { ok: false, code: "invoice_fingerprint_mismatch" };
 
   // ── money truth + exact authorized-line equality with the claim ──
   if (claim.currency !== inv.currency) return { ok: false, code: "invoice_currency_mismatch" };
