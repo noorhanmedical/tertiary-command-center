@@ -146,7 +146,7 @@ Table columns: **Pattern | # impl | Shared primitive file | Bespoke implementati
 ### FLOATING DOCK
 | # impl | Shared primitive | Bespoke | Variants | Visual | Interaction | A11y | Std candidate |
 |---|---|---|---|---|---|---|---|
-| 1 + portal variant | `components/navigation/GlobalFloatingDock.tsx` (S003) | Portal dock panels `PortalDockPanels.tsx` (S005); `EngagementPanel.tsx` (S006); `features/command-center/docks/CalendarDockPopup.tsx` | `DOCK_ITEMS` (admin/biller) vs `PORTAL_DOCK_ITEMS` (scheduler/clinician) | dock link vs panel items | Chat item disabled (`CHAT_ROUTE_AVAILABLE=false`) | Dock buttons: `aria-label` `UNKNOWN_NEEDS_VERIFICATION` | Partial (registry-driven) |
+| 1 + portal variant | `components/navigation/GlobalFloatingDock.tsx` (S003) | Portal dock panels `PortalDockPanels.tsx` (S005); `EngagementPanel.tsx` (S006); `features/command-center/docks/CalendarDockPopup.tsx` | `DOCK_ITEMS` (admin/biller/technician/liaison) vs `PORTAL_DOCK_ITEMS` (scheduler/clinician); split via `PORTAL_DOCK_ROLES.has(me.role)` | dock link vs panel items | Chat item disabled (`CHAT_ROUTE_AVAILABLE=false`) | Dock buttons: `aria-label` `UNKNOWN_NEEDS_VERIFICATION` | Partial (registry-driven) |
 
 ### DRAWERS
 | # impl | Shared primitive | Bespoke | Variants | Visual | Interaction | A11y | Std candidate |

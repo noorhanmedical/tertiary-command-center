@@ -10,7 +10,7 @@
 - **Post-login landing is ALWAYS `/home`** for every role — `handleLogin` (`client/src/App.tsx:346-357`) calls `navigate("/home")` unconditionally (no role-based redirect). Username `admin` also gets a default-admin toast (S010).
 - **GlobalNav sidebar renders only on `/home` and `/clinician-portal`** (`GLOBAL_NAV_ROUTES`, `navigationRegistry.ts:144`). Everywhere else, navigation is the floating dock (S003) + direct links.
 - **Client guards** (`App.tsx`): `AdminGuard` (admin-only) and `RoleGuard(...roles)` redirect denied users to `/home`. Most routes have NO App.tsx guard — reachable by URL by any authenticated role — but `GlobalNav` still filters nav-item *visibility* per item's `roles[]` (`GlobalNav.tsx:37-65`).
-- **Dock:** admin/biller get full `DOCK_ITEMS`; `PORTAL_DOCK_ROLES={scheduler,clinician}` get simplified `PORTAL_DOCK_ITEMS` (`navigationRegistry.ts:90,142`). Chat is disabled (`CHAT_ROUTE_AVAILABLE=false`). `technician`/`liaison`/`biller` are NOT in `PORTAL_DOCK_ROLES`; `UNKNOWN_NEEDS_VERIFICATION` whether technician/liaison see the full dock or a reduced set (they are not admin/biller and not portal-dock-roles).
+- **Dock:** dock selection is deterministic in `GlobalFloatingDock.tsx:194-195` — `isPortalUser = PORTAL_DOCK_ROLES.has(me.role)`, then `dockItems = isPortalUser ? PORTAL_DOCK_ITEMS : DOCK_ITEMS`. `PORTAL_DOCK_ROLES = {scheduler, clinician}` (`navigationRegistry.ts:142`) get simplified `PORTAL_DOCK_ITEMS`; **every other authenticated role — `admin`, `biller`, `technician`, `liaison` — falls back to full `DOCK_ITEMS`** (there is no third branch). Chat is disabled (`CHAT_ROUTE_AVAILABLE=false`).
 - **Server-side role enforcement is sparse:** `requireRole` is invoked ONLY as `requireRole("admin")` platform-wide (Mission Control, call-list-audit, engagement distribution/metrics/call-settings). Portal endpoints use `requirePortalRole={admin,technician,liaison}` (`portal.ts:41`). PCS/ACS canonical use `PCS_ROLES={admin,liaison}` / `ACS_ROLES={admin,technician}` (`pcsAcsCanonical.ts:22-23`). Billing/invoice routes have NO `requireRole` — client-guarded only + session clinic scope. `scheduler`/`biller` have NO dedicated server role gate beyond `requireAuth`+clinic scope.
 - **Clinic scope:** admin bypasses clinic filter (`clinicContext.ts:31-33`); every non-admin is strictly filtered to `req.session.clinicId`; a non-admin with null clinicId sees NO tenant data.
 
@@ -76,7 +76,7 @@ Rows = 6 roles. Cols = portals. Cell values: **✅ full** (guard admits + nav vi
 
 ## biller
 
-- **Lands:** `/home`. Nav shows Billing, Invoices, Patient EHR, Plexus Tasks. Gets full `DOCK_ITEMS` (admin/biller keep full dock).
+- **Lands:** `/home`. Nav shows Billing, Invoices, Patient EHR, Plexus Tasks. Gets full `DOCK_ITEMS` (`biller` is not in `PORTAL_DOCK_ROLES`, so falls back to the full dock).
 - **Sees first:** Home; then Billing/Invoices.
 - **Primary work queues:** `/invoices` (RT021, `RoleGuard{admin,biller}`) — invoices list (S299), detail (S300), create (S301), financial panel (S307). `/billing` (RT020, nav-visible, no guard) — overview (S292), records (S293), canonical billing panel (S294). This role owns journey stages 14 (Invoice) and 15 (Payment) on the legacy Phase-4 desk.
 - **Find a patient:** Patient EHR (biller has Patient EHR nav visibility, `GlobalNav.tsx:55`); billing records search (S293); remittance invoice-ID lookup (S327 — but that page is AdminGuard, see below).
@@ -89,7 +89,7 @@ Rows = 6 roles. Cols = portals. Cell values: **✅ full** (guard admits + nav vi
 
 ## technician
 
-- **Lands:** `/home` (Home nav item's `roles` = `[admin,clinician,scheduler]` — technician not listed, so Home is URL-reachable but not a highlighted nav item; still lands there). Nav shows Imaging Central, Technician Portal, Liaison Technician Portal.
+- **Lands:** `/home` (Home nav item's `roles` = `[admin,clinician,scheduler]` — technician not listed, so Home is URL-reachable but not a highlighted nav item; still lands there). Nav shows Imaging Central, Technician Portal, Liaison Technician Portal. **Dock:** receives full `DOCK_ITEMS` — `technician` is not in `PORTAL_DOCK_ROLES={scheduler,clinician}`, so `GlobalFloatingDock.tsx:194-195` falls back to `DOCK_ITEMS` (current source behavior; not an inferred persona decision).
 - **Sees first:** Home, then the Technician/ACS portal.
 - **Primary work queues:** Technician Portal (RT029, `requirePortalRole={admin,technician,liaison}`) and ACS Portal (RT044) via `ClinicWorkflowPortal`/`TeamPortalShell` (S212/S213). ACS canonical view is admitted (`ACS_ROLES={admin,technician}`, S218/S216). This role executes journey stages 7 (Procedure), 8 (Report), 9 (Procedure Note upload path).
 - **Find a patient:** portal patient search (S235, facility-constrained), My Patients tab (S234), work-queue composition (S215).
@@ -102,7 +102,7 @@ Rows = 6 roles. Cols = portals. Cell values: **✅ full** (guard admits + nav vi
 
 ## liaison
 
-- **Lands:** `/home` (Home nav `roles` excludes liaison → URL-reachable, not a nav highlight). Nav shows Imaging Central, Technician Portal, Liaison Technician Portal.
+- **Lands:** `/home` (Home nav `roles` excludes liaison → URL-reachable, not a nav highlight). Nav shows Imaging Central, Technician Portal, Liaison Technician Portal. **Dock:** receives full `DOCK_ITEMS` — `liaison` is not in `PORTAL_DOCK_ROLES={scheduler,clinician}`, so `GlobalFloatingDock.tsx:194-195` falls back to `DOCK_ITEMS` (current source behavior; not an inferred persona decision).
 - **Sees first:** Home, then the Liaison/PCS portal.
 - **Primary work queues:** Liaison Technician Portal (RT030, `requirePortalRole`) and PCS Portal (RT043) via `ClinicWorkflowPortal`. PCS canonical view is admitted (`PCS_ROLES={admin,liaison}`, S217/S216). This role coordinates the patient-care side of engagement/care coordination (upstream of scheduling execution).
 - **Find a patient:** portal patient search (S235), PCS canonical patient-grouped episodes (S217), My Patients (S234), Portal Patient Directory (S228, wraps full EHR chart).
@@ -119,5 +119,5 @@ Rows = 6 roles. Cols = portals. Cell values: **✅ full** (guard admits + nav vi
 
 - Every canonical portal view (PCS/ACS/Clinician canonical, stage vectors) renders a **disabled contract** at HEAD because its flag is OFF — so the *data* a portal role sees today is the legacy/non-canonical surface, even where the role is admitted by guard.
 - `scheduler`/`biller` have no server-side `requireRole` gate beyond auth + clinic scope; their restriction to specific surfaces is enforced by **client guards only** for the guarded routes, and by **nav visibility** otherwise. Server billing/invoice routes are not role-gated.
-- `technician`/`liaison` are neither admin/biller (full dock) nor in `PORTAL_DOCK_ROLES={scheduler,clinician}` — the exact dock they receive is `UNKNOWN_NEEDS_VERIFICATION` (dock role-matching only branches on those two sets).
+- `technician`/`liaison` dock is **NOT unknown**: dock selection branches only on `PORTAL_DOCK_ROLES.has(me.role)` (`GlobalFloatingDock.tsx:194-195`). Since `PORTAL_DOCK_ROLES={scheduler,clinician}`, every other authenticated role — `admin`, `biller`, `technician`, `liaison` — deterministically falls back to full `DOCK_ITEMS`. There is no third branch. (Whether this current split *should* remain is a future `USER_DECISION_REQUIRED`, tracked in the IA-facts doc; the current implementation is unchanged.)
 - Client demo labels (`"Clinic Admin"`, `"Owner"`, `"patientCareSpecialist"`, `"ancillaryCareSpecialist"`) are UI/demo constructs, NOT real session roles (`FUNCTIONAL_FREEZE §1.3`).

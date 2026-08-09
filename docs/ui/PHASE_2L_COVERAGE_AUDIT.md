@@ -48,6 +48,7 @@
 
 1. `PHASE_2L_SURFACE_INVENTORY.md` line 22: header said the S-namespace was `S001–S400`; corrected to `S001–S361` to match the doc's actual definitions and its own footer (line 792).
 2. `PHASE_2L_REPLIT_REFERENCE_AUDIT.md` (Reviewer-B round-1 finding): added a "Complete home code-file inventory" table cataloguing all six home code files (`HomeDashboard`, `HomeDashboardPreview`, `HomeLiveDashboard`, `HomeLiveDashboardPreview`, `HomeSidebar`, `HomeWorldClocks`) with their canonical-parity diff. `HomeSidebar.tsx` was previously uncatalogued; verified it is byte-identical to canonical HEAD and imported by `pages/home.tsx`/`pages/home-preview.tsx` (not by `HomeDashboard.tsx` as the reviewer surmised). All supporting components; no reference-unique home code exists.
+3. **Six-role dock assignment correction** (user factual review): dock selection is deterministic — `dockItems = PORTAL_DOCK_ROLES.has(me.role) ? PORTAL_DOCK_ITEMS : DOCK_ITEMS` (`GlobalFloatingDock.tsx:194-195`) with `PORTAL_DOCK_ROLES = {scheduler, clinician}` (`navigationRegistry.ts:142`). Therefore `scheduler`/`clinician` → `PORTAL_DOCK_ITEMS` (REF-DOCK-002); `admin`/`biller`/`technician`/`liaison` → `DOCK_ITEMS` (REF-DOCK-001). Corrected every stale statement that described `DOCK_ITEMS` as admin/biller-only or that marked technician/liaison dock as `UNKNOWN_NEEDS_VERIFICATION`, across: `ROLE_JOURNEYS`, `REPLIT_REFERENCE_AUDIT`, `USER_REFERENCE_REGISTER`, `COMPONENT_PATTERN_INVENTORY`, `UI_DEBT_MAP`, `INFORMATION_ARCHITECTURE_FACTS`, and this audit. The current implementation is unchanged; future dock role-assignment remains `USER_DECISION_REQUIRED`. (Billing-access `admin/biller` statements — e.g. `/invoices` RoleGuard, billing surfaces — are correct and were left intact; they are not dock statements.)
 
 ## Known residual UNKNOWN_NEEDS_VERIFICATION items (carried to reviewers, not resolved as design)
 
@@ -55,7 +56,8 @@
 - `refund` vs `reversal` business distinction; `adjustment` allocation command path.
 - Scheduler/biller server-side gating beyond auth + clinic scope.
 - `POST /api/settings/qualification-modes` lacking a role guard.
-- Exact dock served to `technician`/`liaison` (absent from `PORTAL_DOCK_ROLES`).
 - Component inventory cited "FilterBar in 6 files"; grep found 5 at this HEAD (6th flagged UNKNOWN).
+
+> **Resolved (no longer UNKNOWN):** "Exact dock served to `technician`/`liaison`" — resolved to `DOCK_ITEMS` by direct source reading of the deterministic `PORTAL_DOCK_ROLES.has(me.role)` branch (see Correction #3 above).
 
 **Verdict:** mechanical coverage audit PASS. Proceeding to independent Reviewer A (discovery/architecture completeness) and Reviewer B (Replit reference accounting).

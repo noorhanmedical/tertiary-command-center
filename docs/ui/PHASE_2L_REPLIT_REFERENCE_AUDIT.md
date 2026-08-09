@@ -141,7 +141,7 @@ Source (all identical on PRIMARY, SECONDARY, and HEAD): `client/src/components/n
 
 Transcribed from `plexus-iq-admin-review-persistence-fix:client/src/lib/navigation/navigationRegistry.ts` (identical on SECONDARY and HEAD). `CHAT_ROUTE_AVAILABLE = false`.
 
-### REF-DOCK-001 — `DOCK_ITEMS` (full dock; admin / biller)
+### REF-DOCK-001 — `DOCK_ITEMS` (full dock; admin / biller / technician / liaison)
 
 | id | label | Icon | kind | href / panelId | testId |
 |----|-------|------|------|----------------|--------|
@@ -168,7 +168,7 @@ Transcribed from `plexus-iq-admin-review-persistence-fix:client/src/lib/navigati
 
 ### REF-DOCK-003 — `PORTAL_DOCK_ROLES`
 
-`new Set(["scheduler", "clinician"])` — these roles receive REF-DOCK-002; all others (admin / biller) receive REF-DOCK-001. Selection in `GlobalFloatingDock` via `PORTAL_DOCK_ROLES.has(me.role)` reading `/api/auth/me`.
+`new Set(["scheduler", "clinician"])` — these roles receive REF-DOCK-002; every other authenticated canonical role (**admin, biller, technician, liaison**) falls back to REF-DOCK-001. Selection in `GlobalFloatingDock` via `dockItems = PORTAL_DOCK_ROLES.has(me.role) ? PORTAL_DOCK_ITEMS : DOCK_ITEMS` (`GlobalFloatingDock.tsx:194-195`, reading `/api/auth/me`). There is no third dock-selection branch.
 
 Also present: `GLOBAL_NAV_ROUTES = ["/home", "/clinician-portal"]` and `shouldShowGlobalNav(pathname)` (prefix match) gating the `GlobalNav` sidebar.
 

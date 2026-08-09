@@ -79,7 +79,7 @@ Each is a PNG under `plexus-iq-admin-review-persistence-fix:attached_assets/scre
 
 | Ref | Variant | Source | Roles | Status |
 |-----|---------|--------|-------|--------|
-| REF-DOCK-001 | Full dock (`DOCK_ITEMS`, 7 items) | `…:client/src/lib/navigation/navigationRegistry.ts` | admin / biller (default) | **USER_DECISION_REQUIRED** |
+| REF-DOCK-001 | Full dock (`DOCK_ITEMS`, 7 items) | `…:client/src/lib/navigation/navigationRegistry.ts` | admin / biller / technician / liaison (default fallback for every role not in `PORTAL_DOCK_ROLES`) | **USER_DECISION_REQUIRED** |
 | REF-DOCK-002 | Portal dock (`PORTAL_DOCK_ITEMS`, 6 items) | same file | scheduler / clinician (`PORTAL_DOCK_ROLES`) | **USER_DECISION_REQUIRED** |
 | REF-DOCK-003 | Role assignment (`PORTAL_DOCK_ROLES = {scheduler, clinician}`) | same file | — | **USER_DECISION_REQUIRED** |
 

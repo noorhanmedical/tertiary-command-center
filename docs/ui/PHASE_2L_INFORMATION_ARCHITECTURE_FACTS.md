@@ -29,7 +29,9 @@
 
 Two independent "top-level" sets exist because the two nav systems have different, only partly-overlapping targets.
 
-### 1a. GlobalFloatingDock targets — `DOCK_ITEMS` (admin / biller) — `navigationRegistry.ts:28-85`
+### 1a. GlobalFloatingDock targets — `DOCK_ITEMS` (admin / biller / technician / liaison) — `navigationRegistry.ts:28-85`
+
+> Recipients: every authenticated role **not** in `PORTAL_DOCK_ROLES` falls back to `DOCK_ITEMS` — i.e. `admin`, `biller`, `technician`, `liaison` (`dockItems = PORTAL_DOCK_ROLES.has(me.role) ? PORTAL_DOCK_ITEMS : DOCK_ITEMS`, `GlobalFloatingDock.tsx:194-195`). There is no third branch.
 
 | Dock id | Label | Kind | Target | Route/Surface |
 |---|---|---|---|---|
@@ -242,7 +244,7 @@ Described factually with hop counts (a "hop" = one user navigation action).
 3. **Patient EHR as primary entry:** Should Patient EHR (`/patient-directory`, RT016) become the **primary patient-context entry point** (e.g. a canonical `/patient/:id` context), given there is currently no patient-scoped client route (§5)?
 4. **Which Replit home variant:** Which exact Replit home variant is preferred — **REF-HOME-001** (production `HomeDashboard`, starfield/black tiles) vs **REF-HOME-002** (`HomeDashboardPreview`, navy/uniform tiles)? (See `PHASE_2L_REPLIT_REFERENCE_AUDIT.md`; all marked USER_DECISION_REQUIRED.)
 5. **Dock behavior to preserve:** Which exact dock behaviors should be preserved (bottom-center pill, hover-intent 120ms debounce, collapsed/expanded scale-opacity, tasks unread badge, calendar/tasks sheets, click-outside reset, mobile tap toggle)? (`REF-DOCK-001…003`.)
-6. **Role-specific docks:** Should role-specific docks remain — i.e. keep `PORTAL_DOCK_ROLES = {scheduler, clinician}` receiving the 6-item `PORTAL_DOCK_ITEMS` while admin/biller get `DOCK_ITEMS`?
+6. **Role-specific docks:** Should role-specific docks remain? The **current** split is: `PORTAL_DOCK_ROLES = {scheduler, clinician}` receive the 6-item `PORTAL_DOCK_ITEMS`; every other authenticated role — **admin, biller, technician, liaison** — falls back to `DOCK_ITEMS`. Whether that split should stay, or `technician`/`liaison`/`biller` should get a tailored dock, is `USER_DECISION_REQUIRED` (the current implementation is not changed by this discovery).
 7. **Dock vs sidebar relationship:** Should the dock **replace** or **complement** the persistent GlobalNav sidebar (currently the sidebar renders on only `/home` and `/clinician-portal`)?
 8. **Chat:** Should Chat ever be enabled (`CHAT_ROUTE_AVAILABLE` is currently `false`; the dock item is `disabled`)?
 9. **Route naming:** Should the 9 name-vs-component mismatches (§7) be renamed/aligned (e.g. `/scheduler-portal`→OutreachPage, `/clinician-portal`→PhysicianPortalPage, `/patient-directory`→PatientDatabasePage/"Patient EHR", `/ancillary-documents`→DocumentsPage, `/dashboard`→ScheduleDashboardPage)?
