@@ -9,6 +9,7 @@ import { registerPlexusTasksRoutes } from "./routes/plexusTasks";
 import { registerBatchRoutes } from "./routes/batches";
 import { registerPatientRoutes } from "./routes/patients";
 import { registerPlexusIqClinicalImportRoutes } from "./routes/plexusIqClinicalImport";
+import { registerEmrScheduleSyncRoutes } from "./routes/emrScheduleSync";
 import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssignmentBoard";
 import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
 import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
@@ -328,6 +329,7 @@ export async function registerRoutes(
   registerBillingAuditorRoutes(app);
   registerBillingReportsRoutes(app);
   registerGlobalScheduleRoutes(app);
+  registerEmrScheduleSyncRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);
   registerCooldownRoutes(app);

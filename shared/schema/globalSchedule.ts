@@ -1,11 +1,12 @@
 import {
   sql, pgTable, serial, text, varchar, integer, timestamp, jsonb, index,
-  createInsertSchema, z,
+  uniqueIndex, createInsertSchema, z,
 } from "./_common";
 import { users } from "./users";
 import { patientExecutionCases } from "./executionCase";
 import { patientScreenings } from "./screening";
 import { clinics } from "./clinics";
+import { patientDirectory } from "./patientDirectory";
 
 export const GLOBAL_SCHEDULE_EVENT_TYPES = [
   "doctor_visit",
@@ -41,6 +42,8 @@ export const GLOBAL_SCHEDULE_SOURCES = [
   "pto_sync",
   "api_sync",
   "system_generated",
+  "ecw_fhir_bulk",
+  "healow_booking",
 ] as const;
 export type GlobalScheduleSource = typeof GLOBAL_SCHEDULE_SOURCES[number];
 
@@ -64,6 +67,13 @@ export const globalScheduleEvents = pgTable("global_schedule_events", {
   roomId: text("room_id"),
   equipmentId: text("equipment_id"),
   metadata: jsonb("metadata").default({}),
+  // EMR ingestion (migration 0041). External source key for idempotent
+  // UPSERT of FHIR Encounter rows; patient_directory FK for the canonical
+  // patient link. All nullable — only populated on EMR-sourced rows.
+  externalSourceSystem: text("external_source_system"),
+  externalEncounterId: text("external_encounter_id"),
+  patientDirectoryId: integer("patient_directory_id")
+    .references(() => patientDirectory.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -74,6 +84,10 @@ export const globalScheduleEvents = pgTable("global_schedule_events", {
   index("idx_gse_assigned_user_id").on(table.assignedUserId),
   index("idx_gse_execution_case_id").on(table.executionCaseId),
   index("idx_gse_patient_screening_id").on(table.patientScreeningId),
+  uniqueIndex("gse_external_encounter_idx")
+    .on(table.externalSourceSystem, table.externalEncounterId)
+    .where(sql`${table.externalEncounterId} IS NOT NULL`),
+  index("gse_patient_directory_id_idx").on(table.patientDirectoryId),
 ]);
 
 export const insertGlobalScheduleEventSchema = createInsertSchema(globalScheduleEvents).omit({
