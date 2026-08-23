@@ -112,7 +112,7 @@ export async function listExportTimestamps(groupId: string): Promise<string[]> {
         // cp.Prefix = "{groupId}/{timestamp}/" — extract the timestamp segment
         const parts = cp.Prefix.split("/");
         if (parts.length >= 2) {
-          timestamps.add(parts[1]);
+          timestamps.add(parts[2]);
         }
       }
     }
