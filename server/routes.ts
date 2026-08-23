@@ -96,6 +96,7 @@ import { registerHomeStatsRoutes } from "./routes/homeStats";
 // import { registerClinicianPortalRoutes } from "./routes/clinicianPortal";
 import { registerMissionControlRoutes } from "./routes/missionControl";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
+import { registerFhirImportRoutes } from "./routes/fhirImportSync";
 // import { registerClinicalIntelligenceRoutes } from "./routes/clinicalIntelligence";
 // import { seedCiRulesIfEmpty } from "./repositories/clinicalIntelligence.repo";
 import { setupVite } from "./vite";
@@ -352,6 +353,7 @@ export async function registerRoutes(
   // registerClinicianPortalRoutes(app);
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
+  registerFhirImportRoutes(app);
   // Priority 4 — clinical intelligence backend deferred; UI runs on local
   // storage prototype. Enable route + seed when schema is approved.
   // registerClinicalIntelligenceRoutes(app, requireRole);
