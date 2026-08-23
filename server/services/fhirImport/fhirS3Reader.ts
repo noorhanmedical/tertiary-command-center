@@ -1,6 +1,6 @@
 // FHIR Import Pipeline — S3 reader
 //
-// Reads NDJSON files from the fhir-bulk-exp S3 bucket (us-east-2,
+// Reads NDJSON files from the fhir-bulk-exp S3 bucket (us-east-1,
 // account 107554921331). The app runs in account 374604322534; cross-account
 // access is handled either by a bucket policy grant or by assuming an IAM
 // role (FHIR_IMPORT_S3_ROLE_ARN env var).
@@ -22,7 +22,7 @@ import type { S3NdjsonFile } from "./types";
 // ─── Config (from environment) ────────────────────────────────────────────
 
 const FHIR_BUCKET = process.env.FHIR_IMPORT_S3_BUCKET ?? "fhir-bulk-exp";
-const FHIR_REGION = process.env.FHIR_IMPORT_S3_REGION ?? "us-east-2";
+const FHIR_REGION = process.env.FHIR_IMPORT_S3_REGION ?? "us-east-1";
 const ROLE_ARN = process.env.FHIR_IMPORT_S3_ROLE_ARN ?? "";
 
 // ─── S3 client factory ────────────────────────────────────────────────────
