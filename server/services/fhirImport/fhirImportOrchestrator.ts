@@ -1,4 +1,21 @@
-// FHIR Import Pipeline — main orchestrator
+
+  // ── Step 3b: ensure clinic row exists ─────────────────────────────────────
+  // The clinics table may not have been seeded yet. Insert-or-ignore the
+  // configured clinic so the screening_batches FK constraint doesn't fail.
+  try {
+    const existing = await db.select().from(clinics).where(eq(clinics.id, clinicId)).limit(1);
+    if (existing.length === 0) {
+      await db.insert(clinics).values({
+        id: clinicId,
+        name: clinicName,
+        slug: clinicSlug,
+      });
+      console.log(`[fhirImport] seeded clinic row: id=${clinicId}, name="${clinicName}"`);
+    }
+  } catch (seedErr: any) {
+    console.warn(`[fhirImport] clinic seed warning (non-fatal): ${seedErr?.message}`);
+  }
+
 //
 // Flow:
 //   1. Resolve export timestamp (latest or explicit)
@@ -21,6 +38,7 @@
 import { eq, and } from "drizzle-orm";
 import { db } from "../../db";
 import { storage } from "../../storage";
+import { clinics } from "@shared/schema/clinics";
 import { patientDirectory } from "@shared/schema/patientDirectory";
 import { patientScreenings } from "@shared/schema/screening";
 import { startBatchAnalysis } from "../batchAnalysisRunner";
