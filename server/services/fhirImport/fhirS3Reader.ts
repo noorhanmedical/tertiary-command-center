@@ -95,7 +95,7 @@ async function buildS3Client(): Promise<S3Client> {
  */
 export async function listExportTimestamps(groupId: string): Promise<string[]> {
   const client = await buildS3Client();
-  const prefix = `${groupId}/`;
+  const prefix = `incoming/${groupId}/`;
   const timestamps = new Set<string>();
 
   let continuationToken: string | undefined;
@@ -151,7 +151,7 @@ export async function listNdjsonFiles(
   timestamp: string,
 ): Promise<S3NdjsonFile[]> {
   const client = await buildS3Client();
-  const prefix = `${groupId}/${timestamp}/`;
+  const prefix = `incoming/${groupId}/${timestamp}/`;
   const all: S3NdjsonFile[] = [];
 
   let continuationToken: string | undefined;
