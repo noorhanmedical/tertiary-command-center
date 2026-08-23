@@ -1,21 +1,4 @@
-
-  // ── Step 3b: ensure clinic row exists ─────────────────────────────────────
-  // The clinics table may not have been seeded yet. Insert-or-ignore the
-  // configured clinic so the screening_batches FK constraint doesn't fail.
-  try {
-    const existing = await db.select().from(clinics).where(eq(clinics.id, clinicId)).limit(1);
-    if (existing.length === 0) {
-      await db.insert(clinics).values({
-        id: clinicId,
-        name: clinicName,
-        slug: clinicSlug,
-      });
-      console.log(`[fhirImport] seeded clinic row: id=${clinicId}, name="${clinicName}"`);
-    }
-  } catch (seedErr: any) {
-    console.warn(`[fhirImport] clinic seed warning (non-fatal): ${seedErr?.message}`);
-  }
-
+// FHIR Import Pipeline — main orchestrator
 //
 // Flow:
 //   1. Resolve export timestamp (latest or explicit)
@@ -148,6 +131,23 @@ export async function runFhirImport(
       stats,
       message: `[DRY RUN] Would import ${bundles.size} patient bundle(s) (${parseErrors} parse error(s)) from ${ndjsonFiles.length} file(s)`,
     };
+  }
+
+  // ── Step 3b: ensure clinic row exists ─────────────────────────────────────
+  // The clinics table may not have been seeded yet. Insert-or-ignore the
+  // configured clinic so the screening_batches FK constraint doesn't fail.
+  try {
+    const existing = await db.select().from(clinics).where(eq(clinics.id, clinicId)).limit(1);
+    if (existing.length === 0) {
+      await db.insert(clinics).values({
+        id: clinicId,
+        name: clinicName,
+        slug: clinicSlug,
+      });
+      console.log(`[fhirImport] seeded clinic row: id=${clinicId}, name="${clinicName}"`);
+    }
+  } catch (seedErr: any) {
+    console.warn(`[fhirImport] clinic seed warning (non-fatal): ${seedErr?.message}`);
   }
 
   // ── Step 4: create screening_batches row ─────────────────────────────────
