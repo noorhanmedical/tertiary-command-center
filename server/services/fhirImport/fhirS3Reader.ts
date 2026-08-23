@@ -170,7 +170,7 @@ export async function listNdjsonFiles(
       const keyParts = key.split("/");
       // Expected: groupId / timestamp / ResourceType / json / file.ndjson
       // keyParts indices:    0       /     1      /     2    /  3  /     4
-      const resourceType = keyParts[2] ?? "Unknown";
+      const resourceType = keyParts[3] ?? "Unknown";
       all.push({ key, resourceType });
     }
     continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
