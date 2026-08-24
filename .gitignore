@@ -19,6 +19,7 @@ artifacts/
 .env
 .env.*
 !.env.example
+!.env.local.example
 
 # Generated/sensitive files
 cookies.txt
