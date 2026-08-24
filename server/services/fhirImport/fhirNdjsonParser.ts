@@ -213,7 +213,14 @@ export function parseFhirNdjsonFiles(
   let totalLines = 0;
   let parseErrors = 0;
 
-  for (const file of files) {
+  // Two-pass approach: Patient files first (creates bundles), then clinical
+  // files (attaches to existing bundles). This guarantees all patient bundles
+  // exist before any Condition/MedicationRequest/Encounter is processed,
+  // regardless of file download order.
+  const patientFiles = files.filter((f) => f.key.includes("/Patient/"));
+  const clinicalFiles = files.filter((f) => !f.key.includes("/Patient/"));
+
+  for (const file of [...patientFiles, ...clinicalFiles]) {
     const { linesRead, parseErrors: fileErrors } = ingestNdjsonContent(
       file.content,
       file.key,
