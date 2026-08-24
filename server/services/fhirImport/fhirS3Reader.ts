@@ -132,13 +132,18 @@ export async function getLatestExportTimestamp(groupId: string): Promise<string 
 
 // ─── List NDJSON files ────────────────────────────────────────────────────
 
-// Resource types the pipeline handles. We intentionally process Patient
-// files first so all bundle slots are created before clinical files run.
+// Resource types the pipeline handles.
+// ORDER MATTERS for the parser's three-pass strategy:
+//   1. Patient            — creates bundle slots
+//   2. Medication         — builds the drug-name lookup map (must precede MedicationRequest)
+//   3. Everything else    — attaches clinical data to bundles
 const ORDERED_RESOURCE_TYPES = [
   "Patient",
+  "Medication",       // standalone drug resources (ECW) — before MedicationRequest
   "Condition",
   "MedicationRequest",
   "Encounter",
+  "Procedure",
   "DiagnosticReport",
 ] as const;
 

@@ -14,27 +14,42 @@ import type {
   FhirCondition,
   FhirMedicationRequest,
   FhirEncounter,
+  FhirProcedure,
 } from "./types";
 
 // ─── Demographic extractors ───────────────────────────────────────────────
 
 /**
  * Extracts the MRN from a Patient's identifier array.
- * Looks for an identifier whose type.coding contains code "MR".
- * Falls back to the first identifier value if no MR type is found.
+ *
+ * ECW identifier layout:
+ *   - use="usual"     → encrypted FHIR patient id (same as Patient.id) — NOT the MRN
+ *   - use="secondary" → the human-readable MRN (e.g. "e35959")
+ *
+ * Fallback chain:
+ *   1. use="secondary" identifier value  (ECW)
+ *   2. identifier whose type.coding contains code="MR"  (standard FHIR)
+ *   3. any identifier whose value differs from Patient.id  (last resort)
  */
 export function extractMrn(patient: FhirPatient): string | null {
   if (!patient.identifier?.length) return null;
 
-  // Prefer the identifier explicitly typed as MR (Medical Record Number)
+  // ECW: MRN is the identifier with use === "secondary"
+  const secondary = patient.identifier.find((id) => id.use === "secondary" && id.value);
+  if (secondary?.value) return secondary.value;
+
+  // Standard FHIR: identifier with type.coding[].code === "MR"
   const mrIdentifier = patient.identifier.find((id) =>
     id.type?.coding?.some((c) => c.code === "MR"),
   );
   if (mrIdentifier?.value) return mrIdentifier.value;
 
-  // Fall back to first identifier with a value
-  const first = patient.identifier.find((id) => id.value);
-  return first?.value ?? null;
+  // Last resort: any identifier whose value doesn't look like the FHIR id
+  // (ECW sets the "usual" identifier to the same encrypted patient id)
+  const nonFhirId = patient.identifier.find(
+    (id) => id.value && id.value !== patient.id,
+  );
+  return nonFhirId?.value ?? null;
 }
 
 /**
@@ -93,34 +108,83 @@ export function getConditionDisplay(condition: FhirCondition): string {
 }
 
 /**
- * Returns the human-readable display string for a MedicationRequest.
- * Prefers the medicationCodeableConcept.text, then the first coding display.
+ * Resolves the human-readable display name for a MedicationRequest.
+ *
+ * Resolution order:
+ *   1. medicationCodeableConcept.text or first coding display  (standard FHIR)
+ *   2. Lookup medicationReference.reference in the medication map  (ECW pattern)
+ *
+ * @param med     The MedicationRequest resource.
+ * @param lookup  Optional Map<medicationId, displayName> built from
+ *                standalone Medication resources. Pass the one from
+ *                ParsedFhirExport.medicationLookup.
  */
-export function getMedicationDisplay(med: FhirMedicationRequest): string {
+export function resolveMedicationName(
+  med: FhirMedicationRequest,
+  lookup?: Map<string, string>,
+): string {
+  // 1. Standard FHIR: name embedded in medicationCodeableConcept
   if (med.medicationCodeableConcept?.text) return med.medicationCodeableConcept.text;
-  const coding = med.medicationCodeableConcept?.coding?.[0];
-  if (coding?.display) return coding.display;
-  if (coding?.code) return coding.code;
+  const ccCoding = med.medicationCodeableConcept?.coding?.[0];
+  if (ccCoding?.display) return ccCoding.display;
+  if (ccCoding?.code) return ccCoding.code;
+
+  // 2. ECW: resolve via medicationReference → lookup map
+  if (med.medicationReference?.reference && lookup) {
+    // Reference is either "Medication/xyz123" or just "xyz123"
+    const raw = med.medicationReference.reference;
+    const medId = raw.startsWith("Medication/") ? raw.slice("Medication/".length) : raw;
+    const name = lookup.get(medId);
+    if (name) return name;
+  }
+
   return "Unknown medication";
 }
 
 /**
- * Determines whether any encounter in the bundle represents an upcoming
- * appointment (period.start > today AND < today + 180 days).
- *
- * patientType = "visit"    when an upcoming encounter exists
- * patientType = "outreach" otherwise
+ * @deprecated Use resolveMedicationName(med, lookup) instead.
+ * Kept for any legacy callers; internally delegates to resolveMedicationName.
+ */
+export function getMedicationDisplay(med: FhirMedicationRequest): string {
+  return resolveMedicationName(med, undefined);
+}
+
+// ─── Procedure extractors ─────────────────────────────────────────────────
+
+/**
+ * Returns the human-readable display string for a Procedure.
+ * Prefers code.text, then the first coding display, then the CPT/SNOMED code.
+ */
+export function getProcedureDisplay(procedure: FhirProcedure): string {
+  if (procedure.code?.text) return procedure.code.text;
+  const coding = procedure.code?.coding?.[0];
+  if (coding?.display) return coding.display;
+  if (coding?.code) return coding.code;
+  return "Unknown procedure";
+}
+
+/**
+ * Extracts the date a procedure was performed as a YYYY-MM-DD string.
+ * Tries performedDateTime first, then performedPeriod.start.
+ */
+export function getProcedureDate(procedure: FhirProcedure): string | null {
+  if (procedure.performedDateTime) return procedure.performedDateTime.slice(0, 10);
+  if (procedure.performedPeriod?.start) return procedure.performedPeriod.start.slice(0, 10);
+  return null;
+}
+
+// ─── Encounter helpers ────────────────────────────────────────────────────
+
+/**
+ * Determines whether any encounter represents an upcoming appointment
+ * (period.start > today AND < today + 180 days).
  */
 export function hasUpcomingEncounter(encounters: FhirEncounter[]): boolean {
   const now = Date.now();
-  const maxFuture = now + 180 * 24 * 60 * 60 * 1000; // 180 days in ms
-
+  const maxFuture = now + 180 * 24 * 60 * 60 * 1000;
   return encounters.some((enc) => {
-    const startStr = enc.period?.start;
-    if (!startStr) return false;
-    const startMs = Date.parse(startStr);
-    if (isNaN(startMs)) return false;
-    return startMs > now && startMs < maxFuture;
+    const ms = Date.parse(enc.period?.start ?? "");
+    return !isNaN(ms) && ms > now && ms < maxFuture;
   });
 }
 
@@ -142,13 +206,43 @@ export function getNextEncounterTime(encounters: FhirEncounter[]): string | null
   return upcoming[0]?.s ?? null;
 }
 
+/**
+ * Builds a PHI-safe encounter summary string for the notes field.
+ * Format: "32 visits, last: 2026-05-15"
+ * (No patient names or DOBs — only counts and dates.)
+ */
+function buildEncounterNotes(encounters: FhirEncounter[]): string | null {
+  if (encounters.length === 0) return null;
+
+  const finishedEncounters = encounters.filter(
+    (e) => e.status === "finished" || e.status === "completed",
+  );
+  const totalCount = finishedEncounters.length || encounters.length;
+
+  // Most recent past encounter
+  const now = Date.now();
+  const past = encounters
+    .map((e) => e.period?.start)
+    .filter((s): s is string => !!s)
+    .map((s) => Date.parse(s))
+    .filter((ms) => !isNaN(ms) && ms <= now)
+    .sort((a, b) => b - a); // newest first
+
+  const lastVisitDate = past.length > 0
+    ? new Date(past[0]).toISOString().slice(0, 10)
+    : null;
+
+  const parts: string[] = [`${totalCount} visit${totalCount !== 1 ? "s" : ""}`];
+  if (lastVisitDate) parts.push(`last: ${lastVisitDate}`);
+
+  return parts.join(", ");
+}
+
 // ─── Mapper: FhirPatientBundle → patient_directory row ────────────────────
 
 /**
  * Maps a FhirPatientBundle to an InsertPatientDirectory record.
- *
- * Note: plexusId is intentionally omitted — the DB trigger generates it on
- * INSERT. id, createdAt, and updatedAt are also omitted per the insert schema.
+ * plexusId is omitted — the DB trigger auto-generates it on INSERT.
  */
 export function mapFhirToPatientDirectory(
   bundle: FhirPatientBundle,
@@ -176,44 +270,75 @@ export function mapFhirToPatientDirectory(
 // ─── Mapper: FhirPatientBundle → patient_screenings row ──────────────────
 
 /**
- * Maps a FhirPatientBundle to an InsertPatientScreening record ready for
- * bulk insertion into the patient_screenings table.
+ * Maps a FhirPatientBundle to an InsertPatientScreening record.
  *
- * status is "draft" so the AI qualification runner picks it up immediately.
- * commitStatus and adminApprovalStatus are left at their schema defaults
- * ("Draft" / "pending") — this row requires admin review before engagement.
+ * @param bundle           The patient's full FHIR data bundle.
+ * @param clinicIdInt      Integer FK to clinics.id.
+ * @param batchId          FK to screening_batches.id.
+ * @param clinicName       Human-readable clinic name for the facility field.
+ * @param medicationLookup Map<medicationId, displayName> from ParsedFhirExport.
+ *                         Required for ECW exports where drug names live in
+ *                         standalone Medication resources.
  */
 export function mapFhirToScreening(
   bundle: FhirPatientBundle,
   clinicIdInt: number,
   batchId: number,
   clinicName: string,
+  medicationLookup?: Map<string, string>,
 ): InsertPatientScreening {
-  const { patient, conditions, medications, encounters } = bundle;
+  const { patient, conditions, medications, encounters, procedures } = bundle;
   const primaryName = patient.name?.[0];
   const lastName = primaryName?.family ?? "";
   const firstName = primaryName?.given?.join(" ") ?? "";
-  const fullName = lastName && firstName ? `${lastName}, ${firstName}` : firstName || lastName || "Unknown";
+  const fullName =
+    lastName && firstName
+      ? `${lastName}, ${firstName}`
+      : firstName || lastName || "Unknown";
 
+  // ── Diagnoses ────────────────────────────────────────────────────────────
   const activeConditions = conditions.filter((c) => {
-    const status = c.clinicalStatus?.coding?.[0]?.code;
-    return !status || status === "active" || status === "recurrence" || status === "relapse";
+    const statusCode = c.clinicalStatus?.coding?.[0]?.code;
+    return (
+      !statusCode ||
+      statusCode === "active" ||
+      statusCode === "recurrence" ||
+      statusCode === "relapse"
+    );
   });
-
-  const activeMedications = medications.filter((m) => m.status === "active");
-
+  const conditionsToUse = activeConditions.length > 0 ? activeConditions : conditions;
   const diagnosesText =
-    activeConditions.length > 0
-      ? activeConditions.map(getConditionDisplay).join("; ")
-      : conditions.map(getConditionDisplay).join("; ") || null;
+    conditionsToUse.length > 0
+      ? conditionsToUse.map(getConditionDisplay).join("; ")
+      : null;
 
+  // ── Medications ──────────────────────────────────────────────────────────
+  const activeMedications = medications.filter((m) => m.status === "active");
+  const medsToUse = activeMedications.length > 0 ? activeMedications : medications;
   const medicationsText =
-    activeMedications.length > 0
-      ? activeMedications.map(getMedicationDisplay).join("; ")
-      : medications.map(getMedicationDisplay).join("; ") || null;
+    medsToUse.length > 0
+      ? medsToUse.map((m) => resolveMedicationName(m, medicationLookup)).join("; ")
+      : null;
 
+  // ── Procedures → previousTests ───────────────────────────────────────────
+  // Populate previousTests with semicolon-separated procedure names and
+  // previousTestsDate with the most recent procedure date.
+  const procedureNames =
+    procedures.length > 0
+      ? procedures.map(getProcedureDisplay).join("; ")
+      : null;
+
+  const procedureDates = procedures
+    .map(getProcedureDate)
+    .filter((d): d is string => !!d)
+    .sort()
+    .reverse(); // newest first
+  const mostRecentProcedureDate = procedureDates[0] ?? null;
+
+  // ── Encounters → notes + patientType + time ───────────────────────────────
   const upcomingEncounter = hasUpcomingEncounter(encounters);
   const nextTime = getNextEncounterTime(encounters);
+  const encounterNotes = buildEncounterNotes(encounters);
 
   return {
     clinicId: clinicIdInt,
@@ -227,13 +352,13 @@ export function mapFhirToScreening(
     insurance: null,
     facility: clinicName,
     diagnoses: diagnosesText,
-    // history mirrors diagnoses — the AI enriches this during qualification
+    // history mirrors diagnoses at import time — the AI enriches this during qualification
     history: diagnosesText,
     medications: medicationsText,
-    previousTests: null,
-    previousTestsDate: null,
-    noPreviousTests: false,
-    notes: null,
+    previousTests: procedureNames,
+    previousTestsDate: mostRecentProcedureDate,
+    noPreviousTests: procedures.length === 0,
+    notes: encounterNotes,
     qualifyingTests: [],
     reasoning: {},
     status: "draft",
@@ -241,7 +366,7 @@ export function mapFhirToScreening(
     patientType: upcomingEncounter ? "visit" : "outreach",
     commitStatus: "Draft",
     adminApprovalStatus: "pending",
-    // time is the scheduled appointment time string (HH:MM or similar)
+    // time holds the next appointment datetime string (for "visit" patients)
     time: nextTime ?? null,
     isTest: false,
   };

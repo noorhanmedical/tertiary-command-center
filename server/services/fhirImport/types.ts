@@ -20,6 +20,7 @@ export type FhirCodeableConcept = {
 };
 
 export type FhirIdentifier = {
+  use?: string;   // "usual" | "official" | "secondary" | etc.
   type?: {
     coding?: FhirCoding[];
   };
@@ -70,6 +71,17 @@ export type FhirPatient = {
   address?: FhirAddress[];
 };
 
+// ─── Medication (standalone drug resource — ECW pattern) ──────────────────
+// ECW emits drug names in a separate Medication resource; MedicationRequests
+// then reference it via medicationReference instead of embedding the name
+// in medicationCodeableConcept. The parser builds a lookup map from these.
+
+export type FhirMedication = {
+  resourceType: "Medication";
+  id?: string;
+  code?: FhirCodeableConcept;
+};
+
 // ─── Condition ────────────────────────────────────────────────────────────
 
 export type FhirCondition = {
@@ -88,13 +100,20 @@ export type FhirMedicationRequest = {
   resourceType: "MedicationRequest";
   id?: string;
   subject?: FhirReference;
+  // Standard FHIR: drug name embedded directly
   medicationCodeableConcept?: FhirCodeableConcept;
-  // FHIR R4 also allows medicationReference — we only handle CodeableConcept
+  // ECW pattern: reference to a standalone Medication resource
+  medicationReference?: FhirReference;
   status?: string; // "active" | "stopped" | "completed" | "cancelled" | etc.
   authoredOn?: string;
 };
 
 // ─── Encounter ────────────────────────────────────────────────────────────
+
+export type FhirEncounterParticipant = {
+  type?: FhirCodeableConcept[];
+  individual?: FhirReference;
+};
 
 export type FhirEncounterClass = {
   system?: string;
@@ -110,6 +129,19 @@ export type FhirEncounter = {
   class?: FhirEncounterClass;
   period?: FhirPeriod;
   type?: FhirCodeableConcept[];
+  participant?: FhirEncounterParticipant[];
+};
+
+// ─── Procedure ────────────────────────────────────────────────────────────
+
+export type FhirProcedure = {
+  resourceType: "Procedure";
+  id?: string;
+  status?: string; // "preparation" | "in-progress" | "not-done" | "on-hold" | "stopped" | "completed" | "entered-in-error" | "unknown"
+  code?: FhirCodeableConcept;
+  subject?: FhirReference;
+  performedDateTime?: string;
+  performedPeriod?: FhirPeriod;
 };
 
 // ─── DiagnosticReport ─────────────────────────────────────────────────────
@@ -129,9 +161,11 @@ export type FhirDiagnosticReport = {
 
 export type FhirResource =
   | FhirPatient
+  | FhirMedication
   | FhirCondition
   | FhirMedicationRequest
   | FhirEncounter
+  | FhirProcedure
   | FhirDiagnosticReport;
 
 // ─── Patient bundle ───────────────────────────────────────────────────────
@@ -142,6 +176,7 @@ export type FhirPatientBundle = {
   conditions: FhirCondition[];
   medications: FhirMedicationRequest[];
   encounters: FhirEncounter[];
+  procedures: FhirProcedure[];
   diagnosticReports: FhirDiagnosticReport[];
 };
 
@@ -150,6 +185,12 @@ export type FhirPatientBundle = {
 export type ParsedFhirExport = {
   /** Bundles keyed by FHIR patient resource id (e.g. "12345") */
   bundles: Map<string, FhirPatientBundle>;
+  /**
+   * Drug name lookup built from standalone Medication resources.
+   * Key = Medication.id, value = resolved display name.
+   * Used by the mapper to resolve MedicationRequest.medicationReference.
+   */
+  medicationLookup: Map<string, string>;
   /** Total raw lines read (including blank / unparseable) */
   totalLines: number;
   /** Lines that failed JSON.parse or had no resourceType */
@@ -159,7 +200,7 @@ export type ParsedFhirExport = {
 // ─── S3 file entry ─────────────────────────────────────────────────────────
 
 export type S3NdjsonFile = {
-  key: string;       // full S3 object key
+  key: string;          // full S3 object key
   resourceType: string; // "Patient" | "Condition" | etc., inferred from key path
 };
 

@@ -108,7 +108,7 @@ export async function runFhirImport(
   console.log(`[fhirImport] downloaded ${ndjsonFiles.length} NDJSON file(s)`);
 
   // ── Step 3: parse into bundles ───────────────────────────────────────────
-  const { bundles, totalLines, parseErrors } = parseFhirNdjsonFiles(ndjsonFiles);
+  const { bundles, medicationLookup, totalLines, parseErrors } = parseFhirNdjsonFiles(ndjsonFiles);
   stats.totalPatientBundles = bundles.size;
 
   console.log(
@@ -195,7 +195,7 @@ export async function runFhirImport(
       }
 
       // Create a screening row in this batch
-      const screeningRow = mapFhirToScreening(bundle, clinicId, batch.id, clinicName);
+      const screeningRow = mapFhirToScreening(bundle, clinicId, batch.id, clinicName, medicationLookup);
       screeningRows.push(screeningRow);
     } catch (err: any) {
       // Per-patient error — log FHIR id only (PHI-safe), continue

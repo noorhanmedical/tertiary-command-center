@@ -4,9 +4,11 @@
 
 export type {
   FhirPatient,
+  FhirMedication,
   FhirCondition,
   FhirMedicationRequest,
   FhirEncounter,
+  FhirProcedure,
   FhirDiagnosticReport,
   FhirResource,
   FhirPatientBundle,
@@ -29,6 +31,9 @@ export {
   calculateAge,
   getConditionDisplay,
   getMedicationDisplay,
+  resolveMedicationName,
+  getProcedureDisplay,
+  getProcedureDate,
   hasUpcomingEncounter,
 } from "./fhirPatientMapper";
 

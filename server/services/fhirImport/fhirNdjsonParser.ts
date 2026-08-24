@@ -4,14 +4,21 @@
 // classifies each line by resourceType, and groups the clinical resources
 // against their Patient by FHIR id reference ("Patient/{id}").
 //
+// Three-pass processing order (enforced in parseFhirNdjsonFiles):
+//   1. Patient files    — creates bundle slots keyed by FHIR patient id
+//   2. Medication files — builds the medicationLookup map (id → display name)
+//   3. All other files  — attaches clinical resources to existing bundles
+//
 // PHI-safe: no patient names or DOBs are logged. Errors include only the
 // S3 key, line number, and error message.
 
 import type {
   FhirPatient,
+  FhirMedication,
   FhirCondition,
   FhirMedicationRequest,
   FhirEncounter,
+  FhirProcedure,
   FhirDiagnosticReport,
   FhirResource,
   FhirPatientBundle,
@@ -28,6 +35,10 @@ function isFhirPatient(r: Record<string, unknown>): r is FhirPatient {
   return r["resourceType"] === "Patient";
 }
 
+function isFhirMedication(r: Record<string, unknown>): r is FhirMedication {
+  return r["resourceType"] === "Medication";
+}
+
 function isFhirCondition(r: Record<string, unknown>): r is FhirCondition {
   return r["resourceType"] === "Condition";
 }
@@ -38,6 +49,10 @@ function isFhirMedicationRequest(r: Record<string, unknown>): r is FhirMedicatio
 
 function isFhirEncounter(r: Record<string, unknown>): r is FhirEncounter {
   return r["resourceType"] === "Encounter";
+}
+
+function isFhirProcedure(r: Record<string, unknown>): r is FhirProcedure {
+  return r["resourceType"] === "Procedure";
 }
 
 function isFhirDiagnosticReport(r: Record<string, unknown>): r is FhirDiagnosticReport {
@@ -57,6 +72,20 @@ export function extractPatientIdFromReference(reference: string | undefined): st
   return match ? match[1] : null;
 }
 
+// ─── Medication display name resolution ──────────────────────────────────
+
+/**
+ * Extracts the best display name from a standalone Medication resource.
+ * Prefers code.text, then the first coding display, then the coding code.
+ */
+function extractMedicationDisplayName(med: FhirMedication): string | null {
+  if (med.code?.text) return med.code.text;
+  const coding = med.code?.coding?.[0];
+  if (coding?.display) return coding.display;
+  if (coding?.code) return coding.code;
+  return null;
+}
+
 // ─── Bundle builder ───────────────────────────────────────────────────────
 
 function emptyBundle(patient: FhirPatient): FhirPatientBundle {
@@ -65,11 +94,12 @@ function emptyBundle(patient: FhirPatient): FhirPatientBundle {
     conditions: [],
     medications: [],
     encounters: [],
+    procedures: [],
     diagnosticReports: [],
   };
 }
 
-function ensureBundle(
+function getBundle(
   bundles: Map<string, FhirPatientBundle>,
   patientId: string,
 ): FhirPatientBundle | null {
@@ -101,28 +131,27 @@ function parseLine(
   return { ok: true, resource: parsed as unknown as FhirResource };
 }
 
-// ─── Ingest a single NDJSON file's content into the shared bundles map ────
+// ─── Ingest a single NDJSON file ─────────────────────────────────────────
 
 /**
  * Processes one NDJSON file's content string.
  *
- * Patients encountered here register a new bundle slot. Clinical resources
- * are attached to whichever bundle holds their patient ref. Resources whose
- * patient ref is not yet in the map are deferred — once a second pass
- * processes Patient resources from a different file, the dangling refs won't
- * be resolved. In practice the S3 structure emits all Patients first (one
- * dedicated subfolder), so the multi-pass strategy used by the orchestrator
- * (process Patient files first, then clinical files) guarantees correctness.
+ * - Patient resources create new bundle slots.
+ * - Medication resources populate the medicationLookup map (id → display name).
+ * - All other clinical resources are attached to existing bundle slots via
+ *   their subject.reference ("Patient/{id}").
  *
- * @param content   Raw NDJSON string (newline-separated JSON objects).
- * @param sourceKey S3 key — used only in error logs.
- * @param bundles   Mutable shared map to accumulate results into.
- * @returns         { linesRead, parseErrors } for the caller to accumulate.
+ * @param content            Raw NDJSON string.
+ * @param sourceKey          S3 key — used only in error logs.
+ * @param bundles            Mutable shared bundles map.
+ * @param medicationLookup   Mutable shared medication lookup map.
+ * @returns                  { linesRead, parseErrors }
  */
 export function ingestNdjsonContent(
   content: string,
   sourceKey: string,
   bundles: Map<string, FhirPatientBundle>,
+  medicationLookup: Map<string, string>,
 ): { linesRead: number; parseErrors: number } {
   const lines = content.split("\n");
   let parseErrors = 0;
@@ -139,6 +168,7 @@ export function ingestNdjsonContent(
 
     const resource = result.resource;
 
+    // ── Patient ────────────────────────────────────────────────────────────
     if (isFhirPatient(resource)) {
       const patientId = resource.id;
       if (!patientId) {
@@ -149,18 +179,33 @@ export function ingestNdjsonContent(
       if (!bundles.has(patientId)) {
         bundles.set(patientId, emptyBundle(resource));
       } else {
-        // Patient already seen (e.g. from a previous file) — update demographics
-        // in place so the latest record wins without losing attached clinical data.
+        // Patient already seen (e.g. from a previous file) — refresh demographics
+        // in place so the latest record wins without dropping attached clinical data.
         const existing = bundles.get(patientId)!;
         existing.patient = resource;
       }
       continue;
     }
 
+    // ── Medication (standalone drug resource — ECW pattern) ────────────────
+    // Has no subject reference; goes into the lookup map, not a bundle.
+    if (isFhirMedication(resource)) {
+      const medId = resource.id;
+      if (medId) {
+        const displayName = extractMedicationDisplayName(resource);
+        if (displayName) {
+          medicationLookup.set(medId, displayName);
+        }
+      }
+      continue;
+    }
+
+    // ── Clinical resources — all require a subject.reference ───────────────
+
     if (isFhirCondition(resource)) {
       const pid = extractPatientIdFromReference(resource.subject?.reference);
       if (!pid) continue;
-      const bundle = ensureBundle(bundles, pid);
+      const bundle = getBundle(bundles, pid);
       if (bundle) bundle.conditions.push(resource);
       continue;
     }
@@ -168,7 +213,7 @@ export function ingestNdjsonContent(
     if (isFhirMedicationRequest(resource)) {
       const pid = extractPatientIdFromReference(resource.subject?.reference);
       if (!pid) continue;
-      const bundle = ensureBundle(bundles, pid);
+      const bundle = getBundle(bundles, pid);
       if (bundle) bundle.medications.push(resource);
       continue;
     }
@@ -176,15 +221,23 @@ export function ingestNdjsonContent(
     if (isFhirEncounter(resource)) {
       const pid = extractPatientIdFromReference(resource.subject?.reference);
       if (!pid) continue;
-      const bundle = ensureBundle(bundles, pid);
+      const bundle = getBundle(bundles, pid);
       if (bundle) bundle.encounters.push(resource);
+      continue;
+    }
+
+    if (isFhirProcedure(resource)) {
+      const pid = extractPatientIdFromReference(resource.subject?.reference);
+      if (!pid) continue;
+      const bundle = getBundle(bundles, pid);
+      if (bundle) bundle.procedures.push(resource);
       continue;
     }
 
     if (isFhirDiagnosticReport(resource)) {
       const pid = extractPatientIdFromReference(resource.subject?.reference);
       if (!pid) continue;
-      const bundle = ensureBundle(bundles, pid);
+      const bundle = getBundle(bundles, pid);
       if (bundle) bundle.diagnosticReports.push(resource);
       continue;
     }
@@ -200,35 +253,55 @@ export function ingestNdjsonContent(
 /**
  * Parses a set of NDJSON file contents into a unified export result.
  *
- * `files` should be ordered so Patient files come before clinical files to
- * avoid dangling references (the S3 reader handles this ordering).
+ * Three-pass ordering is applied regardless of the input file order:
+ *   1. Patient files  → creates bundle slots
+ *   2. Medication files → builds the medication lookup map
+ *   3. Everything else  → attaches clinical resources to bundles
  *
- * @param files  Array of { key, content } tuples in preferred processing order.
- * @returns      ParsedFhirExport with the bundles map + aggregate counters.
+ * This guarantees all bundle slots and the full drug-name lookup table
+ * exist before MedicationRequests are processed.
+ *
+ * Medication-file detection uses path matching to avoid confusing
+ * "/Medication/" with "/MedicationRequest/":
+ *   - Medication:        key contains "/Medication/" but NOT "/MedicationRequest/"
+ *   - MedicationRequest: key contains "/MedicationRequest/"
+ *
+ * @param files  Array of { key, content } tuples (any order).
+ * @returns      ParsedFhirExport with bundles, medicationLookup, and counters.
  */
 export function parseFhirNdjsonFiles(
   files: Array<{ key: string; content: string }>,
 ): ParsedFhirExport {
   const bundles = new Map<string, FhirPatientBundle>();
+  const medicationLookup = new Map<string, string>();
   let totalLines = 0;
   let parseErrors = 0;
 
-  // Two-pass approach: Patient files first (creates bundles), then clinical
-  // files (attaches to existing bundles). This guarantees all patient bundles
-  // exist before any Condition/MedicationRequest/Encounter is processed,
-  // regardless of file download order.
+  // Classify files into three groups for ordered processing
   const patientFiles = files.filter((f) => f.key.includes("/Patient/"));
-  const clinicalFiles = files.filter((f) => !f.key.includes("/Patient/"));
+  const medicationFiles = files.filter(
+    (f) => f.key.includes("/Medication/") && !f.key.includes("/MedicationRequest/"),
+  );
+  const clinicalFiles = files.filter(
+    (f) =>
+      !f.key.includes("/Patient/") &&
+      !(f.key.includes("/Medication/") && !f.key.includes("/MedicationRequest/")),
+  );
 
-  for (const file of [...patientFiles, ...clinicalFiles]) {
+  for (const file of [...patientFiles, ...medicationFiles, ...clinicalFiles]) {
     const { linesRead, parseErrors: fileErrors } = ingestNdjsonContent(
       file.content,
       file.key,
       bundles,
+      medicationLookup,
     );
     totalLines += linesRead;
     parseErrors += fileErrors;
   }
 
-  return { bundles, totalLines, parseErrors };
+  console.log(
+    `[fhirNdjsonParser] lookup built: ${medicationLookup.size} medication name(s) from ${medicationFiles.length} Medication file(s)`,
+  );
+
+  return { bundles, medicationLookup, totalLines, parseErrors };
 }
