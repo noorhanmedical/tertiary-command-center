@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { assertAdminBootstrapReady } from "./auth/bootstrapPolicy";
 import { db, pool } from "./db";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
@@ -104,6 +105,10 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // Never create credentials during application startup. Confirm provisioning
+  // before recovery jobs mutate data or the public server begins listening.
+  await assertAdminBootstrapReady(() => storage.getUserCount());
 
   // ─── Reset any batches stuck in "processing" from a previous server run ────
   try {
@@ -359,17 +364,6 @@ export async function registerRoutes(
   // } catch (seedErr: any) {
   //   console.error("[clinical-intelligence] Failed to seed rule library:", seedErr.message);
   // }
-
-  // ─── First-boot seed: create admin/admin if no users exist ────────────────
-  try {
-    const count = await storage.getUserCount();
-    if (count === 0) {
-      await storage.createUser({ username: "admin", password: "admin", role: "admin" });
-      console.warn("[auth] ⚠ No users found. Created default admin/admin account — CHANGE THIS PASSWORD IMMEDIATELY");
-    }
-  } catch (seedErr: any) {
-    console.error("[auth] Failed to seed default admin account:", seedErr.message);
-  }
 
   // Note: /healthz and /readyz are mounted in server/index.ts before session
   // middleware so they are cheap and unauthenticated for the load balancer.

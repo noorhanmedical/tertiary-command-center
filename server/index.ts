@@ -4,11 +4,12 @@ import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import { errorHandler } from "./middleware/errorHandler";
 import { clinicContext } from "./middleware/clinicContext";
 import { validateEnv } from "./lib/validateEnv";
 import { startBackgroundServices, stopBackgroundServices } from "./lifecycle";
+import { runStartupBoundary } from "./startupBoundary";
 
 // Single source of truth for required env + production storage provider check.
 validateEnv();
@@ -134,39 +135,46 @@ process.on("uncaughtException", (err) => {
 });
 
 (async () => {
-  await registerRoutes(httpServer, app);
+  const startupResult = await runStartupBoundary({
+    initialize: async () => {
+      await registerRoutes(httpServer, app);
 
-  app.use(errorHandler);
+      app.use(errorHandler);
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
-  }
-
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
+      // Set up the SPA only after API registration so its catch-all cannot
+      // shadow application routes.
+      if (process.env.NODE_ENV === "production") {
+        serveStatic(app);
+      } else {
+        const { setupVite } = await import("./vite");
+        await setupVite(httpServer, app);
+      }
     },
-    () => {
-      log(`serving on port ${port}`);
-      // Start recurring background services after the HTTP server is up so
-      // health checks and request routing aren't blocked by their first tick.
-      // Each job acquires a Postgres advisory lock per tick so multiple ECS
-      // tasks never double-fire.
-      startBackgroundServices();
+    listen: () => {
+      // Always use the configured port; other ports are firewalled.
+      const port = parseInt(process.env.PORT || "5000", 10);
+      httpServer.listen(
+        {
+          port,
+          host: "0.0.0.0",
+        },
+        () => {
+          log(`serving on port ${port}`);
+          // Background jobs start only after the listener is ready. Each job
+          // acquires a Postgres advisory lock to prevent duplicate side effects.
+          startBackgroundServices();
+        },
+      );
     },
-  );
+    writeFatalSignal: (signal) => {
+      writeSync(process.stderr.fd, `${signal}\n`);
+    },
+    exit: (statusCode) => {
+      process.exit(statusCode);
+    },
+  });
+
+  if (startupResult !== "started") return;
 
   // ─── Dev orphan watchdog ──────────────────────────────────────────────────
   // In dev the process tree is `sh -c` → tsx CLI wrapper → this node process.
