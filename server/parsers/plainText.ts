@@ -1,5 +1,7 @@
 import { parse } from "csv-parse/sync";
 import { openai, withRetry } from "../services/aiClient";
+import { getRequestId } from "../middleware/requestObservability";
+import { classifyLogSafeError, errorPhiSafe } from "../lib/phiSafeLogger";
 import type { ParsedPatient } from "./types";
 
 const END_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains numbered patient records separated by "---". Extract clinical data from each record IN ORDER.
@@ -65,7 +67,7 @@ async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
         max_completion_tokens: 16000,
       }),
     3,
-    "parseSingleChunk"
+    "plain_text_parse"
   );
 
   const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
@@ -192,7 +194,7 @@ async function parseEndDelimitedBatch(batch: { name: string; block: string; insu
         max_completion_tokens: 16000,
       }),
     3,
-    "parseEndDelimitedBatch"
+    "plain_text_parse"
   );
 
   const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
@@ -722,8 +724,14 @@ export async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
       }
     }
     return Array.from(grouped.values());
-  } catch (err: any) {
-    console.error("parseWithAI failed:", err.message);
+  } catch (error: unknown) {
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "plain_text_parse",
+      outcome: "failed",
+      category: classifyLogSafeError(error),
+      requestId: getRequestId(),
+    });
     return [];
   }
 }

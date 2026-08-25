@@ -17,6 +17,12 @@ import {
   EmptyBatchError,
 } from "../services/batchAnalysisRunner";
 import { extractDateFromPrevTests } from "./helpers";
+import { getRequestId } from "../middleware/requestObservability";
+import {
+  classifyLogSafeError,
+  errorPhiSafe,
+  warnPhiSafe,
+} from "../lib/phiSafeLogger";
 
 // Clinical-paste bulk import + durable qualification job routes for
 // Plexus IQ. Re-uses the existing analysis_jobs infra so the client can
@@ -27,6 +33,21 @@ import { extractDateFromPrevTests } from "./helpers";
 // human inspection) can recover the import row index, MRN, parser
 // warnings, and raw row snippet without touching the schema.
 const CLINICAL_IMPORT_NOTES_HEADER = "[plexus-iq-clinical-import]";
+
+function publicAnalysisFailureReason(category: unknown): string {
+  switch (category) {
+    case "missing_clinical":
+      return "Required clinical information is missing.";
+    case "missing_demographic":
+      return "Required demographic information is missing.";
+    case "technical_failed":
+      return "Analysis failed because of a technical error.";
+    case "ai_error":
+      return "AI analysis failed.";
+    default:
+      return "Analysis failed.";
+  }
+}
 
 // Build the structured notes block for one imported clinical row. The
 // AGE and SEX values are NOT included here because they have dedicated
@@ -247,11 +268,14 @@ async function resolveBatchForGroup(
         await createAssignmentTask(batch.id, batch.name, null);
       }
     }
-  } catch (assignErr) {
-    console.error(
-      `[plexusIqClinicalImport] scheduler assignment failed for batch ${batch.id}:`,
-      assignErr,
-    );
+  } catch (error: unknown) {
+    warnPhiSafe({
+      source: "clinical_import",
+      operation: "clinical_import",
+      outcome: "failed",
+      category: classifyLogSafeError(error),
+      requestId: getRequestId(),
+    });
   }
 
   void userId;
@@ -520,7 +544,13 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           batchPatientMap: [],
         });
       }
-      console.error("[plexusIqClinicalImport] bulk insert error:", error);
+      errorPhiSafe({
+        source: "clinical_import",
+        operation: "clinical_import",
+        outcome: "failed",
+        category: classifyLogSafeError(error),
+        requestId: getRequestId(),
+      });
       return res.status(500).json({
         ok: false,
         importedCount: patientIds.length,
@@ -529,10 +559,7 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           ...errors,
           {
             rowIndex: 0,
-            reason:
-              error instanceof Error
-                ? error.message
-                : "Unknown server error during bulk insert",
+            reason: "Clinical import failed.",
           },
         ],
         batchIds,
@@ -632,7 +659,7 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           } else {
             startErrors.push({
               batchId,
-              reason: err instanceof Error ? err.message : "Unknown error",
+              reason: "Unable to start analysis job",
             });
           }
         }
@@ -728,16 +755,10 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           const failure = reasoning["__analysisFailure"] as
             | { category?: string; reason?: string; failedAt?: string }
             | undefined;
-          const analysisErr = reasoning["__analysisError"] as
-            | { message?: string; failedAt?: string }
-            | undefined;
           return {
             patientId: p.id,
             patientName: p.name,
-            error:
-              failure?.reason ??
-              analysisErr?.message ??
-              "Analysis failed (status=error)",
+            error: publicAnalysisFailureReason(failure?.category),
             category: failure?.category,
           };
         });
@@ -783,15 +804,18 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           aiErrorCount,
           startedAt: job.startedAt,
           completedAt: job.completedAt ?? null,
-          errorMessage: job.errorMessage ?? null,
+          errorMessage: job.status === "failed" ? "Analysis job failed" : null,
           errors,
         });
       } catch (error: unknown) {
-        console.error("[plexusIqClinicalImport] job-status error:", error);
-        res.status(500).json({
-          error:
-            error instanceof Error ? error.message : "Failed to fetch job status",
+        errorPhiSafe({
+          source: "clinical_import",
+          operation: "clinical_import",
+          outcome: "failed",
+          category: classifyLogSafeError(error),
+          requestId: getRequestId(),
         });
+        res.status(500).json({ error: "Failed to fetch job status" });
       }
     },
   );
@@ -908,10 +932,14 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
         if (err instanceof EmptyBatchError) {
           return res.status(400).json({ error: "No patients in batch" });
         }
-        console.error("[plexusIqClinicalImport] retry-failed error:", err);
-        res.status(500).json({
-          error: err instanceof Error ? err.message : "Failed to retry job",
+        errorPhiSafe({
+          source: "clinical_import",
+          operation: "clinical_import",
+          outcome: "failed",
+          category: classifyLogSafeError(err),
+          requestId: getRequestId(),
         });
+        res.status(500).json({ error: "Failed to retry job" });
       }
     },
   );

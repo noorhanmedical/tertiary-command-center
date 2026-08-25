@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { sendPublicOperationalResponse } from "./middleware/requestObservability";
 import { storage } from "./storage";
 import { db, pool } from "./db";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
@@ -203,7 +204,7 @@ export async function registerRoutes(
         },
       });
     } catch {
-      res.status(503).json({ status: "error", db: false });
+      sendPublicOperationalResponse(res, "DATABASE_HEALTH_UNAVAILABLE");
     }
   });
 

@@ -6,29 +6,10 @@
 //
 // PHI-SAFE LOGGING CONTRACT — CRITICAL INVARIANT
 //
-//   The catch block's `console.error` in the original handler emitted
-//   ONLY the following fields:
-//     - patientId        (number; not PHI)
-//     - queryLength      (number; not PHI — the count of trimmed chars)
-//     - hasAIIntegrationsKey (boolean; not PHI)
-//     - hasOpenAIKey     (boolean; not PHI)
-//     - hasBaseUrl       (boolean; not PHI)
-//     - message          (string; the error message truncated to 240 chars,
-//                         from the upstream `Error.message` or stringified
-//                         non-Error value)
-//
-//   The catch block intentionally did NOT log:
-//     - the raw query string
-//     - the patient name, DOB, phone, or any patient demographics
-//     - the patient diagnoses / medications / history (the PHI patient
-//       context)
-//     - the raw AI prompt or AI response body
-//     - any API key or base URL value
-//
-//   This wrapper preserves that contract by KEEPING THE catch BLOCK IN
-//   THE ROUTE. The service does happy-path logic and throws on AI error;
-//   it has zero logging side effects. The route's catch handler is
-//   unchanged byte-for-byte.
+//   The service performs no logging. Its route-level catch emits only a
+//   bounded operation, outcome, category, and request ID through the PHI-safe
+//   logger. It never logs or returns provider diagnostics, patient IDs, query
+//   values, clinical context, prompts, responses, API-key state, or base URLs.
 //
 // Behavior contract preserved (see
 // docs/architecture/backend-route-parity-inventory.md §1.8):
@@ -47,7 +28,7 @@
 //         fallback to undefined per field.
 //   - AI call: searchAdminReviewIcdCodes({ query, patient, patientContext }).
 //   - Happy-path response (route): { ok: true, results }.
-//   - Error envelope (route catch): preserved verbatim — see contract above.
+//   - Error envelope (route catch): generic 5xx response with request correlation.
 //   - The dynamic import of searchAdminReviewIcdCodes remains inside the
 //     service so cold-start behavior matches the previous handler.
 //
@@ -75,7 +56,7 @@ export type AdminReviewIcdSearchOutcome =
 /**
  * Run the universal Admin Review ICD-10-CM search. Returns a discriminated
  * union for validation failures; throws on AI/network failures so the route
- * can apply the PHI-safe catch logging contract unchanged.
+ * can apply the bounded PHI-safe failure contract.
  *
  * Short queries (`query.length < 2` after trimming) short-circuit to
  * `{ ok: true, results: [] }` without calling the AI, matching the

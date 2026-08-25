@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import {
@@ -20,6 +20,28 @@ import {
   recallPatient,
   ensureCanonicalSpineForScreening,
 } from "../services/patientCommitService";
+import { getRequestId } from "../middleware/requestObservability";
+import {
+  classifyLogSafeError,
+  errorPhiSafe,
+  warnPhiSafe,
+  type LogSafeOperation,
+} from "../lib/phiSafeLogger";
+
+function logAiRouteFailure(operation: LogSafeOperation, error: unknown): void {
+  errorPhiSafe({
+    source: "ai_operation",
+    operation,
+    outcome: "failed",
+    category: classifyLogSafeError(error),
+    requestId: getRequestId(),
+  });
+}
+
+function sendAdminReviewFailure(res: Response, error: unknown): void {
+  logAiRouteFailure("admin_review", error);
+  res.status(500).json({ error: "Admin review operation failed" });
+}
 
 export function registerPatientRoutes(
   app: Express,
@@ -224,11 +246,8 @@ export function registerPatientRoutes(
         return res.status(404).json({ error: "Patient not found" });
       }
       res.json({ ok: true, patientId: outcome.patientId, ...outcome.result });
-    } catch (error: any) {
-      console.error("[admin-review/evidence] error:", error?.message ?? error);
-      res.status(500).json({
-        error: error?.message ?? "Failed to build admin review evidence",
-      });
+    } catch (error: unknown) {
+      sendAdminReviewFailure(res, error);
     }
   });
 
@@ -261,11 +280,8 @@ export function registerPatientRoutes(
         clinicianReasoning: outcome.clinicianReasoning,
         patientExplanation: outcome.patientExplanation,
       });
-    } catch (error: any) {
-      console.error("[admin-review/regenerate] error:", error?.message ?? error);
-      res.status(500).json({
-        error: error?.message ?? "Failed to regenerate admin review reasoning",
-      });
+    } catch (error: unknown) {
+      sendAdminReviewFailure(res, error);
     }
   });
 
@@ -293,11 +309,8 @@ export function registerPatientRoutes(
         return res.status(404).json({ error: "Patient not found" });
       }
       res.json({ ok: true, patient: outcome.patient });
-    } catch (error: any) {
-      console.error("[admin-review/regenerate-all] error:", error?.message ?? error);
-      res.status(500).json({
-        error: error?.message ?? "Failed to regenerate canonical reasoning",
-      });
+    } catch (error: unknown) {
+      sendAdminReviewFailure(res, error);
     }
   });
 
@@ -335,14 +348,8 @@ export function registerPatientRoutes(
           patient: outcome.patient,
           ancillaryId: outcome.ancillaryId,
         });
-      } catch (error: any) {
-        console.error(
-          "[admin-review/regenerate-ancillary] error:",
-          error?.message ?? error,
-        );
-        res.status(500).json({
-          error: error?.message ?? "Failed to regenerate ancillary reasoning",
-        });
+      } catch (error: unknown) {
+        sendAdminReviewFailure(res, error);
       }
     },
   );
@@ -351,11 +358,9 @@ export function registerPatientRoutes(
   // Logs only non-sensitive metadata — no key, no PHI, no full query, no Hx/Dx/Rx.
   //
   // Delegated to server/services/plexusIq/adminReviewIcdSearchService.ts for the
-  // validation + AI-call path. The PHI-safe catch block is INTENTIONALLY kept
-  // in the route so the structured error log emits the exact same fields it
-  // has always emitted (patientId, queryLength, hasAIIntegrationsKey,
-  // hasOpenAIKey, hasBaseUrl, message). See
-  // docs/architecture/backend-route-parity-inventory.md §1.8.
+  // validation + AI-call path. Failures are emitted only through the bounded
+  // PHI-safe taxonomy; patient IDs, query details, provider messages, key
+  // configuration, prompts, and response content are never logged.
   app.post(
     "/api/patient-screenings/:id/admin-review/icd-search",
     async (req, res) => {
@@ -380,24 +385,8 @@ export function registerPatientRoutes(
           });
         }
         res.json({ ok: true, results: outcome.results });
-      } catch (error: any) {
-        const detail =
-          error instanceof Error
-            ? error.message.slice(0, 240)
-            : String(error ?? "unknown").slice(0, 240);
-        console.error("[admin-review/icd-search] error", {
-          patientId: id,
-          queryLength: String(req.body?.query ?? "").trim().length,
-          hasAIIntegrationsKey: !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-          hasOpenAIKey: !!process.env.OPENAI_API_KEY,
-          hasBaseUrl: !!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-          message: detail,
-        });
-        res.status(500).json({
-          ok: false,
-          error: "OpenAI universal ICD search failed",
-          detail,
-        });
+      } catch (error: unknown) {
+        sendAdminReviewFailure(res, error);
       }
     },
   );
@@ -448,14 +437,8 @@ export function registerPatientRoutes(
           testName: outcome.testName,
           ancillaryId: outcome.ancillaryId,
         });
-      } catch (error: any) {
-        console.error(
-          "[admin-review/regenerate-test] error:",
-          error?.message ?? error,
-        );
-        res.status(500).json({
-          error: error?.message ?? "Failed to regenerate test reasoning",
-        });
+      } catch (error: unknown) {
+        sendAdminReviewFailure(res, error);
       }
     },
   );
@@ -500,14 +483,8 @@ export function registerPatientRoutes(
           patient: outcome.patient,
           removedTestName: outcome.removedTestName,
         });
-      } catch (error: any) {
-        console.error(
-          "[admin-review/remove-test] error:",
-          error?.message ?? error,
-        );
-        res.status(500).json({
-          error: error?.message ?? "Failed to remove test",
-        });
+      } catch (error: unknown) {
+        sendAdminReviewFailure(res, error);
       }
     },
   );
@@ -548,14 +525,8 @@ export function registerPatientRoutes(
           ancillaryId: outcome.ancillaryId,
           removedTests: outcome.removedTests,
         });
-      } catch (error: any) {
-        console.error(
-          "[admin-review/remove-ancillary] error:",
-          error?.message ?? error,
-        );
-        res.status(500).json({
-          error: error?.message ?? "Failed to remove ancillary",
-        });
+      } catch (error: unknown) {
+        sendAdminReviewFailure(res, error);
       }
     },
   );
@@ -609,14 +580,8 @@ export function registerPatientRoutes(
           alreadyPresent: outcome.alreadyPresent,
           narrativeGenerated: outcome.narrativeGenerated,
         });
-      } catch (error: any) {
-        console.error(
-          "[admin-review/add-ancillary] error:",
-          error?.message ?? error,
-        );
-        res.status(500).json({
-          error: error?.message ?? "Failed to add ancillary",
-        });
+      } catch (error: unknown) {
+        sendAdminReviewFailure(res, error);
       }
     },
   );
@@ -884,8 +849,8 @@ export function registerPatientRoutes(
           medications: patient.medications,
           notes: patient.notes,
         }, patientQualMode);
-      } catch (aiErr: any) {
-        console.error(`AI screening failed for patient ${patient.name}:`, aiErr.message);
+      } catch (aiError: unknown) {
+        logAiRouteFailure("screen_patient", aiError);
         await storage.updatePatientScreening(id, { status: "error" });
         return res.status(500).json({ error: "AI analysis failed after retries" });
       }
@@ -915,8 +880,14 @@ export function registerPatientRoutes(
           finalPatient = result.data.patient;
           schedulerName = result.data.schedulerName;
         }
-      } catch (commitErr) {
-        console.error("Auto-commit after analyze failed:", commitErr);
+      } catch (commitError: unknown) {
+        warnPhiSafe({
+          source: "ai_operation",
+          operation: "screen_patient",
+          outcome: "partial",
+          category: classifyLogSafeError(commitError),
+          requestId: getRequestId(),
+        });
       }
 
       invalidatePatientDatabase();
@@ -929,13 +900,21 @@ export function registerPatientRoutes(
       if (finalPatient && qualTests.length > 0 && finalPatient.facility) {
         const today = new Date().toISOString().slice(0, 10);
         assignNewlyEligiblePatient(storage, finalPatient, finalPatient.facility, today)
-          .catch((err) => console.warn("[patients] assignNewlyEligiblePatient failed:", err?.message));
+          .catch((error: unknown) => {
+            warnPhiSafe({
+              source: "ai_operation",
+              operation: "screen_patient",
+              outcome: "partial",
+              category: classifyLogSafeError(error),
+              requestId: getRequestId(),
+            });
+          });
       }
 
       res.json({ ...finalPatient, autoCommittedSchedulerName: schedulerName });
-    } catch (error: any) {
-      console.error("Per-patient analysis error:", error);
-      res.status(500).json({ error: error.message || "Analysis failed" });
+    } catch (error: unknown) {
+      logAiRouteFailure("screen_patient", error);
+      res.status(500).json({ error: "Analysis failed" });
     }
   });
 
@@ -1046,8 +1025,8 @@ export function registerPatientRoutes(
           },
           testName
         );
-      } catch (aiErr: any) {
-        console.error(`AI analyze-test failed for ${patient.name} / ${testName}:`, aiErr.message);
+      } catch (aiError: unknown) {
+        logAiRouteFailure("test_analysis", aiError);
         return res.status(500).json({ error: "AI analysis failed after retries" });
       }
 
@@ -1077,9 +1056,9 @@ export function registerPatientRoutes(
 
       invalidatePatientDatabase();
       res.json({ reasoning: mergedReasoning, testName, patient: updated });
-    } catch (error: any) {
-      console.error("Single-test analysis error:", error);
-      res.status(500).json({ error: error.message || "Analysis failed" });
+    } catch (error: unknown) {
+      logAiRouteFailure("test_analysis", error);
+      res.status(500).json({ error: "Analysis failed" });
     }
   });
 
@@ -1121,9 +1100,9 @@ export function registerPatientRoutes(
       const saved = await storage.saveGeneratedNotes(records);
       invalidatePatientDatabase();
       res.json({ notes: saved });
-    } catch (error: any) {
-      console.error("[refresh-notes] Error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      logAiRouteFailure("generate_note", error);
+      res.status(500).json({ error: "Failed to refresh notes" });
     }
   });
 
@@ -1171,14 +1150,14 @@ export function registerPatientRoutes(
             max_completion_tokens: 1200,
           }),
         3,
-        "generateJustification"
+        "generate_note"
       );
 
       const justification = response.choices[0]?.message?.content?.trim() || "";
       res.json({ justification });
-    } catch (error: any) {
-      console.error("[generate-justification] Error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      logAiRouteFailure("generate_note", error);
+      res.status(500).json({ error: "Failed to generate justification" });
     }
   });
 
@@ -1285,7 +1264,7 @@ Return format: ["Condition Name 1", "Condition Name 2", ...]`;
             max_completion_tokens: 500,
           }),
         3,
-        "aiSelectConditions"
+        "screen_selected_conditions"
       );
 
       const raw = response.choices[0]?.message?.content?.trim() || "[]";
@@ -1297,13 +1276,19 @@ Return format: ["Condition Name 1", "Condition Name 2", ...]`;
           selected = parsedArr.filter((c: unknown) => typeof c === "string" && availableConditions.includes(c));
         }
       } catch {
-        console.warn("[ai-select-conditions] Failed to parse AI response:", raw);
+        errorPhiSafe({
+          source: "ai_operation",
+          operation: "screen_selected_conditions",
+          outcome: "failed",
+          category: "parse_failure",
+          requestId: getRequestId(),
+        });
       }
 
       res.json({ conditions: selected });
-    } catch (error: any) {
-      console.error("[ai-select-conditions] Error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      logAiRouteFailure("screen_selected_conditions", error);
+      res.status(500).json({ error: "Failed to select conditions" });
     }
   });
 
@@ -1356,7 +1341,7 @@ ${parsed.data.text}`;
           max_completion_tokens: 1200,
         }),
         2,
-        "parsePatientPaste"
+        "parse_patient"
       );
 
       const raw = response.choices[0]?.message?.content?.trim() || "{}";
@@ -1371,13 +1356,19 @@ ${parsed.data.text}`;
           }
         });
       } catch {
-        console.warn("[parse-patient-paste] Failed to parse AI response:", raw);
+        errorPhiSafe({
+          source: "ai_operation",
+          operation: "parse_patient",
+          outcome: "failed",
+          category: "parse_failure",
+          requestId: getRequestId(),
+        });
       }
 
       res.json({ fields: result });
-    } catch (error: any) {
-      console.error("[parse-patient-paste] Error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      logAiRouteFailure("parse_patient", error);
+      res.status(500).json({ error: "Failed to parse patient data" });
     }
   });
 }

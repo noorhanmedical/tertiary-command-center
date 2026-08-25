@@ -1,5 +1,7 @@
 import { openai, withRetry } from "./aiClient";
 import { storage } from "../storage";
+import { getRequestId } from "../middleware/requestObservability";
+import { errorPhiSafe, warnPhiSafe } from "../lib/phiSafeLogger";
 
 export type QualificationMode = "permissive" | "standard" | "conservative";
 
@@ -143,7 +145,7 @@ export async function screenSinglePatientWithAI(patient: ScreeningPatientInput, 
         max_completion_tokens: 16000,
       }),
     3,
-    `screenPatient:${patient.name}`
+    "screen_patient"
   );
 
   const content = response.choices[0]?.message?.content || "{}";
@@ -162,29 +164,61 @@ export async function screenSinglePatientWithAI(patient: ScreeningPatientInput, 
   };
 
   if (finishReason === "length") {
-    console.error(`AI response truncated for patient: ${patient.name}. Attempting partial recovery.`);
+    warnPhiSafe({
+      source: "ai_operation",
+      operation: "screen_patient",
+      outcome: "partial",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
     const partial = tryParse(content);
     if (partial && partial.qualifyingTests && Array.isArray(partial.qualifyingTests) && partial.qualifyingTests.length > 0) {
-      console.warn(`Partial recovery succeeded for patient: ${patient.name}. Recovered ${partial.qualifyingTests.length} qualifying tests.`);
+      warnPhiSafe({
+        source: "ai_operation",
+        operation: "screen_patient",
+        outcome: "recovered",
+        category: "parse_failure",
+        requestId: getRequestId(),
+        recoveredCount: partial.qualifyingTests.length,
+      });
       return partial;
     }
     const arrayMatch = content.match(/"qualifyingTests"\s*:\s*(\[[\s\S]*?\])/);
     if (arrayMatch) {
       try {
         const recoveredTests = JSON.parse(arrayMatch[1]);
-        console.warn(`Regex partial recovery succeeded for patient: ${patient.name}. Recovered ${recoveredTests.length} qualifying tests.`);
+        warnPhiSafe({
+          source: "ai_operation",
+          operation: "screen_patient",
+          outcome: "recovered",
+          category: "parse_failure",
+          requestId: getRequestId(),
+          recoveredCount: Array.isArray(recoveredTests) ? recoveredTests.length : 0,
+        });
         return { qualifyingTests: recoveredTests };
       } catch {
         // fall through to full parse attempt
       }
     }
-    console.error(`Partial recovery failed for patient: ${patient.name}. Returning null.`);
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "screen_patient",
+      outcome: "failed",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
     return null;
   }
 
   const result = tryParse(content);
   if (result === null) {
-    console.error(`Failed to parse AI response for patient: ${patient.name}. First 300 chars: ${content.substring(0, 300)}`);
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "screen_patient",
+      outcome: "failed",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
   }
   return result;
 }
@@ -305,7 +339,13 @@ Only include patients who have at least one matched history record. If no matche
 
     return result;
   } catch {
-    console.error("Failed to parse cooldown check response");
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "cooldown_match",
+      outcome: "failed",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
     return {};
   }
 }
@@ -369,8 +409,14 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`,
         await storage.updatePatientScreening(match.patientId, updates);
       }
     }
-  } catch (err: any) {
-    console.error("Reference DB auto-fill failed:", err.message);
+  } catch {
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "reference_enrichment",
+      outcome: "failed",
+      category: "provider_error",
+      requestId: getRequestId(),
+    });
   }
 }
 
@@ -416,7 +462,13 @@ Skip rows that are headers, empty, or don't contain valid patient data.`,
     const parsed = JSON.parse(response.choices[0]?.message?.content || '{"records":[]}');
     return parsed.records || [];
   } catch {
-    console.error("Failed to parse reference import response");
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "reference_import",
+      outcome: "failed",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
     return [];
   }
 }
@@ -464,7 +516,7 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
         max_completion_tokens: 2000,
       }),
     3,
-    `analyzeTest:${testName}`
+    "test_analysis"
   );
 
   return JSON.parse(response.choices[0]?.message?.content || "{}");
@@ -490,7 +542,13 @@ export async function extractPdfPatients(text: string): Promise<{ name: string; 
       return parsed.patients.filter((p: any) => p.name).map((p: any) => ({ name: p.name, time: p.time || undefined }));
     }
   } catch {
-    console.error("Failed to parse PDF AI extraction response");
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "document_extraction",
+      outcome: "failed",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
   }
   return [];
 }
@@ -524,7 +582,13 @@ export async function extractImagePatients(base64: string, mimeType: string): Pr
       return parsed.patients.filter((p: any) => p.name).map((p: any) => ({ name: p.name, time: p.time || undefined }));
     }
   } catch {
-    console.error("Failed to parse image AI extraction response");
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "document_extraction",
+      outcome: "failed",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
   }
   return [];
 }

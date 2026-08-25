@@ -18,6 +18,13 @@ import type {
   PlexusIqFailureCategory,
   PlexusIqJobMetadata,
 } from "@shared/contracts/plexusIqJobMetadata";
+import { classifyMicroBatchFailureReason } from "../lib/aiObservability";
+import {
+  classifyLogSafeError,
+  errorPhiSafe,
+  logPhiSafe,
+  warnPhiSafe,
+} from "../lib/phiSafeLogger";
 
 /**
  * Plexus IQ runtime hardening — step 3 helper.
@@ -38,26 +45,30 @@ import type {
  */
 export const DEFAULT_ELIGIBLE_STATUSES: ReadonlyArray<string> = ["draft", "pending"];
 
-/**
- * Plexus IQ runtime hardening — step 5 helpers.
- *
- * Both failure paths (pre-check + caught exception) write the same
- * shape: `reasoning.__analysisFailure = { category, reason, failedAt }`.
- * A legacy mirror under `__analysisError` is kept so the existing
- * status endpoint's "first 300 chars" reader keeps working until
- * step 6 adds a metadata-driven category readout to the status payload.
- */
+/** Stable user-facing reasons persisted with analysis failures. */
+const SAFE_ANALYSIS_FAILURE_REASONS: Record<PlexusIqFailureCategory, string> = {
+  missing_clinical: "Required clinical information is missing.",
+  missing_demographic: "Required demographic information is missing.",
+  technical_failed: "Analysis failed because of a technical error.",
+  ai_error: "AI analysis failed.",
+};
+
 async function writeAnalysisFailure(
   patientId: number,
   failure: PlexusIqAnalysisFailure,
 ): Promise<void> {
+  const safeFailure: PlexusIqAnalysisFailure = {
+    category: failure.category,
+    reason: SAFE_ANALYSIS_FAILURE_REASONS[failure.category],
+    failedAt: failure.failedAt,
+  };
   await storage.updatePatientScreening(patientId, {
     qualifyingTests: [],
     reasoning: {
-      __analysisFailure: failure,
+      __analysisFailure: safeFailure,
       __analysisError: {
-        message: failure.reason,
-        failedAt: failure.failedAt,
+        message: safeFailure.reason,
+        failedAt: safeFailure.failedAt,
       },
     } as Record<string, unknown>,
     status: "error",
@@ -356,8 +367,13 @@ export async function startBatchAnalysis(
 
   // Run the heavy work in the background. `eligibleIds` is forwarded
   // so the loop can target the resolved set rather than re-querying.
-  void runAnalysisLoop(batchId, job.id, userId, eligibleIds, skipped.length, config).catch((err) => {
-    console.error("[batchAnalysisRunner] background loop error:", err);
+  void runAnalysisLoop(batchId, job.id, userId, eligibleIds, skipped.length, config).catch((error: unknown) => {
+    errorPhiSafe({
+      source: "batch_analysis",
+      operation: "batch_analysis",
+      outcome: "failed",
+      category: classifyLogSafeError(error),
+    });
   });
 
   return {
@@ -473,8 +489,6 @@ async function runMicroBatchAi(args: {
   mode: Parameters<typeof screenPatientsWithAIBatch>[1];
   config: PlexusIqRuntimeConfig;
   onFallback: (count: number) => void;
-  isDev: boolean;
-  batchId: number;
 }): Promise<void> {
   const {
     chunkPatients,
@@ -482,8 +496,6 @@ async function runMicroBatchAi(args: {
     mode,
     config,
     onFallback,
-    isDev,
-    batchId,
   } = args;
   // Pre-check filter: only feed AI-eligible patients to the micro
   // batch. Patients that fail the pre-check are handled by the
@@ -547,11 +559,13 @@ async function runMicroBatchAi(args: {
       }
     } else {
       onFallback(mini.length);
-      if (isDev) {
-        console.log(
-          `[batchAnalysisRunner:${batchId}] micro-batch fallback (size=${mini.length}): ${res.reason}`,
-        );
-      }
+      warnPhiSafe({
+        source: "batch_analysis",
+        operation: "batch_analysis",
+        outcome: "partial",
+        category: classifyMicroBatchFailureReason(res.reason),
+        count: mini.length,
+      });
     }
   }
 }
@@ -586,9 +600,6 @@ async function runAnalysisLoop(
         ? allPatients
         : allPatients.filter((p) => eligibleSet.has(p.id));
     const facilityQualMode = await getQualificationMode(batch.facility ?? null);
-    console.log(
-      `[batchAnalysisRunner:${batchId}] qualification mode: ${facilityQualMode} (facility: ${batch.facility ?? "none"})`,
-    );
 
     // Plexus IQ runtime hardening — step 7: use PLEXUS_IQ_* config.
     // The legacy BATCH_ANALYSIS_CONCURRENCY env var is preserved by
@@ -596,16 +607,12 @@ async function runAnalysisLoop(
     // until they explicitly raise PLEXUS_IQ_ANALYSIS_CONCURRENCY.
     const concurrency = Math.max(1, Math.floor(config.concurrency));
     const chunkSize = Math.max(1, Math.floor(config.chunkSize));
-    // Dev-only audit logs so per-patient processing can be verified by
-    // tailing the server console. We deliberately keep these out of
-    // production logging to avoid noise; the per-patient persistence
-    // already gives durable proof.
-    const isDev = process.env.NODE_ENV !== "production";
-    if (isDev) {
-      console.log(
-        `[batchAnalysisRunner:${batchId}] starting job ${jobId} with ${patients.length} patients; concurrency=${concurrency} chunkSize=${chunkSize}`,
-      );
-    }
+    logPhiSafe({
+      source: "batch_analysis",
+      operation: "batch_analysis",
+      outcome: "started",
+      total: patients.length,
+    });
 
     // Plexus IQ runtime hardening — step 7: chunk loop. Slice the
     // eligible patient list into chunks of `chunkSize`; each chunk
@@ -644,8 +651,6 @@ async function runAnalysisLoop(
           onFallback: (count: number) => {
             aiBatchFallbackTotal += count;
           },
-          isDev,
-          batchId,
         });
       }
 
@@ -680,11 +685,6 @@ async function runAnalysisLoop(
           // including MRN / row index / parser warnings) are
           // intentionally forwarded so each patient is evaluated on
           // their own full saved record.
-          if (isDev) {
-            console.log(
-              `[batchAnalysisRunner:${batchId}] starting patient ${patient.id} ${patient.name}`,
-            );
-          }
           // Step 8: prefer the cached micro-batch result when present.
           // Cache miss (or aiBatchSize=1) keeps the legacy per-patient
           // call path. The cached shape is a normal AI result, so the
@@ -741,25 +741,20 @@ async function runAnalysisLoop(
             });
           }
           counters.processed += 1;
-          if (isDev) {
-            console.log(
-              `[batchAnalysisRunner:${batchId}] completed patient ${patient.id} ${patient.name}`,
-            );
-          }
-        } catch (err: any) {
-          const errMsg = err?.message ?? String(err);
-          console.error(
-            `[batchAnalysisRunner:${batchId}] failed to analyze patient ${patient.id} ${patient.name}:`,
-            errMsg,
-          );
-          // Plexus IQ runtime hardening — step 5: classify catches
-          // into `ai_error` vs `technical_failed`. Network/HTTP errors
-          // and timeouts read as technical_failed; everything else
-          // (JSON parse failures, model errors) reads as ai_error.
-          const category = classifyCaughtError(err);
+        } catch (error: unknown) {
+          // Classify internally, but never persist or emit the provider message.
+          const category = classifyCaughtError(error);
+          errorPhiSafe({
+            source: "batch_analysis",
+            operation: "batch_analysis",
+            outcome: "failed",
+            category: category === "technical_failed"
+              ? classifyLogSafeError(error)
+              : "provider_error",
+          });
           await writeAnalysisFailure(patient.id, {
             category,
-            reason: errMsg,
+            reason: SAFE_ANALYSIS_FAILURE_REASONS[category],
             failedAt: new Date().toISOString(),
           });
           bumpFailureCounter(counters, category);
@@ -844,7 +839,12 @@ async function runAnalysisLoop(
     });
     invalidatePatientDatabase();
   } catch (error: unknown) {
-    console.error(`[batchAnalysisRunner:${batchId}] analysis loop error:`, error);
+    errorPhiSafe({
+      source: "batch_analysis",
+      operation: "batch_analysis",
+      outcome: "failed",
+      category: classifyLogSafeError(error),
+    });
     try {
       await db.transaction(async (tx) => {
         await tx
@@ -852,20 +852,20 @@ async function runAnalysisLoop(
           .set({ status: "error" })
           .where(eq(screeningBatches.id, batchId));
       });
-    } catch (resetErr: unknown) {
-      console.error(
-        `[batchAnalysisRunner:${batchId}] failed to set batch status to error:`,
-        resetErr,
-      );
+    } catch {
+      errorPhiSafe({
+        source: "batch_analysis",
+        operation: "batch_analysis",
+        outcome: "db_failed",
+        category: "shutdown_failure",
+      });
     }
     try {
       const failedJob = await storage.getLatestAnalysisJobByBatch(batchId);
       if (failedJob && failedJob.status === "running") {
-        const errMsg =
-          error instanceof Error ? error.message : "Unknown analysis error";
         await storage.updateAnalysisJob(failedJob.id, {
           status: "failed",
-          errorMessage: errMsg,
+          errorMessage: "Analysis job failed",
           completedAt: new Date(),
           metadata: buildTerminalMetadata({
             eligibleIds,
@@ -874,11 +874,13 @@ async function runAnalysisLoop(
           }) as unknown as Record<string, unknown>,
         });
       }
-    } catch (jobErr: unknown) {
-      console.error(
-        `[batchAnalysisRunner:${batchId}] failed to mark analysis job as failed:`,
-        jobErr,
-      );
+    } catch {
+      errorPhiSafe({
+        source: "batch_analysis",
+        operation: "batch_analysis",
+        outcome: "db_failed",
+        category: "internal_error",
+      });
     }
   }
 }

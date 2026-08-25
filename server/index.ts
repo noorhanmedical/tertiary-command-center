@@ -7,6 +7,13 @@ import { createServer } from "http";
 import { readFileSync } from "node:fs";
 import { errorHandler } from "./middleware/errorHandler";
 import { clinicContext } from "./middleware/clinicContext";
+import { requestObservability } from "./middleware/requestObservability";
+import {
+  errorPhiSafe,
+  logPhiSafe,
+  warnPhiSafe,
+  toLogSafeSignal,
+} from "./lib/phiSafeLogger";
 import { validateEnv } from "./lib/validateEnv";
 import { startBackgroundServices, stopBackgroundServices } from "./lifecycle";
 
@@ -42,11 +49,22 @@ app.get("/readyz", async (_req, res) => {
     const { sql } = await import("drizzle-orm");
     await db.execute(sql`SELECT 1`);
     res.status(200).json({ status: "ready" });
-  } catch (err: any) {
-    console.error("[readyz] DB readiness check failed:", err?.message ?? err);
+  } catch {
+    errorPhiSafe({
+      source: "readiness_check",
+      operation: "database_readiness",
+      outcome: "not_ready",
+      category: "database_unavailable",
+      statusCode: 503,
+    });
     res.status(503).json({ status: "not_ready" });
   }
 });
+
+// Correlation and API egress protection must precede body parsing, sessions,
+// and tenant context so failures in those layers receive the same request ID
+// and completion telemetry as route-handler failures.
+app.use(requestObservability);
 
 app.use(
   express.json({
@@ -84,52 +102,23 @@ app.use(
 // Admin role gets null (bypasses all clinic filters); others get their clinic.
 app.use(clinicContext);
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  // Don't log health probes — ALB hits /healthz every few seconds.
-  if (path === "/healthz" || path === "/readyz") return next();
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
-
-// Suppress harmless Vite HMR WebSocket race condition that occurs during dev server restarts
+// Suppress the known Vite HMR reconnect race without emitting exception data.
 process.on("uncaughtException", (err) => {
   if (err.message?.includes("handleUpgrade() was called more than once")) {
-    console.warn("[vite] Suppressed duplicate WebSocket upgrade (harmless reconnect race)");
+    warnPhiSafe({
+      source: "process_exception",
+      operation: "websocket_upgrade",
+      outcome: "suppressed",
+      category: "websocket_race",
+    });
     return;
   }
-  console.error("Uncaught exception:", err);
+  errorPhiSafe({
+    source: "process_exception",
+    operation: "process",
+    outcome: "failed",
+    category: "uncaught_exception",
+  });
   process.exit(1);
 });
 
@@ -159,7 +148,12 @@ process.on("uncaughtException", (err) => {
       host: "0.0.0.0",
     },
     () => {
-      log(`serving on port ${port}`);
+      logPhiSafe({
+        source: "application_lifecycle",
+        operation: "http_server",
+        outcome: "started",
+        port,
+      });
       // Start recurring background services after the HTTP server is up so
       // health checks and request routing aren't blocked by their first tick.
       // Each job acquires a Postgres advisory lock per tick so multiple ECS
@@ -199,10 +193,12 @@ process.on("uncaughtException", (err) => {
         originalGrandparentPid > 0 &&
         readPpidOf(process.ppid) !== originalGrandparentPid;
       if (reparented || grandparentChanged) {
-        console.error(
-          `[watchdog] Ancestor process changed (ppid ${originalPpid}→${process.ppid}, ` +
-            `grandparent ${originalGrandparentPid}); process orphaned. Exiting to release port.`,
-        );
+        errorPhiSafe({
+          source: "process_watchdog",
+          operation: "process",
+          outcome: "exiting",
+          category: "shutdown_failure",
+        });
         process.exit(0);
       }
     }, 2_000);
@@ -217,7 +213,13 @@ process.on("uncaughtException", (err) => {
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    log(`${signal} received. Draining HTTP server...`, "shutdown");
+    const safeSignal = toLogSafeSignal(signal);
+    logPhiSafe({
+      source: "application_lifecycle",
+      operation: "http_server",
+      outcome: "stopping",
+      signal: safeSignal,
+    });
 
     const isDev = process.env.NODE_ENV !== "production";
 
@@ -226,32 +228,78 @@ process.on("uncaughtException", (err) => {
     // 5000); in production allow a longer drain that still stays comfortably
     // before ECS's default 30s stopTimeout.
     const forceExit = setTimeout(() => {
-      console.error("[shutdown] Graceful shutdown timed out — force exiting.");
+      errorPhiSafe({
+        source: "application_lifecycle",
+        operation: "http_server",
+        outcome: "timed_out",
+        category: "timeout",
+        signal: safeSignal,
+      });
       process.exit(1);
     }, isDev ? 10_000 : 25_000);
     forceExit.unref();
 
     httpServer.close(async (err) => {
-      if (err) console.error("[shutdown] httpServer.close error:", err.message);
-      log("HTTP server closed. Stopping background services...", "shutdown");
+      if (err) {
+        errorPhiSafe({
+          source: "application_lifecycle",
+          operation: "http_server",
+          outcome: "failed",
+          category: "shutdown_failure",
+          signal: safeSignal,
+        });
+      }
+      logPhiSafe({
+        source: "application_lifecycle",
+        operation: "http_server",
+        outcome: "closed",
+        signal: safeSignal,
+      });
 
       try {
         await stopBackgroundServices();
-      } catch (svcErr: any) {
-        console.error("[shutdown] Error stopping background services:", svcErr?.message ?? svcErr);
+      } catch {
+        errorPhiSafe({
+          source: "application_lifecycle",
+          operation: "background_services",
+          outcome: "failed",
+          category: "shutdown_failure",
+          signal: safeSignal,
+        });
       }
 
-      log("Closing WebSocket upgrade listeners...", "shutdown");
+      logPhiSafe({
+        source: "application_lifecycle",
+        operation: "websocket_upgrade",
+        outcome: "stopping",
+        signal: safeSignal,
+      });
       // Detach any registered upgrade handlers (Vite HMR in dev attaches one).
       try { httpServer.removeAllListeners("upgrade"); } catch {}
 
-      log("Closing DB pool...", "shutdown");
+      logPhiSafe({
+        source: "application_lifecycle",
+        operation: "database_pool",
+        outcome: "stopping",
+        signal: safeSignal,
+      });
       try {
         const { pool } = await import("./db");
         await pool.end();
-        log("DB pool drained. Exiting.", "shutdown");
-      } catch (poolErr: any) {
-        console.error("[shutdown] Error draining DB pool:", poolErr.message);
+        logPhiSafe({
+          source: "application_lifecycle",
+          operation: "database_pool",
+          outcome: "closed",
+          signal: safeSignal,
+        });
+      } catch {
+        errorPhiSafe({
+          source: "application_lifecycle",
+          operation: "database_pool",
+          outcome: "failed",
+          category: "shutdown_failure",
+          signal: safeSignal,
+        });
       }
       clearTimeout(forceExit);
       process.exit(0);

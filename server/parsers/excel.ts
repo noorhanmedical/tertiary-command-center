@@ -1,5 +1,7 @@
 import * as XLSX from "xlsx";
 import { openai, withRetry } from "../services/aiClient";
+import { getRequestId } from "../middleware/requestObservability";
+import { warnPhiSafe } from "../lib/phiSafeLogger";
 import type { ParsedPatient } from "./types";
 import { isProviderName, parseWithAI } from "./plainText";
 
@@ -81,7 +83,7 @@ async function parseTsvBatch(batch: { name: string; block: string; insurance?: s
         max_completion_tokens: 16000,
       }),
     3,
-    "parseTsvBatch"
+    "excel_condition_match"
   );
 
   const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
@@ -115,7 +117,13 @@ async function parseTsvBatch(batch: { name: string; block: string; insurance?: s
       }
     }
     if (!r) {
-      console.warn(`parseTsvBatch: no AI result matched patient "${seg.name}" by name; record will have no clinical data`);
+      warnPhiSafe({
+        source: "ai_operation",
+        operation: "excel_condition_match",
+        outcome: "missing_row",
+        category: "not_found",
+        requestId: getRequestId(),
+      });
       r = {};
     }
     return {

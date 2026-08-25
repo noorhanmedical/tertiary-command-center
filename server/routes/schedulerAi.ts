@@ -1,6 +1,12 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { openai, withRetry } from "../services/aiClient";
+import {
+  createInternalErrorBody,
+  getOrCreateResponseRequestId,
+  markResponseFailed,
+} from "../middleware/requestObservability";
+import { classifyLogSafeError, errorPhiSafe } from "../lib/phiSafeLogger";
 
 function requireSchedulerOrAdmin(req: Request, res: Response, next: NextFunction) {
   const sess = (req as Request & { session?: { userId?: string; role?: string } }).session;
@@ -94,7 +100,7 @@ export function registerSchedulerAiRoutes(app: Express): void {
             stream: true,
           }),
         2,
-        "scheduler-ai",
+        "scheduler_assistant",
       );
 
       for await (const chunk of stream) {
@@ -105,15 +111,31 @@ export function registerSchedulerAiRoutes(app: Express): void {
       }
       res.write("data: [DONE]\n\n");
       res.end();
-    } catch (err: any) {
-      console.error("[scheduler-ai] error:", err?.message || err);
+    } catch (error: unknown) {
+      const requestId = getOrCreateResponseRequestId(res);
+      markResponseFailed(res);
+      errorPhiSafe({
+        source: "ai_operation",
+        operation: "scheduler_assistant",
+        outcome: "failed",
+        category: classifyLogSafeError(error),
+        requestId,
+      });
+
       if (!res.headersSent) {
-        return res.status(500).json({ error: err?.message || "AI request failed" });
+        return res.status(500).json(createInternalErrorBody(requestId));
       }
+
       try {
-        res.write(`data: ${JSON.stringify({ error: err?.message || "AI failed" })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          error: "AI request failed",
+          code: "AI_REQUEST_FAILED",
+          requestId,
+        })}\n\n`);
         res.end();
-      } catch {}
+      } catch {
+        if (!res.writableEnded) res.end();
+      }
     }
   });
 }

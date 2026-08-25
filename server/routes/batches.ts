@@ -38,6 +38,12 @@ import {
   extractImagePatients,
 } from "../services/screening";
 import { logAudit } from "../services/auditService";
+import { getRequestId } from "../middleware/requestObservability";
+import {
+  classifyLogSafeError,
+  errorPhiSafe,
+  logPhiSafe,
+} from "../lib/phiSafeLogger";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import {
   findSchedulerForBatch,
@@ -427,7 +433,13 @@ export function registerBatchRoutes(app: Express) {
       res.json({ success: true, patientCount: patients.length, jobId: job.id, async: true });
 
       const facilityQualMode = await getQualificationMode(batch.facility ?? null);
-      console.log(`[batch:${batchId}] Qualification mode: ${facilityQualMode} (facility: ${batch.facility ?? "none"})`);
+      logPhiSafe({
+        source: "batch_analysis",
+        operation: "batch_analysis",
+        outcome: "started",
+        requestId: getRequestId(),
+        total: patients.length,
+      });
 
       await batchProcess(
         patients,
@@ -475,8 +487,14 @@ export function registerBatchRoutes(app: Express) {
             // Patients remain in Draft after AI analysis. They only move to
             // Ready (and into the engagement queue) when an admin explicitly
             // approves them via the Admin Review flow.
-          } catch (err: any) {
-            console.error(`Failed to analyze patient ${patient.name}:`, err.message);
+          } catch (error: unknown) {
+            errorPhiSafe({
+              source: "batch_analysis",
+              operation: "batch_analysis",
+              outcome: "failed",
+              category: classifyLogSafeError(error),
+              requestId: getRequestId(),
+            });
             await storage.updatePatientScreening(patient.id, {
               qualifyingTests: [],
               reasoning: {},
@@ -494,22 +512,43 @@ export function registerBatchRoutes(app: Express) {
       await storage.updateAnalysisJob(job.id, { status: "completed", completedAt: new Date() });
       invalidatePatientDatabase();
     } catch (error: unknown) {
-      console.error("Analysis error:", error);
+      errorPhiSafe({
+        source: "batch_analysis",
+        operation: "batch_analysis",
+        outcome: "failed",
+        category: classifyLogSafeError(error),
+        requestId: getRequestId(),
+      });
       try {
         await db.transaction(async (tx) => {
           await tx.update(screeningBatches).set({ status: "error" }).where(eq(screeningBatches.id, batchId));
         });
-      } catch (resetErr: unknown) {
-        console.error("Failed to set batch status to error after analysis failure:", resetErr);
+      } catch {
+        errorPhiSafe({
+          source: "batch_analysis",
+          operation: "batch_analysis",
+          outcome: "db_failed",
+          category: "internal_error",
+          requestId: getRequestId(),
+        });
       }
       try {
         const failedJob = await storage.getLatestAnalysisJobByBatch(batchId);
         if (failedJob && failedJob.status === "running") {
-          const errMsg = error instanceof Error ? error.message : "Unknown analysis error";
-          await storage.updateAnalysisJob(failedJob.id, { status: "failed", errorMessage: errMsg, completedAt: new Date() });
+          await storage.updateAnalysisJob(failedJob.id, {
+            status: "failed",
+            errorMessage: "Analysis job failed",
+            completedAt: new Date(),
+          });
         }
-      } catch (jobErr: unknown) {
-        console.error("Failed to mark analysis job as failed:", jobErr);
+      } catch {
+        errorPhiSafe({
+          source: "batch_analysis",
+          operation: "batch_analysis",
+          outcome: "db_failed",
+          category: "internal_error",
+          requestId: getRequestId(),
+        });
       }
     }
   });
@@ -534,12 +573,18 @@ export function registerBatchRoutes(app: Express) {
         totalPatients: job.totalPatients,
         completedPatients: job.completedPatients,
         progress: `${job.completedPatients}/${job.totalPatients}`,
-        errorMessage: job.errorMessage ?? null,
+        errorMessage: job.status === "failed" ? "Analysis job failed" : null,
         startedAt: job.startedAt,
         completedAt: job.completedAt ?? null,
       });
-    } catch (error: any) {
-      console.error("analysis-status error:", error.message);
+    } catch (error: unknown) {
+      errorPhiSafe({
+        source: "batch_analysis",
+        operation: "batch_analysis",
+        outcome: "failed",
+        category: classifyLogSafeError(error),
+        requestId: getRequestId(),
+      });
       res.status(500).json({ error: "Failed to fetch analysis status" });
     }
   });
