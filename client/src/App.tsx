@@ -2,7 +2,6 @@ import { Switch, Route, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
-import { useToast } from "@/hooks/use-toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
@@ -329,7 +328,6 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
 
 function AppShell() {
   const [location, navigate] = useLocation();
-  const { toast } = useToast();
 
   const { data: user, isLoading, refetch } = useQuery<AuthUser>({
     queryKey: ["/api/auth/me"],
@@ -344,16 +342,7 @@ function AppShell() {
   });
 
   function handleLogin() {
-    refetch().then(({ data }) => {
-      if (data && (data as AuthUser)?.username === "admin") {
-        toast({
-          title: "⚠ Default admin account",
-          description: "You are using the default admin/admin account. Please change your password in Settings.",
-          duration: 8000,
-        });
-      }
-      navigate("/home");
-    });
+    refetch().then(() => navigate("/home"));
   }
 
   async function handleLogout() {
