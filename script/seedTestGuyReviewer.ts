@@ -14,7 +14,6 @@ import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 const USERNAME = "plexus_reviewer";
-const PASSWORD = process.env.PLEXUS_REVIEWER_PASSWORD || "PlexusReviewer123!";
 const ROLE = "plexus_internal_clinical_reviewer";
 
 async function main() {
@@ -22,6 +21,11 @@ async function main() {
     console.error("[seed:testguy-reviewer] DATABASE_URL is not set");
     process.exit(1);
   }
+  if (!process.env.PLEXUS_REVIEWER_PASSWORD) {
+    console.error("[seed:testguy-reviewer] PLEXUS_REVIEWER_PASSWORD is required. Set it in your environment before running this seed.");
+    process.exit(1);
+  }
+  const password = process.env.PLEXUS_REVIEWER_PASSWORD;
   const { db, pool } = await import("../server/db");
   const { users } = await import("@shared/schema/users");
   const { patientScreenings } = await import("@shared/schema/screening");
@@ -43,7 +47,7 @@ async function main() {
     }
     if (clinicId == null) clinicId = 1;
 
-    const hashed = await bcrypt.hash(PASSWORD, 12);
+    const hashed = await bcrypt.hash(password, 12);
     const [existing] = await db.select().from(users).where(eq(users.username, USERNAME)).limit(1);
     if (existing) {
       await db.update(users).set({ password: hashed, role: ROLE, active: true, clinicId }).where(eq(users.id, existing.id));
@@ -52,7 +56,7 @@ async function main() {
       await db.insert(users).values({ username: USERNAME, password: hashed, role: ROLE, active: true, clinicId });
       console.log(`[seed:testguy-reviewer] created user '${USERNAME}' role=${ROLE} clinicId=${clinicId}`);
     }
-    console.log(`[seed:testguy-reviewer] login: ${USERNAME} / ${PASSWORD}`);
+    console.log(`[seed:testguy-reviewer] login: ${USERNAME} (password from PLEXUS_REVIEWER_PASSWORD env var)`);
   } catch (err: any) {
     console.error("[seed:testguy-reviewer] failed:", err);
     exitCode = 1;
