@@ -52,7 +52,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
   { href: "/clinic-analytics", label: "Clinic Analytics", Icon: BarChart3,      roles: ["admin"] },
   { href: "/clinic-onboarding", label: "Clinic Onboarding", Icon: ClipboardCheck, roles: ["admin"] },
-  { href: "/patient-directory", label: "Patient EHR", Icon: Database,     roles: ["admin", "clinician", "biller"] },
+  { href: "/patient-directory", label: "Plexus EHR", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   // Slice 1.5: legacy duplicate Patient-Directory-live nav item
   // removed. The /patient-directory/live URL still redirects to
   // /patient-directory for back-compat with existing bookmarks.
@@ -91,6 +91,8 @@ function UnreadBadge({ count, overdue }: { count: number; overdue: boolean }) {
 
 export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) {
   const [location] = useLocation();
+  // Winter shell is scoped to the staged Home redesign only (§9).
+  const winter = location === "/home-preview";
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
   const [manualOverride, setManualOverride] = useState(false);
   const userRole = user?.role ?? "clinician";
@@ -150,7 +152,10 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
 
   return (
     <nav
-      className={`flex flex-col h-full bg-finance-dark border-r border-finance-dark-3 transition-all duration-200 shrink-0 ${collapsed ? "w-14" : "w-52"}`}
+      className={`flex flex-col h-full border-r transition-all duration-200 shrink-0 ${
+        winter ? "border-white/10" : "bg-finance-dark border-finance-dark-3"
+      } ${collapsed ? "w-14" : winter ? "w-[244px]" : "w-52"}`}
+      style={winter ? { background: "#0b0f17" } : undefined}
       data-testid="global-nav"
       aria-label="Global navigation"
     >
@@ -181,13 +186,26 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
               <div
                 className={`relative flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
                   active
-                    ? "bg-white text-finance-text shadow-sm"
-                    : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
+                    ? winter
+                      ? "winter-nav-active shadow-sm"
+                      : "bg-white text-finance-text shadow-sm"
+                    : winter
+                      ? "text-slate-300 hover:bg-white/5 hover:text-white"
+                      : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid={`nav-item-${label.toLowerCase().replace(/\s+/g, "-")}`}
                 title={collapsed ? label : undefined}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-finance-text" : "text-slate-400 group-hover:text-white"}`} strokeWidth={1.75} />
+                <Icon
+                  className={`w-4 h-4 shrink-0 ${
+                    active
+                      ? winter
+                        ? "text-white"
+                        : "text-finance-text"
+                      : "text-slate-400 group-hover:text-white"
+                  }`}
+                  strokeWidth={1.75}
+                />
                 {!collapsed && (
                   <>
                     <span className="text-[14px] font-medium truncate flex-1">{label}</span>

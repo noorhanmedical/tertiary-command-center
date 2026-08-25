@@ -353,8 +353,13 @@ function WorldClocksEditor({
   );
 }
 
-export function HomeWorldClocks() {
+export function HomeWorldClocks({
+  variant = "default",
+}: {
+  variant?: "default" | "winter";
+} = {}) {
   const [now, setNow] = useState(() => new Date());
+  const winter = variant === "winter";
 
   const { data } = useQuery<{ cities: ClockCity[] }>({
     queryKey: ["/api/settings/world-clocks"],
@@ -391,26 +396,38 @@ export function HomeWorldClocks() {
           return (
             <div
               key={key}
-              className="flex flex-col items-center gap-1.5 rounded-2xl border border-black bg-black backdrop-blur px-4 py-3 min-w-[110px]"
+              className={
+                winter
+                  ? "winter-clock-tile flex flex-col items-center gap-1.5 px-4 py-3.5 min-w-[112px]"
+                  : "flex flex-col items-center gap-1.5 rounded-2xl border border-black bg-black backdrop-blur px-4 py-3 min-w-[110px]"
+              }
               data-testid={`clock-${idBase}`}
             >
-              <div className="text-[12px] font-semibold text-white tracking-tight">
+              <div
+                className={`text-[12px] font-medium tracking-tight ${winter ? "" : "font-semibold text-white"}`}
+                style={winter ? { color: "var(--w-text-2)" } : undefined}
+              >
                 {clock.label}
               </div>
               <div className="flex flex-col items-center leading-tight">
                 <span
-                  className="text-[20px] font-semibold text-blue-400 tabular-nums"
+                  className={`text-[20px] font-medium tabular-nums ${winter ? "" : "font-semibold text-blue-400"}`}
+                  style={winter ? { color: "var(--w-text)" } : undefined}
                   data-testid={`text-clock-time-${idBase}`}
                 >
                   {time.digital}
                 </span>
                 {time.abbr && (
-                  <span className="text-[10px] font-medium text-white uppercase tracking-wide">
+                  <span
+                    className={`text-[10px] font-medium uppercase tracking-wide ${winter ? "" : "text-white"}`}
+                    style={winter ? { color: "var(--w-text-muted)" } : undefined}
+                  >
                     {time.abbr}
                   </span>
                 )}
                 <span
-                  className="text-[11px] font-medium text-white"
+                  className={`text-[11px] font-medium ${winter ? "" : "text-white"}`}
+                  style={winter ? { color: "var(--w-text-muted)" } : undefined}
                   data-testid={`text-clock-date-${idBase}`}
                 >
                   {time.date}

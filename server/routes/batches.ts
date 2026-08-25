@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import multer from "multer";
-import * as XLSX from "xlsx";
 import { z } from "zod";
 import { storage } from "../storage";
 import { db } from "../db";

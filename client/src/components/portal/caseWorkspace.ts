@@ -119,7 +119,7 @@ export type CaseProofDoc = {
 };
 
 // Fetch the canonical document-library rows for a patient and classify the
-// Clinician PDF / Plexus PDF proof documents that explain why the patient is
+// Clinician Atlas / Plexus Atlas proof documents that explain why the patient is
 // being called. Returns nulls (not fakes) when documents are missing.
 export function useCaseProofDocs(patientScreeningId: number | null) {
   const enabled = typeof patientScreeningId === "number" && patientScreeningId > 0;

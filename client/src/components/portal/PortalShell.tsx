@@ -625,10 +625,10 @@ function DemoPatientProfile({
             </div>
             <div className="flex flex-wrap gap-2 self-start">
               <Button variant="outline" size="sm">
-                <FilePlus className="h-3.5 w-3.5 mr-1" /> Plexus PDF
+                <FilePlus className="h-3.5 w-3.5 mr-1" /> Plexus Atlas
               </Button>
               <Button variant="outline" size="sm">
-                <FileText className="h-3.5 w-3.5 mr-1" /> Clinician PDF
+                <FileText className="h-3.5 w-3.5 mr-1" /> Clinician Atlas
               </Button>
               <Button size="sm" onClick={onOpenConsent}>
                 <FileSignature className="h-3.5 w-3.5 mr-1" /> Open Consent
@@ -1364,7 +1364,7 @@ export function PortalShell({
                         <Card className="p-4 bg-white">
                           <div className="text-sm font-semibold text-slate-900 mb-2">Selected Patient Documents</div>
                           {selected ? (
-                            <div className="text-sm text-slate-600">Use Plexus PDF, Clinician PDF, screening, and consent actions from the right rail or patient profile.</div>
+                            <div className="text-sm text-slate-600">Use Plexus Atlas, Clinician Atlas, screening, and consent actions from the right rail or patient profile.</div>
                           ) : (
                             <div className="text-sm text-slate-500">Select a patient to work with documents.</div>
                           )}

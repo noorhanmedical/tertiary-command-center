@@ -79,8 +79,8 @@ export function PatientPdfActions({
         <button
           type="button"
           disabled={!eligible}
-          title={blockTitle ?? "Plexus PDF for this patient"}
-          aria-label={blockTitle ?? "Plexus PDF"}
+          title={blockTitle ?? "Plexus Atlas for this patient"}
+          aria-label={blockTitle ?? "Plexus Atlas"}
           onClick={(e) => {
             e.stopPropagation();
             runPacket("plexus");
@@ -93,8 +93,8 @@ export function PatientPdfActions({
         <button
           type="button"
           disabled={!eligible}
-          title={blockTitle ?? "Clinician PDF for this patient"}
-          aria-label={blockTitle ?? "Clinician PDF"}
+          title={blockTitle ?? "Clinician Atlas for this patient"}
+          aria-label={blockTitle ?? "Clinician Atlas"}
           onClick={(e) => {
             e.stopPropagation();
             runPacket("clinician");
@@ -122,7 +122,7 @@ export function PatientPdfActions({
         size="sm"
         variant="outline"
         disabled={!eligible}
-        title={blockTitle ?? "Plexus PDF for this patient"}
+        title={blockTitle ?? "Plexus Atlas for this patient"}
         onClick={(e) => {
           e.stopPropagation();
           if (!eligible) return;
@@ -137,14 +137,14 @@ export function PatientPdfActions({
         data-testid={`button-patient-plexus-pdf-${patient.id}`}
       >
         <FileBarChart className="h-3 w-3" />
-        Plexus PDF
+        Plexus Atlas
       </Button>
       <Button
         type="button"
         size="sm"
         variant="outline"
         disabled={!eligible}
-        title={blockTitle ?? "Clinician PDF for this patient"}
+        title={blockTitle ?? "Clinician Atlas for this patient"}
         onClick={(e) => {
           e.stopPropagation();
           if (!eligible) return;
@@ -159,7 +159,7 @@ export function PatientPdfActions({
         data-testid={`button-patient-clinician-pdf-${patient.id}`}
       >
         <FileText className="h-3 w-3" />
-        Clinician PDF
+        Clinician Atlas
       </Button>
     </div>
   );

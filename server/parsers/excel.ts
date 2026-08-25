@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { openai, withRetry } from "../services/aiClient";
 import type { ParsedPatient } from "./types";
 import { isProviderName, parseWithAI } from "./plainText";
@@ -159,122 +159,123 @@ export async function parseTsvBlocks(segments: { name: string; block: string; in
   return results;
 }
 
-export function excelToText(buffer: Buffer): string {
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+export async function excelToText(buffer: Buffer): Promise<string> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
   const lines: string[] = [];
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
-    if (rows.length === 0) continue;
-    const headers = Object.keys(rows[0]);
+  workbook.eachSheet((sheet) => {
+    // Collect headers from first row
+    const headerRow = sheet.getRow(1);
+    const headers: string[] = [];
+    headerRow.eachCell({ includeEmpty: true }, (cell) => {
+      headers.push(String(cell.value ?? ""));
+    });
+    if (headers.length === 0) return;
+
     const endColIdx = headers.findIndex((h) => h.trim().toLowerCase() === "end");
+    const dataHeaders = endColIdx >= 0 ? headers.filter((_, i) => i !== endColIdx) : headers;
+
+    const rows: string[][] = [];
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber === 1) return; // skip header
+      const values: string[] = [];
+      for (let c = 1; c <= headers.length; c++) {
+        if (endColIdx >= 0 && c - 1 === endColIdx) continue;
+        values.push(String(row.getCell(c).value ?? ""));
+      }
+      rows.push(values);
+    });
+
+    if (rows.length === 0) return;
+
     if (endColIdx >= 0) {
-      const dataHeaders = headers.filter((_, i) => i !== endColIdx);
-      for (const row of rows) {
-        const values = dataHeaders.map((h) => String(row[h] ?? ""));
+      for (const values of rows) {
         if (values.every((v) => !v.trim())) continue;
         lines.push(values.join("\t"));
         lines.push("end");
       }
     } else {
-      lines.push(headers.join("\t"));
-      for (const row of rows) {
-        lines.push(headers.map((h) => String(row[h] ?? "")).join("\t"));
+      lines.push(dataHeaders.join("\t"));
+      for (const values of rows) {
+        lines.push(values.join("\t"));
       }
     }
-  }
+  });
   return lines.join("\n");
 }
 
-export function excelToSegments(buffer: Buffer): { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[] | null {
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+export async function excelToSegments(buffer: Buffer): Promise<{ name: string; block: string; insurance?: string; noPreviousTests?: boolean }[] | null> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
   const allSegments: { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[] = [];
 
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
-    if (rows.length === 0) continue;
+  workbook.eachSheet((sheet) => {
+    // Build header list from first row
+    const headerRow = sheet.getRow(1);
+    const headers: string[] = [];
+    headerRow.eachCell({ includeEmpty: true }, (cell) => {
+      headers.push(String(cell.value ?? ""));
+    });
+    if (headers.length === 0) return;
 
-    const headers = Object.keys(rows[0]);
-    const colMap: Record<string, string> = {};
-    for (const h of headers) {
-      const normalized = h.trim().toLowerCase().replace(/[\s_\-./]/g, "");
+    // Map column headers to logical keys
+    const colMap: Record<string, number> = {}; // key → 1-based column index
+    for (let i = 0; i < headers.length; i++) {
+      const normalized = headers[i].trim().toLowerCase().replace(/[\s_\-./]/g, "");
       for (const { key, pattern } of EXCEL_COL_MAP_PATTERNS) {
-        if (!colMap[key] && pattern.test(normalized)) {
-          colMap[key] = h;
+        if (!(key in colMap) && pattern.test(normalized)) {
+          colMap[key] = i + 1; // 1-based
           break;
         }
       }
     }
 
-    if (!colMap.name) continue;
+    if (!("name" in colMap)) return;
 
-    for (const row of rows) {
-      const name = String(row[colMap.name] ?? "").trim();
-      if (!name || isProviderName(name)) continue;
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber === 1) return; // skip header
+
+      const getVal = (key: string): string =>
+        key in colMap ? String(row.getCell(colMap[key]).value ?? "").trim() : "";
+
+      const name = getVal("name");
+      if (!name || isProviderName(name)) return;
 
       const parts: string[] = [];
-      if (colMap.time) {
-        const val = String(row[colMap.time] ?? "").trim();
-        if (val) parts.push(`Time: ${val}`);
-      }
+      if ("time" in colMap) { const v = getVal("time"); if (v) parts.push(`Time: ${v}`); }
       parts.push(`Patient: ${name}`);
-      if (colMap.age) {
-        const val = String(row[colMap.age] ?? "").trim();
-        if (val) parts.push(`Age: ${val}`);
-      }
-      if (colMap.gender) {
-        const val = String(row[colMap.gender] ?? "").trim();
-        if (val) parts.push(`Gender: ${val}`);
-      }
-      if (colMap.dob) {
-        const val = String(row[colMap.dob] ?? "").trim();
-        if (val) parts.push(`DOB: ${val}`);
-      }
-      if (colMap.diagnoses) {
-        const val = String(row[colMap.diagnoses] ?? "").trim();
-        if (val) parts.push(`Diagnoses: ${val}`);
-      }
-      if (colMap.history) {
-        const val = String(row[colMap.history] ?? "").trim();
-        if (val) parts.push(`History: ${val}`);
-      }
-      if (colMap.medications) {
-        const val = String(row[colMap.medications] ?? "").trim();
-        if (val) parts.push(`Medications: ${val}`);
-      }
-      if (colMap.notes) {
-        const val = String(row[colMap.notes] ?? "").trim();
-        if (val) parts.push(`Notes: ${val}`);
-      }
+      if ("age" in colMap)  { const v = getVal("age");  if (v) parts.push(`Age: ${v}`); }
+      if ("gender" in colMap) { const v = getVal("gender"); if (v) parts.push(`Gender: ${v}`); }
+      if ("dob" in colMap)  { const v = getVal("dob");  if (v) parts.push(`DOB: ${v}`); }
+      if ("diagnoses" in colMap)  { const v = getVal("diagnoses");  if (v) parts.push(`Diagnoses: ${v}`); }
+      if ("history" in colMap)    { const v = getVal("history");    if (v) parts.push(`History: ${v}`); }
+      if ("medications" in colMap){ const v = getVal("medications"); if (v) parts.push(`Medications: ${v}`); }
+      if ("notes" in colMap)      { const v = getVal("notes");      if (v) parts.push(`Notes: ${v}`); }
 
       let noPreviousTests: boolean | undefined;
-      if (colMap.previousTests) {
-        const val = String(row[colMap.previousTests] ?? "").trim();
-        if (val) {
-          if (NO_PREV_TESTS_RE.test(val)) {
+      if ("previousTests" in colMap) {
+        const v = getVal("previousTests");
+        if (v) {
+          if (NO_PREV_TESTS_RE.test(v)) {
             noPreviousTests = true;
           } else {
-            parts.push(`Ancillaries Completed: ${val}`);
+            parts.push(`Ancillaries Completed: ${v}`);
           }
         }
       }
 
-      const insurance = colMap.insurance
-        ? (String(row[colMap.insurance] ?? "").trim() || undefined)
-        : undefined;
-
+      const insurance = "insurance" in colMap ? (getVal("insurance") || undefined) : undefined;
       allSegments.push({ name, block: parts.join("\n"), insurance, noPreviousTests });
-    }
-  }
+    });
+  });
 
   return allSegments.length > 0 ? allSegments : null;
 }
 
 export async function parseExcelFile(buffer: Buffer): Promise<ParsedPatient[]> {
-  const segments = excelToSegments(buffer);
+  const segments = await excelToSegments(buffer);
   if (segments && segments.length > 0) {
     return parseTsvBlocks(segments);
   }
-  return parseWithAI(excelToText(buffer));
+  return parseWithAI(await excelToText(buffer));
 }

@@ -9,6 +9,7 @@ import {
   type EmrCaseStatus, deriveCooldownState, deriveAdAutomation,
   COOLDOWN_STATE_LABELS, type EmrQualifyingTest, type EmrBillingCheckItem,
   type EmrContactability, type EmrOverview, type EmrReports, type CooldownState,
+  type EmrServiceEpisode, type EmrPriorTest, type EmrLab, JOURNEY_STAGES,
 } from "@/types/emr";
 import { testBucket, uniqueQualifyingTests, type DirectoryProfile } from "./profileTypes";
 import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
@@ -67,6 +68,13 @@ export type RawCall = {
   durationSeconds?: number | null;
   startedAt?: string | null;
   createdAt?: string | null;
+  // Canonical communication fields (from /api/patients/:id/communications).
+  staffName?: string | null;
+  staffRole?: string | null;
+  channel?: string | null;
+  direction?: string | null;
+  nextAction?: string | null;
+  serviceType?: string | null;
 };
 
 export type RawDocument = {
@@ -92,6 +100,55 @@ export type RawScreeningDetail = {
   reasoning?: Record<string, any> | null;
   adminApprovalStatus?: string | null;
   adminApprovalNote?: string | null;
+  /** The single screening row's qualifying tests — the SAME set the Atlas
+   *  renders. Preferred over the cross-screening union so EHR and Atlas agree. */
+  qualifyingTests?: string[] | null;
+  /** Canonical contact fields from the screening row (demographics source). */
+  email?: string | null;
+  gender?: string | null;
+  phoneNumber?: string | null;
+  age?: number | null;
+} | null;
+
+/** Canonical per-service ancillary case (from /api/patients/:id/admin-review). */
+export type RawAncillaryCase = {
+  ancillaryCaseId: number;
+  serviceType: string;
+  adminReviewStatus: string;
+  qualificationStatus: string;
+  lifecycleStatus: string;
+  episodeSequence?: number | null;
+};
+/** Canonical order/procedure note (from /api/procedure-notes). */
+export type RawCanonicalNote = {
+  serviceType: string;
+  noteType: string;
+  signatureStatus?: string | null;
+  generationStatus?: string | null;
+};
+/** Canonical prior test episode (from /api/patients/:id/prior-tests). */
+export type RawPriorTest = {
+  testName?: string | null;
+  serviceType?: string | null;
+  dateOfService: string;
+  resultSummary?: string | null;
+  reportAvailable?: boolean | null;
+  procedureNoteId?: number | null;
+  payer?: string | null;
+  insuranceType?: string | null;
+};
+
+/** Canonical clinical reference domains from
+ *  GET /api/patients/:screeningId/clinical-data. Rows are the raw DB shape
+ *  (camelCase); buildEmrChart projects them into the Emr* chart types. */
+export type RawClinicalData = {
+  providers?: Array<{ name?: string | null; role?: string | null; facility?: string | null }> | null;
+  allergies?: Array<{ substance?: string | null; reaction?: string | null; severity?: string | null }> | null;
+  labs?: Array<{ panel?: string | null; name?: string | null; value?: string | null; unit?: string | null; referenceRange?: string | null; collectedAt?: string | null; flag?: string | null }> | null;
+  imaging?: Array<{ study?: string | null; modality?: string | null; performedAt?: string | null; status?: string | null; impression?: string | null; source?: string | null; reportAvailable?: boolean | null; reportDocumentReferenceId?: number | null; serviceType?: string | null }> | null;
+  vitals?: Array<{ label?: string | null; value?: string | null; unit?: string | null; measuredAt?: string | null }> | null;
+  encounters?: Array<{ title?: string | null; kind?: string | null; occurredAt?: string | null; provider?: string | null; summary?: string | null; noteBody?: string | null; category?: string | null; tags?: string[] | null }> | null;
+  encounterTotal?: number | null;
 } | null;
 
 export interface EmrModelInputs {
@@ -109,6 +166,16 @@ export interface EmrModelInputs {
   reportBatchId?: number | null;
   /** Phase 2D — canonical per-service appointment projection (flag ON). */
   canonicalAppointmentByService?: Record<string, AncillaryAppointmentProjection> | null;
+  /** Phase 11 — canonical clinical reference domains (providers/allergies/
+   *  labs/imaging/vitals/encounters) from the clinical-data endpoint. */
+  clinicalData?: RawClinicalData;
+  /** Canonical per-service ancillary cases — the authoritative service state
+   *  the Ancillary Journey / Overview / Admin Review all derive from. */
+  ancillaryCases?: RawAncillaryCase[];
+  /** Canonical order/procedure notes — drive order/procedure signature state. */
+  canonicalNotes?: RawCanonicalNote[];
+  /** Canonical prior test episodes — drive per-service "Previous Tests". */
+  priorTests?: RawPriorTest[];
 }
 
 function splitList(raw: string | null | undefined): string[] {
@@ -117,6 +184,198 @@ function splitList(raw: string | null | undefined): string[] {
     .split(/[\n;,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** Map a stage name to its {stage, stageIndex} pair against JOURNEY_STAGES. */
+function stageAt(name: (typeof JOURNEY_STAGES)[number]): { stage: (typeof JOURNEY_STAGES)[number]; stageIndex: number } {
+  return { stage: name, stageIndex: JOURNEY_STAGES.indexOf(name) };
+}
+
+/**
+ * Build the single per-service episode projection consumed by BOTH the
+ * Ancillary Journey and the Overview "Current Tests" panel. Base derivation
+ * from canonical/available signals (appointment projection, legacy scheduling,
+ * admin approval, engagement, cooldown history). The demo patient overrides
+ * this with richer per-service episodes; real patients get this coarse-but-
+ * consistent derivation. One derivation → Overview and Journey never disagree.
+ */
+function buildServiceEpisodes(args: {
+  qualifyingTests: EmrQualifyingTest[];
+  approvalStatus: string | null | undefined;
+  engagementActive: boolean;
+  scheduling: Array<{ testType?: string | null; scheduledDate?: string | null; scheduledTime?: string | null; facility?: string | null; status?: string | null }>;
+  canonicalByService?: Record<string, AncillaryAppointmentProjection> | null;
+  testCooldowns: Array<{ testName?: string | null; lastDate?: string | null; insuranceType?: string | null }>;
+  nextActionAt?: string | null;
+  owner?: string | null;
+}): EmrServiceEpisode[] {
+  const approved = (args.approvalStatus ?? "").toLowerCase() === "approved";
+  return args.qualifyingTests.map((t) => {
+    const key = t.testName.toLowerCase().split(" ")[0];
+    const canonAppt = args.canonicalByService?.[t.testName]?.activeAppointment ?? null;
+    const legacyAppt = args.scheduling.find(
+      (a) => (a.testType ?? "").toLowerCase().includes(key),
+    );
+    const apptStatus = (canonAppt?.status ?? legacyAppt?.status ?? "").toLowerCase();
+
+    let s = stageAt("Qualified");
+    if (apptStatus === "completed") s = stageAt("Report");
+    else if (apptStatus === "scheduled") s = stageAt("Scheduled");
+    else if (approved && args.engagementActive) s = stageAt("Outreach");
+    else if (approved) s = stageAt("Approved");
+
+    const priorTests: EmrPriorTest[] = args.testCooldowns
+      .filter((c) => (c.testName ?? "").toLowerCase() === t.testName.toLowerCase())
+      .map((c) => ({
+        dateOfService: c.lastDate ?? "",
+        serviceName: t.testName,
+        payer: c.insuranceType ?? null,
+        resultSummary: null,
+        reportAvailable: false,
+        procedureNoteAvailable: false,
+      }))
+      .filter((p) => p.dateOfService)
+      .sort((a, b) => b.dateOfService.localeCompare(a.dateOfService));
+
+    const nextAction = apptStatus === "scheduled"
+      ? "Complete pre-test screening"
+      : approved
+        ? "Continue outreach"
+        : "Awaiting admin approval";
+
+    return {
+      serviceKey: t.testName,
+      serviceName: t.testName,
+      caseId: null,
+      bucket: t.bucket,
+      stage: s.stage,
+      stageIndex: s.stageIndex,
+      nextAction,
+      owner: args.owner ?? null,
+      appointment: (canonAppt || legacyAppt)
+        ? {
+            date: (canonAppt?.startsAt ?? legacyAppt?.scheduledDate) ?? null,
+            time: legacyAppt?.scheduledTime ?? null,
+            facility: (canonAppt?.facilityId ?? legacyAppt?.facility) ?? null,
+            status: apptStatus || null,
+          }
+        : null,
+      // Legacy (no canonical ancillary case / no order note): approval alone
+      // does NOT mean the order was signed — reflect "Pending" so Billing
+      // readiness never reports a signature that doesn't exist.
+      orderStatus: approved ? "Pending" : null,
+      screeningStatus: apptStatus === "scheduled" ? "Pending" : null,
+      reportStatus: apptStatus === "completed" ? "Uploaded" : null,
+      procedureNoteStatus: null,
+      episodeStartedAt: null,
+      priorTests,
+      reasoning: t,
+    };
+  });
+}
+
+/**
+ * Canonical per-service episode projection. Derives each service's lifecycle
+ * STAGE from the authoritative canonical signals — ancillary case
+ * (admin_review_status / qualification / lifecycle), order/procedure note
+ * signature, and appointment status — NOT from any hand-authored demo data.
+ * This is the single projection the Ancillary Journey, Overview, Scheduling,
+ * Billing, Re-engagement, Ancillary Cases, and Admin Review all resolve
+ * against, so an Admin Review decision propagates to every section on refetch.
+ */
+function buildCanonicalServiceEpisodes(args: {
+  cases: RawAncillaryCase[];
+  qualifyingTests: EmrQualifyingTest[];
+  notes: RawCanonicalNote[];
+  priorTests: RawPriorTest[];
+  scheduling: Array<{ testType?: string | null; scheduledDate?: string | null; scheduledTime?: string | null; facility?: string | null; status?: string | null }>;
+  canonicalByService?: Record<string, AncillaryAppointmentProjection> | null;
+  owner?: string | null;
+}): EmrServiceEpisode[] {
+  const reasoningByName = new Map(args.qualifyingTests.map((t) => [t.testName.toLowerCase(), t]));
+  const bucketFor = (name: string): EmrQualifyingTest["bucket"] =>
+    reasoningByName.get(name.toLowerCase())?.bucket ?? testBucket(name);
+
+  return args.cases.map((c) => {
+    const svc = c.serviceType;
+    const key = svc.toLowerCase().split(" ")[0];
+    const svcNotes = args.notes.filter((n) => (n.serviceType ?? "").toLowerCase() === svc.toLowerCase());
+    const orderNote = svcNotes.find((n) => n.noteType === "order_note");
+    const procNote = svcNotes.find((n) => n.noteType === "post_procedure_note");
+    const procedureSigned = (procNote?.signatureStatus ?? "").toLowerCase() === "signed";
+    const orderSig = orderNote?.signatureStatus ?? null;
+
+    const canonAppt = args.canonicalByService?.[svc]?.activeAppointment ?? null;
+    const legacyAppt = args.scheduling.find((a) => (a.testType ?? "").toLowerCase().includes(key));
+    const apptStatus = (canonAppt?.status ?? legacyAppt?.status ?? "").toLowerCase();
+
+    const admin = (c.adminReviewStatus ?? "pending").toLowerCase();
+    const lifecycle = (c.lifecycleStatus ?? "new").toLowerCase();
+
+    // ── Stage derivation (highest applicable wins) ──
+    let s = stageAt("Qualified");
+    let nextAction = "Awaiting admin review";
+    if (lifecycle === "closed" || lifecycle === "archived") {
+      s = stageAt("Billing"); nextAction = "Submit claim";
+    } else if (admin === "rejected") {
+      s = stageAt("Qualified"); nextAction = "Admin rejected — not proceeding";
+    } else if (admin === "needs_info") {
+      s = stageAt("Qualified"); nextAction = "Awaiting additional information";
+    } else if (admin === "approved") {
+      if (procedureSigned) { s = stageAt("Procedure"); nextAction = "Generate billing"; }
+      else if (apptStatus === "completed") { s = stageAt("Report"); nextAction = "Await report / procedure note"; }
+      else if (apptStatus === "scheduled") { s = stageAt("Scheduled"); nextAction = "Complete pre-test screening"; }
+      else if ((orderSig ?? "").toLowerCase() === "signed") { s = stageAt("Signed"); nextAction = "Schedule appointment"; }
+      else if (orderSig) { s = stageAt("Order"); nextAction = "Sign order"; }
+      else { s = stageAt("Approved"); nextAction = "Draft order"; }
+    } else {
+      // pending
+      s = stageAt("Qualified"); nextAction = "Awaiting admin review";
+    }
+
+    const priorTests: EmrPriorTest[] = args.priorTests
+      .filter((p) => ((p.serviceType ?? p.testName) ?? "").toLowerCase() === svc.toLowerCase())
+      .map((p) => ({
+        dateOfService: p.dateOfService,
+        serviceName: svc,
+        payer: p.payer ?? p.insuranceType ?? null,
+        resultSummary: p.resultSummary ?? null,
+        reportAvailable: !!p.reportAvailable,
+        procedureNoteAvailable: p.procedureNoteId != null,
+      }))
+      .filter((p) => p.dateOfService)
+      .sort((a, b) => b.dateOfService.localeCompare(a.dateOfService));
+
+    const orderStatusLabel = orderSig
+      ? (orderSig === "signed" ? "Signed" : orderSig === "ready_to_sign" ? "Ready to sign" : orderSig === "needs_signature" ? "Needs signature" : orderSig)
+      : (admin === "approved" ? "Pending" : null);
+
+    return {
+      serviceKey: svc,
+      serviceName: svc,
+      caseId: c.ancillaryCaseId,
+      bucket: bucketFor(svc),
+      stage: s.stage,
+      stageIndex: s.stageIndex,
+      nextAction,
+      owner: args.owner ?? null,
+      appointment: (canonAppt || legacyAppt)
+        ? {
+            date: (canonAppt?.startsAt ?? legacyAppt?.scheduledDate) ?? null,
+            time: legacyAppt?.scheduledTime ?? null,
+            facility: (canonAppt?.facilityId ?? legacyAppt?.facility) ?? null,
+            status: apptStatus || null,
+          }
+        : null,
+      orderStatus: orderStatusLabel,
+      screeningStatus: apptStatus === "scheduled" ? "Pending" : null,
+      reportStatus: apptStatus === "completed" || procedureSigned ? "Final" : null,
+      procedureNoteStatus: procedureSigned ? "Signed" : null,
+      episodeStartedAt: null,
+      priorTests,
+      reasoning: reasoningByName.get(svc.toLowerCase()) ?? null,
+    };
+  });
 }
 
 export function buildEmrChart(input: EmrModelInputs): EmrChart {
@@ -133,15 +392,19 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
 
   // ── Demographics ──────────────────────────────────────────────────────
   const mrn = billing.find((b) => b.mrn && b.mrn.trim())?.mrn ?? null;
+  const sd = input.screeningDetail;
   const demographics = {
     name: id.name,
     mrn,
     dob: id.dob,
-    age: id.age,
-    gender: id.gender,
-    phoneNumber: id.phoneNumber,
+    age: id.age ?? sd?.age ?? null,
+    gender: id.gender ?? sd?.gender ?? null,
+    phoneNumber: id.phoneNumber ?? sd?.phoneNumber ?? null,
+    email: sd?.email ?? null,
+    address: null,
     clinic: id.clinic,
     provider: input.provider ?? null,
+    language: null,
   };
 
   // ── Insurance & eligibility ───────────────────────────────────────────
@@ -175,6 +438,12 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
     attemptNumber: c.attemptNumber,
     durationSeconds: c.durationSeconds,
     occurredAt: c.startedAt || c.createdAt || c.callbackAt || null,
+    teamMember: c.staffName ?? null,
+    role: c.staffRole ?? null,
+    channel: c.channel ?? null,
+    direction: c.direction ?? null,
+    nextAction: c.nextAction ?? null,
+    serviceType: c.serviceType ?? null,
   }));
   const communication = {
     callAttemptCount: ec?.callAttemptCount ?? (calls.length || null),
@@ -245,7 +514,13 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
 
   // ── Plexus IQ ─────────────────────────────────────────────────────────
   const reasoning = input.screeningDetail?.reasoning ?? null;
-  const qualifying = uniqueQualifyingTests(profile.screenings);
+  // Prefer the SAME single screening row the Atlas renders (screeningDetail),
+  // falling back to the cross-screening union only when that row is empty — so
+  // the EHR service set and both Atlases agree (no multi-screening divergence).
+  const detailTests = input.screeningDetail?.qualifyingTests;
+  const qualifying = (detailTests && detailTests.length > 0)
+    ? Array.from(new Set(detailTests))
+    : uniqueQualifyingTests(profile.screenings);
   const qualifyingTests: EmrQualifyingTest[] = qualifying.map((t) => {
     const r = reasoning?.[t];
     const obj = r && typeof r === "object" ? r : null;
@@ -255,6 +530,10 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
       clinicianUnderstanding: obj?.clinician_understanding ?? (typeof r === "string" ? r : null),
       patientTalkingPoints: obj?.patient_talking_points ?? null,
       confidence: obj?.confidence ?? null,
+      qualifyingFactors: Array.isArray(obj?.qualifying_factors) ? obj.qualifying_factors : null,
+      icd10Codes: Array.isArray(obj?.icd10_codes) ? obj.icd10_codes : null,
+      pearls: Array.isArray(obj?.pearls) ? obj.pearls : null,
+      approvalRequired: typeof obj?.approvalRequired === "boolean" ? obj.approvalRequired : null,
     };
   });
   const plexusIq = {
@@ -310,18 +589,25 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
   // ── Case status (header chip) ─────────────────────────────────────────
   const caseStatus: EmrCaseStatus = deriveCaseStatus(profile, ec);
 
-  // ── Clinician PDF + Plexus PDF report links ───────────────────────────
-  // PDFs are produced client-side from the shared schedule view; the portal
-  // links into /schedule/:batchId anchors. Available only when this patient
-  // belongs to a generated schedule (batchId present).
-  const reportBatchId = input.reportBatchId ?? null;
+  // ── Clinician Atlas + Plexus Atlas ────────────────────────────────────────
+  // Atlases are generated on demand from the canonical Plexus IQ output
+  // (patient_screenings.reasoning + qualifyingTests) and opened per patient by
+  // patientScreeningId — NOT from dead /schedule deep-links. The Clinician
+  // Atlas is available for every patient with a screening; the Plexus Atlas
+  // needs at least one qualifying test (its body is empty otherwise).
+  const hasScreening = input.patientScreeningId != null;
+  const hasQualifying = qualifyingTests.length > 0;
   const reports: EmrReports = {
-    clinicianPdf: reportBatchId != null
-      ? { available: true, url: `/schedule/${reportBatchId}#clinician-pdf`, detail: "Generated from the schedule" }
-      : { available: false, url: null, detail: "Generated once this patient is on a schedule" },
-    plexusPdf: reportBatchId != null
-      ? { available: true, url: `/schedule/${reportBatchId}#plexus-pdf`, detail: "Generated from the schedule" }
-      : { available: false, url: null, detail: "Generated once this patient is on a schedule" },
+    clinicianPdf: {
+      available: hasScreening,
+      url: null,
+      detail: hasScreening ? "Generated from Plexus IQ · click to view" : "Available once Plexus IQ runs",
+    },
+    plexusPdf: {
+      available: hasScreening && hasQualifying,
+      url: null,
+      detail: hasScreening && hasQualifying ? "Generated from Plexus IQ · click to view" : "Available once services qualify",
+    },
   };
 
   // ── Overview (at-a-glance care summary) ───────────────────────────────
@@ -366,19 +652,78 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
     billingTotalCount: billingItems.length,
   };
 
-  return {
+  // ── Per-service episodes (single source for Journey + Overview + Admin
+  //    Review + Scheduling + Billing + Re-engagement + Ancillary Cases). When
+  //    canonical ancillary cases exist we derive the authoritative stage from
+  //    them (so Admin Review decisions propagate everywhere); otherwise we fall
+  //    back to the coarse signal-derived projection for legacy patients.
+  const canonicalCases = input.ancillaryCases ?? [];
+  const serviceEpisodes = canonicalCases.length > 0
+    ? buildCanonicalServiceEpisodes({
+        cases: canonicalCases,
+        qualifyingTests,
+        notes: input.canonicalNotes ?? [],
+        priorTests: input.priorTests ?? [],
+        scheduling,
+        canonicalByService: input.canonicalAppointmentByService ?? null,
+        owner: ec?.assignedRole ?? null,
+      })
+    : buildServiceEpisodes({
+        qualifyingTests,
+        approvalStatus: plexusIq.adminApprovalStatus,
+        engagementActive: !!(ec?.engagementStatus || ec?.engagementBucket),
+        scheduling,
+        canonicalByService: input.canonicalAppointmentByService ?? null,
+        testCooldowns: cooldown.testCooldowns ?? [],
+        nextActionAt: communication.nextActionAt,
+        owner: ec?.assignedRole ?? null,
+      });
+
+  // ── Canonical clinical reference domains ──────────────────────────────
+  // Real DB-backed rows from GET /api/patients/:screeningId/clinical-data.
+  // Sections with no rows resolve to [] and render clean empty states.
+  const cd = input.clinicalData ?? null;
+  const clinicalProviders: EmrChart["providers"] = (cd?.providers ?? []).map((p) => ({
+    name: p.name ?? null, role: p.role ?? null, facility: p.facility ?? null,
+  }));
+  const clinicalAllergies: EmrChart["allergies"] = (cd?.allergies ?? []).map((a) => ({
+    substance: a.substance ?? null, reaction: a.reaction ?? null, severity: a.severity ?? null,
+  }));
+  const labFlag = (f: string | null | undefined): EmrLab["flag"] =>
+    f === "high" || f === "low" || f === "critical" || f === "normal" ? f : null;
+  const clinicalLabs: EmrChart["labs"] = (cd?.labs ?? []).map((l) => ({
+    panel: l.panel ?? null, name: l.name ?? null, value: l.value ?? null, unit: l.unit ?? null,
+    referenceRange: l.referenceRange ?? null, collectedAt: l.collectedAt ?? null,
+    flag: labFlag(l.flag),
+  }));
+  const clinicalImaging: EmrChart["imaging"] = (cd?.imaging ?? []).map((im) => ({
+    study: im.study ?? null, modality: im.modality ?? null, performedAt: im.performedAt ?? null,
+    status: im.status ?? null, impression: im.impression ?? null, source: im.source ?? null,
+    reportAvailable: im.reportAvailable ?? null,
+  }));
+  const clinicalVitals: EmrChart["vitals"] = (cd?.vitals ?? []).map((v) => ({
+    label: v.label ?? null, value: v.value ?? null, unit: v.unit ?? null, measuredAt: v.measuredAt ?? null,
+  }));
+  const clinicalEncounters: EmrChart["encounters"] = (cd?.encounters ?? []).map((e) => ({
+    title: e.title ?? null, kind: e.kind ?? null, occurredAt: e.occurredAt ?? null,
+    provider: e.provider ?? null, summary: e.summary ?? null, noteBody: e.noteBody ?? null,
+    category: e.category ?? null, tags: e.tags ?? null,
+  }));
+
+  const chart: EmrChart = {
     patientScreeningId: input.patientScreeningId,
+    plexusId: profile.plexusId ?? null,
     canonicalAppointmentByService: input.canonicalAppointmentByService ?? null,
     demographics,
     insurance,
-    providers: [],
+    providers: clinicalProviders,
     diagnoses,
     medications,
-    allergies: [],
-    labs: [],
-    imaging: [],
-    vitals: [],
-    encounters: [],
+    allergies: clinicalAllergies,
+    labs: clinicalLabs,
+    imaging: clinicalImaging,
+    vitals: clinicalVitals,
+    encounters: clinicalEncounters,
     documents: documents.map((d) => ({
       id: d.id,
       title: d.title || d.filename || (d.id != null ? `Document #${d.id}` : "Document"),
@@ -393,11 +738,18 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
     adAutomation,
     billing: billingReadiness,
     plexusIq,
+    serviceEpisodes,
     executionCases,
     caseStatus,
     overview,
     reports,
   };
+
+  // Every section is projected from canonical DB rows (screening reasoning,
+  // clinical-data domains, insurance reviews, ancillary appointments, comms).
+  // No patient is ever synthesized client-side — TestGuy travels the same
+  // code paths as any patient via seeded canonical data.
+  return chart;
 }
 
 function deriveContactability(state: CooldownState): EmrContactability {

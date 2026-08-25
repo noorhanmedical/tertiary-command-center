@@ -582,6 +582,207 @@
       linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(255, 255, 255, 0.80));
     border-bottom: 1px solid rgba(23, 51, 88, 0.08);
   }
+
+  /* ── Winter / Alpine Home (spec redesign) ──────────────────────────────
+     Scoped ONLY under `.winter-home` so nothing leaks to other pages. Used by
+     /home-preview during staging. Palette + surfaces come straight from the
+     spec's tokens (§2–§7). Does not touch .glass-tile or the .preview-* block. */
+  .winter-home {
+    /* Shell */
+    --w-shell: #070a10;
+    --w-shell-2: #0b0f17;
+    --w-navy-deep: #111a2e;
+    --w-navy: #18243b;
+    --w-navy-light: #25344f;
+    /* Typography */
+    --w-text: #182234;
+    --w-text-2: #5f6f86;
+    --w-text-muted: #7e8ca1;
+    --w-text-disabled: #a7b2c1;
+    /* Winter backgrounds */
+    --w-bg: #edf5fc;
+    --w-bg-light: #f4f8fc;
+    --w-bg-highlight: #f8fbfe;
+    --w-icy: #e4effa;
+    --w-cool: #d8e8f7;
+    /* Frost + borders */
+    --w-frost: rgba(255, 255, 255, 0.74);
+    --w-frost-2: rgba(255, 255, 255, 0.58);
+    --w-frost-strong: rgba(255, 255, 255, 0.84);
+    --w-frost-border: rgba(255, 255, 255, 0.48);
+    --w-divider: #e3eaf2;
+    /* Accents */
+    --w-blue: #5f7eea;
+    --w-blue-hover: #4e6ed9;
+    --w-blue-soft: #e9effd;
+    --w-purple: #7564d8;
+    --w-green: #1fa870;
+    /* Shadows */
+    --w-shadow-panel: 0 16px 40px rgba(24, 34, 52, 0.08);
+    --w-shadow-card: 0 6px 18px rgba(24, 34, 52, 0.05);
+    --w-shadow-hover: 0 10px 28px rgba(24, 34, 52, 0.08);
+    --w-shadow-dark: 0 16px 34px rgba(5, 8, 14, 0.22);
+
+    font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+    color: var(--w-text);
+  }
+
+  /* Icy page canvas with a layered winter gradient + drifting snow. */
+  .winter-canvas {
+    position: relative;
+    background:
+      linear-gradient(
+        180deg,
+        rgba(237, 245, 252, 0.18) 0%,
+        rgba(244, 248, 252, 0.44) 45%,
+        rgba(248, 251, 254, 0.74) 100%
+      ),
+      radial-gradient(130% 90% at 50% -12%, var(--w-cool), transparent 60%),
+      var(--w-bg);
+  }
+  .winter-canvas::before,
+  .winter-canvas::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-repeat: repeat;
+  }
+  /* Near snow layer — larger, faster. */
+  .winter-canvas::before {
+    background-image:
+      radial-gradient(2.4px 2.4px at 12% 18%, rgba(255, 255, 255, 0.95), transparent 55%),
+      radial-gradient(2px 2px at 38% 42%, rgba(255, 255, 255, 0.85), transparent 55%),
+      radial-gradient(2.6px 2.6px at 62% 22%, rgba(255, 255, 255, 0.9), transparent 55%),
+      radial-gradient(2px 2px at 82% 58%, rgba(255, 255, 255, 0.8), transparent 55%),
+      radial-gradient(2.4px 2.4px at 24% 78%, rgba(255, 255, 255, 0.88), transparent 55%),
+      radial-gradient(2px 2px at 72% 84%, rgba(255, 255, 255, 0.82), transparent 55%);
+    background-size: 420px 420px;
+    opacity: 0.26;
+    animation: winter-snow-a 22s linear infinite;
+  }
+  /* Far snow layer — smaller, slower (parallax). */
+  .winter-canvas::after {
+    background-image:
+      radial-gradient(1.4px 1.4px at 8% 32%, rgba(255, 255, 255, 0.75), transparent 55%),
+      radial-gradient(1.6px 1.6px at 46% 12%, rgba(255, 255, 255, 0.7), transparent 55%),
+      radial-gradient(1.4px 1.4px at 68% 48%, rgba(255, 255, 255, 0.72), transparent 55%),
+      radial-gradient(1.6px 1.6px at 88% 26%, rgba(255, 255, 255, 0.68), transparent 55%),
+      radial-gradient(1.4px 1.4px at 30% 62%, rgba(255, 255, 255, 0.7), transparent 55%),
+      radial-gradient(1.6px 1.6px at 92% 72%, rgba(255, 255, 255, 0.66), transparent 55%);
+    background-size: 300px 300px;
+    opacity: 0.18;
+    animation: winter-snow-b 34s linear infinite;
+  }
+
+  /* Large frosted panel — Practice Pulse, Calendar-scale surfaces (§12). */
+  .winter-panel {
+    background: var(--w-frost);
+    border: 1px solid var(--w-frost-border);
+    border-radius: 20px;
+    box-shadow: var(--w-shadow-panel);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+  /* Softer frosted panel — Clocks, Today's Summary, shortcut groups (§15–§17). */
+  .winter-panel-soft {
+    background: var(--w-frost-2);
+    border: 1px solid rgba(255, 255, 255, 0.44);
+    border-radius: 18px;
+    box-shadow: var(--w-shadow-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  /* Shortcut tile (§18). */
+  .winter-tile {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 14px;
+    box-shadow: 0 4px 12px rgba(24, 34, 52, 0.04);
+    transition: transform 200ms ease, background 200ms ease, box-shadow 200ms ease;
+  }
+  .winter-tile:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 8px 20px rgba(24, 34, 52, 0.07);
+  }
+  /* Plexus IQ dark frosted feature card (§14). */
+  .winter-feature-dark {
+    position: relative;
+    background: linear-gradient(135deg, rgba(7, 10, 16, 0.96), rgba(17, 26, 46, 0.92));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    box-shadow: var(--w-shadow-dark);
+    color: #fff;
+    overflow: hidden;
+  }
+  /* Frosted icon circle for KPIs / tiles (§13). */
+  .winter-icon-frost {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: 0 4px 12px rgba(24, 34, 52, 0.05);
+    border-radius: 999px;
+  }
+  /* Frosted clock tile (§15). */
+  .winter-clock-tile {
+    background: rgba(255, 255, 255, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    border-radius: 14px;
+  }
+  /* Thin vertical KPI cluster divider (§12). */
+  .winter-divider {
+    background: var(--w-divider);
+  }
+
+  /* Consistent focus ring for interactive elements (§23). */
+  .winter-home a:focus-visible,
+  .winter-home button:focus-visible,
+  .winter-home [role="button"]:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(95, 126, 234, 0.22);
+  }
+
+  /* Route-scoped winter shell (§8–§9). Applied by TopBanner / GlobalNav only
+     on /home-preview; interior pages keep their existing shell. */
+  .winter-topbar {
+    height: 72px;
+    background: linear-gradient(90deg, #070a10 0%, #0b1020 60%, #111a2e 100%);
+  }
+  .winter-nav {
+    width: 244px;
+    background: #0b0f17;
+  }
+  .winter-nav-active {
+    background: rgba(95, 126, 234, 0.18);
+    color: #fff;
+  }
+}
+
+@keyframes winter-snow-a {
+  0% {
+    background-position: 0 -420px;
+  }
+  100% {
+    background-position: 60px 420px;
+  }
+}
+@keyframes winter-snow-b {
+  0% {
+    background-position: 0 -300px;
+  }
+  100% {
+    background-position: -40px 300px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .winter-canvas::before,
+  .winter-canvas::after {
+    animation: none;
+  }
 }
 
 /**

@@ -334,12 +334,103 @@ export function registerDocumentReadinessRoutes(app: Express) {
         console.error("[case-document-readiness/complete] billing readiness re-evaluation failed:", err.message);
       }
 
+      // Phase 7 — Screening Addendum trigger. When a screening_form is
+      // completed and the ancillary case has an active Order Note, create
+      // a traceable addendum. Best-effort: failure here never blocks the
+      // primary readiness completion.
+      let screeningAddendumResult: { status: string } | null = null;
+      if (data.documentType === "screening_form" && row?.id != null) {
+        try {
+          const { createScreeningAddendumForCase } = await import(
+            "../services/screeningAddendum"
+          );
+          // Resolve ancillary_case_id from the execution case or from
+          // the case_document_readiness row's metadata if available.
+          const ancillaryCaseId = (row as { ancillaryCaseId?: number | null }).ancillaryCaseId ??
+            (executionCase as { ancillaryCaseId?: number | null }).ancillaryCaseId ?? null;
+          // Try to resolve from patient_ancillary_cases if we have the right info
+          let resolvedAncillaryCaseId = ancillaryCaseId;
+          if (!resolvedAncillaryCaseId && patientScreeningId) {
+            try {
+              const { listAncillaryCasesForExecutionCase } = await import(
+                "../repositories/ancillaryCases.repo"
+              );
+              const cases = await listAncillaryCasesForExecutionCase(executionCase.id);
+              const match = cases.find((c) => c.serviceType === data.serviceType);
+              if (match) resolvedAncillaryCaseId = match.id;
+            } catch { /* best-effort */ }
+          }
+          if (resolvedAncillaryCaseId) {
+            const result = await createScreeningAddendumForCase({
+              ancillaryCaseId: resolvedAncillaryCaseId,
+              patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+              clinicId: (executionCase as { clinicId?: number | null }).clinicId ?? null,
+              sourceReadinessId: row.id,
+              serviceType: data.serviceType,
+              screeningMetadata: mergedMetadata,
+              actorUserId,
+            });
+            screeningAddendumResult = { status: result.status };
+          }
+        } catch (err: any) {
+          console.error("[case-document-readiness/complete] screening addendum creation failed:", err?.message ?? err);
+          screeningAddendumResult = { status: "failed" };
+        }
+      }
+
+      // Phase 8 — Procedure Note Generation trigger. When a report is
+      // uploaded and the ancillary case is resolved, generate a Procedure
+      // Note incorporating the Order Note + Screening Addendum + report.
+      // Best-effort: failure never blocks the primary report completion.
+      let procedureNoteGenerationResult: { status: string } | null = null;
+      if (data.documentType === "report" && row?.id != null) {
+        try {
+          const { generateProcedureNoteFromReport } = await import(
+            "../services/procedureNoteGenerator"
+          );
+          const ancillaryCaseId = (row as { ancillaryCaseId?: number | null }).ancillaryCaseId ??
+            (executionCase as { ancillaryCaseId?: number | null }).ancillaryCaseId ?? null;
+          let resolvedAncillaryCaseId = ancillaryCaseId;
+          if (!resolvedAncillaryCaseId && patientScreeningId) {
+            try {
+              const { listAncillaryCasesForExecutionCase } = await import(
+                "../repositories/ancillaryCases.repo"
+              );
+              const cases = await listAncillaryCasesForExecutionCase(executionCase.id);
+              const match = cases.find((c) => c.serviceType === data.serviceType);
+              if (match) resolvedAncillaryCaseId = match.id;
+            } catch { /* best-effort */ }
+          }
+          if (resolvedAncillaryCaseId) {
+            const result = await generateProcedureNoteFromReport({
+              ancillaryCaseId: resolvedAncillaryCaseId,
+              executionCaseId: executionCase.id,
+              patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+              clinicId: (executionCase as { clinicId?: number | null }).clinicId ?? null,
+              serviceType: data.serviceType,
+              reportReadinessId: row.id,
+              patientName: executionCase.patientName,
+              patientDob: executionCase.patientDob ?? null,
+              facilityId: executionCase.facilityId ?? null,
+              reportMetadata: mergedMetadata,
+              actorUserId,
+            });
+            procedureNoteGenerationResult = { status: result.status };
+          }
+        } catch (err: any) {
+          console.error("[case-document-readiness/complete] procedure note generation failed:", err?.message ?? err);
+          procedureNoteGenerationResult = { status: "failed" };
+        }
+      }
+
       return res.json({
         ok: true,
         caseDocumentReadiness: row,
         journeyEvent,
         billingReadinessCheck,
         ancillaryDocumentIndex,
+        screeningAddendumResult,
+        procedureNoteGenerationResult,
       });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

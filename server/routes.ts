@@ -26,6 +26,7 @@ import { registerAppointmentRoutes } from "./routes/appointments";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
+import { registerClinicalDataRoutes } from "./routes/clinicalData";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
 import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
@@ -94,6 +95,11 @@ import { registerHomeStatsRoutes } from "./routes/homeStats";
 // import { registerClinicianPortalRoutes } from "./routes/clinicianPortal";
 import { registerMissionControlRoutes } from "./routes/missionControl";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
+import { registerPlexusClinicalFindingsRoutes } from "./routes/plexusClinicalFindings";
+import { registerAncillaryServiceRegistryRoutes } from "./routes/ancillaryServiceRegistry";
+import { registerOrderNoteLifecycleRoutes } from "./routes/orderNoteLifecycle";
+import { registerPlexusBankRoutes } from "./routes/plexusBank";
+import { registerPlexusEhrAddPatientRoutes } from "./routes/plexusEhrAddPatient";
 // import { registerClinicalIntelligenceRoutes } from "./routes/clinicalIntelligence";
 // import { seedCiRulesIfEmpty } from "./repositories/clinicalIntelligence.repo";
 import { setupVite } from "./vite";
@@ -275,6 +281,9 @@ export async function registerRoutes(
   // `/api/patients/:id` parameterised handler.
   registerPatientDatabaseRoutes(app);
   registerPatientRoutes(app);
+  // Canonical clinical reference domains (providers/allergies/labs/imaging/
+  // vitals/encounters). Deeper path than /api/patients/:id so no collision.
+  registerClinicalDataRoutes(app);
   // Patient EHR routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
@@ -349,6 +358,16 @@ export async function registerRoutes(
   // registerClinicianPortalRoutes(app);
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
+  // Phase 3 — Plexus Clinical Findings CRUD + review.
+  registerPlexusClinicalFindingsRoutes(app);
+  // Phase 4 — Ancillary Service Registry.
+  registerAncillaryServiceRegistryRoutes(app);
+  // Phase 5 — Order Note Lifecycle + Note Addenda.
+  registerOrderNoteLifecycleRoutes(app);
+  // Phase 10 — Plexus Bank.
+  registerPlexusBankRoutes(app);
+  // Plexus EHR — Direct patient add.
+  registerPlexusEhrAddPatientRoutes(app);
   // Phase 2H — canonical Clinician Portal overview (read-only). Registered
   // unconditionally; returns an explicit disabled contract when
   // FEATURE_CLINICIAN_PORTAL_CANONICAL_DATA is OFF (zero canonical reads).

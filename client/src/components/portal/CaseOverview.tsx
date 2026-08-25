@@ -459,13 +459,13 @@ export function CaseOverview({
       >
         <div className="space-y-2">
           <ProofRow
-            label="Clinician PDF"
+            label="Clinician Atlas"
             doc={proof.clinicianPdf}
             isLoading={proof.isLoading}
             testId="case-overview-proof-clinician"
           />
           <ProofRow
-            label="Plexus PDF"
+            label="Plexus Atlas"
             doc={proof.plexusPdf}
             isLoading={proof.isLoading}
             testId="case-overview-proof-plexus"

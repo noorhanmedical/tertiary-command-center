@@ -398,13 +398,13 @@ export function CallWorkspace({
         </div>
         <div className="space-y-2">
           <ProofDocRow
-            label="Clinician PDF"
+            label="Clinician Atlas"
             icon={<FileText className="h-4 w-4" />}
             doc={proof.clinicianPdf}
             isLoading={proof.isLoading}
           />
           <ProofDocRow
-            label="Plexus PDF"
+            label="Plexus Atlas"
             icon={<FileBarChart className="h-4 w-4" />}
             doc={proof.plexusPdf}
             isLoading={proof.isLoading}

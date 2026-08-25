@@ -726,7 +726,7 @@ export function EngagementCasePanel({
               ) : (
                 <FileText className="h-3.5 w-3.5" />
               )}
-              Plexus PDF
+              Plexus Atlas
             </Button>
             <Button
               size="sm"
@@ -741,7 +741,7 @@ export function EngagementCasePanel({
               ) : (
                 <FileText className="h-3.5 w-3.5" />
               )}
-              Clinician PDF
+              Clinician Atlas
             </Button>
             {psid != null && (
               <Button

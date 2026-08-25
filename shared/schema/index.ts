@@ -90,4 +90,21 @@ export * from "./canonicalAppointments";
 // FEATURE_CANONICAL_ORDER_NOTE (default OFF); migration 0053 is not
 // applied automatically.
 export * from "./ancillaryDocuments";
+// Phase 3 — Plexus Clinical Findings (structured AI-found clinical findings
+// with provenance). Migration 0057; no feature flag gate at schema level.
+export * from "./plexusClinicalFindings";
+// Phase 4 — Ancillary Service Registry (centralized service definitions,
+// CPT codes, qualification criteria, cooldown rules). Migration 0058.
+export * from "./ancillaryServiceRegistry";
+// Phase 5 — Note Addenda (traceable addenda for signed clinical documents).
+// Migration 0059.
+export * from "./noteAddenda";
+// Phase 10 — Plexus Bank Events (append-only financial reconciliation ledger).
+// Migration 0060.
+export * from "./plexusBankEvents";
+// Phase 11 — Canonical clinical reference domains (providers, allergies, labs,
+// imaging, vitals, encounters) that back the Patient EHR chart. Additive;
+// migration 0061. Replaces the client-side demo enrichment for these six
+// sections with real DB-backed rows.
+export * from "./clinicalData";
 export * from "../models/chat";

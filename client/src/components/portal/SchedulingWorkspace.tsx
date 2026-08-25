@@ -525,8 +525,8 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                 </div>
               ) : (
                 <>
-                  <ProofLink label="Clinician PDF" doc={proof.clinicianPdf} testId="sw-proof-clinician" />
-                  <ProofLink label="Plexus PDF" doc={proof.plexusPdf} testId="sw-proof-plexus" />
+                  <ProofLink label="Clinician Atlas" doc={proof.clinicianPdf} testId="sw-proof-clinician" />
+                  <ProofLink label="Plexus Atlas" doc={proof.plexusPdf} testId="sw-proof-plexus" />
                 </>
               )}
             </div>

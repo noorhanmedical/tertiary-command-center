@@ -141,7 +141,9 @@ export const PORTAL_DOCK_ITEMS: DockItem[] = [
 // Roles that get the simplified 4-item portal dock.
 export const PORTAL_DOCK_ROLES = new Set(["scheduler", "clinician"]);
 
-export const GLOBAL_NAV_ROUTES: string[] = ["/home", "/clinician-portal"];
+// `/home-preview` is included so the winter Home redesign can be staged with the
+// global sidebar visible; it mirrors `/home` and is removed on promotion.
+export const GLOBAL_NAV_ROUTES: string[] = ["/home", "/home-preview", "/clinician-portal"];
 
 export function shouldShowGlobalNav(pathname: string): boolean {
   return GLOBAL_NAV_ROUTES.some(

@@ -1,33 +1,22 @@
 /**
  * Phase 2C — Admin Review authorization guard.
  *
- * ─── UNRESOLVED BLOCKER (Phase 2C) ────────────────────────────────
+ * ─── RESOLUTION (canonical reviewer role now exists) ──────────────
  *
  * Admin Review must be performed by AUTHORIZED PLEXUS-INTERNAL
- * CLINICAL PERSONNEL. The current USER_ROLES enum
- *   ["admin", "clinician", "scheduler", "biller", "technician", "liaison"]
- * has no such role:
- *   • `admin`     → clinic administrator, NOT Plexus internal.
- *   • `clinician` → clinic-side physician; not a Plexus reviewer.
- *   • The remaining roles are clinic operational roles.
+ * CLINICAL PERSONNEL. The canonical role `plexus_internal_clinical_reviewer`
+ * is now part of USER_ROLES (shared/schema/users.ts) and is the ONLY
+ * role this guard permits (in addition to the feature flag being ON).
+ * Clinic `admin` is deliberately NOT permitted — the reviewer role is
+ * provisioned only for Plexus-internal clinical reviewers.
  *
- * Per the Phase 2C rule this file does NOT invent a broad
- * authorization rule to make the routes functional. Instead:
- *
- *   • `assertAdminReviewAccess()` throws until the internal role exists.
- *   • The Express guard `requireAdminReviewAccess` always responds 403.
- *   • The new service-specific review routes stay UNREGISTERED in
- *     server/routes.ts.
- *   • `FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW` stays OFF.
+ *   • `checkAdminReviewAccess()` permits ONLY that role.
+ *   • `assertAdminReviewAccess()` throws (403) for any other role.
+ *   • `FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW` must be ON.
  *
  * The legacy screening-level route
  *   POST /api/patient-screenings/:id/admin-approval
- * REMAINS unchanged (it is the only Admin Review the runtime uses
- * today). Phase 2C does not restrict or modify that route.
- *
- * When a Plexus-internal role is introduced (proposed name:
- * `plexus_internal_clinical_reviewer`), swap the always-deny logic
- * for a role check, register the new routes, and flip the flag ON.
+ * REMAINS unchanged.
  */
 
 import type { Request, Response, NextFunction } from "express";

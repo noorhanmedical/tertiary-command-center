@@ -2755,7 +2755,7 @@ export function TeamPortalShell({
                         <Card className="p-4 bg-white">
                           <div className="text-sm font-semibold text-slate-900 mb-2">Selected Patient Documents</div>
                           {selected ? (
-                            <div className="text-sm text-slate-600">Use Plexus PDF, Clinician PDF, screening, and consent actions from the right rail or patient profile.</div>
+                            <div className="text-sm text-slate-600">Use Plexus Atlas, Clinician Atlas, screening, and consent actions from the right rail or patient profile.</div>
                           ) : (
                             <div className="text-sm text-slate-500">Select a patient to work with documents.</div>
                           )}
