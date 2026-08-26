@@ -117,6 +117,8 @@ export type NovaParticlesProps = {
   onClick?: () => void;
   /** Drag handler — called with new position relative to container. */
   onDragEnd?: (x: number, y: number) => void;
+  /** Called when Nova interaction state changes (hover/active/drag). */
+  onInteractionChange?: (active: boolean) => void;
   /** Additional className. */
   className?: string;
   /** Style (for absolute positioning). */
@@ -130,6 +132,7 @@ export function NovaParticles({
   active = false,
   onClick,
   onDragEnd,
+  onInteractionChange,
   className = "",
   style,
 }: NovaParticlesProps) {
@@ -142,7 +145,7 @@ export function NovaParticles({
   const [tick, setTick] = useState(0);
 
   const { size, particleDensity, shape, colorPreset, customColors, opacity,
-    glowIntensity, movementSpeed, movementIntensity, hoverIntensity, idleVisibility,
+    glowIntensity, movementSpeed, movementIntensity, hoverIntensity, hoverScale, idleVisibility,
   } = appearance;
 
   const colors = customColors && customColors.length > 0
@@ -215,17 +218,31 @@ export function NovaParticles({
 
   const isEngaged = hovered || active;
   const baseOpacity = isEngaged ? Math.min(1, idleVisibility * hoverIntensity) : idleVisibility;
-  const glowPx = isEngaged ? glowIntensity * 2 : glowIntensity;
-  const tighten = isEngaged ? 0.75 : 1;
+  const glowPx = isEngaged ? glowIntensity * 2.5 : glowIntensity;
+  // BLOOM: particles expand outward on hover/active (not tighten).
+  const bloom = isEngaged ? (hoverScale ?? 1.2) : 1;
   const time = timeRef.current;
+
+  // Notify parent of interaction state changes for rail suppression.
+  const isInteracting = hovered || active || dragging;
+  const prevInteracting = useRef(false);
+  useEffect(() => {
+    if (isInteracting !== prevInteracting.current) {
+      prevInteracting.current = isInteracting;
+      onInteractionChange?.(isInteracting);
+    }
+  }, [isInteracting, onInteractionChange]);
+
+  // Hit area is larger than visible size to prevent hover flicker.
+  const hitSize = Math.max(size * 1.3, size + 30);
 
   return (
     <div
       ref={containerRef}
       className={`select-none touch-none ${dragging ? "cursor-grabbing" : "cursor-pointer"} ${className}`}
-      style={{ width: size, height: size, ...style }}
+      style={{ width: hitSize, height: hitSize, display: "flex", alignItems: "center", justifyContent: "center", ...style }}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseLeave={() => { if (!active) setHovered(false); }}
       onClick={dragging ? undefined : onClick}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -243,7 +260,9 @@ export function NovaParticles({
         style={{
           opacity: baseOpacity,
           filter: `drop-shadow(0 0 ${glowPx}px ${colors[0]}88)`,
-          transition: "opacity 0.4s, filter 0.4s",
+          transition: "opacity 0.4s, filter 0.4s, transform 0.4s ease-out",
+          transform: `scale(${bloom})`,
+          transformOrigin: "center",
         }}
         aria-hidden="true"
       >
@@ -251,9 +270,11 @@ export function NovaParticles({
           // Procedural offset from noise.
           const noiseX = smoothNoise(p.seed + time * 0.3, 0, p.id) - 0.5;
           const noiseY = smoothNoise(0, p.seed + time * 0.3, p.id + 100) - 0.5;
+          // Bloom: particles drift OUTWARD from center on hover.
+          const bloomDrift = isEngaged ? 1.15 : 1;
           const drift = movementIntensity * 0.12;
-          const cx = (p.baseCx + noiseX * drift) * tighten;
-          const cy = (p.baseCy + noiseY * drift) * tighten;
+          const cx = (p.baseCx * bloomDrift + noiseX * drift);
+          const cy = (p.baseCy * bloomDrift + noiseY * drift);
           const particleR = p.r / (size / 2);
 
           return (
@@ -261,15 +282,16 @@ export function NovaParticles({
               key={p.id}
               cx={cx}
               cy={cy}
-              r={particleR}
+              r={particleR * (isEngaged ? 1.1 : 1)}
               fill={colors[p.colorIdx % colors.length]}
-              opacity={p.opacity}
+              opacity={p.opacity * (isEngaged ? 1.3 : 1)}
+              style={{ transition: "cx 0.4s, cy 0.4s, r 0.3s, opacity 0.3s" }}
             />
           );
         })}
         {/* Central bright core when engaged */}
         {isEngaged && (
-          <circle cx={0} cy={0} r={0.06} fill={colors[colors.length - 1]} opacity={0.85} />
+          <circle cx={0} cy={0} r={0.08} fill={colors[colors.length - 1]} opacity={0.9} />
         )}
       </svg>
     </div>

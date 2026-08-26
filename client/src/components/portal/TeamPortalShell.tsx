@@ -1286,6 +1286,8 @@ export function TeamPortalShell({
       setPeek: (v: boolean) => void,
     ) =>
     () => {
+      // Suppress rail hover-peek when Nova interaction is active.
+      if (novaInteractionActive) return;
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
@@ -1324,6 +1326,12 @@ export function TeamPortalShell({
   const [metricsPopupOpen, setMetricsPopupOpen] = useState(false);
   // Nova appearance + position persistence.
   const { prefs: novaPrefs, setFreePosition: setNovaFreePosition } = useNovaPreferences(currentUserId);
+  // Nova interaction ownership — when true, suppress rail hover-peek activation.
+  const [novaInteractionActive, setNovaInteractionActive] = useState(false);
+  // Keep interaction active when quick panel is open.
+  useEffect(() => {
+    if (novaQuickPanelOpen) setNovaInteractionActive(true);
+  }, [novaQuickPanelOpen]);
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
   // Demo-patient consent / screening toggles removed in Phase 1
   // Slice 1.1. Consent / screening state for real patients now comes
@@ -2320,6 +2328,7 @@ export function TeamPortalShell({
                 active={novaQuickPanelOpen}
                 onClick={() => setNovaQuickPanelOpen((v) => !v)}
                 onDragEnd={(x, y) => setNovaFreePosition(x, y)}
+                onInteractionChange={(active) => setNovaInteractionActive(active || novaQuickPanelOpen)}
               />
             </div>
             {portalTabs.length > 0 && (

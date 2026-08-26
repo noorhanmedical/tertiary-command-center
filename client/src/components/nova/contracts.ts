@@ -59,6 +59,8 @@ export type NovaAppearanceProfile = {
   movementIntensity: number;
   /** Hover brightness multiplier. Range: 1–2. Default: 1.6. */
   hoverIntensity: number;
+  /** Hover growth scale (Nova blooms bigger). Range: 1.0–1.4. Default: 1.2. */
+  hoverScale: number;
   /** Idle visibility (minimum opacity). Range: 0.1–1. Default: 0.45. */
   idleVisibility: number;
 };
@@ -66,13 +68,14 @@ export type NovaAppearanceProfile = {
 export const DEFAULT_NOVA_APPEARANCE: NovaAppearanceProfile = {
   shape: "nebula",
   colorPreset: "deep_space",
-  size: 90,
+  size: 100,
   particleDensity: 40,
   opacity: 0.5,
   glowIntensity: 5,
   movementSpeed: 1,
   movementIntensity: 1,
   hoverIntensity: 1.6,
+  hoverScale: 1.2,
   idleVisibility: 0.45,
 };
 
