@@ -68,15 +68,15 @@ export type NovaAppearanceProfile = {
 export const DEFAULT_NOVA_APPEARANCE: NovaAppearanceProfile = {
   shape: "nebula",
   colorPreset: "deep_space",
-  size: 100,
-  particleDensity: 40,
-  opacity: 0.5,
-  glowIntensity: 5,
+  size: 105,
+  particleDensity: 45,
+  opacity: 0.7,
+  glowIntensity: 8,
   movementSpeed: 1,
   movementIntensity: 1,
-  hoverIntensity: 1.6,
+  hoverIntensity: 1.5,
   hoverScale: 1.2,
-  idleVisibility: 0.45,
+  idleVisibility: 0.65,
 };
 
 // ─── Position State ───────────────────────────────────────────────────────

@@ -120,11 +120,11 @@ export function createEngine(count: number, shape: NovaShape, seed: number): Eng
     else if (rRoll < 0.98) radius = 1.4 + rand() * 0.4;  // 8%: 1.4–1.8
     else radius = 1.8 + rand() * 0.5;                     // 2%: core
 
-    // Opacity by depth.
+    // Opacity by depth — foreground brighter for visibility.
     let opacity: number;
-    if (depth === 0) opacity = 0.15 + rand() * 0.25;      // background
-    else if (depth === 1) opacity = 0.35 + rand() * 0.35; // mid
-    else opacity = 0.6 + rand() * 0.4;                    // foreground
+    if (depth === 0) opacity = 0.2 + rand() * 0.3;        // background
+    else if (depth === 1) opacity = 0.45 + rand() * 0.35; // mid
+    else opacity = 0.7 + rand() * 0.3;                    // foreground
 
     particles.push({
       x: target.x + (rand() - 0.5) * 0.05,
@@ -273,7 +273,15 @@ export function renderToCanvas(
   const cx = width / 2;
   const cy = height / 2;
   const scale = Math.min(width, height) * 0.9;
-  const opacityMul = engaged ? 1.5 : 1.0;
+  const opacityMul = engaged ? 1.4 : 1.0;
+
+  // Subtle radial backdrop glow for visibility on light backgrounds.
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, scale * 0.45);
+  grad.addColorStop(0, engaged ? "rgba(67,56,202,0.12)" : "rgba(67,56,202,0.06)");
+  grad.addColorStop(0.6, engaged ? "rgba(67,56,202,0.04)" : "rgba(67,56,202,0.02)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, height);
 
   // Sort by depth for correct layering (background first).
   const sorted = state.particles.slice().sort((a, b) => a.depth - b.depth);
@@ -291,14 +299,21 @@ export function renderToCanvas(
     ctx.arc(px, py, r, 0, Math.PI * 2);
     ctx.fill();
 
-    // Subtle glow on brighter foreground particles.
+    // Glow on brighter foreground particles.
     if (p.depth === 2 && glowIntensity > 2) {
-      ctx.globalAlpha = alpha * 0.3;
+      ctx.globalAlpha = alpha * 0.35;
       ctx.beginPath();
-      ctx.arc(px, py, r * 2.5, 0, Math.PI * 2);
+      ctx.arc(px, py, r * 2.8, 0, Math.PI * 2);
       ctx.fill();
     }
   }
+
+  // Bright central core for presence.
+  ctx.globalAlpha = engaged ? 0.6 : 0.3;
+  ctx.fillStyle = colors[colors.length - 1] ?? "#818CF8";
+  ctx.beginPath();
+  ctx.arc(cx, cy, engaged ? 3 : 2, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.globalAlpha = 1;
 }

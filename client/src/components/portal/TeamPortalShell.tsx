@@ -2277,7 +2277,7 @@ export function TeamPortalShell({
         <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
           <div
             ref={playgroundSurfaceRef}
-            className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-2"
+            className="relative mx-auto flex min-h-full w-full flex-col px-6 pt-2 pb-24"
             data-testid="playground-canvas-surface"
             onDragOver={handlePlaygroundDragOver}
             onDrop={handlePlaygroundDrop}
@@ -2296,14 +2296,13 @@ export function TeamPortalShell({
                 }}
               />
             )}
-            {/* Nova ambient AI assistant — anchored lower-right of Playground
-                canvas, above the dock. Subtle drift within a small radius. */}
+            {/* Nova ambient AI assistant — dock-adjacent, ~32px above dock center-right. */}
             <div
               className="pointer-events-auto absolute z-20"
               style={
                 novaPrefs.position.mode === "free"
                   ? { left: novaPrefs.position.x, top: novaPrefs.position.y, right: "auto", bottom: "auto" }
-                  : { bottom: 80, right: 32 }
+                  : { bottom: 72, right: "calc(50% - 80px)" }
               }
               data-testid="nova-ambient-anchor"
             >
@@ -2320,7 +2319,7 @@ export function TeamPortalShell({
                       ? `${selected.name}${selected.qualifyingTests?.[0] ? ` · ${selected.qualifyingTests[0]}` : ""}`
                       : null
                   }
-                  className="absolute bottom-full right-0 mb-2"
+                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3"
                 />
               )}
               <NovaParticles
@@ -2896,7 +2895,7 @@ export function TeamPortalShell({
             }
             className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/30 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               !(leftRailPeek || leftRailPinned)
-                ? "-translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
+                ? "-translate-x-[100%] translate-y-0 scale-y-100 opacity-0"
                 : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
           >
@@ -3280,7 +3279,7 @@ export function TeamPortalShell({
             }
             className={`glass-tile !bg-white/40 pointer-events-auto min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               !(rightRailPeek || rightRailPinned)
-                ? "translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
+                ? "translate-x-[100%] translate-y-0 scale-y-100 opacity-0"
                 : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
           >
