@@ -14,7 +14,9 @@ import {
 import { normalizeInsuranceType } from "../services/ingest";
 import { logAudit } from "../services/auditService";
 import { invalidatePatientDatabase } from "./patientDatabase";
-import { assignNewlyEligiblePatient } from "../services/callListEngine";
+// Phase 1 convergence: assignNewlyEligiblePatient disabled — canonical
+// assignment flows through Engagement Center distributionService.
+// import { assignNewlyEligiblePatient } from "../services/callListEngine";
 import {
   commitPatient,
   recallPatient,
@@ -1074,9 +1076,13 @@ export function registerPatientRoutes(
       // Use finalPatient (post-auto-commit) so the engine sees the latest
       // state including commitStatus/committedAt.
       if (finalPatient && qualTests.length > 0 && finalPatient.facility) {
-        const today = new Date().toISOString().slice(0, 10);
-        assignNewlyEligiblePatient(storage, finalPatient, finalPatient.facility, today)
-          .catch((err) => console.warn("[patients] assignNewlyEligiblePatient failed:", err?.message));
+        // Phase 1 convergence: legacy callListEngine assignment disabled.
+        // Assignment now flows through Engagement Center → distributionService
+        // → patient_execution_cases.assignedTeamMemberId. The scheduler_assignments
+        // table is no longer the live ownership source.
+        // const today = new Date().toISOString().slice(0, 10);
+        // assignNewlyEligiblePatient(storage, finalPatient, finalPatient.facility, today)
+        //   .catch((err) => console.warn("[patients] assignNewlyEligiblePatient failed:", err?.message));
       }
 
       // Phase 2C — if the commit successfully returned commitResultData
@@ -1130,9 +1136,11 @@ export function registerPatientRoutes(
         const committedPatient = result.data.patient;
         const qualifyingTests = Array.isArray(committedPatient.qualifyingTests) ? committedPatient.qualifyingTests : [];
         if (qualifyingTests.length > 0 && committedPatient.facility) {
-          const today = new Date().toISOString().slice(0, 10);
-          assignNewlyEligiblePatient(storage, committedPatient, committedPatient.facility, today)
-            .catch((err) => console.warn("[patients] assignNewlyEligiblePatient after manual commit failed:", err?.message));
+          // Phase 1 convergence: legacy callListEngine assignment disabled.
+          // Assignment now flows through Engagement Center → distributionService.
+          // const today = new Date().toISOString().slice(0, 10);
+          // assignNewlyEligiblePatient(storage, committedPatient, committedPatient.facility, today)
+          //   .catch((err) => console.warn("[patients] assignNewlyEligiblePatient after manual commit failed:", err?.message));
         }
       } catch (assignErr) {
         console.warn("[patients] manual commit live assignment hook failed:", assignErr);
