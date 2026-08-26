@@ -34,6 +34,7 @@ import { TasksWorkspaceTab } from "./workspaces/TasksWorkspaceTab";
 import { ScheduleWorkspaceTab } from "./workspaces/ScheduleWorkspaceTab";
 import { DocumentsWorkspaceTab } from "./workspaces/DocumentsWorkspaceTab";
 import { NovaWorkspaceTab } from "./workspaces/NovaWorkspaceTab";
+import { PlaygroundHomeArtwork } from "./workspaces/PlaygroundHomeArtwork";
 import type { PlaygroundWorkspaceDefinition, PlaygroundWorkspace, PlaygroundWorkspaceType } from "./types";
 
 // ─── Patient EHR workspace renderer ───────────────────────────────────────
@@ -73,11 +74,8 @@ function PlaceholderWorkspace({ workspace }: { workspace: PlaygroundWorkspace; i
 
 function PlaygroundHomeWorkspace() {
   return (
-    <div className="flex h-full items-center justify-center" data-testid="workspace-playground-home">
-      <div className="text-center space-y-4 max-w-md">
-        <div className="text-2xl font-light text-slate-300 tracking-wide">Your Playground</div>
-        <p className="text-sm text-slate-400">Select a patient or open a workspace from the dock, rails, or work queue.</p>
-      </div>
+    <div className="h-full" style={{ background: "#FAFBFD" }} data-testid="workspace-playground-home">
+      <PlaygroundHomeArtwork />
     </div>
   );
 }

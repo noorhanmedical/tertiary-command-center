@@ -7,6 +7,7 @@
 import { usePlayground } from "./PlaygroundWorkspaceProvider";
 import { getWorkspaceDefinition } from "./registry";
 import { PlaygroundTabBar } from "./PlaygroundTabBar";
+import { PlaygroundHomeArtwork } from "./workspaces/PlaygroundHomeArtwork";
 
 export function PlaygroundCanvas() {
   const { workspaces, activeWorkspaceId, activeWorkspace } = usePlayground();
@@ -25,13 +26,8 @@ export function PlaygroundCanvas() {
             isActive={true}
           />
         ) : (
-          <div className="flex h-full items-center justify-center" data-testid="playground-empty">
-            <div className="text-center space-y-3">
-              <div className="text-xl font-light text-slate-300 tracking-wide">Your Playground</div>
-              <p className="text-sm text-slate-400 max-w-sm">
-                Select a patient or open a workspace from the dock, rails, or work queue.
-              </p>
-            </div>
+          <div className="h-full" style={{ background: "#FAFBFD" }} data-testid="playground-empty">
+            <PlaygroundHomeArtwork />
           </div>
         )}
       </div>
