@@ -10,23 +10,24 @@ import { usePlayground } from "./PlaygroundWorkspaceProvider";
 import { PlaygroundCanvas } from "./PlaygroundCanvas";
 
 export function PlaygroundBridge() {
-  const { workspaces } = usePlayground();
+  const { workspaces, goHome } = usePlayground();
 
-  // When the Playground engine has workspaces, it takes over the center.
-  if (workspaces.length > 0) {
-    return (
-      <div className="h-full w-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-bridge-active">
-        <PlaygroundCanvas />
-      </div>
-    );
+  // Always render the Playground engine. When no workspaces exist,
+  // the canvas shows its built-in empty/home state.
+  // Auto-create playground_home on first render if empty.
+  if (workspaces.length === 0) {
+    // Trigger home creation (deferred to avoid render-during-render).
+    Promise.resolve().then(() => goHome());
   }
 
-  // When empty, return null — the old rendering system stays active.
-  return null;
+  return (
+    <div className="h-full w-full overflow-hidden" data-testid="playground-bridge-active">
+      <PlaygroundCanvas />
+    </div>
+  );
 }
 
 /** Hook to check if the Playground engine is actively rendering. */
 export function usePlaygroundActive(): boolean {
-  const { workspaces } = usePlayground();
-  return workspaces.length > 0;
+  return true; // Engine is always active now.
 }

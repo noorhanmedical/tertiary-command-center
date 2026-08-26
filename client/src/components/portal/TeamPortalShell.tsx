@@ -3745,14 +3745,17 @@ export function TeamPortalShell({
               if (app.id === "nova") { setNovaQuickPanelOpen((v) => !v); return; }
               // Metrics → toggle floating MetricsPopup (not a navigation).
               if (app.id === "metrics") { setMetricsPopupOpen((v) => !v); return; }
-              // Map dock apps to existing toggleDockApp keys where applicable.
-              const dockKeyMap: Record<string, "tasks" | "schedule" | "consent" | "chart" | "documents"> = {
-                "plexus-tasks": "tasks",
-                "schedule": "schedule",
-                "documents": "documents",
+              // Map dock apps to real Playground workspaces.
+              const workspaceMap: Record<string, { type: string; title: string }> = {
+                "plexus-tasks": { type: "tasks", title: "Tasks" },
+                "schedule": { type: "schedule", title: "Schedule" },
+                "documents": { type: "documents", title: "Documents" },
               };
-              const mapped = dockKeyMap[app.id];
-              if (mapped) { toggleDockApp(mapped); return; }
+              const wsMapping = workspaceMap[app.id];
+              if (wsMapping) {
+                dispatchOpenWorkspace({ type: wsMapping.type as any, title: wsMapping.title });
+                return;
+              }
               // Team Ops → existing Engagement Center (team operations surface)
               if (app.id === "team-ops") { setLocation("/engagement-center"); return; }
               // Plexus Nucleus → honest unavailable (no runtime destination yet)

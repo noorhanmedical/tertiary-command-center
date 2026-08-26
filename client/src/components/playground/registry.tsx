@@ -29,6 +29,11 @@ import {
   Search,
 } from "lucide-react";
 import { NovaDockIcon } from "@/components/nova/NovaDockIcon";
+import { CallWorkspaceTab } from "./workspaces/CallWorkspaceTab";
+import { TasksWorkspaceTab } from "./workspaces/TasksWorkspaceTab";
+import { ScheduleWorkspaceTab } from "./workspaces/ScheduleWorkspaceTab";
+import { DocumentsWorkspaceTab } from "./workspaces/DocumentsWorkspaceTab";
+import { NovaWorkspaceTab } from "./workspaces/NovaWorkspaceTab";
 import type { PlaygroundWorkspaceDefinition, PlaygroundWorkspace, PlaygroundWorkspaceType } from "./types";
 
 // ─── Patient EHR workspace renderer ───────────────────────────────────────
@@ -121,7 +126,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
     type: "call",
     icon: Phone,
     titleResolver: (ws) => ws.title || "Call",
-    render: PlaceholderWorkspace,
+    render: CallWorkspaceTab,
     dedupeKey: patientWorkspaceDedupeKey("call"),
     supportsPatientContext: true,
     supportsDirtyState: true,
@@ -130,7 +135,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "tasks",
     icon: CheckSquare,
-    render: PlaceholderWorkspace,
+    render: TasksWorkspaceTab,
     dedupeKey: singletonDedupeKey("tasks"),
     supportsPatientContext: false,
     supportsDirtyState: false,
@@ -148,7 +153,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "schedule",
     icon: CalendarDays,
-    render: PlaceholderWorkspace,
+    render: ScheduleWorkspaceTab,
     dedupeKey: singletonDedupeKey("schedule"),
     supportsPatientContext: false,
     supportsDirtyState: false,
@@ -157,7 +162,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "calendar",
     icon: CalendarDays,
-    render: PlaceholderWorkspace,
+    render: ScheduleWorkspaceTab,
     dedupeKey: singletonDedupeKey("calendar"),
     supportsPatientContext: false,
     supportsDirtyState: false,
@@ -193,7 +198,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "documents",
     icon: FileText,
-    render: PlaceholderWorkspace,
+    render: DocumentsWorkspaceTab,
     dedupeKey: singletonDedupeKey("documents"),
     supportsPatientContext: false,
     supportsDirtyState: false,
@@ -247,7 +252,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "nova",
     icon: NovaDockIcon,
-    render: PlaceholderWorkspace,
+    render: NovaWorkspaceTab,
     dedupeKey: singletonDedupeKey("nova"),
     supportsPatientContext: true,
     supportsDirtyState: false,
