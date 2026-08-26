@@ -1672,24 +1672,15 @@ export function TeamPortalShell({
   }
 
   function togglePatientInPlayground(p: TodayPatient) {
-    const samePatient = p.patientScreeningId === selectedPatientId;
-
-    if (samePatient && centerMode === "patient") {
-      setCenterMode("playground");
-      setCenterSrc("");
-      setCenterTitle("");
-      setDockActiveApp(null);
-      return;
-    }
-
+    // Open/focus patient EHR via Playground workspace engine.
     if (p.patientScreeningId != null) {
-      setSelectedPatientId(p.patientScreeningId);
+      dispatchOpenWorkspace({
+        type: "patient_ehr",
+        title: p.name,
+        patientScreeningId: p.patientScreeningId,
+        facilityId: p.facility,
+      });
     }
-
-    setCenterMode("patient");
-    setCenterSrc("");
-    setCenterTitle("");
-    markDockOpen("chart");
   }
 
   function openScheduleDialog(p: TodayPatient) {
@@ -1993,24 +1984,13 @@ export function TeamPortalShell({
     name: string;
     facility?: string | null;
   }) {
-    const fakeToday: TodayPatient = {
+    // Route through the Playground workspace engine.
+    dispatchOpenWorkspace({
+      type: "patient_ehr",
+      title: input.name,
       patientScreeningId: input.patientScreeningId,
-      name: input.name,
-      dob: null,
-      time: null,
-      facility: input.facility ?? "",
-      clinicianName: null,
-      qualifyingTests: [],
-      appointmentStatus: "",
-      consentByTest: [],
-      consentSigned: false,
-      appointments: [],
-      batchId: null,
-      plexusPdfUrl: null,
-      clinicianPdfUrl: null,
-      scheduleUrl: null,
-    };
-    openPortalTab("patient", fakeToday);
+      facilityId: input.facility ?? null,
+    });
   }
 
   function closePortalTab(id: string) {
@@ -2289,7 +2269,7 @@ export function TeamPortalShell({
                   if (ctx?.patientScreeningId) {
                     setSelectedPatientId(ctx.patientScreeningId);
                   }
-                  openPortalTab("email");
+                  dispatchOpenWorkspace({ type: "email", title: "Email" });
                 }}
               />
             )}
@@ -2479,7 +2459,7 @@ export function TeamPortalShell({
                           // attachments via the prop bridge.
                           setPendingEmailTemplate(null);
                           setPendingEmailAttachments(ids);
-                          openPortalTab("email");
+                          dispatchOpenWorkspace({ type: "email", title: "Email" });
                         }}
                       />
                     </div>
@@ -2528,7 +2508,7 @@ export function TeamPortalShell({
                           // send paths.
                           setPendingEmailAttachments([]);
                           setPendingEmailTemplate(tpl);
-                          openPortalTab("email");
+                          dispatchOpenWorkspace({ type: "email", title: "Email" });
                         }}
                       />
                     </div>
@@ -3023,7 +3003,7 @@ export function TeamPortalShell({
                           id: "email",
                           label: "Email",
                           icon: Mail,
-                          onClick: () => openPortalTab("email"),
+                          onClick: () => dispatchOpenWorkspace({ type: "email", title: "Email" }),
                           active: activeKind === "email",
                           draggableWidget: "email",
                           testId: "left-rail-tool-email",
@@ -3047,7 +3027,7 @@ export function TeamPortalShell({
                           id: "quickNote",
                           label: "Quick Note",
                           icon: NotebookPen,
-                          onClick: () => openPortalTab("quickNote"),
+                          onClick: () => dispatchOpenWorkspace({ type: "quick_note", title: "Quick Note" }),
                           active: activeKind === "quickNote",
                           testId: "left-rail-tool-quick-note",
                         },
@@ -3055,7 +3035,7 @@ export function TeamPortalShell({
                           id: "documents",
                           label: "Documents",
                           icon: FileText,
-                          onClick: () => openPortalTab("documentLibrary"),
+                          onClick: () => dispatchOpenWorkspace({ type: "documents", title: "Documents" }),
                           active: activeKind === "documentLibrary",
                           testId: "left-rail-tool-document-library",
                         },
@@ -3063,7 +3043,7 @@ export function TeamPortalShell({
                           id: "resources",
                           label: "Scripts",
                           icon: BookOpen,
-                          onClick: () => openPortalTab("resources"),
+                          onClick: () => dispatchOpenWorkspace({ type: "custom_tool", title: "Scripts" }),
                           active: activeKind === "resources",
                           testId: "left-rail-tool-resources",
                         },
@@ -3071,7 +3051,7 @@ export function TeamPortalShell({
                           id: "marketing",
                           label: "Proof/PDFs",
                           icon: Megaphone,
-                          onClick: () => openPortalTab("marketing"),
+                          onClick: () => dispatchOpenWorkspace({ type: "custom_tool", title: "Proof/PDFs" }),
                           active: activeKind === "marketing",
                           testId: "left-rail-tool-marketing",
                         },
@@ -3099,7 +3079,7 @@ export function TeamPortalShell({
                           id: "tasks",
                           label: "Tasks",
                           icon: ClipboardList,
-                          onClick: () => openPortalTab("plexusTasks"),
+                          onClick: () => dispatchOpenWorkspace({ type: "tasks", title: "Tasks" }),
                           active: activeKind === "plexusTasks",
                           badge: taskCount > 0 ? taskCount : undefined,
                           testId: "left-rail-tool-tasks",
@@ -3108,7 +3088,7 @@ export function TeamPortalShell({
                           id: "calls",
                           label: "Calls",
                           icon: PhoneCall,
-                          onClick: () => openPortalTab("calls"),
+                          onClick: () => dispatchOpenWorkspace({ type: "call", title: "Calls" }),
                           active: activeKind === "calls",
                           testId: "left-rail-tool-calls",
                         },
@@ -3116,7 +3096,7 @@ export function TeamPortalShell({
                           id: "contacts",
                           label: "Contacts",
                           icon: Phone,
-                          onClick: () => openPortalTab("internalContacts"),
+                          onClick: () => dispatchOpenWorkspace({ type: "contacts", title: "Contacts" }),
                           active: activeKind === "internalContacts",
                           testId: "left-rail-tool-internal-contacts",
                         },
@@ -3124,7 +3104,7 @@ export function TeamPortalShell({
                           id: "patientSearch",
                           label: "Patient Search",
                           icon: Search,
-                          onClick: () => openPortalTab("patientSearch"),
+                          onClick: () => dispatchOpenWorkspace({ type: "custom_tool", title: "Patient Search" }),
                           active: activeKind === "patientSearch",
                           testId: "left-rail-tool-patient-search",
                         },
@@ -3132,7 +3112,7 @@ export function TeamPortalShell({
                           id: "invoiceDesk",
                           label: "Invoice Desk",
                           icon: Landmark,
-                          onClick: () => openPortalTab("invoiceDesk"),
+                          onClick: () => dispatchOpenWorkspace({ type: "invoice_desk", title: "Invoice Desk" }),
                           active: activeKind === "invoiceDesk",
                           testId: "left-rail-tool-invoice-desk",
                         },
@@ -3362,7 +3342,16 @@ export function TeamPortalShell({
                           <div className="mt-2 flex items-center justify-end gap-1">
                             <button
                               type="button"
-                              onClick={() => openPortalTab("patient", p)}
+                              onClick={() => {
+                                if (p.patientScreeningId != null) {
+                                  dispatchOpenWorkspace({
+                                    type: "patient_ehr",
+                                    title: p.name,
+                                    patientScreeningId: p.patientScreeningId,
+                                    facilityId: p.facility,
+                                  });
+                                }
+                              }}
                               className="absolute -right-3 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
                               data-testid={`button-patient-profile-expand-${p.patientScreeningId ?? p.name}`}
                               title="Open patient profile in Playground"
