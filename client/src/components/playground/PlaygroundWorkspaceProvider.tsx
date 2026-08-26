@@ -3,9 +3,10 @@
 // Single source of truth for all open workspaces, active tab, dirty state,
 // deduplication, and the openInPlayground API that every launcher uses.
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PlaygroundWorkspace, PlaygroundWorkspaceAPI, OpenInPlaygroundRequest } from "./types";
 import { getWorkspaceDefinition } from "./registry";
+import { saveSession, restoreSession } from "./sessionPersistence";
 
 const PlaygroundCtx = createContext<PlaygroundWorkspaceAPI | null>(null);
 
@@ -26,8 +27,25 @@ function generateId(): string {
 }
 
 export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode }) {
-  const [workspaces, setWorkspaces] = useState<PlaygroundWorkspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
+  // Restore session on mount.
+  const [workspaces, setWorkspaces] = useState<PlaygroundWorkspace[]>(() => {
+    const restored = restoreSession();
+    return restored?.workspaces ?? [];
+  });
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(() => {
+    const restored = restoreSession();
+    return restored?.activeId ?? null;
+  });
+
+  // Auto-save session on state changes (debounced).
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveSession(workspaces, activeWorkspaceId);
+    }, 300);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [workspaces, activeWorkspaceId]);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
