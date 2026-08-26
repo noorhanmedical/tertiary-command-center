@@ -16,6 +16,10 @@ import {
 
 const STORAGE_KEY_PREFIX = "plexus_nova_prefs_";
 const DEBOUNCE_MS = 500;
+// Preference version — used to detect stale old defaults that should
+// be migrated to the new larger size. Old v1 default was ~90–105px.
+const PREFS_VERSION = 2;
+const OLD_DEFAULT_SIZE_MAX = 110; // Any saved size ≤110 that wasn't explicitly customized → migrate.
 
 function loadPrefs(userId: string | null): NovaUserPreferences {
   if (!userId) return DEFAULT_NOVA_PREFERENCES;
@@ -23,10 +27,22 @@ function loadPrefs(userId: string | null): NovaUserPreferences {
     const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${userId}`);
     if (!raw) return DEFAULT_NOVA_PREFERENCES;
     const parsed = JSON.parse(raw);
-    return {
+    const prefs: NovaUserPreferences = {
       appearance: { ...DEFAULT_NOVA_PREFERENCES.appearance, ...(parsed.appearance ?? {}) },
       position: { ...DEFAULT_NOVA_PREFERENCES.position, ...(parsed.position ?? {}) },
     };
+    // Version migration: if stored size matches old system default range
+    // and no explicit version marker exists, upgrade to new default.
+    if (!parsed._v || parsed._v < PREFS_VERSION) {
+      if (prefs.appearance.size <= OLD_DEFAULT_SIZE_MAX) {
+        prefs.appearance.size = DEFAULT_NOVA_PREFERENCES.appearance.size;
+        prefs.appearance.particleDensity = DEFAULT_NOVA_PREFERENCES.appearance.particleDensity;
+        prefs.appearance.idleVisibility = DEFAULT_NOVA_PREFERENCES.appearance.idleVisibility;
+        prefs.appearance.glowIntensity = DEFAULT_NOVA_PREFERENCES.appearance.glowIntensity;
+        prefs.appearance.opacity = DEFAULT_NOVA_PREFERENCES.appearance.opacity;
+      }
+    }
+    return prefs;
   } catch {
     return DEFAULT_NOVA_PREFERENCES;
   }
@@ -35,7 +51,7 @@ function loadPrefs(userId: string | null): NovaUserPreferences {
 function savePrefs(userId: string | null, prefs: NovaUserPreferences): void {
   if (!userId) return;
   try {
-    localStorage.setItem(`${STORAGE_KEY_PREFIX}${userId}`, JSON.stringify(prefs));
+    localStorage.setItem(`${STORAGE_KEY_PREFIX}${userId}`, JSON.stringify({ ...prefs, _v: PREFS_VERSION }));
   } catch { /* quota / unavailable */ }
 }
 
@@ -73,7 +89,7 @@ export function useNovaPreferences(userId: string | null) {
   }, [persist]);
 
   const setSize = useCallback((size: number) => {
-    updateAppearance({ size: Math.max(40, Math.min(180, size)) });
+    updateAppearance({ size: Math.max(120, Math.min(320, size)) });
   }, [updateAppearance]);
 
   const setColorPreset = useCallback((preset: NovaColorPreset) => {

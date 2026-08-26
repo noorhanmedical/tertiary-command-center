@@ -2296,13 +2296,13 @@ export function TeamPortalShell({
                 }}
               />
             )}
-            {/* Nova ambient AI assistant — dock-adjacent, ~32px above dock center-right. */}
+            {/* Nova ambient AI assistant — dock-adjacent, ~24px above dock. */}
             <div
               className="pointer-events-auto absolute z-20"
               style={
                 novaPrefs.position.mode === "free"
                   ? { left: novaPrefs.position.x, top: novaPrefs.position.y, right: "auto", bottom: "auto" }
-                  : { bottom: 72, right: "calc(50% - 80px)" }
+                  : { bottom: 90, left: "50%", transform: "translateX(-50%)" }
               }
               data-testid="nova-ambient-anchor"
             >

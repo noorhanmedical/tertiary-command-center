@@ -321,8 +321,9 @@ export function renderToCanvas(
 // ─── Compute particle count from size + density ───────────────────────────
 
 export function computeParticleCount(size: number, density: number): number {
-  // density is 20–80 (from profile). Scale with size.
-  const base = density * 4; // density 40 → 160 base
-  const sizeMultiplier = size / 80; // 100px → 1.25x
-  return Math.round(Math.max(120, Math.min(500, base * sizeMultiplier)));
+  // density is 20–80 (from profile). Scale with size².
+  // At 210px / density 65 → ~650 particles.
+  const base = density * 3.5;
+  const sizeMultiplier = (size / 100) * (size / 100); // quadratic scaling
+  return Math.round(Math.max(150, Math.min(800, base * sizeMultiplier)));
 }
