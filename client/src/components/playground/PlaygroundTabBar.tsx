@@ -3,28 +3,21 @@
 // Each tab: icon + title + close button + dirty indicator.
 // Horizontal scroll on overflow. Active tab has subtle accent.
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { X } from "lucide-react";
 import { usePlayground } from "./PlaygroundWorkspaceProvider";
 import { getWorkspaceDefinition } from "./registry";
+import { DirtyCloseDialog, type DirtyCloseAction } from "./DirtyCloseDialog";
 import type { PlaygroundWorkspace } from "./types";
 
-function Tab({ workspace, isActive }: { workspace: PlaygroundWorkspace; isActive: boolean }) {
-  const { focusWorkspace, closeWorkspace, setDirty } = usePlayground();
+function Tab({ workspace, isActive, onClose }: { workspace: PlaygroundWorkspace; isActive: boolean; onClose: (ws: PlaygroundWorkspace) => void }) {
+  const { focusWorkspace } = usePlayground();
   const def = getWorkspaceDefinition(workspace.type);
   const Icon = workspace.icon ?? def?.icon ?? null;
 
   const handleClose = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (workspace.dirty) {
-      // Unsaved work guard — show confirmation.
-      const msg = workspace.dirtyDescription
-        ? `Unsaved changes: ${workspace.dirtyDescription}. Close anyway?`
-        : "This workspace has unsaved changes. Close anyway?";
-      if (!window.confirm(msg)) return;
-      setDirty(workspace.id, false);
-    }
-    closeWorkspace(workspace.id);
+    onClose(workspace);
   };
 
   return (
@@ -65,21 +58,52 @@ function Tab({ workspace, isActive }: { workspace: PlaygroundWorkspace; isActive
 }
 
 export function PlaygroundTabBar() {
-  const { workspaces, activeWorkspaceId } = usePlayground();
+  const { workspaces, activeWorkspaceId, closeWorkspace, setDirty } = usePlayground();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [dirtyCloseTarget, setDirtyCloseTarget] = useState<PlaygroundWorkspace | null>(null);
+
+  const handleCloseRequest = (ws: PlaygroundWorkspace) => {
+    if (ws.dirty) {
+      setDirtyCloseTarget(ws);
+    } else {
+      closeWorkspace(ws.id);
+    }
+  };
+
+  const handleDirtyAction = (action: DirtyCloseAction) => {
+    if (!dirtyCloseTarget) return;
+    if (action === "save") {
+      // TODO: invoke workspace-specific save. For now, clear dirty + close.
+      setDirty(dirtyCloseTarget.id, false);
+      closeWorkspace(dirtyCloseTarget.id);
+    } else if (action === "discard") {
+      setDirty(dirtyCloseTarget.id, false);
+      closeWorkspace(dirtyCloseTarget.id);
+    }
+    // "cancel" just closes the dialog.
+    setDirtyCloseTarget(null);
+  };
 
   if (workspaces.length === 0) return null;
 
   return (
-    <div
-      ref={scrollRef}
-      role="tablist"
-      className="flex items-center gap-0.5 overflow-x-auto px-2 py-1.5 border-b border-slate-100/60 scrollbar-thin scrollbar-thumb-slate-200"
-      data-testid="playground-tab-bar"
-    >
-      {workspaces.map((ws) => (
-        <Tab key={ws.id} workspace={ws} isActive={ws.id === activeWorkspaceId} />
-      ))}
-    </div>
+    <>
+      <div
+        ref={scrollRef}
+        role="tablist"
+        className="flex items-center gap-0.5 overflow-x-auto px-2 py-1.5 border-b border-slate-100/60 scrollbar-thin scrollbar-thumb-slate-200"
+        data-testid="playground-tab-bar"
+      >
+        {workspaces.map((ws) => (
+          <Tab key={ws.id} workspace={ws} isActive={ws.id === activeWorkspaceId} onClose={handleCloseRequest} />
+        ))}
+      </div>
+      <DirtyCloseDialog
+        open={!!dirtyCloseTarget}
+        workspaceTitle={dirtyCloseTarget?.title ?? ""}
+        description={dirtyCloseTarget?.dirtyDescription}
+        onAction={handleDirtyAction}
+      />
+    </>
   );
 }
