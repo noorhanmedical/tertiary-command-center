@@ -114,7 +114,7 @@ export const DOCK_APPS: DockAppDefinition[] = [
     label: "Plexus Nucleus",
     icon: Atom,
     destinationType: "route",
-    route: "/plexus-iq",
+    route: "/plexus-nucleus",
     order: 70,
     locked: false,
     configurable: true,

@@ -97,6 +97,7 @@ import { GlobalDock } from "@/components/dock/GlobalDock";
 import type { DockAppDefinition } from "@/components/dock/types";
 import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
 import { openInPlaygroundStub } from "@/components/dock/playgroundLaunch";
+import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
 import { NovaParticles } from "@/components/nova/NovaParticles";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
@@ -1319,6 +1320,7 @@ export function TeamPortalShell({
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
   const [novaQuickPanelOpen, setNovaQuickPanelOpen] = useState(false);
+  const [metricsPopupOpen, setMetricsPopupOpen] = useState(false);
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
   // Demo-patient consent / screening toggles removed in Phase 1
   // Slice 1.1. Consent / screening state for real patients now comes
@@ -3707,6 +3709,19 @@ export function TeamPortalShell({
             </div>
           </div>
         </div>
+        {/* Metrics floating popup — toggled from dock */}
+        {metricsPopupOpen && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-40" data-testid="metrics-popup-anchor">
+            <MetricsPopup
+              open={metricsPopupOpen}
+              onClose={() => setMetricsPopupOpen(false)}
+              metrics={{
+                queueCount: workspaceCallList?.length ?? 0,
+                tasksDue: (tasksData?.urgent?.length ?? 0) + (tasksData?.open?.length ?? 0),
+              }}
+            />
+          </div>
+        )}
         <div className="absolute bottom-5 left-1/2 z-50 -translate-x-1/2 w-full max-w-[95vw] overflow-x-auto">
           <GlobalDock
             role={workspaceRole ?? role}
@@ -3722,8 +3737,21 @@ export function TeamPortalShell({
             }}
             onActivate={(app: DockAppDefinition) => {
               // Map unified dock app activations to existing TeamPortalShell behavior.
-              if (app.id === "home") { setLocation("/home"); return; }
+              if (app.id === "home") {
+                // Team roles: return to Playground home (clear active workspace).
+                // Does NOT navigate away from the portal.
+                setCenterMode("playground");
+                setCenterSrc("");
+                setCenterTitle("");
+                setDockActiveApp(null);
+                setSchedulePatientPlaygroundContext(null);
+                // Clear active portal tab to show Playground home state.
+                if (activePortalTabId) setActivePortalTabId(null);
+                return;
+              }
               if (app.id === "nova") { setNovaQuickPanelOpen((v) => !v); return; }
+              // Metrics → toggle floating MetricsPopup (not a navigation).
+              if (app.id === "metrics") { setMetricsPopupOpen((v) => !v); return; }
               // Map dock apps to existing toggleDockApp keys where applicable.
               const dockKeyMap: Record<string, "tasks" | "schedule" | "consent" | "chart" | "documents"> = {
                 "plexus-tasks": "tasks",
@@ -3732,12 +3760,13 @@ export function TeamPortalShell({
               };
               const mapped = dockKeyMap[app.id];
               if (mapped) { toggleDockApp(mapped); return; }
-              // Team Ops → existing team metrics / call settings in Engagement Center
+              // Team Ops → existing Engagement Center (team operations surface)
               if (app.id === "team-ops") { setLocation("/engagement-center"); return; }
-              // Plexus Nucleus → Plexus IQ workspace
-              if (app.id === "plexus-nucleus") { setLocation("/plexus-iq"); return; }
-              // Metrics → toggle metrics popup (will be rendered nearby)
-              if (app.id === "metrics") { setLocation("/engagement-center"); return; }
+              // Plexus Nucleus → honest unavailable (no runtime destination yet)
+              if (app.id === "plexus-nucleus") {
+                toast({ title: "Plexus Nucleus", description: "Nucleus workspace is not yet available." });
+                return;
+              }
               // Phone → open call workspace for selected patient if available
               if (app.id === "phone") {
                 if (selected?.patientScreeningId != null) {
