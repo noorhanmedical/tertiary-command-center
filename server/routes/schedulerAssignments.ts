@@ -2,7 +2,8 @@ import type { Express, Request } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { withAdvisoryLock } from "../lib/advisoryLock";
-import { buildDailyAssignments, releaseAndRedistribute } from "../services/callListEngine";
+import { buildDailyAssignments } from "../services/callListEngine";
+import { releaseAndRedistributeCanonical } from "../services/engagement/absenceRedistribution";
 import { VALID_FACILITIES } from "../../shared/plexus";
 import { isOperationalQueueCallListEnabled } from "../modules/operational-queue/call-list-flag";
 import { getOperationalQueueForUser } from "../modules/operational-queue/service";
@@ -154,11 +155,10 @@ export function registerSchedulerAssignmentRoutes(app: Express) {
         reason: z.string().max(500).default("manual_redistribute"),
       }).safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const summary = await releaseAndRedistribute(
-        storage,
+      const summary = await releaseAndRedistributeCanonical(
         parsed.data.schedulerId,
-        parsed.data.asOfDate ?? todayIso(),
         parsed.data.reason,
+        sessionUserId(req),
       );
       res.json(summary);
     } catch (err: any) {
@@ -185,11 +185,10 @@ export function registerSchedulerAssignmentRoutes(app: Express) {
       if (!proposal.schedulerId || !proposal.asOfDate) {
         return res.status(400).json({ error: "Proposal missing schedulerId/asOfDate" });
       }
-      const summary = await releaseAndRedistribute(
-        storage,
+      const summary = await releaseAndRedistributeCanonical(
         proposal.schedulerId,
-        proposal.asOfDate,
         "absence_admin_approved",
+        sessionUserId(req),
       );
       await storage.updateTask(parsed.data.taskId, { status: "resolved" });
       res.json({ summary });
