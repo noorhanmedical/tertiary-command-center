@@ -96,6 +96,7 @@ import { MessageSquare, StickyNote, Settings as SettingsIcon, MessageCircle } fr
 import { GlobalDock } from "@/components/dock/GlobalDock";
 import type { DockAppDefinition } from "@/components/dock/types";
 import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
+import { PlaygroundWorkspaceProvider } from "@/components/playground";
 import { openInPlaygroundStub } from "@/components/dock/playgroundLaunch";
 import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
@@ -2168,6 +2169,7 @@ export function TeamPortalShell({
 
   return (
     <DockOwnershipProvider>
+    <PlaygroundWorkspaceProvider>
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
       {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
           reclaimed space reads as usable canvas. Left: "The Playground" wordmark
@@ -4024,6 +4026,7 @@ export function TeamPortalShell({
         flushPersist={flushWorkspacePrefs}
       />
     </div>
+    </PlaygroundWorkspaceProvider>
     </DockOwnershipProvider>
   );
 }
