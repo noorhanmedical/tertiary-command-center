@@ -98,9 +98,7 @@ import type { DockAppDefinition } from "@/components/dock/types";
 import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
 import { openInPlaygroundStub } from "@/components/dock/playgroundLaunch";
 import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
-import { NovaParticles } from "@/components/nova/NovaParticles";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
-import { useNovaPreferences } from "@/components/nova/useNovaPreferences";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
 import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
 import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
@@ -1286,8 +1284,6 @@ export function TeamPortalShell({
       setPeek: (v: boolean) => void,
     ) =>
     () => {
-      // Suppress rail hover-peek when Nova interaction is active.
-      if (novaInteractionActive) return;
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
@@ -1324,14 +1320,6 @@ export function TeamPortalShell({
   const [aiDraft, setAiDraft] = useState("");
   const [novaQuickPanelOpen, setNovaQuickPanelOpen] = useState(false);
   const [metricsPopupOpen, setMetricsPopupOpen] = useState(false);
-  // Nova appearance + position persistence.
-  const { prefs: novaPrefs, setFreePosition: setNovaFreePosition } = useNovaPreferences(currentUserId);
-  // Nova interaction ownership — when true, suppress rail hover-peek activation.
-  const [novaInteractionActive, setNovaInteractionActive] = useState(false);
-  // Keep interaction active when quick panel is open.
-  useEffect(() => {
-    if (novaQuickPanelOpen) setNovaInteractionActive(true);
-  }, [novaQuickPanelOpen]);
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
   // Demo-patient consent / screening toggles removed in Phase 1
   // Slice 1.1. Consent / screening state for real patients now comes
@@ -2296,40 +2284,6 @@ export function TeamPortalShell({
                 }}
               />
             )}
-            {/* Nova ambient AI assistant — dock-adjacent, ~24px above dock. */}
-            <div
-              className="pointer-events-auto absolute z-20"
-              style={
-                novaPrefs.position.mode === "free"
-                  ? { left: novaPrefs.position.x, top: novaPrefs.position.y, right: "auto", bottom: "auto" }
-                  : { bottom: 90, left: "50%", transform: "translateX(-50%)" }
-              }
-              data-testid="nova-ambient-anchor"
-            >
-              {novaQuickPanelOpen && (
-                <NovaQuickPanel
-                  open={novaQuickPanelOpen}
-                  onClose={() => setNovaQuickPanelOpen(false)}
-                  onOpenInPlayground={() => {
-                    setNovaQuickPanelOpen(false);
-                    openInPlaygroundStub({ workspaceType: "nova", title: "Nova" });
-                  }}
-                  contextLabel={
-                    selected
-                      ? `${selected.name}${selected.qualifyingTests?.[0] ? ` · ${selected.qualifyingTests[0]}` : ""}`
-                      : null
-                  }
-                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3"
-                />
-              )}
-              <NovaParticles
-                appearance={novaPrefs.appearance}
-                active={novaQuickPanelOpen}
-                onClick={() => setNovaQuickPanelOpen((v) => !v)}
-                onDragEnd={(x, y) => setNovaFreePosition(x, y)}
-                onInteractionChange={(active) => setNovaInteractionActive(active || novaQuickPanelOpen)}
-              />
-            </div>
             {portalTabs.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
                 {portalTabs.map((tab) => {
@@ -3736,6 +3690,24 @@ export function TeamPortalShell({
                 queueCount: workspaceCallList?.length ?? 0,
                 tasksDue: (tasksData?.urgent?.length ?? 0) + (tasksData?.open?.length ?? 0),
               }}
+            />
+          </div>
+        )}
+        {/* Nova quick panel — toggled from dock */}
+        {novaQuickPanelOpen && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-40" data-testid="nova-panel-anchor">
+            <NovaQuickPanel
+              open={novaQuickPanelOpen}
+              onClose={() => setNovaQuickPanelOpen(false)}
+              onOpenInPlayground={() => {
+                setNovaQuickPanelOpen(false);
+                openInPlaygroundStub({ workspaceType: "nova", title: "Nova" });
+              }}
+              contextLabel={
+                selected
+                  ? `${selected.name}${selected.qualifyingTests?.[0] ? ` · ${selected.qualifyingTests[0]}` : ""}`
+                  : null
+              }
             />
           </div>
         )}
