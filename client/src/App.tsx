@@ -39,7 +39,8 @@ import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
 import { TopBanner } from "@/components/TopBanner";
-import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
+// @deprecated — replaced by GlobalDock. Preserved for reference only.
+// import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
 import { GlobalDock } from "@/components/dock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";

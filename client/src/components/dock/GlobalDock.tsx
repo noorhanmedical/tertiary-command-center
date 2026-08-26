@@ -15,6 +15,8 @@ import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type { DockAppDefinition, DockActiveState } from "./types";
 import { resolveAppsForRole } from "./registry";
+import { useDockOwned } from "./DockOwnershipContext";
+import { useUnreadCount } from "@/features/plexus-tasks/hooks";
 
 // ─── Props ────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,13 @@ export function GlobalDock({
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // If another component (e.g. TeamPortalShell) owns the dock AND this
+  // instance has no activeState (meaning it's the app-level fallback),
+  // skip rendering to prevent duplicate docks.
+  const dockOwnedByParent = useDockOwned();
+  const isAppLevelInstance = !activeState && position === "fixed";
+  if (dockOwnedByParent && isAppLevelInstance) return null;
+
   // Auth — only fetch if role not provided via props.
   const { data: me } = useQuery<AuthMe>({
     queryKey: ["/api/auth/me"],
@@ -72,6 +81,15 @@ export function GlobalDock({
 
   // Resolve apps for this role.
   const apps = useMemo(() => resolveAppsForRole(role, isAdmin), [role, isAdmin]);
+
+  // Canonical badge: task due count.
+  const { data: taskUnread } = useUnreadCount();
+  const canonicalBadges = useMemo(() => {
+    const b: Record<string, number> = {};
+    const count = taskUnread?.count ?? 0;
+    if (count > 0) b["plexus-tasks"] = count;
+    return { ...b, ...badges };
+  }, [taskUnread, badges]);
 
   // Hover-intent debounce (120ms collapse delay absorbs transition jitter).
   const handleEnter = useCallback(() => {
@@ -125,7 +143,7 @@ export function GlobalDock({
               ? location === app.route || location.startsWith(app.route + "/")
               : false);
           const isOpen = activeState?.openAppIds?.includes(app.id) ?? false;
-          const badge = badges?.[app.id] ?? (typeof app.badge === "function" ? undefined : (app.badge as number | undefined));
+          const badge = canonicalBadges?.[app.id] ?? (typeof app.badge === "function" ? undefined : (app.badge as number | undefined));
 
           return (
             <div key={app.id} className="flex items-center">

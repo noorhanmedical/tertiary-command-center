@@ -95,6 +95,10 @@ import {
 import { MessageSquare, StickyNote, Settings as SettingsIcon, MessageCircle } from "lucide-react";
 import { GlobalDock } from "@/components/dock/GlobalDock";
 import type { DockAppDefinition } from "@/components/dock/types";
+import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
+import { openInPlaygroundStub } from "@/components/dock/playgroundLaunch";
+import { NovaParticles } from "@/components/nova/NovaParticles";
+import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
 import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
 import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
@@ -1314,6 +1318,7 @@ export function TeamPortalShell({
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
+  const [novaQuickPanelOpen, setNovaQuickPanelOpen] = useState(false);
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
   // Demo-patient consent / screening toggles removed in Phase 1
   // Slice 1.1. Consent / screening state for real patients now comes
@@ -2161,6 +2166,7 @@ export function TeamPortalShell({
   }
 
   return (
+    <DockOwnershipProvider>
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
       {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
           reclaimed space reads as usable canvas. Left: "The Playground" wordmark
@@ -2277,6 +2283,34 @@ export function TeamPortalShell({
                 }}
               />
             )}
+            {/* Nova ambient AI assistant — anchored lower-right of Playground
+                canvas, above the dock. Subtle drift within a small radius. */}
+            <div
+              className="pointer-events-auto absolute bottom-20 right-8 z-20"
+              data-testid="nova-ambient-anchor"
+            >
+              {novaQuickPanelOpen && (
+                <NovaQuickPanel
+                  open={novaQuickPanelOpen}
+                  onClose={() => setNovaQuickPanelOpen(false)}
+                  onOpenInPlayground={() => {
+                    setNovaQuickPanelOpen(false);
+                    openInPlaygroundStub({ workspaceType: "nova", title: "Nova" });
+                  }}
+                  contextLabel={
+                    selected
+                      ? `${selected.name}${selected.qualifyingTests?.[0] ? ` · ${selected.qualifyingTests[0]}` : ""}`
+                      : null
+                  }
+                  className="absolute bottom-14 right-0 mb-2"
+                />
+              )}
+              <NovaParticles
+                size={44}
+                active={novaQuickPanelOpen}
+                onClick={() => setNovaQuickPanelOpen((v) => !v)}
+              />
+            </div>
             {portalTabs.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
                 {portalTabs.map((tab) => {
@@ -3680,16 +3714,16 @@ export function TeamPortalShell({
             position="absolute"
             className="!bottom-0 !left-1/2 !-translate-x-1/2 !z-auto relative"
             activeState={{
-              activeAppId: dockActiveApp ?? (aiOpen ? "nova" : null),
+              activeAppId: dockActiveApp ?? (novaQuickPanelOpen ? "nova" : null),
               openAppIds: [
                 ...dockOpenApps,
-                ...(aiOpen ? ["nova"] : []),
+                ...(novaQuickPanelOpen ? ["nova"] : []),
               ],
             }}
             onActivate={(app: DockAppDefinition) => {
               // Map unified dock app activations to existing TeamPortalShell behavior.
               if (app.id === "home") { setLocation("/home"); return; }
-              if (app.id === "nova") { setAiOpen((v) => !v); setAiMinimized(false); return; }
+              if (app.id === "nova") { setNovaQuickPanelOpen((v) => !v); return; }
               // Map dock apps to existing toggleDockApp keys where applicable.
               const dockKeyMap: Record<string, "tasks" | "schedule" | "consent" | "chart" | "documents"> = {
                 "plexus-tasks": "tasks",
@@ -3698,10 +3732,38 @@ export function TeamPortalShell({
               };
               const mapped = dockKeyMap[app.id];
               if (mapped) { toggleDockApp(mapped); return; }
+              // Team Ops → existing team metrics / call settings in Engagement Center
+              if (app.id === "team-ops") { setLocation("/engagement-center"); return; }
+              // Plexus Nucleus → Plexus IQ workspace
+              if (app.id === "plexus-nucleus") { setLocation("/plexus-iq"); return; }
+              // Metrics → toggle metrics popup (will be rendered nearby)
+              if (app.id === "metrics") { setLocation("/engagement-center"); return; }
+              // Phone → open call workspace for selected patient if available
+              if (app.id === "phone") {
+                if (selected?.patientScreeningId != null) {
+                  setCallWorkspaceCtx({
+                    patientScreeningId: selected.patientScreeningId,
+                    executionCaseId: null,
+                    patientName: selected.name ?? "Patient",
+                    patientDob: selected.dob ?? null,
+                    facilityId: facility ?? null,
+                    callReason: "Dock quick call",
+                    targetServices: selected.qualifyingTests ?? [],
+                    ancillaryCaseId: null,
+                    serviceType: selected.qualifyingTests?.[0] ?? null,
+                    sourcePortal: "PCS",
+                    engagementStatus: null,
+                    lifecycleStatus: null,
+                  });
+                }
+                return;
+              }
               // Route-type apps: navigate.
               if (app.destinationType === "route" && app.route) { setLocation(app.route); return; }
-              // Popup/workspace apps: for now, these are registered but
-              // their full popup/workspace behavior is wired in later phases.
+              // Popup/workspace apps: emit launch request for Phase 4 workspace engine.
+              if (app.destinationType === "workspace" || app.destinationType === "popup") {
+                openInPlaygroundStub({ workspaceType: app.workspaceType ?? app.id, title: app.label });
+              }
             }}
           />
         </div>
@@ -3944,5 +4006,6 @@ export function TeamPortalShell({
         flushPersist={flushWorkspacePrefs}
       />
     </div>
+    </DockOwnershipProvider>
   );
 }

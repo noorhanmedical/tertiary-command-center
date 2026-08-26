@@ -16,3 +16,6 @@ export {
 
 export { GlobalDock } from "./GlobalDock";
 export type { GlobalDockProps } from "./GlobalDock";
+export { DockOwnershipProvider, useDockOwned } from "./DockOwnershipContext";
+export { openInPlaygroundStub } from "./playgroundLaunch";
+export type { PlaygroundLaunchRequest, OpenInPlaygroundFn } from "./playgroundLaunch";
