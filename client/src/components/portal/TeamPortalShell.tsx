@@ -97,7 +97,9 @@ import { GlobalDock } from "@/components/dock/GlobalDock";
 import type { DockAppDefinition } from "@/components/dock/types";
 import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
 import { PlaygroundWorkspaceProvider } from "@/components/playground";
-import { openInPlaygroundStub } from "@/components/dock/playgroundLaunch";
+import { PlaygroundBridge } from "@/components/playground/PlaygroundBridge";
+import { PlaygroundEventListener } from "@/components/playground/PlaygroundEventListener";
+import { dispatchOpenWorkspace } from "@/components/playground/playgroundEvents";
 import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
@@ -1749,10 +1751,14 @@ export function TeamPortalShell({
   // case still opens in-place.
   function openCallRowPatient(row: TeamWorkspaceCallListItem) {
     if (typeof row.patientScreeningId === "number" && row.patientScreeningId > 0) {
-      openPatientTabById({
+      // Open patient EHR via the Playground workspace engine.
+      dispatchOpenWorkspace({
+        type: "patient_ehr",
+        title: row.patientName ?? "Patient",
         patientScreeningId: row.patientScreeningId,
-        name: row.patientName ?? "Patient",
-        facility: row.facilityId ?? facility ?? null,
+        executionCaseId: row.executionCaseId ?? null,
+        serviceKey: row.selectedServices?.[0] ?? null,
+        facilityId: row.facilityId ?? facility ?? null,
       });
       return;
     }
@@ -2170,6 +2176,7 @@ export function TeamPortalShell({
   return (
     <DockOwnershipProvider>
     <PlaygroundWorkspaceProvider>
+    <PlaygroundEventListener />
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
       {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
           reclaimed space reads as usable canvas. Left: "The Playground" wordmark
@@ -2286,6 +2293,8 @@ export function TeamPortalShell({
                 }}
               />
             )}
+            {/* Playground workspace engine — takes over center when workspaces are open */}
+            <PlaygroundBridge />
             {portalTabs.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
                 {portalTabs.map((tab) => {
@@ -3703,7 +3712,7 @@ export function TeamPortalShell({
               onClose={() => setNovaQuickPanelOpen(false)}
               onOpenInPlayground={() => {
                 setNovaQuickPanelOpen(false);
-                openInPlaygroundStub({ workspaceType: "nova", title: "Nova" });
+                dispatchOpenWorkspace({ type: "nova", title: "Nova" });
               }}
               contextLabel={
                 selected
@@ -3729,15 +3738,8 @@ export function TeamPortalShell({
             onActivate={(app: DockAppDefinition) => {
               // Map unified dock app activations to existing TeamPortalShell behavior.
               if (app.id === "home") {
-                // Team roles: return to Playground home (clear active workspace).
-                // Does NOT navigate away from the portal.
-                setCenterMode("playground");
-                setCenterSrc("");
-                setCenterTitle("");
-                setDockActiveApp(null);
-                setSchedulePatientPlaygroundContext(null);
-                // Clear active portal tab to show Playground home state.
-                if (activePortalTabId) setActivePortalTabId(null);
+                // Team roles: activate Playground Home workspace.
+                dispatchOpenWorkspace({ type: "playground_home", title: "Home" });
                 return;
               }
               if (app.id === "nova") { setNovaQuickPanelOpen((v) => !v); return; }
@@ -3780,9 +3782,9 @@ export function TeamPortalShell({
               }
               // Route-type apps: navigate.
               if (app.destinationType === "route" && app.route) { setLocation(app.route); return; }
-              // Popup/workspace apps: emit launch request for Phase 4 workspace engine.
+              // Popup/workspace apps: open real Playground workspace.
               if (app.destinationType === "workspace" || app.destinationType === "popup") {
-                openInPlaygroundStub({ workspaceType: app.workspaceType ?? app.id, title: app.label });
+                dispatchOpenWorkspace({ type: (app.workspaceType ?? app.id) as any, title: app.label });
               }
             }}
           />

@@ -15,6 +15,9 @@ export {
 
 export { PlaygroundCanvas } from "./PlaygroundCanvas";
 export { PlaygroundTabBar } from "./PlaygroundTabBar";
+export { PlaygroundBridge, usePlaygroundActive } from "./PlaygroundBridge";
+export { PlaygroundEventListener } from "./PlaygroundEventListener";
+export { dispatchOpenWorkspace } from "./playgroundEvents";
 
 export {
   getWorkspaceDefinition,
