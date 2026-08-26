@@ -100,6 +100,7 @@ import { openInPlaygroundStub } from "@/components/dock/playgroundLaunch";
 import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
 import { NovaParticles } from "@/components/nova/NovaParticles";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
+import { useNovaPreferences } from "@/components/nova/useNovaPreferences";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
 import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
 import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
@@ -1321,6 +1322,8 @@ export function TeamPortalShell({
   const [aiDraft, setAiDraft] = useState("");
   const [novaQuickPanelOpen, setNovaQuickPanelOpen] = useState(false);
   const [metricsPopupOpen, setMetricsPopupOpen] = useState(false);
+  // Nova appearance + position persistence.
+  const { prefs: novaPrefs, setFreePosition: setNovaFreePosition } = useNovaPreferences(currentUserId);
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
   // Demo-patient consent / screening toggles removed in Phase 1
   // Slice 1.1. Consent / screening state for real patients now comes
@@ -2288,7 +2291,12 @@ export function TeamPortalShell({
             {/* Nova ambient AI assistant — anchored lower-right of Playground
                 canvas, above the dock. Subtle drift within a small radius. */}
             <div
-              className="pointer-events-auto absolute bottom-20 right-8 z-20"
+              className="pointer-events-auto absolute z-20"
+              style={
+                novaPrefs.position.mode === "free"
+                  ? { left: novaPrefs.position.x, top: novaPrefs.position.y, right: "auto", bottom: "auto" }
+                  : { bottom: 80, right: 32 }
+              }
               data-testid="nova-ambient-anchor"
             >
               {novaQuickPanelOpen && (
@@ -2304,13 +2312,14 @@ export function TeamPortalShell({
                       ? `${selected.name}${selected.qualifyingTests?.[0] ? ` · ${selected.qualifyingTests[0]}` : ""}`
                       : null
                   }
-                  className="absolute bottom-14 right-0 mb-2"
+                  className="absolute bottom-full right-0 mb-2"
                 />
               )}
               <NovaParticles
-                size={44}
+                appearance={novaPrefs.appearance}
                 active={novaQuickPanelOpen}
                 onClick={() => setNovaQuickPanelOpen((v) => !v)}
+                onDragEnd={(x, y) => setNovaFreePosition(x, y)}
               />
             </div>
             {portalTabs.length > 0 && (
