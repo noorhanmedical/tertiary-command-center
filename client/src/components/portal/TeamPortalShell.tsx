@@ -93,6 +93,8 @@ import {
   type WidgetPatientContext,
 } from "@/components/portal/tools/workspaceWidgets";
 import { MessageSquare, StickyNote, Settings as SettingsIcon, MessageCircle } from "lucide-react";
+import { GlobalDock } from "@/components/dock/GlobalDock";
+import type { DockAppDefinition } from "@/components/dock/types";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
 import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
 import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
@@ -3672,64 +3674,36 @@ export function TeamPortalShell({
           </div>
         </div>
         <div className="absolute bottom-5 left-1/2 z-50 -translate-x-1/2 w-full max-w-[95vw] overflow-x-auto">
-          <div className="group/dock mx-auto flex w-fit items-center gap-1 rounded-2xl border border-white/10 bg-slate-900/40 px-2 py-2 opacity-60 backdrop-blur-xl transition-all duration-300 ease-out hover:gap-2 hover:border-white/20 hover:bg-slate-900/60 hover:px-3 hover:py-2 hover:opacity-100 hover:shadow-2xl">
-            {/* Admin Home dock button — only rendered for admins. Routes
-                 back to /home (the existing main app dashboard route).
-                 PCS and ACS users keep the standard 6-app dock; the
-                 button is appended for admins so we don't re-engineer
-                 the existing dock structure. */}
-            {isAdmin && (
-              <div className="flex items-center" data-testid="dock-icon-home-wrap">
-                <button
-                  type="button"
-                  onClick={() => setLocation("/home")}
-                  aria-label="Return to main app home"
-                  title="Home"
-                  className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-[#4863A0]/25 text-[#6F8FD6] shadow-md transition-all duration-300 ease-out group-hover/dock:h-11 group-hover/dock:w-11 hover:-translate-y-0.5 hover:scale-105 hover:bg-[#4863A0]/35"
-                  data-testid="dock-icon-home"
-                >
-                  <Home className="h-5 w-5 text-white" />
-                </button>
-                <div className="mx-1 h-6 w-px bg-white/15" />
-              </div>
-            )}
-            {[
-              { key: "tasks", icon: Bell },
-              { key: "schedule", icon: CalendarIcon },
-              { key: "consent", icon: FileSignature },
-              { key: "chart", icon: User },
-              { key: "documents", icon: FileText },
-              { key: "ai", icon: Bot },
-            ].map((app, index) => {
-              const Icon = app.icon;
-              const isActive = dockActiveApp === app.key || (app.key === "ai" && aiOpen);
-              const isOpen = app.key === "ai" ? aiOpen : dockOpenApps.includes(app.key as any);
-
-              return (
-                <div key={app.key} className="flex items-center">
-                  {index > 0 && <div className="mx-1 h-6 w-px bg-white/15" />}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (app.key === "ai") {
-                        setAiOpen((v) => !v);
-                        setAiMinimized(false);
-                        return;
-                      }
-                      toggleDockApp(app.key as "tasks" | "schedule" | "consent" | "chart" | "documents");
-                    }}
-                    className={`relative flex h-10 w-10 items-center justify-center rounded-xl bg-[#4863A0]/25 text-[#6F8FD6] shadow-md transition-all duration-300 ease-out group-hover/dock:h-11 group-hover/dock:w-11 hover:-translate-y-0.5 hover:scale-105 hover:bg-[#4863A0]/35 ${
-                      isActive ? "ring-2 ring-white bg-[#4863A0]/45 text-white" : ""
-                    }`}
-                    data-testid={`dock-icon-${app.key}`}
-                  >
-                    <Icon className="h-5 w-5 text-white" />
-                    {isOpen && <div className="absolute -bottom-1.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-white" />}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+          <GlobalDock
+            role={workspaceRole ?? role}
+            isAdmin={isAdmin}
+            position="absolute"
+            className="!bottom-0 !left-1/2 !-translate-x-1/2 !z-auto relative"
+            activeState={{
+              activeAppId: dockActiveApp ?? (aiOpen ? "nova" : null),
+              openAppIds: [
+                ...dockOpenApps,
+                ...(aiOpen ? ["nova"] : []),
+              ],
+            }}
+            onActivate={(app: DockAppDefinition) => {
+              // Map unified dock app activations to existing TeamPortalShell behavior.
+              if (app.id === "home") { setLocation("/home"); return; }
+              if (app.id === "nova") { setAiOpen((v) => !v); setAiMinimized(false); return; }
+              // Map dock apps to existing toggleDockApp keys where applicable.
+              const dockKeyMap: Record<string, "tasks" | "schedule" | "consent" | "chart" | "documents"> = {
+                "plexus-tasks": "tasks",
+                "schedule": "schedule",
+                "documents": "documents",
+              };
+              const mapped = dockKeyMap[app.id];
+              if (mapped) { toggleDockApp(mapped); return; }
+              // Route-type apps: navigate.
+              if (app.destinationType === "route" && app.route) { setLocation(app.route); return; }
+              // Popup/workspace apps: for now, these are registered but
+              // their full popup/workspace behavior is wired in later phases.
+            }}
+          />
         </div>
 
         {aiOpen ? (

@@ -40,6 +40,7 @@ import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
 import { TopBanner } from "@/components/TopBanner";
 import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
+import { GlobalDock } from "@/components/dock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
@@ -85,7 +86,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
       <Route>
         <div className="flex flex-col h-screen w-full overflow-hidden">
           <TopBanner user={user} onLogout={onLogout} />
-          <GlobalFloatingDock />
+          <GlobalDock />
+          {/* Legacy GlobalFloatingDock preserved for feature-parity transition */}
+          {/* <GlobalFloatingDock /> */}
           <div className="flex flex-1 min-h-0 min-w-0">
             {showGlobalNav && <GlobalNav user={user} onLogout={onLogout} />}
             <div className="flex flex-col flex-1 min-w-0 min-h-0">
