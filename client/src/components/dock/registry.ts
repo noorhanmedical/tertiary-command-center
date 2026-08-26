@@ -21,6 +21,7 @@ import {
   Gamepad2,
   PenTool,
 } from "lucide-react";
+import { NovaDockIcon } from "@/components/nova/NovaDockIcon";
 import type { DockAppDefinition, RoleDockConfig } from "./types";
 
 // ─── Core app definitions ─────────────────────────────────────────────────
@@ -41,7 +42,7 @@ export const DOCK_APPS: DockAppDefinition[] = [
   {
     id: "nova",
     label: "Nova",
-    icon: Sparkles, // Placeholder — replaced by custom Nova icon component
+    icon: NovaDockIcon,
     destinationType: "action",
     order: 10,
     locked: true,

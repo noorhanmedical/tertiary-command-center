@@ -1,42 +1,53 @@
-// Nova dock icon — simplified static nebula for the GlobalDock.
-//
-// Uses the dark purple/indigo/blue palette matching Nova's default
-// Deep Space appearance. Recognizable at dock size (20x20).
+// Nova dock icon — a distinctive glowing orb with radiating energy lines.
+// Visually unique from any Lucide icon. Matches the deep indigo/violet Nova identity.
 
 export function NovaDockIcon({ className = "" }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 20 20"
+      viewBox="0 0 24 24"
       fill="none"
-      className={`nova-dock-icon ${className}`}
+      stroke="none"
+      className={className}
       aria-hidden="true"
     >
-      {/* Central cluster — deep purple/indigo */}
-      <circle cx="10" cy="10" r="2.2" fill="#4338CA" opacity="0.9" />
-      <circle cx="8" cy="9" r="1.5" fill="#6366F1" opacity="0.75" />
-      <circle cx="12" cy="8.5" r="1.3" fill="#4B0082" opacity="0.8" />
-      <circle cx="11" cy="12" r="1.6" fill="#312E81" opacity="0.7" />
-      <circle cx="7.5" cy="11.5" r="1.1" fill="#818CF8" opacity="0.6" />
-      {/* Outer scattered particles */}
-      <circle cx="6" cy="7" r="0.8" fill="#6366F1" opacity="0.45" />
-      <circle cx="14" cy="7" r="0.7" fill="#4338CA" opacity="0.4" />
-      <circle cx="13.5" cy="13" r="0.9" fill="#818CF8" opacity="0.5" />
-      <circle cx="6.5" cy="13.5" r="0.7" fill="#312E81" opacity="0.4" />
-      <circle cx="10" cy="6" r="0.6" fill="#4B0082" opacity="0.5" />
-      <circle cx="10" cy="14.5" r="0.7" fill="#A5B4FC" opacity="0.4" />
-      <circle cx="5" cy="10" r="0.5" fill="#1E1B4B" opacity="0.35" />
-      <circle cx="15" cy="10.5" r="0.6" fill="#6366F1" opacity="0.35" />
-
-      <style>{`
-        .nova-dock-icon circle {
-          transition: opacity 0.3s, transform 0.3s;
-          transform-origin: 10px 10px;
-        }
-        .nova-dock-icon:hover circle {
-          opacity: 1 !important;
-          transform: scale(0.92);
-        }
-      `}</style>
+      {/* Outer glow ring */}
+      <circle cx="12" cy="12" r="9" fill="none" stroke="url(#nova-grad-ring)" strokeWidth="1" opacity="0.5" />
+      {/* Radiating energy lines */}
+      <line x1="12" y1="2" x2="12" y2="5" stroke="url(#nova-grad-ray)" strokeWidth="1.2" strokeLinecap="round" opacity="0.6" />
+      <line x1="12" y1="19" x2="12" y2="22" stroke="url(#nova-grad-ray)" strokeWidth="1.2" strokeLinecap="round" opacity="0.6" />
+      <line x1="2" y1="12" x2="5" y2="12" stroke="url(#nova-grad-ray)" strokeWidth="1.2" strokeLinecap="round" opacity="0.6" />
+      <line x1="19" y1="12" x2="22" y2="12" stroke="url(#nova-grad-ray)" strokeWidth="1.2" strokeLinecap="round" opacity="0.6" />
+      {/* Diagonal rays */}
+      <line x1="4.93" y1="4.93" x2="6.81" y2="6.81" stroke="url(#nova-grad-ray)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+      <line x1="17.19" y1="17.19" x2="19.07" y2="19.07" stroke="url(#nova-grad-ray)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+      <line x1="4.93" y1="19.07" x2="6.81" y2="17.19" stroke="url(#nova-grad-ray)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+      <line x1="17.19" y1="6.81" x2="19.07" y2="4.93" stroke="url(#nova-grad-ray)" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
+      {/* Core orb with gradient */}
+      <circle cx="12" cy="12" r="5.5" fill="url(#nova-grad-core)" />
+      {/* Inner bright center */}
+      <circle cx="12" cy="12" r="2.5" fill="url(#nova-grad-center)" />
+      {/* Highlight dot */}
+      <circle cx="10.5" cy="10" r="1" fill="white" opacity="0.6" />
+      {/* Gradient definitions */}
+      <defs>
+        <radialGradient id="nova-grad-core">
+          <stop offset="0%" stopColor="#818CF8" />
+          <stop offset="50%" stopColor="#4F46E5" />
+          <stop offset="100%" stopColor="#312E81" />
+        </radialGradient>
+        <radialGradient id="nova-grad-center">
+          <stop offset="0%" stopColor="#C4B5FD" />
+          <stop offset="100%" stopColor="#6366F1" />
+        </radialGradient>
+        <linearGradient id="nova-grad-ring" x1="0" y1="0" x2="24" y2="24">
+          <stop offset="0%" stopColor="#818CF8" />
+          <stop offset="100%" stopColor="#4338CA" />
+        </linearGradient>
+        <linearGradient id="nova-grad-ray" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#A5B4FC" />
+          <stop offset="100%" stopColor="#6366F1" />
+        </linearGradient>
+      </defs>
     </svg>
   );
 }
