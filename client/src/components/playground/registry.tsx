@@ -31,7 +31,28 @@ import {
 import { NovaDockIcon } from "@/components/nova/NovaDockIcon";
 import type { PlaygroundWorkspaceDefinition, PlaygroundWorkspace, PlaygroundWorkspaceType } from "./types";
 
-// ─── Placeholder renderers (replaced by real components during wiring) ────
+// ─── Patient EHR workspace renderer ───────────────────────────────────────
+// Uses the existing PortalPatientDirectory which wraps PatientProfileWorkspace → PatientChart.
+import { PortalPatientDirectory } from "@/components/portal/PortalPatientDirectory";
+import type { WorkspaceRenderProps } from "./types";
+
+function PatientEhrWorkspace({ workspace, isActive }: WorkspaceRenderProps) {
+  if (!workspace.patientScreeningId) {
+    return (
+      <div className="flex h-full items-center justify-center text-slate-400">
+        <p className="text-sm">No patient selected for this workspace.</p>
+      </div>
+    );
+  }
+  return (
+    <PortalPatientDirectory
+      patientScreeningId={workspace.patientScreeningId}
+      seedName={workspace.title}
+      onBack={undefined}
+      onSchedule={undefined}
+    />
+  );
+}
 
 function PlaceholderWorkspace({ workspace }: { workspace: PlaygroundWorkspace; isActive: boolean }) {
   return (
@@ -90,7 +111,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
     type: "patient_ehr",
     icon: User,
     titleResolver: (ws) => ws.title || "Patient",
-    render: PlaceholderWorkspace, // Wired in task #6
+    render: PatientEhrWorkspace,
     dedupeKey: patientDedupeKey,
     supportsPatientContext: true,
     supportsDirtyState: false,
