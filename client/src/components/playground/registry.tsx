@@ -73,11 +73,7 @@ function PlaceholderWorkspace({ workspace }: { workspace: PlaygroundWorkspace; i
 }
 
 function PlaygroundHomeWorkspace() {
-  return (
-    <div className="h-full" style={{ background: "#FAFBFD" }} data-testid="workspace-playground-home">
-      <PlaygroundHomeArtwork />
-    </div>
-  );
+  return <PlaygroundHomeArtwork />;
 }
 
 // ─── Dedupe key helpers ───────────────────────────────────────────────────

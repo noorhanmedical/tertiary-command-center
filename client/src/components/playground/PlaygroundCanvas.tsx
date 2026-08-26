@@ -26,9 +26,7 @@ export function PlaygroundCanvas() {
             isActive={true}
           />
         ) : (
-          <div className="h-full" style={{ background: "#FAFBFD" }} data-testid="playground-empty">
-            <PlaygroundHomeArtwork />
-          </div>
+          <PlaygroundHomeArtwork />
         )}
       </div>
     </div>
