@@ -133,12 +133,28 @@ export function registerBatchRoutes(app: Express) {
         }
       }
 
+      // Clinician attribution (Plexus IQ). Validate the free-text contract:
+      // when clinicianSource is "free_text" a non-blank clinicianName is
+      // required; when "facility_clinician" a clinicianId is required. Absent
+      // clinician context is fine (legacy / not recorded).
+      const clinicianSource = parsed.data.clinicianSource ?? null;
+      const clinicianNameTrimmed = parsed.data.clinicianName?.trim() || null;
+      if (clinicianSource === "free_text" && !clinicianNameTrimmed) {
+        return res.status(400).json({ error: "clinicianName is required when clinicianSource is 'free_text'" });
+      }
+      if (clinicianSource === "facility_clinician" && parsed.data.clinicianId == null) {
+        return res.status(400).json({ error: "clinicianId is required when clinicianSource is 'facility_clinician'" });
+      }
+
       const batch = await storage.createScreeningBatch({
         name,
         patientCount: 0,
         status: "draft",
         facility: parsed.data.facility || null,
         scheduleDate: parsed.data.scheduleDate || null,
+        clinicianId: clinicianSource === "facility_clinician" ? (parsed.data.clinicianId ?? null) : null,
+        clinicianName: clinicianNameTrimmed,
+        clinicianSource,
       });
       void logAudit(req, "create", "batch", batch.id, { name: batch.name, facility: batch.facility });
 
@@ -748,13 +764,22 @@ export function registerBatchRoutes(app: Express) {
   app.patch("/api/screening-batches/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { clinicianName, facility, scheduleDate } = req.body;
+      const { clinicianName, clinicianId, clinicianSource, facility, scheduleDate } = req.body;
       const batchUpdates: Partial<{
         clinicianName: string | null;
+        clinicianId: number | null;
+        clinicianSource: string | null;
         facility: string | null;
         scheduleDate: string | null;
       }> = {};
-      if (clinicianName !== undefined) batchUpdates.clinicianName = clinicianName ?? null;
+      if (clinicianName !== undefined) batchUpdates.clinicianName = (typeof clinicianName === "string" ? clinicianName.trim() : clinicianName) || null;
+      if (clinicianId !== undefined) batchUpdates.clinicianId = clinicianId ?? null;
+      if (clinicianSource !== undefined) {
+        if (clinicianSource !== null && clinicianSource !== "facility_clinician" && clinicianSource !== "free_text") {
+          return res.status(400).json({ error: "clinicianSource must be facility_clinician | free_text | null" });
+        }
+        batchUpdates.clinicianSource = clinicianSource ?? null;
+      }
       if (facility !== undefined) batchUpdates.facility = facility ?? null;
       if (scheduleDate !== undefined) {
         if (scheduleDate === null || scheduleDate === "") {

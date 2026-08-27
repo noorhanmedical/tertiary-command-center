@@ -20,8 +20,10 @@ import {
   Flame,
   ScrollText,
   Sparkles,
+  Building2,
   type LucideIcon,
 } from "lucide-react";
+import { OrganizationSettingsSection } from "@/components/settings/OrganizationSettingsSection";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -337,6 +339,13 @@ export default function AdminSettingsPage() {
               {/* Facility */}
               {activeSection === "facility" && (
                 <div data-testid="panel-facility">
+                  <Group
+                    title="Facilities & Clinicians"
+                    desc="Manage facilities and the clinicians associated with them. This is the source for Plexus IQ batch dropdowns."
+                    Icon={Building2}
+                  >
+                    <OrganizationSettingsSection />
+                  </Group>
                   <EmbeddedGroup>
                     <StovetopHeatSettingsPage embedded />
                   </EmbeddedGroup>

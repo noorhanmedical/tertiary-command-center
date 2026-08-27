@@ -486,10 +486,11 @@ export default function SharedSchedule() {
         patients={patients}
         onClose={() => setPdfMode(null)}
         onGenerate={(selected) => {
+          const attribution = { clinicianName: batch.clinicianName ?? null, facilityName: batch.facility ?? null };
           if (pdfMode === "clinician") {
-            generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
+            generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt, attribution);
           } else {
-            generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
+            generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt, attribution);
           }
           setPdfMode(null);
         }}

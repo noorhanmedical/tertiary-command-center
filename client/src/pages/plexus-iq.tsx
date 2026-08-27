@@ -302,10 +302,21 @@ export default function PlexusIQPage() {
   }, [queryClient]);
 
   const resolveBatchId = useCallback(
-    async (facility: string, scheduleDate: string): Promise<number> => {
+    async (
+      facility: string,
+      scheduleDate: string,
+      clinician?: {
+        clinicianId: number | null;
+        clinicianName: string;
+        clinicianSource: "facility_clinician" | "free_text";
+      } | null,
+    ): Promise<number> => {
       const existing = batches.find(
         (b) => b.facility === facility && b.scheduleDate === scheduleDate,
       );
+      // Reuse keeps the existing batch's own clinician attribution (the
+      // clinician is per-run; adding a patient to an existing run does not
+      // rewrite whose list it was).
       if (existing) return existing.id;
 
       const key = `${facility}::${scheduleDate}`;
@@ -317,6 +328,13 @@ export default function PlexusIQPage() {
           name: `${facility} - ${scheduleDate}`,
           facility,
           scheduleDate,
+          ...(clinician
+            ? {
+                clinicianId: clinician.clinicianId,
+                clinicianName: clinician.clinicianName,
+                clinicianSource: clinician.clinicianSource,
+              }
+            : {}),
         })
         .then((b) => (b as { id: number }).id);
       pendingCreatesRef.current.set(key, promise);
@@ -339,9 +357,14 @@ export default function PlexusIQPage() {
       patientType: "visit" | "outreach";
       name: string;
       time?: string;
+      clinician?: {
+        clinicianId: number | null;
+        clinicianName: string;
+        clinicianSource: "facility_clinician" | "free_text";
+      } | null;
     }): Promise<boolean> => {
       try {
-        const targetBatchId = await resolveBatchId(input.facility, input.scheduleDate);
+        const targetBatchId = await resolveBatchId(input.facility, input.scheduleDate, input.clinician ?? null);
         await addPatientMut.mutateAsync({
           batchId: targetBatchId,
           name: input.name,

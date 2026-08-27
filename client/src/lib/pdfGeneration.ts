@@ -361,8 +361,8 @@ export function getPrevTestsSign(_insurance: string | null | undefined, _previou
   return "";
 }
 
-export function generateClinicianPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
-  void generateClinicianPDFAsync(batchName, patients, scheduleDate, createdAt).catch((err) => {
+export function generateClinicianPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null, attribution?: AtlasAttribution): void {
+  void generateClinicianPDFAsync(batchName, patients, scheduleDate, createdAt, attribution).catch((err) => {
     console.error("[pdfGeneration] Clinician Atlas failed:", err);
     alert(`PDF export failed: ${err instanceof Error ? err.message : "unknown error"}`);
   });
@@ -372,8 +372,8 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
 // Center) can surface the real reason in their own toast/UI instead of
 // relying on the bare alert fallback used by fire-and-forget callers.
 // SOURCE MARKER: Clinician Atlas export is awaitable
-export async function generateClinicianPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): Promise<void> {
-  const body = buildClinicianPdfBody(batchName, patients, scheduleDate, createdAt);
+export async function generateClinicianPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null, attribution?: AtlasAttribution): Promise<void> {
+  const body = buildClinicianPdfBody(batchName, patients, scheduleDate, createdAt, attribution);
   await exportPdfDocument(`Clinician Atlas — ${batchName}`, body);
 }
 
@@ -384,8 +384,35 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
 // SOURCE MARKER: Clinician Atlas chart review has safe spacing
 // SOURCE MARKER: Clinician Atlas ancillary columns align cleanly
 // SOURCE MARKER: Clinician Atlas test rows have stable checkbox title alignment
-export function buildClinicianPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): string {
+// Batch attribution threaded into both Atlas headers. Optional so existing
+// callers compile unchanged; when present, clinician + facility show in the
+// header. Free-text clinician names are rendered verbatim (never "Unknown"/
+// "Other"/"Free Text"). Sourced from the screening_batches snapshot.
+export type AtlasAttribution = {
+  clinicianName?: string | null;
+  facilityName?: string | null;
+};
+
+// Header attribution strip shared by both Atlases — placed under the title
+// strip. Renders "Clinician: X · Facility: Y" using the batch snapshot. When
+// no clinician was recorded, shows an honest "Clinician not recorded".
+function buildAtlasAttributionLine(attribution?: AtlasAttribution): string {
+  if (!attribution) return "";
+  const clinician = (attribution.clinicianName ?? "").trim();
+  const facility = (attribution.facilityName ?? "").trim();
+  const parts: string[] = [];
+  parts.push(
+    clinician
+      ? `<span style="font-weight:700;color:#1a365d;">Clinician:</span> ${esc(clinician)}`
+      : `<span style="font-weight:700;color:#94a3b8;">Clinician not recorded</span>`,
+  );
+  if (facility) parts.push(`<span style="font-weight:700;color:#1a365d;">Facility:</span> ${esc(facility)}`);
+  return `<div style="font-size:9px;color:#475569;margin-bottom:6px;">${parts.join(' &nbsp;·&nbsp; ')}</div>`;
+}
+
+export function buildClinicianPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null, attribution?: AtlasAttribution): string {
   const date = formatScheduleDate(scheduleDate, createdAt);
+  const attributionLine = buildAtlasAttributionLine(attribution);
 
   const oneSentence = (text: string | null | undefined): string => {
     if (!text) return "";
@@ -512,6 +539,7 @@ export function buildClinicianPdfBody(batchName: string, patients: PatientScreen
           <span style="font-size:9.5px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
           <span style="font-size:8.5px;color:#94a3b8;text-align:right;">Clinician Summary — ${esc(date)}</span>
         </div>
+        ${attributionLine}
         <div style="display:grid;grid-template-columns:auto 1fr;align-items:end;column-gap:12px;margin-bottom:2px;">
           <span style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.09em;">Plexus Qualifying Ancillaries</span>
           <span style="font-size:18px;font-weight:800;color:#1a365d;text-align:right;">${esc(p.name)}</span>
@@ -536,8 +564,8 @@ export function buildClinicianPdfBody(batchName: string, patients: PatientScreen
   return pages;
 }
 
-export function generatePlexusPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
-  void generatePlexusPDFAsync(batchName, patients, scheduleDate, createdAt).catch((err) => {
+export function generatePlexusPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null, attribution?: AtlasAttribution): void {
+  void generatePlexusPDFAsync(batchName, patients, scheduleDate, createdAt, attribution).catch((err) => {
     console.error("[pdfGeneration] Plexus Atlas failed:", err);
     alert(`PDF export failed: ${err instanceof Error ? err.message : "unknown error"}`);
   });
@@ -550,8 +578,8 @@ export function generatePlexusPDF(batchName: string, patients: PatientScreening[
 // hasn't run yet); a Plexus Atlas with no qualified tests has nothing
 // to say to the call team.
 // SOURCE MARKER: Plexus Atlas export is awaitable
-export async function generatePlexusPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): Promise<void> {
-  const body = buildPlexusPdfBody(batchName, patients, scheduleDate, createdAt);
+export async function generatePlexusPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null, attribution?: AtlasAttribution): Promise<void> {
+  const body = buildPlexusPdfBody(batchName, patients, scheduleDate, createdAt, attribution);
   if (!body) {
     throw new Error(
       "Plexus Atlas has no qualifying tests for any selected patient. Run qualification or pick a Clinician Atlas for an outreach call list.",
@@ -563,8 +591,9 @@ export async function generatePlexusPDFAsync(batchName: string, patients: Patien
 // Pure body builder shared by the html2pdf path and the print-preview
 // popup path. Returns the empty string when no patient has qualifying
 // tests so callers can decide how to surface that.
-export function buildPlexusPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): string {
+export function buildPlexusPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null, attribution?: AtlasAttribution): string {
   const date = formatScheduleDate(scheduleDate, createdAt);
+  const attributionLine = buildAtlasAttributionLine(attribution);
   const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
 
   const buildCompactTop = (p: PatientScreening) => {
@@ -585,6 +614,7 @@ export function buildPlexusPdfBody(batchName: string, patients: PatientScreening
         <span style="font-size:10px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
         <span style="font-size:9px;color:#94a3b8;">Plexus Team Script — ${esc(date)}</span>
       </div>
+      ${attributionLine}
       <div style="margin-bottom:10px;">
         <div style="font-size:17px;font-weight:800;color:#1a365d;margin-bottom:1px;">${esc(p.name)}</div>
         <div style="font-size:10px;color:#64748b;">${demoLine}</div>
@@ -843,16 +873,18 @@ export function openPatientPacketPrintPreview(input: {
   scheduleDate?: string | null;
   createdAt?: string | Date | null;
   title?: string;
+  // Batch clinician/facility attribution shown in the Atlas header.
+  attribution?: AtlasAttribution;
   // "print" (default) → Print button prints directly.
   // "select" → Print button asks the opener to open the patient-selection
   //   dialog (preview-first workflow on the main schedule view).
   printMode?: "print" | "select";
 }): PacketPrintPreviewResult {
-  const { mode, batchName, patients, scheduleDate, createdAt } = input;
+  const { mode, batchName, patients, scheduleDate, createdAt, attribution } = input;
   const body =
     mode === "plexus"
-      ? buildPlexusPdfBody(batchName, patients, scheduleDate, createdAt)
-      : buildClinicianPdfBody(batchName, patients, scheduleDate, createdAt);
+      ? buildPlexusPdfBody(batchName, patients, scheduleDate, createdAt, attribution)
+      : buildClinicianPdfBody(batchName, patients, scheduleDate, createdAt, attribution);
   if (!body || body.trim().length === 0) {
     throw new Error(
       mode === "plexus"

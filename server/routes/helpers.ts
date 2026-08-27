@@ -108,6 +108,14 @@ export const createBatchSchema = z.object({
   name: z.string().optional(),
   facility: z.enum(VALID_FACILITIES),
   scheduleDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Batch clinician attribution (Plexus IQ). Optional so today's callers are
+  // unaffected. When a configured clinician is selected: clinicianId set +
+  // clinicianSource "facility_clinician". Free text: clinicianId null +
+  // clinicianSource "free_text" + clinicianName required. clinicianName is a
+  // snapshot stored on the batch for historical display.
+  clinicianId: z.number().int().positive().nullable().optional(),
+  clinicianName: z.string().trim().min(1).max(200).nullable().optional(),
+  clinicianSource: z.enum(["facility_clinician", "free_text"]).nullable().optional(),
 });
 
 export const addTestHistorySchema = z.object({
