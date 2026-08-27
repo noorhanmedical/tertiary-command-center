@@ -65,6 +65,20 @@ describe("matchFacility — ambiguous substring safeguard", () => {
     ];
     assert.equal(matchFacility("Medical", withTwoMedical), null);
   });
+
+  it("returns null for the shared phrase across two active facilities (spec 6D)", () => {
+    // Two ACTIVE facilities share the exact phrase "Medical Center". The input
+    // "Medical Center" is a substring of both → ambiguous → no match. The
+    // resolver must NOT pick the first ("North"). Exact names still resolve.
+    const northSouth: CanonicalFacility[] = [
+      { name: "North Medical Center", clinicId: 10, source: "clinics" },
+      { name: "South Medical Center", clinicId: 11, source: "clinics" },
+    ];
+    assert.equal(matchFacility("Medical Center", northSouth), null);
+    // Sanity: the exact names still resolve uniquely.
+    assert.equal(matchFacility("North Medical Center", northSouth)?.clinicId, 10);
+    assert.equal(matchFacility("South Medical Center", northSouth)?.clinicId, 11);
+  });
 });
 
 describe("matchFacility — legacy back-compat", () => {
@@ -80,6 +94,19 @@ describe("matchFacility — inactive / not-a-candidate", () => {
   it("returns null for a facility that is not in the (active) candidate set", () => {
     // Desert Medical Center is inactive → excluded from candidates upstream.
     assert.equal(matchFacility("Desert Medical Center", FACILITIES), null);
+  });
+
+  it("an inactive facility cannot win a substring match (spec 6F)", () => {
+    // loadCanonicalFacilities() filters to active clinics before calling
+    // matchFacility, so an inactive facility is simply never in the candidate
+    // set. Even if its exact name is typed, there is no candidate to match.
+    // Here the ONLY facility that could match "Desert" is excluded, so the
+    // unique-substring rule has zero candidates → null (not a silent win).
+    const activeOnly: CanonicalFacility[] = [
+      { name: "Life Medical Center", clinicId: 3, source: "clinics" },
+    ];
+    assert.equal(matchFacility("Desert", activeOnly), null);
+    assert.equal(matchFacility("Desert Medical Center", activeOnly), null);
   });
 });
 
