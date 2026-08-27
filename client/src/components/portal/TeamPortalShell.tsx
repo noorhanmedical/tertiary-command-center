@@ -101,7 +101,6 @@ import { PlaygroundBridge } from "@/components/playground/PlaygroundBridge";
 import { PlaygroundEventListener } from "@/components/playground/PlaygroundEventListener";
 import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import { SketchButton, SketchBadge } from "@/components/playground/sketch/SketchPrimitives";
-import { SketchRailEdge } from "@/components/playground/sketch/SketchRailEdge";
 import { SKETCH_COLORS } from "@/components/playground/sketch/sketchTokens";
 import { dispatchOpenWorkspace } from "@/components/playground/playgroundEvents";
 import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
@@ -1214,6 +1213,9 @@ export function TeamPortalShell({
   // pin button in each panel's header; independent per panel.
   const [leftRailPinned, setLeftRailPinned] = useState(false);
   const [rightRailPinned, setRightRailPinned] = useState(false);
+  // Derived open state — binary, the single source of truth for the slide.
+  const leftRailOpen = leftRailPinned || leftRailPeek;
+  const rightRailOpen = rightRailPinned || rightRailPeek;
   // Task #643 — apply in-session Settings prefs. Pin defaults + tray tab
   // follow the workspace prefs; changing the pref updates live.
   useEffect(() => {
@@ -1233,11 +1235,9 @@ export function TeamPortalShell({
   // Task #643 — Playground surface ref for drop-point math (drag tool → widget).
   const playgroundSurfaceRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
-  // Task #755 — hover-intent debounce timers for each rail. The sliding
-  // peek transform sweeps the element's bounding rect past a stationary
-  // cursor mid-animation, firing rapid leave→enter→leave events (the
-  // "quiver"). Delaying the collapse and cancelling it on re-enter absorbs
-  // those spurious leaves.
+  // Deferred-close timers, one per rail. Entering the hotspot or the rail body
+  // cancels the pending close; leaving schedules it. This is the mechanism that
+  // treats hotspot + body (+ rail-owned popovers) as a single hover region.
   const leftRailPeekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rightRailPeekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -1246,6 +1246,16 @@ export function TeamPortalShell({
       if (rightRailPeekTimer.current) clearTimeout(rightRailPeekTimer.current);
     };
   }, []);
+  // Escape closes any hover-open (unpinned) rail. Pinned rails are unaffected.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (!leftRailPinned) setLeftRailPeek(false);
+      if (!rightRailPinned) setRightRailPeek(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [leftRailPinned, rightRailPinned]);
   // TOUCH SUPPORT (task #629) — hover is unavailable on tablets / touchscreens,
   // so the hover-only reveal from task #628 leaves touch users stuck with just
   // the center canvas. On `(hover: none)` devices we switch the panels to a TAP
@@ -1293,54 +1303,41 @@ export function TeamPortalShell({
   }, [isTouchDevice, leftRailPeek, rightRailPeek]);
   const leftRailSize = "normal" as RailSize;
   const rightRailSize = "normal" as RailSize;
-  // Collapse the hover-peek only when the pointer genuinely leaves the rail's
-  // full bounding box (task #635). The panel body translates in/out on peek,
-  // so a naive onMouseLeave on the body fires spuriously as the element slides
-  // under a stationary cursor at the panel edge — checking against the stable
-  // outer ref rect stops the flicker loop.
-  // Task #755 — schedule the collapse instead of firing it synchronously.
-  // The rect-guard below still short-circuits an obvious in-bounds leave, but
-  // during the slide animation getBoundingClientRect returns an intermediate
-  // rect, so the guard alone can't stop the quiver. Deferring setPeek(false)
-  // by ~120ms lets a matching onMouseEnter (see makeRailPeekEnterHandler)
-  // cancel the pending collapse, absorbing rapid leave→enter jitter.
-  const RAIL_PEEK_LEAVE_DELAY_MS = 120;
-  const makeRailPeekEnterHandler =
+  // Conventional side-panel hover model. The open trigger is a STATIONARY
+  // edge hotspot (see the rail JSX), never the moving body — so there is no
+  // quiver from the sliding element sweeping past the cursor, and no rect
+  // guard is needed. The hotspot and the rail body are treated as ONE hover
+  // region: entering either cancels a pending close; leaving either schedules
+  // a close after a short delay that the next enter cancels. This absorbs the
+  // hotspot→rail and rail→popover hand-offs without flicker.
+  //
+  // Derived open state is `isPinned || isHovered` (the `*Peek` state below is
+  // the "isHovered" flag; the name is retained to avoid churning ~30 call
+  // sites). Binary only — no intermediate/drag positions are ever stored.
+  const RAIL_CLOSE_DELAY_MS = 200;
+  const makeRailHoverOpen =
     (
       timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
-      setPeek: (v: boolean) => void,
+      setHovered: (v: boolean) => void,
     ) =>
     () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      setPeek(true);
+      setHovered(true);
     };
-  const makeRailPeekLeaveHandler =
+  const makeRailHoverClose =
     (
-      ref: React.RefObject<HTMLDivElement>,
       timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
-      setPeek: (v: boolean) => void,
+      setHovered: (v: boolean) => void,
     ) =>
-    (e: React.MouseEvent) => {
-      const rect = ref.current?.getBoundingClientRect();
-      if (rect) {
-        const { clientX, clientY } = e;
-        if (
-          clientX >= rect.left &&
-          clientX <= rect.right &&
-          clientY >= rect.top &&
-          clientY <= rect.bottom
-        ) {
-          return;
-        }
-      }
+    () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
-        setPeek(false);
-      }, RAIL_PEEK_LEAVE_DELAY_MS);
+        setHovered(false);
+      }, RAIL_CLOSE_DELAY_MS);
     };
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
@@ -2843,30 +2840,39 @@ export function TeamPortalShell({
           </div>
         </div>
 
+        {/* LEFT RAIL — conventional frosted-glass side panel, attached flush to
+            the left edge, running full height between header and viewport. The
+            wrapper is a fixed-width overlay; only the body's transform animates.
+            Open = leftRailPinned || leftRailPeek. */}
         <div
           ref={leftRailRef}
-          className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]}`}
+          className={`pointer-events-none absolute left-0 top-0 bottom-0 z-30 flex flex-col ${LEFT_RAIL_WIDTH[leftRailSize]}`}
           data-testid="portal-left-rail"
         >
-          {/* Body — frosted-glass panel. Hover-only (task #628): it always
-              rests aside (slid mostly off-screen at ~50% opacity, never
-              opacity:0, never unmounted) leaving a visible edge, and reveals to
-              full opacity on hover/focus; moving the pointer away slides it back
-              aside. Independent of the right rail. */}
+          {/* Stationary edge hotspot — the open trigger. Never moves, so the
+              sliding body can't sweep past the cursor and quiver. Present only
+              on hover-capable devices and only while the rail is closed. */}
+          {!isTouchDevice && !leftRailOpen ? (
+            <div
+              className="pointer-events-auto absolute left-0 top-0 bottom-0 z-10 w-[10px]"
+              onMouseEnter={makeRailHoverOpen(leftRailPeekTimer, setLeftRailPeek)}
+              data-testid="portal-left-rail-hotspot"
+              aria-hidden="true"
+            />
+          ) : null}
+          {/* Body — frosted glass. Slides in/out via transform only (no scale,
+              no opacity fade, no spring). Never unmounts, so filters / scroll /
+              selected patient / tool state are preserved. */}
           <div
             onMouseEnter={
               isTouchDevice
                 ? undefined
-                : makeRailPeekEnterHandler(leftRailPeekTimer, setLeftRailPeek)
+                : makeRailHoverOpen(leftRailPeekTimer, setLeftRailPeek)
             }
             onMouseLeave={
               isTouchDevice
                 ? undefined
-                : makeRailPeekLeaveHandler(
-                    leftRailRef,
-                    leftRailPeekTimer,
-                    setLeftRailPeek,
-                  )
+                : makeRailHoverClose(leftRailPeekTimer, setLeftRailPeek)
             }
             onClick={
               isTouchDevice
@@ -2878,17 +2884,16 @@ export function TeamPortalShell({
                   }
                 : undefined
             }
-            className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden border text-slate-900 shadow-[0_12px_36px_rgba(31,41,55,0.14)] transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              !(leftRailPeek || leftRailPinned)
-                ? "-translate-x-[100%] translate-y-0 scale-y-100 opacity-0"
-                : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
+            className={`portal-rail-glass min-h-0 flex-1 overflow-hidden text-slate-900 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] ${
+              leftRailOpen
+                ? "translate-x-0 pointer-events-auto"
+                : "-translate-x-full pointer-events-none"
             }`}
-            style={{ backgroundColor: "#F7F8F4", borderColor: "rgba(31,41,55,0.5)", borderRadius: "18px 22px 18px 22px" }}
+            style={{ borderRadius: "0 14px 14px 0" }}
+            aria-hidden={leftRailOpen ? undefined : true}
+            {...(!leftRailOpen ? { inert: "" as unknown as boolean } : {})}
           >
             <div className="relative flex h-full flex-col">
-            {/* Colored-pencil edge on the rail's RIGHT boundary (frames the
-                canvas without boxing it). Moves with the rail; no layout width. */}
-            <SketchRailEdge side="right" seedId="left-rail" />
             {/* Blue header band (step 1) — top-level tab switcher (Task #740).
                 Messaging shows the iMessage-style inbox; Tools shows the
                 existing dock + calendar + communication tray. */}
@@ -3233,30 +3238,34 @@ export function TeamPortalShell({
           </div>
         </div>
 
+        {/* RIGHT RAIL — mirror of the left: frosted-glass panel attached flush
+            to the right edge, transform-only slide from the right. Open =
+            rightRailPinned || rightRailPeek. */}
         <div
           ref={rightRailRef}
-          className={`pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
+          className={`pointer-events-none absolute right-0 top-0 bottom-0 z-30 flex flex-col ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
           data-testid="portal-right-rail"
         >
-          {/* Body — canonical .glass-tile panel. Hover-only (task #628): it
-              always rests aside (slid mostly off-screen at ~50% opacity, never
-              opacity:0, never unmounted) leaving a visible edge, and reveals to
-              full opacity on hover/focus; moving the pointer away slides it back
-              aside. Mirrors the left rail; independent of it. */}
+          {/* Stationary right-edge hotspot — the open trigger. */}
+          {!isTouchDevice && !rightRailOpen ? (
+            <div
+              className="pointer-events-auto absolute right-0 top-0 bottom-0 z-10 w-[10px]"
+              onMouseEnter={makeRailHoverOpen(rightRailPeekTimer, setRightRailPeek)}
+              data-testid="portal-right-rail-hotspot"
+              aria-hidden="true"
+            />
+          ) : null}
+          {/* Body — frosted glass, transform-only slide from the right edge. */}
           <div
             onMouseEnter={
               isTouchDevice
                 ? undefined
-                : makeRailPeekEnterHandler(rightRailPeekTimer, setRightRailPeek)
+                : makeRailHoverOpen(rightRailPeekTimer, setRightRailPeek)
             }
             onMouseLeave={
               isTouchDevice
                 ? undefined
-                : makeRailPeekLeaveHandler(
-                    rightRailRef,
-                    rightRailPeekTimer,
-                    setRightRailPeek,
-                  )
+                : makeRailHoverClose(rightRailPeekTimer, setRightRailPeek)
             }
             onClick={
               isTouchDevice
@@ -3268,16 +3277,16 @@ export function TeamPortalShell({
                   }
                 : undefined
             }
-            className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden border text-slate-900 shadow-[0_12px_36px_rgba(31,41,55,0.14)] transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              !(rightRailPeek || rightRailPinned)
-                ? "translate-x-[100%] translate-y-0 scale-y-100 opacity-0"
-                : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
+            className={`portal-rail-glass min-h-0 flex-1 overflow-hidden text-slate-900 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] ${
+              rightRailOpen
+                ? "translate-x-0 pointer-events-auto"
+                : "translate-x-full pointer-events-none"
             }`}
-            style={{ backgroundColor: "#F7F8F4", borderColor: "rgba(31,41,55,0.5)", borderRadius: "22px 18px 22px 18px" }}
+            style={{ borderRadius: "14px 0 0 14px" }}
+            aria-hidden={rightRailOpen ? undefined : true}
+            {...(!rightRailOpen ? { inert: "" as unknown as boolean } : {})}
           >
             <div className="relative flex h-full flex-col">
-              {/* Colored-pencil edge on the rail's LEFT boundary. */}
-              <SketchRailEdge side="left" seedId="right-rail" />
               <div className="flex-1 overflow-y-auto">
                 {/* Phase 2I — the work-queue is composed by the real production
                     WorkspaceWorkQueueComposition: the sticky mode-switcher header

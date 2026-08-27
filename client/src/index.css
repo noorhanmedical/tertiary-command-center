@@ -513,6 +513,33 @@
     transform: scale(1.10);
   }
 
+  /* ── Team Portal side-rail shell — conventional frosted-glass panel ──
+     Used ONLY by the Team Portal left/right rails. This is a plain desktop
+     side panel: translucent cool-neutral fill + backdrop blur + subtle border
+     + restrained shadow. Deliberately NOT .glass-tile (no hover lift, no
+     periwinkle glow, no card radius). The rail wrapper animates transform only;
+     this class supplies the static glass surface. Inner-edge-only border-radius
+     is applied inline per side (left rail rounds its right edge, right rail its
+     left edge). */
+  .portal-rail-glass {
+    background: rgba(255, 255, 255, 0.62);
+    -webkit-backdrop-filter: blur(18px) saturate(135%);
+    backdrop-filter: blur(18px) saturate(135%);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.5),
+      0 8px 30px rgba(15, 23, 42, 0.08);
+    will-change: transform;
+  }
+
+  .dark .portal-rail-glass {
+    background: rgba(15, 23, 42, 0.62);
+    border-color: rgba(148, 163, 184, 0.24);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 8px 30px rgba(0, 0, 0, 0.30);
+  }
+
   /* ── Home Preview (Task #622): navy / slate / white command center ──
      Scoped utilities used ONLY by /home-preview. The live /home page keeps
      using .glass-tile above; nothing in this block touches it. No gradients
