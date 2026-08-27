@@ -1,10 +1,12 @@
-// Nova workspace tab — the full AI assistant working environment.
-// AI backend capabilities are limited; the workspace shell is real.
+// Nova workspace tab — the full AI assistant working environment, rendered in
+// the Playground SketchUI language. The ambient Nova particle form (dock icon)
+// is a separate concern and is NOT touched here. AI backend capabilities are
+// limited; the workspace shell is real. Conversation text stays clean/readable.
 
 import { useState } from "react";
 import { Sparkles, Send } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { SketchButton, SketchInput, SketchSurface } from "../sketch/SketchPrimitives";
+import { SKETCH_COLORS } from "../sketch/sketchTokens";
 import { useNovaContext } from "@/components/nova/NovaContextProvider";
 import type { WorkspaceRenderProps } from "../types";
 
@@ -30,70 +32,86 @@ export function NovaWorkspaceTab({ workspace }: WorkspaceRenderProps) {
       : "General context";
 
   return (
-    <div className="flex h-full flex-col" data-testid={`workspace-nova-${workspace.id}`}>
-      {/* Header */}
-      <div className="border-b border-slate-100 px-5 py-3 flex items-center gap-3">
-        <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-          <Sparkles className="h-4 w-4 text-indigo-600" />
+    <div className="flex h-full flex-col bg-transparent px-4 py-3" data-testid={`workspace-nova-${workspace.id}`}>
+      {/* Header — sketch surface (notebook header). */}
+      <SketchSurface seedId={`nova-header-${workspace.id}`} padded={false} className="px-4 py-2.5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: "rgba(122,106,154,0.14)" }}>
+            <Sparkles className="h-4 w-4" style={{ color: SKETCH_COLORS.violet }} />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Nova</div>
+            <div className="text-[10px] text-slate-500">Plexus AI Assistant · {contextLabel}</div>
+          </div>
         </div>
-        <div>
-          <div className="text-sm font-semibold text-slate-900">Nova</div>
-          <div className="text-[10px] text-slate-400">Plexus AI Assistant · {contextLabel}</div>
-        </div>
-      </div>
+      </SketchSurface>
 
       {/* Messages */}
-      <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+      <div className="flex-1 overflow-auto py-4 space-y-3">
         {messages.length === 0 ? (
-          <div className="text-center pt-12 space-y-3">
-            <Sparkles className="h-10 w-10 text-slate-200 mx-auto" />
-            <div className="text-lg font-light text-slate-300">Ask Nova anything</div>
-            <p className="text-sm text-slate-400 max-w-sm mx-auto">
+          <div className="space-y-3 pt-12 text-center">
+            <Sparkles className="mx-auto h-10 w-10" style={{ color: "rgba(122,106,154,0.35)" }} />
+            <div className="text-lg font-light text-slate-400">Ask Nova anything</div>
+            <p className="mx-auto max-w-sm text-sm text-slate-500">
               Summarize patients, find reports, suggest next actions, or help navigate your workspace.
             </p>
             <div className="flex flex-wrap justify-center gap-2 pt-4">
               {["Summarize my day", "Next action", "Find recent report", "Who is overdue?"].map((chip) => (
-                <button
+                <SketchButton
                   key={chip}
-                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  seedId={`nova-chip-${chip}`}
                   onClick={() => setQuery(chip)}
-                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
                 >
                   {chip}
-                </button>
+                </SketchButton>
               ))}
             </div>
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${
-                msg.role === "user"
-                  ? "bg-indigo-600 text-white"
-                  : "bg-slate-100 text-slate-800"
-              }`}>
-                {msg.text}
+          messages.map((msg, i) =>
+            msg.role === "user" ? (
+              <div key={i} className="flex justify-end">
+                <div
+                  className="max-w-[80%] rounded-2xl px-4 py-2.5 text-sm text-slate-900"
+                  style={{ backgroundColor: "rgba(84,106,154,0.14)" }}
+                >
+                  {msg.text}
+                </div>
               </div>
-            </div>
-          ))
+            ) : (
+              <div key={i} className="flex justify-start">
+                <SketchSurface seedId={`nova-msg-${i}`} padded={false} className="max-w-[80%] px-4 py-2.5">
+                  <div className="text-sm text-slate-800">{msg.text}</div>
+                </SketchSurface>
+              </div>
+            ),
+          )
         )}
       </div>
 
       {/* Input */}
-      <div className="border-t border-slate-100 px-5 py-3">
-        <div className="flex gap-2">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
-            placeholder="Ask Nova..."
-            className="flex-1"
-            data-testid="nova-workspace-input"
-          />
-          <Button size="sm" onClick={handleSend} disabled={!query.trim()} data-testid="nova-workspace-send">
-            <Send className="h-4 w-4" />
-          </Button>
-        </div>
+      <div className="flex items-center gap-2 pt-2">
+        <SketchInput
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+          placeholder="Ask Nova..."
+          containerClassName="flex-1"
+          data-testid="nova-workspace-input"
+        />
+        <SketchButton
+          variant="icon"
+          size="sm"
+          seedId="nova-send"
+          onClick={handleSend}
+          disabled={!query.trim()}
+          aria-label="Send"
+          data-testid="nova-workspace-send"
+        >
+          <Send className="h-4 w-4" />
+        </SketchButton>
       </div>
     </div>
   );

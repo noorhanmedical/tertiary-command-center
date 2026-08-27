@@ -32,6 +32,8 @@ export function PatientProfileWorkspace({
   seedName,
   onBack,
   onSchedule,
+  focusSection,
+  focusToken,
 }: {
   encodedKey: string;
   representativeScreeningId: number | null;
@@ -40,6 +42,9 @@ export function PatientProfileWorkspace({
   onBack?: () => void;
   /** Opens the in-portal scheduling dialog (calendar popup) for this patient. */
   onSchedule?: () => void;
+  /** Service-focus: section to scroll/highlight on a one-shot focus request. */
+  focusSection?: string | null;
+  focusToken?: number;
 }) {
   // Heavy, cleanly-independent sections fetch only once scrolled into view.
   const [documentsWanted, setDocumentsWanted] = useState(false);
@@ -328,6 +333,8 @@ export function PatientProfileWorkspace({
       onSchedule={onSchedule}
       loadingSections={loadingSections}
       onVisibleSectionsChange={handleVisible}
+      focusSection={focusSection}
+      focusToken={focusToken}
     />
   );
 }

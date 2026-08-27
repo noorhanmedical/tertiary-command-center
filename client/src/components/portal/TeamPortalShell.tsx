@@ -99,6 +99,10 @@ import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
 import { PlaygroundWorkspaceProvider } from "@/components/playground";
 import { PlaygroundBridge } from "@/components/playground/PlaygroundBridge";
 import { PlaygroundEventListener } from "@/components/playground/PlaygroundEventListener";
+import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
+import { SketchButton, SketchBadge } from "@/components/playground/sketch/SketchPrimitives";
+import { SketchRailEdge } from "@/components/playground/sketch/SketchRailEdge";
+import { SKETCH_COLORS } from "@/components/playground/sketch/sketchTokens";
 import { dispatchOpenWorkspace } from "@/components/playground/playgroundEvents";
 import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
@@ -1055,9 +1059,27 @@ export function TeamPortalShell({
   }, [workspaceProfile, profileViewAllFacilities, profileAssignedFacilities.join("|"), facility]);
 
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
+  // ═══════════════════════════════════════════════════════════════════════
+  // LEGACY CENTER STATE — DO NOT USE FOR NEW WORKSPACE NAVIGATION.
+  // The Playground workspace engine (PlaygroundWorkspaceProvider) is the sole
+  // authority for opening, focusing, and rendering center workspaces via
+  // dispatchOpenWorkspace(). PlaygroundBridge always renders the center; the
+  // centerMode/centerSrc/centerTitle + portalTabs + dock* state below is dead
+  // for workspace ownership and retained only so the pre-Playground helper
+  // chain still type-checks. New navigation MUST go through the Playground.
+  // Scheduled for removal once the last legacy helper callers are deleted.
+  // ═══════════════════════════════════════════════════════════════════════
+  /**
+   * Scheduling context only — the active patient for the left-rail
+   * PatientMiniCalendar / schedule dialogs. Derived ONE-WAY from launcher
+   * clicks; it must NOT drive center rendering (the Playground owns that).
+   */
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
+  /** @deprecated Legacy center router. Playground owns center rendering. DO NOT USE. */
   const [centerMode, setCenterMode] = useState<CenterMode>("playground");
+  /** @deprecated Legacy iframe/src for ExpandedSectionView. DO NOT USE. */
   const [centerSrc, setCenterSrc] = useState<string>("");
+  /** @deprecated Legacy center title. DO NOT USE. */
   const [centerTitle, setCenterTitle] = useState<string>("");
   const [consentDialog, setConsentDialog] = useState<{ patient: TodayPatient; testType: string | null } | null>(null);
   const [playgroundTab, setPlaygroundTab] = useState<"overview" | "tasks" | "documents">("overview");
@@ -1103,7 +1125,9 @@ export function TeamPortalShell({
   // one-click complete, let the row animate up (max-h-0 + opacity-0), then
   // refetch so the row disappears smoothly instead of popping out.
   const [removingRowKeys, setRemovingRowKeys] = useState<Set<string>>(new Set());
+  /** @deprecated Legacy center tab list. Superseded by Playground workspaces. DO NOT USE. */
   const [portalTabs, setPortalTabs] = useState<PortalTab[]>([]);
+  /** @deprecated Legacy active center tab id. Superseded by Playground activeWorkspaceId. DO NOT USE. */
   const [activePortalTabId, setActivePortalTabId] = useState<string | null>(null);
   // Left-rail Marketing → Email handoff payloads. The Marketing tool
   // pushes material IDs here when the operator chooses "Compose email
@@ -1328,7 +1352,9 @@ export function TeamPortalShell({
   // Slice 1.1. Consent / screening state for real patients now comes
   // from the live feed (p.consentSigned) and from the canonical
   // patient-detail surfaces.
+  /** @deprecated Legacy dock-app center state. Superseded by GlobalDock + Playground workspaces. DO NOT USE. */
   const [dockOpenApps, setDockOpenApps] = useState<Array<"tasks" | "schedule" | "consent" | "chart" | "documents">>([]);
+  /** @deprecated Legacy active dock-app. Superseded by Playground workspaces. DO NOT USE. */
   const [dockActiveApp, setDockActiveApp] = useState<null | "tasks" | "schedule" | "consent" | "chart" | "documents">(null);
 
   // The hardcoded demo-patient + demo-profile useMemo blocks were
@@ -1742,14 +1768,19 @@ export function TeamPortalShell({
   // case still opens in-place.
   function openCallRowPatient(row: TeamWorkspaceCallListItem) {
     if (typeof row.patientScreeningId === "number" && row.patientScreeningId > 0) {
-      // Open patient EHR via the Playground workspace engine.
+      // Open (or focus) patient EHR via the Playground workspace engine and
+      // request one-shot service focus on the Ancillary Journey section. When
+      // the tab already exists, the provider bumps its focusToken so the chart
+      // re-scrolls/highlights without duplicating the workspace.
       dispatchOpenWorkspace({
         type: "patient_ehr",
         title: row.patientName ?? "Patient",
         patientScreeningId: row.patientScreeningId,
         executionCaseId: row.executionCaseId ?? null,
+        ancillaryCaseId: row.ancillaryCaseId ?? null,
         serviceKey: row.selectedServices?.[0] ?? null,
         facilityId: row.facilityId ?? facility ?? null,
+        focusSection: "ancillary-journey",
       });
       return;
     }
@@ -1927,6 +1958,12 @@ export function TeamPortalShell({
     }
   }
 
+  /**
+   * @deprecated LEGACY center-tab launcher. DO NOT USE FOR NEW WORKSPACE
+   * NAVIGATION. Zero callers remain; new navigation goes through
+   * dispatchOpenWorkspace() into the Playground engine. Retained only until
+   * the legacy helper chain is deleted.
+   */
   function openPortalTab(kind: PortalTabKind, patient?: TodayPatient | null) {
     const id =
       kind === "patient" || kind === "schedule"
@@ -2163,7 +2200,7 @@ export function TeamPortalShell({
           in a cursive script font, blue. Right: the existing Clinic selector,
           Calendar button, and (admins only) the "Viewing as" selector — all
           unchanged in behavior + test ids. */}
-      <header className="relative z-20 flex items-center justify-between gap-4 flex-wrap bg-white/85 px-6 py-2 backdrop-blur-xl">
+      <header className="relative z-20 flex items-center justify-between gap-4 flex-wrap px-6 py-2" style={{ backgroundColor: "#FAFBF8" }}>
         <div className="flex items-center gap-3">
           <span
             className="text-[30px] font-semibold leading-none text-[#2563EB]"
@@ -2191,70 +2228,69 @@ export function TeamPortalShell({
               >
                 Viewing as
               </Label>
-              <Select
+              <SketchSelect
+                id="admin-viewas-team-member-select"
+                seedId="admin-viewas"
                 value={viewAsTeamMemberId ?? "__self__"}
-                onValueChange={(v) =>
-                  setViewAsTeamMemberId(v === "__self__" ? null : v)
+                onChange={(e) =>
+                  setViewAsTeamMemberId(e.target.value === "__self__" ? null : e.target.value)
                 }
+                data-testid="admin-viewas-team-member-select"
               >
-                <SelectTrigger
-                  id="admin-viewas-team-member-select"
-                  className="h-8 w-[160px] border-slate-300 bg-white text-xs text-slate-900"
-                  data-testid="admin-viewas-team-member-select"
-                >
-                  <SelectValue placeholder="Admin (self)" />
-                </SelectTrigger>
-                <SelectContent className="z-[90]">
-                  <SelectItem value="__self__" data-testid="admin-viewas-option-self">
-                    Admin (self)
-                  </SelectItem>
-                  {viewAsCandidates.map((u) => (
-                    <SelectItem
-                      key={u.id}
-                      value={u.id}
-                      data-testid={`admin-viewas-option-${u.id}`}
-                    >
-                      {u.username}{u.facility ? ` · ${u.facility}` : ""}{typeof u.dailyTarget === "number" ? ` · target ${u.dailyTarget}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <option value="__self__" data-testid="admin-viewas-option-self">
+                  Admin (self)
+                </option>
+                {viewAsCandidates.map((u) => (
+                  <option
+                    key={u.id}
+                    value={u.id}
+                    data-testid={`admin-viewas-option-${u.id}`}
+                  >
+                    {u.username}{u.facility ? ` · ${u.facility}` : ""}{typeof u.dailyTarget === "number" ? ` · target ${u.dailyTarget}` : ""}
+                  </option>
+                ))}
+              </SketchSelect>
             </div>
           )}
           <Label htmlFor="facility-select" className="text-xs text-slate-600">Clinic</Label>
-          <Select value={facility} onValueChange={setFacility}>
-            <SelectTrigger id="facility-select" className="h-8 w-[160px] border-slate-300 bg-white text-xs text-slate-900" data-testid="select-facility">
-              <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
-            </SelectTrigger>
-            <SelectContent className="z-[90]">
-              {facilities.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <button
-            type="button"
+          <SketchSelect
+            id="facility-select"
+            seedId="facility"
+            value={facility}
+            onChange={(e) => setFacility(e.target.value)}
+            data-testid="select-facility"
+          >
+            {facility === "" && (
+              <option value="" disabled>
+                {facilities.length === 0 ? "No clinic assignments" : "Choose clinic"}
+              </option>
+            )}
+            {facilities.map((f) => <option key={f} value={f}>{f}</option>)}
+          </SketchSelect>
+          <SketchButton
+            variant="icon"
+            size="sm"
+            seedId="team-portal-calendar"
             onClick={() => setTeamPortalCalendarOpen(true)}
             aria-label="Open team portal calendar"
             title="Open team portal calendar"
-            className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-colors"
             data-testid="button-team-portal-main-calendar"
           >
             <CalendarIcon className="h-4 w-4" />
-          </button>
+          </SketchButton>
         </div>
       </header>
 
       <div className="relative flex-1 overflow-hidden">
         <div className="absolute inset-0">
-          <div className="absolute inset-0 bg-white" />
-          <div className="absolute inset-0 px-6 py-5">
-            <div className="h-full w-full rounded-[32px] bg-white" />
-          </div>
+          {/* One continuous paper background — no alternating white/tan bands. */}
+          <div className="absolute inset-0" style={{ backgroundColor: "#FAFBF8" }} />
         </div>
 
         <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
           <div
             ref={playgroundSurfaceRef}
-            className="relative mx-auto flex min-h-full w-full flex-col px-6 pt-2 pb-24"
+            className="relative mx-auto flex h-full min-h-full w-full flex-col bg-transparent px-6 pt-2 pb-6"
             data-testid="playground-canvas-surface"
             onDragOver={handlePlaygroundDragOver}
             onDrop={handlePlaygroundDrop}
@@ -2311,7 +2347,11 @@ export function TeamPortalShell({
               </div>
             )}
 
-            <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+            {/* @deprecated LEGACY CENTER RENDERER — DEAD CODE behind PlaygroundBridge.
+                Hidden via `hidden` so it never displays (the Playground engine
+                above is the sole center) while remaining type-identical. Retained
+                temporarily; delete with the rest of the legacy center state. */}
+            <div className="hidden min-h-0 flex-1 gap-4 overflow-hidden" aria-hidden="true">
               <div className={workspacePrefs.playgroundLayout === "split" ? "min-w-0 basis-1/2 overflow-y-auto" : "min-h-0 flex-1 overflow-y-auto"}>
               {centerMode === "calendar" ? (
                 <div
@@ -2838,47 +2878,53 @@ export function TeamPortalShell({
                   }
                 : undefined
             }
-            className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/30 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+            className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden border text-slate-900 shadow-[0_12px_36px_rgba(31,41,55,0.14)] transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               !(leftRailPeek || leftRailPinned)
                 ? "-translate-x-[100%] translate-y-0 scale-y-100 opacity-0"
                 : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
+            style={{ backgroundColor: "#F7F8F4", borderColor: "rgba(31,41,55,0.5)", borderRadius: "18px 22px 18px 22px" }}
           >
-            <div className="flex h-full flex-col">
+            <div className="relative flex h-full flex-col">
+            {/* Colored-pencil edge on the rail's RIGHT boundary (frames the
+                canvas without boxing it). Moves with the rail; no layout width. */}
+            <SketchRailEdge side="right" seedId="left-rail" />
             {/* Blue header band (step 1) — top-level tab switcher (Task #740).
                 Messaging shows the iMessage-style inbox; Tools shows the
                 existing dock + calendar + communication tray. */}
-            <div className="flex items-center justify-between gap-1.5 border-b border-white/20 bg-[#4863A0] px-2 py-1.5 text-white">
+            <div
+              className="flex items-center justify-between gap-1.5 border-b px-2 py-1.5"
+              style={{ borderColor: "rgba(148,163,184,0.4)", backgroundColor: "#FAFBF8" }}
+            >
               <div className="flex items-center gap-1" data-testid="left-panel-tabs">
                 <button
                   type="button"
                   onClick={() => setLeftPanelTab("messaging")}
-                  className={`relative inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                  className={`relative inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
                     leftPanelTab === "messaging"
-                      ? "bg-white text-[#4863A0] shadow-sm"
-                      : "text-white/80 hover:bg-white/15"
+                      ? "text-slate-900"
+                      : "text-slate-500 hover:text-slate-700"
                   }`}
+                  style={leftPanelTab === "messaging" ? { boxShadow: "inset 0 -2px 0 var(--sketch-blue)" } : undefined}
                   data-testid="left-panel-tab-messaging"
                 >
                   <MessageCircle className="h-3 w-3" />
                   Messaging
                   {messagingUnread > 0 ? (
-                    <span
-                      className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-purple-600 px-1 text-[8px] font-bold text-white"
-                      data-testid="left-panel-tab-messaging-badge"
-                    >
-                      {messagingUnread}
+                    <span data-testid="left-panel-tab-messaging-badge">
+                      <SketchBadge tone="violet">{messagingUnread}</SketchBadge>
                     </span>
                   ) : null}
                 </button>
                 <button
                   type="button"
                   onClick={() => setLeftPanelTab("tools")}
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
                     leftPanelTab === "tools"
-                      ? "bg-white text-[#4863A0] shadow-sm"
-                      : "text-white/80 hover:bg-white/15"
+                      ? "text-slate-900"
+                      : "text-slate-500 hover:text-slate-700"
                   }`}
+                  style={leftPanelTab === "tools" ? { boxShadow: "inset 0 -2px 0 var(--sketch-blue)" } : undefined}
                   data-testid="left-panel-tab-tools"
                 >
                   <Wrench className="h-3 w-3" />
@@ -2890,7 +2936,7 @@ export function TeamPortalShell({
                 onClick={() => setLeftRailPinned((v) => !v)}
                 aria-label={leftRailPinned ? "Unpin panel" : "Pin panel"}
                 title={leftRailPinned ? "Unpin panel" : "Pin panel"}
-                className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${leftRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
+                className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${leftRailPinned ? "text-[color:var(--sketch-blue)]" : "text-slate-400 hover:text-slate-600"}`}
                 data-testid="button-pin-left-rail"
               >
                 {leftRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
@@ -3043,7 +3089,7 @@ export function TeamPortalShell({
                           id: "resources",
                           label: "Scripts",
                           icon: BookOpen,
-                          onClick: () => dispatchOpenWorkspace({ type: "custom_tool", title: "Scripts" }),
+                          onClick: () => dispatchOpenWorkspace({ type: "scripts", title: "Scripts" }),
                           active: activeKind === "resources",
                           testId: "left-rail-tool-resources",
                         },
@@ -3051,7 +3097,7 @@ export function TeamPortalShell({
                           id: "marketing",
                           label: "Proof/PDFs",
                           icon: Megaphone,
-                          onClick: () => dispatchOpenWorkspace({ type: "custom_tool", title: "Proof/PDFs" }),
+                          onClick: () => dispatchOpenWorkspace({ type: "proof_pdfs", title: "Proof/PDFs" }),
                           active: activeKind === "marketing",
                           testId: "left-rail-tool-marketing",
                         },
@@ -3104,7 +3150,7 @@ export function TeamPortalShell({
                           id: "patientSearch",
                           label: "Patient Search",
                           icon: Search,
-                          onClick: () => dispatchOpenWorkspace({ type: "custom_tool", title: "Patient Search" }),
+                          onClick: () => dispatchOpenWorkspace({ type: "patient_search", title: "Patient Search" }),
                           active: activeKind === "patientSearch",
                           testId: "left-rail-tool-patient-search",
                         },
@@ -3160,7 +3206,7 @@ export function TeamPortalShell({
                     Tools panel. Hidden in the narrow icon rail (too small).
                     Honest boundaries: no fabricated messages/sends. */}
                 {!leftNarrow && (
-                  <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/40 bg-white/40">
+                  <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-xl border" style={{ borderColor: "rgba(148,163,184,0.4)", backgroundColor: SKETCH_COLORS.paper }}>
                     <CommunicationTray
                       activeTab={trayTab}
                       onTabChange={setTrayTab}
@@ -3222,13 +3268,16 @@ export function TeamPortalShell({
                   }
                 : undefined
             }
-            className={`glass-tile !bg-white/40 pointer-events-auto min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+            className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden border text-slate-900 shadow-[0_12px_36px_rgba(31,41,55,0.14)] transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               !(rightRailPeek || rightRailPinned)
                 ? "translate-x-[100%] translate-y-0 scale-y-100 opacity-0"
                 : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
+            style={{ backgroundColor: "#F7F8F4", borderColor: "rgba(31,41,55,0.5)", borderRadius: "22px 18px 22px 18px" }}
           >
-            <div className="flex h-full flex-col">
+            <div className="relative flex h-full flex-col">
+              {/* Colored-pencil edge on the rail's LEFT boundary. */}
+              <SketchRailEdge side="left" seedId="right-rail" />
               <div className="flex-1 overflow-y-auto">
                 {/* Phase 2I — the work-queue is composed by the real production
                     WorkspaceWorkQueueComposition: the sticky mode-switcher header
@@ -3238,17 +3287,17 @@ export function TeamPortalShell({
                 <WorkspaceWorkQueueComposition
                   canonicalSection={<CanonicalLifecycleSection workspaceRole={workspaceRole} />}
                   header={
-                <div className="sticky top-0 z-10 border-b border-white/10 bg-[#4863A0] px-3 pb-1.5 pt-1.5 backdrop-blur-xl">
+                <div className="sticky top-0 z-10 border-b px-3 pb-1.5 pt-1.5" style={{ borderColor: "rgba(148,163,184,0.4)", backgroundColor: "#FAFBF8" }}>
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Work Queue</span>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-white/70">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
+                      <span className="text-[10px] text-slate-500 tabular-nums">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
                       <button
                         type="button"
                         onClick={() => setRightRailPinned((v) => !v)}
                         aria-label={rightRailPinned ? "Unpin Work Queue panel" : "Pin Work Queue panel"}
                         title={rightRailPinned ? "Unpin Work Queue panel" : "Pin Work Queue panel"}
-                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors ${rightRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${rightRailPinned ? "text-[color:var(--sketch-blue)]" : "text-slate-400 hover:text-slate-600"}`}
                         data-testid="button-pin-right-rail"
                       >
                         {rightRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
@@ -3277,7 +3326,9 @@ export function TeamPortalShell({
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
                 <div className="mb-3 flex items-center justify-between">
-                  <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
+                  <span data-testid="badge-patient-count">
+                    <SketchBadge tone="graphite">{patients.length}</SketchBadge>
+                  </span>
                 </div>
                 {patients.length === 0 ? (
                   <div className="text-xs text-slate-600 py-4 text-center">No patients scheduled.</div>
@@ -3307,11 +3358,14 @@ export function TeamPortalShell({
                       return (
                         <div
                           key={(p.patientScreeningId ?? p.name) + ""}
-                          className={`relative rounded-xl border border-l-4 px-2 py-1.5 text-slate-900 shadow-sm transition-colors ${
-                            consentDone ? "border-l-emerald-400" : "border-l-amber-400"
-                          } ${
-                            isSelected && centerMode === "patient" ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
+                          className={`relative rounded-lg border border-l-4 px-2 py-1.5 text-slate-900 transition-colors ${
+                            isSelected && centerMode === "patient" ? "bg-slate-900/[0.04]" : "hover:bg-slate-900/[0.03]"
                           }`}
+                          style={{
+                            backgroundColor: isSelected && centerMode === "patient" ? undefined : SKETCH_COLORS.paper,
+                            borderColor: "rgba(148,163,184,0.35)",
+                            borderLeftColor: consentDone ? "var(--sketch-green)" : "var(--sketch-gold)",
+                          }}
                           data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
                         >
                           <button
@@ -3328,13 +3382,13 @@ export function TeamPortalShell({
                                 </div>
                               </div>
                               {consentDone ? (
-                                <Badge className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0">
+                                <SketchBadge tone="green">
                                   <Check className="h-2.5 w-2.5 mr-0.5" /> Consent ✓
-                                </Badge>
+                                </SketchBadge>
                               ) : (
-                                <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0">
+                                <SketchBadge tone="gold">
                                   <AlertCircle className="h-2.5 w-2.5 mr-0.5" /> Needed
-                                </Badge>
+                                </SketchBadge>
                               )}
                             </div>
                           </button>
@@ -3477,7 +3531,8 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-xl border border-blue-100/60 bg-blue-50/40 px-2 py-1.5 text-slate-900 shadow-sm backdrop-blur-sm transition-all hover:bg-blue-100/50 hover:shadow-[0_0_12px_rgba(72,99,160,0.18)]"
+                          className="rounded-lg border border-l-2 px-2 py-1.5 text-slate-900 transition-colors hover:bg-slate-900/[0.03]"
+                          style={{ backgroundColor: SKETCH_COLORS.paper, borderColor: "rgba(148,163,184,0.35)", borderLeftColor: "var(--sketch-blue)" }}
                           data-testid={`workspace-call-${row.id ?? idx}`}
                         >
                           {/* Minimal card: just the patient name + a circular

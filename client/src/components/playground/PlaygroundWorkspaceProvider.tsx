@@ -47,6 +47,15 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [workspaces, activeWorkspaceId]);
 
+  // Workspace-owned save handlers, keyed by workspace id. Populated via
+  // registerSaveHandler; consumed by saveWorkspace (Save & Close). Kept in a
+  // ref so registering does not trigger re-renders.
+  const saveHandlers = useRef<Map<string, () => Promise<boolean>>>(new Map());
+
+  // Monotonic focus token source. Every focus-intent open bumps this so a
+  // renderer can act on the change exactly once.
+  const focusTokenSeq = useRef(0);
+
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
     [workspaces, activeWorkspaceId],
@@ -84,7 +93,11 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
         return existingDef && existingDef.dedupeKey(w) === dedupeKey;
       });
       if (existing) {
-        // Focus existing + optionally update context.
+        // Focus existing + optionally update context. Bump the one-shot focus
+        // token only when this open carries focus intent, so re-clicking the
+        // same queue row scrolls/highlights again without spurious refocus.
+        const hasFocusIntent = request.focusSection != null || request.focusObjectId != null;
+        const nextToken = hasFocusIntent ? ++focusTokenSeq.current : existing.focusToken;
         setWorkspaces((prev) => prev.map((w) =>
           w.id === existing.id
             ? {
@@ -93,6 +106,10 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
                 focusSection: request.focusSection ?? w.focusSection,
                 focusObjectId: request.focusObjectId ?? w.focusObjectId,
                 serviceKey: request.serviceKey ?? w.serviceKey,
+                executionCaseId: request.executionCaseId ?? w.executionCaseId,
+                ancillaryCaseId: request.ancillaryCaseId ?? w.ancillaryCaseId,
+                serviceEpisodeId: request.serviceEpisodeId ?? w.serviceEpisodeId,
+                focusToken: nextToken,
               }
             : w,
         ));
@@ -121,6 +138,9 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
       conversationId: request.conversationId ?? null,
       focusSection: request.focusSection ?? null,
       focusObjectId: request.focusObjectId ?? null,
+      focusToken: (request.focusSection != null || request.focusObjectId != null)
+        ? ++focusTokenSeq.current
+        : 0,
       facilityId: request.facilityId ?? null,
       source: request.source,
       pinned: false,
@@ -142,6 +162,7 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
   }, []);
 
   const closeWorkspace = useCallback((id: string) => {
+    saveHandlers.current.delete(id);
     setWorkspaces((prev) => {
       const idx = prev.findIndex((w) => w.id === id);
       const next = prev.filter((w) => w.id !== id);
@@ -155,13 +176,27 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
   }, [activeWorkspaceId]);
 
   const closeOtherWorkspaces = useCallback((keepId: string) => {
-    setWorkspaces((prev) => prev.filter((w) => w.id === keepId || w.pinned));
+    // Dirty protection: never silently drop unsaved work. Keep the target, any
+    // pinned tabs, and any dirty tabs; close the rest.
+    setWorkspaces((prev) => {
+      prev.forEach((w) => {
+        if (w.id !== keepId && !w.pinned && !w.dirty) saveHandlers.current.delete(w.id);
+      });
+      return prev.filter((w) => w.id === keepId || w.pinned || w.dirty);
+    });
     setActiveWorkspaceId(keepId);
   }, []);
 
   const closeAllWorkspaces = useCallback(() => {
-    setWorkspaces((prev) => prev.filter((w) => w.pinned));
-    setActiveWorkspaceId(null);
+    // Dirty protection: keep pinned + dirty tabs.
+    setWorkspaces((prev) => {
+      prev.forEach((w) => {
+        if (!w.pinned && !w.dirty) saveHandlers.current.delete(w.id);
+      });
+      const kept = prev.filter((w) => w.pinned || w.dirty);
+      setActiveWorkspaceId(kept[0]?.id ?? null);
+      return kept;
+    });
   }, []);
 
   const pinWorkspace = useCallback((id: string, pinned: boolean) => {
@@ -172,6 +207,34 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
     setWorkspaces((prev) => prev.map((w) =>
       w.id === id ? { ...w, dirty, dirtyDescription: description } : w,
     ));
+  }, []);
+
+  const registerSaveHandler = useCallback((id: string, handler: () => Promise<boolean>) => {
+    saveHandlers.current.set(id, handler);
+    return () => {
+      // Only delete if still the same handler (guards against unmount races).
+      if (saveHandlers.current.get(id) === handler) saveHandlers.current.delete(id);
+    };
+  }, []);
+
+  const saveWorkspace = useCallback(async (id: string): Promise<boolean> => {
+    const handler = saveHandlers.current.get(id);
+    if (!handler) {
+      // No registered saver — nothing to persist, treat as a no-op success so
+      // the caller can proceed to clear dirty + close.
+      return true;
+    }
+    try {
+      const ok = await handler();
+      if (ok) {
+        setWorkspaces((prev) => prev.map((w) =>
+          w.id === id ? { ...w, dirty: false, dirtyDescription: undefined } : w,
+        ));
+      }
+      return ok;
+    } catch {
+      return false;
+    }
   }, []);
 
   const updateWorkspace = useCallback((id: string, patch: Partial<PlaygroundWorkspace>) => {
@@ -225,10 +288,13 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
     updateWorkspace,
     reorderWorkspace,
     goHome,
+    registerSaveHandler,
+    saveWorkspace,
     foregroundPatientId,
   }), [workspaces, activeWorkspaceId, activeWorkspace, openWorkspace, focusWorkspace,
     closeWorkspace, closeOtherWorkspaces, closeAllWorkspaces, pinWorkspace, setDirty,
-    updateWorkspace, reorderWorkspace, goHome, foregroundPatientId]);
+    updateWorkspace, reorderWorkspace, goHome, registerSaveHandler, saveWorkspace,
+    foregroundPatientId]);
 
   return <PlaygroundCtx.Provider value={api}>{children}</PlaygroundCtx.Provider>;
 }

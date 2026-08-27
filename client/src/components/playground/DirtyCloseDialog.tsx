@@ -4,7 +4,7 @@
 // Can be consumed by any workspace that supports dirty-state.
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { SketchButton } from "./sketch/SketchPrimitives";
 import { AlertTriangle } from "lucide-react";
 
 export type DirtyCloseAction = "save" | "discard" | "cancel";
@@ -42,34 +42,37 @@ export function DirtyCloseDialog({
           )}
         </div>
         <DialogFooter className="flex gap-2 sm:justify-between">
-          <Button
+          <SketchButton
             variant="ghost"
             size="sm"
+            seedId="dirty-close-cancel"
             onClick={() => onAction("cancel")}
             disabled={saving}
             data-testid="dirty-close-cancel"
           >
             Cancel
-          </Button>
+          </SketchButton>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
+            <SketchButton
+              variant="danger"
               size="sm"
+              seedId="dirty-close-discard"
               onClick={() => onAction("discard")}
               disabled={saving}
-              className="text-rose-600 hover:text-rose-700"
               data-testid="dirty-close-discard"
             >
               Discard
-            </Button>
-            <Button
+            </SketchButton>
+            <SketchButton
+              variant="primary"
               size="sm"
+              seedId="dirty-close-save"
               onClick={() => onAction("save")}
               disabled={saving}
               data-testid="dirty-close-save"
             >
               {saving ? "Saving..." : "Save & Close"}
-            </Button>
+            </SketchButton>
           </div>
         </DialogFooter>
       </DialogContent>

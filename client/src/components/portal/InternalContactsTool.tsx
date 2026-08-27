@@ -6,10 +6,8 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Loader2, Phone, Search, Mail } from "lucide-react";
+import { SketchSurface, SketchInput, SketchBadge } from "@/components/playground/sketch/SketchPrimitives";
 import {
   fetchContacts,
   type ContactRow,
@@ -42,10 +40,10 @@ export function InternalContactsTool() {
 
   return (
     <div
-      className="flex h-full w-full flex-col gap-3 overflow-hidden p-4"
+      className="flex h-full w-full flex-col gap-3 overflow-hidden bg-transparent p-4"
       data-testid="portal-internal-contacts"
     >
-      <Card className="p-3 bg-white">
+      <SketchSurface seedId="contacts-header">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Phone className="h-4 w-4 text-slate-500" /> Internal Contacts
         </div>
@@ -53,35 +51,43 @@ export function InternalContactsTool() {
           Live directory from /api/contacts — no hardcoded list.
           Admins maintain the directory; everyone reads.
         </div>
-      </Card>
+      </SketchSurface>
 
-      <Card className="p-3 bg-white space-y-2">
+      <SketchSurface seedId="contacts-filters" className="space-y-2">
         <div className="flex items-center gap-2">
-          <Search className="h-4 w-4 text-slate-400" />
-          <Input
+          <Search className="h-4 w-4 text-slate-400 shrink-0" />
+          <SketchInput
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search name / phone / org…"
-            className="h-8 text-xs"
+            containerClassName="flex-1"
             data-testid="contacts-search"
           />
         </div>
         <div className="flex flex-wrap gap-1">
-          {(["all", "facility", "physician", "vendor_report", "escalation", "team_member"] as const).map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setCategory(c)}
-              className={`px-2 py-0.5 text-[10px] rounded ${category === c ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-700"}`}
-              data-testid={`contacts-cat-${c}`}
-            >
-              {c === "all" ? "All" : CONTACT_CATEGORY_LABELS[c]}
-            </button>
-          ))}
+          {(["all", "facility", "physician", "vendor_report", "escalation", "team_member"] as const).map((c) => {
+            const on = category === c;
+            return (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCategory(c)}
+                className="rounded px-2 py-0.5 text-[10px] transition-colors"
+                style={
+                  on
+                    ? { color: "var(--sketch-blue)", backgroundColor: "rgba(84,106,154,0.14)", boxShadow: "inset 0 -1.5px 0 var(--sketch-blue)" }
+                    : { color: "#64748B", backgroundColor: "rgba(148,163,184,0.12)" }
+                }
+                data-testid={`contacts-cat-${c}`}
+              >
+                {c === "all" ? "All" : CONTACT_CATEGORY_LABELS[c]}
+              </button>
+            );
+          })}
         </div>
-      </Card>
+      </SketchSurface>
 
-      <Card className="flex-1 min-h-0 bg-white overflow-y-auto p-3" data-testid="contacts-list">
+      <SketchSurface seedId="contacts-list" className="flex-1 min-h-0 overflow-y-auto" data-testid="contacts-list">
         {isLoading ? (
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading contacts…
@@ -97,11 +103,11 @@ export function InternalContactsTool() {
               : "No matches."}
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="divide-y divide-slate-200/60">
             {filtered.map((r) => (
               <li
                 key={r.id}
-                className="rounded border border-slate-100 bg-slate-50/30 p-2"
+                className="px-1 py-2"
                 data-testid={`contact-row-${r.id}`}
               >
                 <div className="flex items-center justify-between">
@@ -114,9 +120,7 @@ export function InternalContactsTool() {
                     </div>
                   </div>
                   {r.isOnCall ? (
-                    <Badge className="text-[10px]" variant="default">
-                      on-call
-                    </Badge>
+                    <SketchBadge tone="green">on-call</SketchBadge>
                   ) : null}
                 </div>
                 <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-700">
@@ -134,7 +138,7 @@ export function InternalContactsTool() {
             ))}
           </ul>
         )}
-      </Card>
+      </SketchSurface>
     </div>
   );
 }

@@ -42,12 +42,18 @@ export function PatientChart({
   onSchedule,
   loadingSections,
   onVisibleSectionsChange,
+  focusSection,
+  focusToken,
 }: {
   chart: EmrChart;
   onBack?: () => void;
   onSchedule?: () => void;
   loadingSections?: Set<string>;
   onVisibleSectionsChange?: (ids: string[]) => void;
+  /** Section id to scroll/highlight when the workspace requests service focus. */
+  focusSection?: string | null;
+  /** One-shot token; a new value triggers the focus once (not on every render). */
+  focusToken?: number;
 }) {
   const d = chart.demographics;
   const { getSectionAccess } = usePatientDirectorySectionAccess();
@@ -59,6 +65,12 @@ export function PatientChart({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const manualScrollUntil = useRef<number>(0);
   const visibleSig = useRef<string>("");
+
+  // Service-focus: transiently highlight a section when the workspace requests
+  // focus (e.g. clicking a service row in the right-rail Ancillary queue).
+  const [highlightedSection, setHighlightedSection] = useState<string | null>(null);
+  const consumedFocusToken = useRef<number | undefined>(undefined);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Scroll-spy ─────────────────────────────────────────────────────────
   const handleScroll = useCallback(() => {
@@ -109,6 +121,42 @@ export function PatientChart({
     setActiveSection(id);
     const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 16;
     container.scrollTo({ top, behavior: "smooth" });
+  }, []);
+
+  // One-shot service focus. Runs only when focusToken changes to a new value,
+  // so it does not retrigger on unrelated re-renders. Scrolls to the requested
+  // section and applies a transient highlight. Retries briefly because the
+  // target section may still be hydrating (per-section skeletons).
+  useEffect(() => {
+    if (focusToken == null || focusToken === 0) return;
+    if (consumedFocusToken.current === focusToken) return;
+    if (!focusSection) return;
+
+    let attempts = 0;
+    let raf = 0;
+    const tryFocus = () => {
+      const el = document.getElementById(`section-${focusSection}`);
+      if (el) {
+        consumedFocusToken.current = focusToken;
+        scrollToSection(focusSection);
+        setHighlightedSection(focusSection);
+        if (highlightTimer.current) clearTimeout(highlightTimer.current);
+        highlightTimer.current = setTimeout(() => setHighlightedSection(null), 2200);
+        return;
+      }
+      if (attempts++ < 40) {
+        raf = window.setTimeout(tryFocus, 100); // up to ~4s while sections hydrate
+      }
+    };
+    tryFocus();
+
+    return () => {
+      if (raf) clearTimeout(raf);
+    };
+  }, [focusToken, focusSection, scrollToSection]);
+
+  useEffect(() => () => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
   }, []);
 
   const phoneHref = d.phoneNumber ? `tel:${d.phoneNumber.replace(/[^\d+]/g, "")}` : null;
@@ -295,7 +343,16 @@ export function PatientChart({
                   );
                 }
                 const Comp = s.Component;
-                return <Comp key={s.id} chart={chart} />;
+                const focused = highlightedSection === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    className={focused ? "rounded-2xl ring-2 ring-[#3169E8] ring-offset-2 transition-shadow duration-500" : "transition-shadow duration-500"}
+                    data-focused={focused ? "true" : undefined}
+                  >
+                    <Comp chart={chart} />
+                  </div>
+                );
               })}
               <div className="h-32" aria-hidden />
             </div>

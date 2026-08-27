@@ -11,11 +11,13 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Loader2, NotebookPen, Search } from "lucide-react";
+import {
+  SketchSurface,
+  SketchButton,
+  SketchInput,
+  SketchTextarea,
+} from "@/components/playground/sketch/SketchPrimitives";
 import { useToast } from "@/hooks/use-toast";
 import { searchPatientDirectory } from "@/lib/patientDirectoryApi";
 import { createPatientNote } from "@/lib/patientNotesApi";
@@ -59,10 +61,10 @@ export function QuickNoteTool() {
 
   return (
     <div
-      className="flex h-full w-full flex-col gap-3 overflow-hidden p-4"
+      className="flex h-full w-full flex-col gap-3 overflow-hidden bg-transparent p-4"
       data-testid="portal-quick-note"
     >
-      <Card className="p-3 bg-white">
+      <SketchSurface seedId="quick-note-header">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <NotebookPen className="h-4 w-4 text-slate-500" /> Quick Note
         </div>
@@ -71,33 +73,34 @@ export function QuickNoteTool() {
           persist to /api/patient-notes and appear in the center
           patient canvas + Patient EHR.
         </div>
-      </Card>
+      </SketchSurface>
 
       {picked ? (
-        <Card className="p-3 bg-white" data-testid="quick-note-selected-patient">
+        <SketchSurface seedId="quick-note-selected" data-testid="quick-note-selected-patient">
           <div className="flex items-center justify-between">
             <div className="text-sm text-slate-900">
               For: <span className="font-medium">{picked.name}</span>
             </div>
-            <Button
+            <SketchButton
               size="sm"
               variant="ghost"
+              seedId="quick-note-change"
               onClick={() => setPicked(null)}
               data-testid="quick-note-change-patient"
             >
               Change
-            </Button>
+            </SketchButton>
           </div>
-        </Card>
+        </SketchSurface>
       ) : (
-        <Card className="p-3 bg-white space-y-2">
+        <SketchSurface seedId="quick-note-search-surface" className="space-y-2">
           <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-slate-400" />
-            <Input
+            <Search className="h-4 w-4 text-slate-400 shrink-0" />
+            <SketchInput
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search patient by name…"
-              className="h-8 text-xs"
+              containerClassName="flex-1"
               data-testid="quick-note-search"
             />
           </div>
@@ -127,21 +130,24 @@ export function QuickNoteTool() {
               ))}
             </ul>
           )}
-        </Card>
+        </SketchSurface>
       )}
 
-      <Card className="p-3 bg-white flex-1 min-h-0 flex flex-col">
-        <Textarea
+      <SketchSurface seedId="quick-note-body-surface" className="flex-1 min-h-0 flex flex-col">
+        <SketchTextarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
           placeholder={picked ? "Type your note…" : "Pick a patient first."}
           disabled={!picked || saveMutation.isPending}
-          className="flex-1 min-h-[120px] text-sm"
+          containerClassName="flex-1 min-h-[120px]"
+          className="h-full min-h-[120px]"
           data-testid="quick-note-body"
         />
         <div className="mt-2 flex items-center justify-end">
-          <Button
+          <SketchButton
+            variant="primary"
             size="sm"
+            seedId="quick-note-save"
             onClick={() => saveMutation.mutate()}
             disabled={!picked || !body.trim() || saveMutation.isPending}
             data-testid="quick-note-save"
@@ -153,9 +159,9 @@ export function QuickNoteTool() {
             ) : (
               "Save note"
             )}
-          </Button>
+          </SketchButton>
         </div>
-      </Card>
+      </SketchSurface>
     </div>
   );
 }

@@ -10,23 +10,17 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  SketchDialog as Dialog,
+  SketchDialogContent as DialogContent,
+  SketchDialogHeader as DialogHeader,
+  SketchDialogTitle as DialogTitle,
+  SketchDialogFooter as DialogFooter,
+} from "@/components/playground/sketch/SketchOverlays";
+import { SketchButton } from "@/components/playground/sketch/SketchPrimitives";
+import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import {
   SERVICE_OPTIONS,
   TIME_SLOTS,
@@ -298,34 +292,38 @@ export function CalendarQuickScheduleDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="quick-schedule-time">Time</Label>
-            <Select value={time} onValueChange={setTime}>
-              <SelectTrigger id="quick-schedule-time" data-testid="select-quick-schedule-time">
-                <SelectValue placeholder="Select a time" />
-              </SelectTrigger>
-              <SelectContent className="z-[95]">
-                {TIME_SLOTS.map((slot) => (
-                  <SelectItem key={slot} value={slot}>
-                    {prettyTime(slot)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SketchSelect
+              id="quick-schedule-time"
+              seedId="quick-schedule-time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="w-full"
+              containerClassName="w-full"
+              data-testid="select-quick-schedule-time"
+            >
+              <option value="" disabled>Select a time</option>
+              {TIME_SLOTS.map((slot) => (
+                <option key={slot} value={slot}>{prettyTime(slot)}</option>
+              ))}
+            </SketchSelect>
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="quick-schedule-service">Service</Label>
-            <Select value={service} onValueChange={setService}>
-              <SelectTrigger id="quick-schedule-service" data-testid="select-quick-schedule-service">
-                <SelectValue placeholder="Select a service" />
-              </SelectTrigger>
-              <SelectContent className="z-[95]">
-                {SERVICE_OPTIONS.map((opt) => (
-                  <SelectItem key={opt} value={opt}>
-                    {opt}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SketchSelect
+              id="quick-schedule-service"
+              seedId="quick-schedule-service"
+              value={service}
+              onChange={(e) => setService(e.target.value)}
+              className="w-full"
+              containerClassName="w-full"
+              data-testid="select-quick-schedule-service"
+            >
+              <option value="" disabled>Select a service</option>
+              {SERVICE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </SketchSelect>
           </div>
 
           <div className="space-y-1.5">
@@ -511,17 +509,20 @@ export function CalendarQuickScheduleDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button
+          <SketchButton
             type="button"
-            variant="outline"
+            variant="secondary"
+            seedId="quick-schedule-playground"
             disabled={!canProceed || bookMutation.isPending}
             onClick={() => onOpenInPlayground(payload)}
             data-testid="button-quick-schedule-playground"
           >
             Open in Playground
-          </Button>
-          <Button
+          </SketchButton>
+          <SketchButton
             type="button"
+            variant="primary"
+            seedId="quick-schedule-submit"
             disabled={!canProceed || bookMutation.isPending}
             onClick={handleSchedule}
             data-testid="button-quick-schedule-submit"
@@ -536,7 +537,7 @@ export function CalendarQuickScheduleDialog({
             ) : (
               "Schedule"
             )}
-          </Button>
+          </SketchButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

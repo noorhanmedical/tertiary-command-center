@@ -149,8 +149,8 @@ export default function InvoiceDeskPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-white">
-      <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+    <div className="flex h-full flex-col overflow-hidden bg-transparent">
+      <div className="flex items-center justify-between border-b border-slate-200/60 px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0d1b3e] text-white">
             <Landmark className="h-4 w-4" />

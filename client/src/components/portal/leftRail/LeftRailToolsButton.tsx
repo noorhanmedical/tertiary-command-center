@@ -1,17 +1,20 @@
 import { type ComponentType, type ReactNode } from "react";
+import { SketchButton } from "@/components/playground/sketch/SketchPrimitives";
+import { SketchBadge } from "@/components/playground/sketch/SketchPrimitives";
 
-// Shared left-rail tool icon button. Vertical stacking layout: icon
-// over label. Used by the Team Portal left tools rail (PCS + ACS).
-
-// Light iOS-style frosted-glass color tints, keyed per dock group.
+// Shared left-rail tool icon button. Vertical stacking layout: icon over
+// label. Used by the Team Portal left tools rail (PCS + ACS). SketchUI: each
+// tile is a paper sketch button; the per-group "tint" survives as a muted
+// colored-pencil accent on the label so the grouping is still legible.
 export type ToolTint = "sky" | "amber" | "emerald" | "violet" | "slate";
 
-const TINT_INACTIVE: Record<ToolTint, string> = {
-  sky: "border-sky-200/50 bg-sky-100/40 text-slate-900 hover:bg-sky-100/70",
-  amber: "border-amber-200/50 bg-amber-100/40 text-slate-900 hover:bg-amber-100/70",
-  emerald: "border-emerald-200/50 bg-emerald-100/40 text-slate-900 hover:bg-emerald-100/70",
-  violet: "border-violet-200/50 bg-violet-100/40 text-slate-900 hover:bg-violet-100/70",
-  slate: "border-slate-200/50 bg-white/40 text-slate-900 hover:bg-white/70",
+// Muted colored-pencil accent per dock group (label color).
+const TINT_ACCENT: Record<ToolTint, string> = {
+  sky: "var(--sketch-blue)",
+  amber: "var(--sketch-gold)",
+  emerald: "var(--sketch-green)",
+  violet: "var(--sketch-violet)",
+  slate: "#475569",
 };
 
 export type LeftRailToolsButtonProps = {
@@ -47,8 +50,10 @@ export function LeftRailToolsButton({
   testId,
 }: LeftRailToolsButtonProps) {
   return (
-    <button
-      type="button"
+    <SketchButton
+      variant="secondary"
+      seedId={`rail-tool-${testId}`}
+      active={active}
       onClick={onClick}
       aria-pressed={active}
       title={draggable ? `${label} — click to open, drag onto Playground` : label}
@@ -56,22 +61,25 @@ export function LeftRailToolsButton({
       draggable={draggable}
       onDragStart={onDragStart}
       className={[
-        "group relative inline-flex flex-col items-center justify-center gap-1 rounded-xl border text-center backdrop-blur-md transition-colors",
-        compact ? "aspect-square w-full p-0" : "px-2 py-2",
-        active
-          ? "border-white/60 bg-white/80 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.18)]"
-          : TINT_INACTIVE[tint],
-        draggable ? "cursor-grab active:cursor-grabbing hover:ring-1 hover:ring-dashed hover:ring-indigo-300" : "",
+        "relative flex-col gap-1 text-center",
+        compact ? "aspect-square w-full !px-0 !py-0" : "w-full !px-2 !py-2",
+        draggable ? "cursor-grab active:cursor-grabbing" : "",
       ].join(" ")}
       data-testid={testId}
     >
-      <Icon className="h-4 w-4" />
-      {!compact && <span className="text-[9px] font-medium leading-tight">{label}</span>}
-      {badge ? (
-        <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-semibold text-white">
-          {badge}
+      <span style={{ color: active ? TINT_ACCENT[tint] : undefined }} className="inline-flex">
+        <Icon className="h-4 w-4" />
+      </span>
+      {!compact && (
+        <span className="text-[9px] font-medium leading-tight" style={{ color: TINT_ACCENT[tint] }}>
+          {label}
+        </span>
+      )}
+      {badge != null ? (
+        <span className="absolute -top-1.5 -right-1.5">
+          <SketchBadge tone="gold">{badge}</SketchBadge>
         </span>
       ) : null}
-    </button>
+    </SketchButton>
   );
 }

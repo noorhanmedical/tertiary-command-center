@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
 import { Loader2, ClipboardList } from "lucide-react";
+import {
+  SketchSurface,
+  SketchSectionHeader,
+  SketchBadge,
+} from "@/components/playground/sketch/SketchPrimitives";
 
 // Plexus Tasks tab — embeds the canonical Plexus task feed for the
 // session user (or a single patient when one is selected). Reads
@@ -43,18 +47,15 @@ export function PortalPlexusTasksTab({
   });
 
   return (
-    <div className="flex h-full w-full flex-col gap-3 overflow-hidden p-4" data-testid="portal-plexus-tasks">
-      <Card className="p-3 bg-white">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-          <ClipboardList className="h-4 w-4 text-slate-500" />
-          {patientScreeningId ? "Patient Plexus tasks" : "My Plexus tasks"}
-          <span className="ml-auto text-[10px] font-normal text-slate-500">
-            Canonical: plexus_tasks
-          </span>
-        </div>
-      </Card>
+    <div className="flex h-full w-full flex-col gap-3 overflow-hidden bg-transparent p-4" data-testid="portal-plexus-tasks">
+      <SketchSectionHeader
+        seedId="plexus-tasks-header"
+        icon={<ClipboardList className="h-4 w-4" />}
+        title={patientScreeningId ? "Patient Plexus tasks" : "My Plexus tasks"}
+        right={<span className="text-[10px] font-normal text-slate-500">Canonical: plexus_tasks</span>}
+      />
 
-      <Card className="flex-1 min-h-0 p-3 bg-white overflow-y-auto">
+      <SketchSurface seedId="plexus-tasks-list" className="flex-1 min-h-0 overflow-y-auto" padded>
         {isLoading ? (
           <div className="flex items-center gap-2 text-xs text-slate-500 italic py-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading tasks…
@@ -68,11 +69,11 @@ export function PortalPlexusTasksTab({
             No tasks {patientScreeningId ? "for this patient" : "assigned to you"}.
           </div>
         ) : (
-          <ul className="space-y-1.5" data-testid="portal-plexus-tasks-list">
+          <ul className="divide-y divide-slate-200/60" data-testid="portal-plexus-tasks-list">
             {data.map((t) => (
               <li
                 key={t.id}
-                className="rounded-lg border border-slate-100 bg-slate-50/40 px-3 py-2"
+                className="px-1 py-2.5"
                 data-testid={`portal-plexus-task-${t.id}`}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -85,9 +86,7 @@ export function PortalPlexusTasksTab({
                     </div>
                   </div>
                   {t.status && (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
-                      {t.status}
-                    </span>
+                    <SketchBadge tone={taskStatusTone(t.status)}>{t.status}</SketchBadge>
                   )}
                 </div>
                 {t.description ? (
@@ -97,7 +96,17 @@ export function PortalPlexusTasksTab({
             ))}
           </ul>
         )}
-      </Card>
+      </SketchSurface>
     </div>
   );
+}
+
+// Map a task status to a muted colored-pencil tone.
+function taskStatusTone(status: string): "graphite" | "blue" | "green" | "gold" | "red" {
+  const s = status.toLowerCase();
+  if (s.includes("done") || s.includes("complete") || s.includes("closed")) return "green";
+  if (s.includes("progress") || s.includes("active") || s.includes("open")) return "blue";
+  if (s.includes("block") || s.includes("overdue") || s.includes("fail")) return "red";
+  if (s.includes("pending") || s.includes("wait") || s.includes("hold")) return "gold";
+  return "graphite";
 }

@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useSketchEnv } from "@/components/playground/sketch/PlaygroundSketchProvider";
+import { SketchAwareButton } from "@/components/playground/sketch/SketchAwareButton";
+import { SketchSurface, SketchBadge, SketchButton } from "@/components/playground/sketch/SketchPrimitives";
 import {
   Phone,
   PhoneOff,
@@ -44,6 +46,16 @@ export type CallWorkspaceProps = {
   onOpenCase: () => void;
   /** Close this Call tab. */
   onClose: () => void;
+  /** Optional — bubbled from the disposition sheet's unsaved-draft state. */
+  onDraftChange?: (dirty: boolean, description?: string) => void;
+  /** Optional — fired after a call is successfully logged (canonical save). */
+  onLogged?: () => void;
+  /**
+   * Optional one-shot signal: when this number increases, the disposition
+   * sheet is opened. Lets a host (Playground "Save & Close") route the user to
+   * complete the canonical disposition instead of silently persisting.
+   */
+  requestOpenDisposition?: number;
 };
 
 // Quick-disposition shortcuts. Each pre-selects an outcome in the
@@ -72,6 +84,99 @@ const TONE_CLASS: Record<string, string> = {
   slate: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
 };
 
+// Context-aware panel: a SketchSurface inside the Playground canvas, a plain
+// Card everywhere else (e.g. the non-Playground quick-dial Dialog). Keeps ONE
+// CallWorkspace implementation while honoring the visual-split contract.
+function Panel({
+  children,
+  seedId,
+  className,
+  testId,
+}: {
+  children: ReactNode;
+  seedId: string;
+  className?: string;
+  testId?: string;
+}) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    return (
+      <SketchSurface seedId={seedId} className={className} data-testid={testId}>
+        {children}
+      </SketchSurface>
+    );
+  }
+  return (
+    <Card className={`p-4 bg-white ${className ?? ""}`} data-testid={testId}>
+      {children}
+    </Card>
+  );
+}
+
+// Quick-outcome shortcut — SketchButton inside the Playground, the original
+// tone-classed button in the non-Playground quick-dial Dialog.
+function QuickOutcomeButton({
+  value,
+  label,
+  tone,
+  disabled,
+  onSelect,
+}: {
+  value: string;
+  label: string;
+  tone: "emerald" | "amber" | "slate" | "rose";
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    const variant = tone === "rose" ? "danger" : "secondary";
+    return (
+      <SketchButton
+        type="button"
+        variant={variant}
+        size="sm"
+        seedId={`quick-outcome-${value}`}
+        onClick={onSelect}
+        disabled={disabled}
+        className="justify-start"
+        data-testid={`call-quick-outcome-${value}`}
+      >
+        {label}
+      </SketchButton>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      className={`rounded-md border px-3 py-2 text-left text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${TONE_CLASS[tone]}`}
+      data-testid={`call-quick-outcome-${value}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+// Target-service chip — SketchBadge inside the Playground, shadcn Badge in the
+// non-Playground quick-dial Dialog.
+function TargetChip({ label }: { label: string }) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    return (
+      <span data-testid={`call-target-${label}`}>
+        <SketchBadge tone="blue">{label}</SketchBadge>
+      </span>
+    );
+  }
+  return (
+    <Badge variant="secondary" data-testid={`call-target-${label}`}>
+      {label}
+    </Badge>
+  );
+}
+
 function StatusPill({
   label,
   tone = "slate",
@@ -79,6 +184,11 @@ function StatusPill({
   label: string;
   tone?: "slate" | "emerald" | "amber" | "rose" | "sky";
 }) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    const map = { slate: "graphite", emerald: "green", amber: "gold", rose: "red", sky: "blue" } as const;
+    return <SketchBadge tone={map[tone]}>{label}</SketchBadge>;
+  }
   const tones: Record<string, string> = {
     slate: "bg-slate-100 text-slate-700",
     emerald: "bg-emerald-100 text-emerald-700",
@@ -134,14 +244,14 @@ function ProofDocRow({
               rel="noreferrer"
               data-testid={`call-proof-open-${testKey}`}
             >
-              <Button size="sm" variant="outline" type="button">
+              <SketchAwareButton size="sm" variant="outline" type="button" seedId={`proof-open-${testKey}`}>
                 <ExternalLink className="mr-1 h-3.5 w-3.5" /> Open
-              </Button>
+              </SketchAwareButton>
             </a>
             <a href={doc.downloadUrl} download data-testid={`call-proof-download-${testKey}`}>
-              <Button size="sm" variant="ghost" type="button">
+              <SketchAwareButton size="sm" variant="ghost" type="button" seedId={`proof-dl-${testKey}`}>
                 <Download className="h-3.5 w-3.5" />
-              </Button>
+              </SketchAwareButton>
             </a>
           </>
         ) : (
@@ -159,6 +269,9 @@ export function CallWorkspace({
   onScheduleCase,
   onOpenCase,
   onClose,
+  onDraftChange,
+  onLogged,
+  requestOpenDisposition,
 }: CallWorkspaceProps) {
   const { toast } = useToast();
   const screeningId = ctx.patientScreeningId;
@@ -192,6 +305,18 @@ export function CallWorkspace({
     setDefaultOutcome(outcome);
     setDispositionOpen(true);
   };
+
+  // Host-driven open: when the Playground "Save & Close" flow bumps
+  // requestOpenDisposition, surface the disposition sheet so the user can
+  // complete the canonical log (we never silently persist a clinical call).
+  const lastOpenReq = useRef<number | undefined>(requestOpenDisposition);
+  useEffect(() => {
+    if (requestOpenDisposition == null) return;
+    if (lastOpenReq.current !== requestOpenDisposition) {
+      lastOpenReq.current = requestOpenDisposition;
+      setDispositionOpen(true);
+    }
+  }, [requestOpenDisposition]);
 
   async function startCall() {
     if (!phone) {
@@ -249,7 +374,7 @@ export function CallWorkspace({
       data-testid="call-workspace"
     >
       {/* ─── Header ─────────────────────────────────────────────── */}
-      <Card className="p-4 bg-white">
+      <Panel seedId="call-header">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div
@@ -301,16 +426,14 @@ export function CallWorkspace({
         {ctx.targetServices.filter(Boolean).length > 1 ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {ctx.targetServices.filter(Boolean).map((s) => (
-              <Badge key={s} variant="secondary" data-testid={`call-target-${s}`}>
-                {s}
-              </Badge>
+              <TargetChip key={s} label={s} />
             ))}
           </div>
         ) : null}
-      </Card>
+      </Panel>
 
       {/* ─── RingCentral dialer panel ───────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-dialer">
+      <Panel seedId="call-dialer" testId="call-workspace-dialer">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-slate-900">RingCentral dialer</div>
           {ringCentralEnabled && !ringCentralUnwired ? (
@@ -355,10 +478,11 @@ export function CallWorkspace({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {!callSession ? (
-                <Button
+                <SketchAwareButton
                   type="button"
                   onClick={startCall}
                   disabled={dialing || !phone}
+                  seedId="call-start"
                   data-testid="call-ringcentral-start"
                 >
                   {dialing ? (
@@ -367,16 +491,17 @@ export function CallWorkspace({
                     <PhoneCall className="mr-1 h-4 w-4" />
                   )}
                   {dialing ? "Dialing…" : "Start call"}
-                </Button>
+                </SketchAwareButton>
               ) : (
-                <Button
+                <SketchAwareButton
                   type="button"
                   variant="destructive"
                   onClick={endCall}
+                  seedId="call-end"
                   data-testid="call-ringcentral-end"
                 >
                   <PhoneOff className="mr-1 h-4 w-4" /> End call
-                </Button>
+                </SketchAwareButton>
               )}
               <span className="text-[11px] text-slate-500">
                 Disposition is logged below — a placed call is never marked complete
@@ -385,10 +510,10 @@ export function CallWorkspace({
             </div>
           </div>
         )}
-      </Card>
+      </Panel>
 
       {/* ─── Proof documents ────────────────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-proof">
+      <Panel seedId="call-proof" testId="call-workspace-proof">
         <div className="mb-2">
           <div className="text-sm font-semibold text-slate-900">Why this patient?</div>
           <div className="text-[11px] text-slate-500">
@@ -431,10 +556,10 @@ export function CallWorkspace({
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading patient context…
           </div>
         ) : null}
-      </Card>
+      </Panel>
 
       {/* ─── Disposition logging ────────────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-disposition">
+      <Panel seedId="call-disposition" testId="call-workspace-disposition">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <div className="text-sm font-semibold text-slate-900">Log call outcome</div>
@@ -445,55 +570,56 @@ export function CallWorkspace({
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {QUICK_OUTCOMES.map((o) => (
-            <button
+            <QuickOutcomeButton
               key={o.value}
-              type="button"
-              onClick={() => openDisposition(o.value)}
+              value={o.value}
+              label={o.label}
+              tone={o.tone}
               disabled={screeningId == null}
-              className={`rounded-md border px-3 py-2 text-left text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${TONE_CLASS[o.tone]}`}
-              data-testid={`call-quick-outcome-${o.value}`}
-            >
-              {o.label}
-            </button>
+              onSelect={() => openDisposition(o.value)}
+            />
           ))}
         </div>
         <div className="mt-3">
-          <Button
+          <SketchAwareButton
             type="button"
             variant="outline"
             onClick={() => openDisposition(undefined)}
             disabled={screeningId == null}
+            seedId="call-open-disposition"
             data-testid="call-open-disposition"
           >
             <Phone className="mr-1 h-4 w-4" /> Full disposition sheet
-          </Button>
+          </SketchAwareButton>
         </div>
-      </Card>
+      </Panel>
 
       {/* ─── Quick navigation ───────────────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-actions">
+      <Panel seedId="call-actions" testId="call-workspace-actions">
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={onScheduleCase} data-testid="call-open-schedule">
+          <SketchAwareButton type="button" onClick={onScheduleCase} seedId="call-open-schedule" data-testid="call-open-schedule">
             <CalendarDays className="mr-1 h-4 w-4" /> Open Schedule
-          </Button>
-          <Button
+          </SketchAwareButton>
+          <SketchAwareButton
             type="button"
             variant="outline"
             onClick={onOpenCase}
+            seedId="call-open-case"
             data-testid="call-open-case"
           >
             <Maximize2 className="mr-1 h-4 w-4" /> Open Case
-          </Button>
-          <Button
+          </SketchAwareButton>
+          <SketchAwareButton
             type="button"
             variant="ghost"
             onClick={onClose}
+            seedId="call-close-tab"
             data-testid="call-close-tab"
           >
             Close tab
-          </Button>
+          </SketchAwareButton>
         </div>
-      </Card>
+      </Panel>
 
       <DispositionSheet
         open={dispositionOpen}
@@ -503,6 +629,8 @@ export function CallWorkspace({
         schedulerUserId={null}
         priorAttempts={priorAttempts}
         defaultOutcome={defaultOutcome}
+        onDraftChange={onDraftChange}
+        onLogged={onLogged}
       />
     </div>
   );

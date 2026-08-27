@@ -38,7 +38,8 @@ export function CallRowQuickActions({
         onClick={onOpenCall}
         aria-label={`Call ${name}`}
         title="Call patient"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-emerald-600 shadow-sm transition-colors hover:border-emerald-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors hover:bg-slate-900/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
+        style={{ borderColor: "rgba(31,41,55,0.45)", backgroundColor: "#FAFBFD", color: "var(--sketch-green, #5C7A5C)" }}
         data-testid={`button-call-phone-${key}`}
       >
         <Phone className="h-4 w-4" />
@@ -49,8 +50,8 @@ export function CallRowQuickActions({
         onClick={onOpenSchedule}
         aria-label={`Schedule ${name}`}
         title="Schedule appointment"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition-colors hover:bg-blue-50"
-        style={{ color: ACCENT }}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors hover:bg-slate-900/[0.04]"
+        style={{ borderColor: "rgba(31,41,55,0.45)", backgroundColor: "#FAFBFD", color: ACCENT }}
         data-testid={`button-call-schedule-${key}`}
       >
         <CalendarIcon className="h-4 w-4" />

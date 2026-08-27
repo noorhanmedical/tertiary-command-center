@@ -5,21 +5,15 @@
 // across reloads and sync across devices.
 
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+  SketchDialog,
+  SketchDialogContent,
+  SketchDialogHeader,
+  SketchDialogTitle,
+  SketchDialogFooter,
+} from "@/components/playground/sketch/SketchOverlays";
+import { SketchButton } from "@/components/playground/sketch/SketchPrimitives";
+import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type {
   WorkspacePrefs,
@@ -69,66 +63,58 @@ export function WorkspaceSettingsDialog({
     onOpenChange(next);
   };
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md" data-testid="workspace-settings-dialog">
-        <DialogHeader>
-          <DialogTitle>Workspace Settings</DialogTitle>
-        </DialogHeader>
+    <SketchDialog open={open} onOpenChange={handleOpenChange}>
+      <SketchDialogContent className="max-w-md" data-testid="workspace-settings-dialog">
+        <SketchDialogHeader>
+          <SketchDialogTitle>Workspace Settings</SketchDialogTitle>
+        </SketchDialogHeader>
 
-        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700" data-testid="settings-saved-note">
+        <div className="rounded-lg px-3 py-2 text-[11px]" style={{ backgroundColor: "rgba(92,122,92,0.12)", color: "var(--sketch-green)" }} data-testid="settings-saved-note">
           Preferences are saved automatically and apply everywhere you sign in.
         </div>
 
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-slate-200/60">
           <Row label="Default tray tab" hint="Which communication tab opens first.">
-            <Select
+            <SketchSelect
+              seedId="setting-default-tray-tab"
               value={prefs.defaultTrayTab}
-              onValueChange={(v) => updatePref("defaultTrayTab", v as TrayTab)}
+              onChange={(e) => updatePref("defaultTrayTab", e.target.value as TrayTab)}
+              data-testid="setting-default-tray-tab"
             >
-              <SelectTrigger className="h-8 w-[140px] text-xs" data-testid="setting-default-tray-tab">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="z-[95]">
-                {/* Patient Messages / patient SMS intentionally absent —
-                    no live patient-texting path on this platform. */}
-                <SelectItem value="direct">Direct Messages</SelectItem>
-                <SelectItem value="team">Team Chat</SelectItem>
-              </SelectContent>
-            </Select>
+              {/* Patient Messages / patient SMS intentionally absent —
+                  no live patient-texting path on this platform. */}
+              <option value="direct">Direct Messages</option>
+              <option value="team">Team Chat</option>
+            </SketchSelect>
           </Row>
 
           <Row label="Calendar behavior" hint="What the Calendar tool does when clicked. Quick schedule pop-up is the default.">
-            <Select
+            <SketchSelect
+              seedId="setting-calendar-behavior"
               value={prefs.calendarBehavior}
-              onValueChange={(v) => updatePref("calendarBehavior", v as CalendarBehavior)}
+              onChange={(e) => updatePref("calendarBehavior", e.target.value as CalendarBehavior)}
+              data-testid="setting-calendar-behavior"
             >
-              <SelectTrigger className="h-8 w-[170px] text-xs" data-testid="setting-calendar-behavior">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="z-[95]">
-                <SelectItem value="quickSchedule">Quick schedule pop-up (default)</SelectItem>
-                <SelectItem value="playground">Open full calendar view</SelectItem>
-              </SelectContent>
-            </Select>
+              <option value="quickSchedule">Quick schedule pop-up (default)</option>
+              <option value="playground">Open full calendar view</option>
+            </SketchSelect>
           </Row>
 
           <Row label="Playground layout" hint="Docked single canvas or split two-up.">
-            <Select
+            <SketchSelect
+              seedId="setting-playground-layout"
               value={prefs.playgroundLayout}
-              onValueChange={(v) => updatePref("playgroundLayout", v as PlaygroundLayout)}
+              onChange={(e) => updatePref("playgroundLayout", e.target.value as PlaygroundLayout)}
+              data-testid="setting-playground-layout"
             >
-              <SelectTrigger className="h-8 w-[140px] text-xs" data-testid="setting-playground-layout">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="z-[95]">
-                <SelectItem value="docked">Docked</SelectItem>
-                <SelectItem value="split">Split</SelectItem>
-              </SelectContent>
-            </Select>
+              <option value="docked">Docked</option>
+              <option value="split">Split</option>
+            </SketchSelect>
           </Row>
 
           <Row label="Show sticky notes" hint="Show/hide Playground widgets.">
             <Switch
+              className="data-[state=checked]:bg-[color:var(--sketch-blue)]"
               checked={prefs.stickyNotesVisible}
               onCheckedChange={(v) => updatePref("stickyNotesVisible", v)}
               data-testid="setting-sticky-visible"
@@ -137,6 +123,7 @@ export function WorkspaceSettingsDialog({
 
           <Row label="Pin Tools panel by default">
             <Switch
+              className="data-[state=checked]:bg-[color:var(--sketch-blue)]"
               checked={prefs.toolsPinnedByDefault}
               onCheckedChange={(v) => updatePref("toolsPinnedByDefault", v)}
               data-testid="setting-tools-pinned"
@@ -145,6 +132,7 @@ export function WorkspaceSettingsDialog({
 
           <Row label="Pin Work Queue by default">
             <Switch
+              className="data-[state=checked]:bg-[color:var(--sketch-blue)]"
               checked={prefs.workQueuePinnedByDefault}
               onCheckedChange={(v) => updatePref("workQueuePinnedByDefault", v)}
               data-testid="setting-workqueue-pinned"
@@ -152,15 +140,15 @@ export function WorkspaceSettingsDialog({
           </Row>
         </div>
 
-        <DialogFooter className="flex items-center justify-between sm:justify-between">
-          <Button variant="ghost" size="sm" onClick={resetPrefs} data-testid="setting-reset">
+        <SketchDialogFooter className="flex items-center justify-between sm:justify-between">
+          <SketchButton variant="ghost" size="sm" seedId="setting-reset" onClick={resetPrefs} data-testid="setting-reset">
             Reset to defaults
-          </Button>
-          <Button size="sm" onClick={() => void handleOpenChange(false)} data-testid="setting-done">
+          </SketchButton>
+          <SketchButton variant="primary" size="sm" seedId="setting-done" onClick={() => void handleOpenChange(false)} data-testid="setting-done">
             Done
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </SketchButton>
+        </SketchDialogFooter>
+      </SketchDialogContent>
+    </SketchDialog>
   );
 }

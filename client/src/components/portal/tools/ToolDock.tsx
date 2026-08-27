@@ -71,7 +71,7 @@ export function ToolDock({
         {groups.map((group, i) => (
           <div
             key={group.id}
-            className={i > 0 ? "border-t border-white/30 pt-2" : ""}
+            className={i > 0 ? "border-t border-slate-300/50 pt-2" : ""}
             data-testid={`tool-dock-group-${group.id}`}
           >
             <div className="grid grid-cols-1 gap-2">

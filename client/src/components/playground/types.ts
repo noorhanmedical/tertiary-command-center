@@ -27,6 +27,9 @@ export type PlaygroundWorkspaceType =
   | "nova"
   | "team_ops"
   | "invoice_desk"
+  | "patient_search"
+  | "scripts"
+  | "proof_pdfs"
   | "custom_tool"
   // Future:
   | "whiteboard"
@@ -63,6 +66,13 @@ export type PlaygroundWorkspace = {
   conversationId?: number | string | null;
   focusSection?: string | null;
   focusObjectId?: number | string | null;
+  /**
+   * One-shot focus token. Bumped by the provider every time this workspace is
+   * (re)opened with focus intent. Renderers consume it exactly once (scroll +
+   * highlight + expand) by tracking the last value they acted on, so focus does
+   * NOT retrigger on every React render.
+   */
+  focusToken?: number;
   facilityId?: number | string | null;
 
   /** Where this workspace was launched from. */
@@ -146,6 +156,17 @@ export type PlaygroundWorkspaceAPI = {
   updateWorkspace: (id: string, patch: Partial<PlaygroundWorkspace>) => void;
   reorderWorkspace: (fromIndex: number, toIndex: number) => void;
   goHome: () => void;
+
+  /**
+   * Register a workspace-owned save handler. Returns an unregister fn (call it
+   * on unmount). The handler runs when the user picks "Save & Close" on a dirty
+   * workspace. Resolve `true` on a successful canonical save, `false`/throw to
+   * keep the workspace open. Reusable by any dirty-capable workspace (Call,
+   * Quick Note, Email, Tasks, ...).
+   */
+  registerSaveHandler: (id: string, handler: () => Promise<boolean>) => () => void;
+  /** Invoke a workspace's registered save handler (if any). Returns success. */
+  saveWorkspace: (id: string) => Promise<boolean>;
 
   /** The current foreground patient (derived from active workspace). */
   foregroundPatientId: number | null;

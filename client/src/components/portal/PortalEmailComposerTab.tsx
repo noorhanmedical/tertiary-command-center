@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
 import { Loader2, Mail, FileText, AlertTriangle } from "lucide-react";
+import {
+  SketchSurface,
+  SketchInput,
+  SketchTextarea,
+  SketchButton,
+} from "@/components/playground/sketch/SketchPrimitives";
 import {
   fetchMarketingMaterials,
   sendMarketingMaterial,
@@ -165,10 +168,10 @@ export function PortalEmailComposerTab({
 
   return (
     <div
-      className="flex h-full w-full flex-col gap-3 overflow-hidden p-4"
+      className="flex h-full w-full flex-col gap-3 overflow-hidden bg-transparent p-4"
       data-testid="portal-email-composer"
     >
-      <Card className="p-3 bg-white">
+      <SketchSurface seedId="email-header">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Mail className="h-4 w-4 text-slate-500" />
           Email Composer
@@ -180,11 +183,12 @@ export function PortalEmailComposerTab({
           without it, sends fail loudly and the composer does NOT pretend
           to have sent.
         </div>
-      </Card>
+      </SketchSurface>
 
       <div className="grid flex-1 min-h-0 gap-3 lg:grid-cols-[minmax(0,1fr)_300px] overflow-hidden">
-        <Card
-          className="p-4 bg-white overflow-y-auto"
+        <SketchSurface
+          seedId="email-form"
+          className="overflow-y-auto"
           data-testid="portal-email-composer-form"
         >
           {!selectedPatient && (
@@ -202,12 +206,12 @@ export function PortalEmailComposerTab({
               >
                 To
               </Label>
-              <Input
+              <SketchInput
                 id="email-to"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
                 placeholder="patient@example.com"
-                className="mt-1 h-8 text-xs"
+                containerClassName="mt-1"
                 data-testid="portal-email-composer-to"
               />
             </div>
@@ -218,7 +222,7 @@ export function PortalEmailComposerTab({
               >
                 Subject
               </Label>
-              <Input
+              <SketchInput
                 id="email-subject"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
@@ -228,7 +232,7 @@ export function PortalEmailComposerTab({
                     : "Subject"
                 }
                 disabled={attachedMaterials.length > 0}
-                className="mt-1 h-8 text-xs"
+                containerClassName="mt-1"
                 data-testid="portal-email-composer-subject"
               />
             </div>
@@ -239,7 +243,7 @@ export function PortalEmailComposerTab({
               >
                 Body
               </Label>
-              <textarea
+              <SketchTextarea
                 id="email-body"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
@@ -249,7 +253,8 @@ export function PortalEmailComposerTab({
                     : "Write your message…"
                 }
                 disabled={attachedMaterials.length > 0}
-                className="mt-1 min-h-[180px] w-full rounded-md border border-slate-200 bg-white p-2 text-xs"
+                containerClassName="mt-1"
+                className="min-h-[180px]"
                 data-testid="portal-email-composer-body"
               />
             </div>
@@ -264,10 +269,11 @@ export function PortalEmailComposerTab({
               <div className="min-w-0">{sendError}</div>
             </div>
           )}
-        </Card>
+        </SketchSurface>
 
-        <Card
-          className="p-3 bg-white overflow-y-auto"
+        <SketchSurface
+          seedId="email-attachments"
+          className="overflow-y-auto"
           data-testid="portal-email-composer-attachments"
         >
           <div className="flex items-center justify-between mb-2">
@@ -300,11 +306,12 @@ export function PortalEmailComposerTab({
                         return next;
                       })
                     }
-                    className={`flex w-full items-start gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                    className="flex w-full items-start gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors hover:bg-slate-900/[0.03]"
+                    style={
                       isAttached
-                        ? "border-indigo-300 bg-indigo-50"
-                        : "border-slate-100 bg-slate-50/40 hover:bg-slate-50"
-                    }`}
+                        ? { borderColor: "var(--sketch-blue)", backgroundColor: "rgba(84,106,154,0.12)" }
+                        : { borderColor: "rgba(148,163,184,0.35)", backgroundColor: "transparent" }
+                    }
                     data-testid={`portal-email-attach-${m.id}`}
                   >
                     <FileText className="h-3.5 w-3.5 text-slate-500 shrink-0 mt-0.5" />
@@ -322,12 +329,14 @@ export function PortalEmailComposerTab({
             })}
           </ul>
 
-          <Button
+          <SketchButton
             type="button"
+            variant="primary"
             size="sm"
+            seedId="email-send"
             disabled={sendDisabled}
             onClick={() => sendMutation.mutate()}
-            className="mt-3 w-full gap-1.5"
+            className="mt-3 w-full"
             data-testid="portal-email-composer-send"
           >
             {sendMutation.isPending ? (
@@ -336,8 +345,8 @@ export function PortalEmailComposerTab({
               <Mail className="h-3.5 w-3.5" />
             )}
             Send email
-          </Button>
-        </Card>
+          </SketchButton>
+        </SketchSurface>
       </div>
     </div>
   );

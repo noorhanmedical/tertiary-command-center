@@ -27,6 +27,8 @@ import {
   TrendingUp,
   Atom,
   Search,
+  BookOpen,
+  Megaphone,
 } from "lucide-react";
 import { NovaDockIcon } from "@/components/nova/NovaDockIcon";
 import { CallWorkspaceTab } from "./workspaces/CallWorkspaceTab";
@@ -35,6 +37,16 @@ import { ScheduleWorkspaceTab } from "./workspaces/ScheduleWorkspaceTab";
 import { DocumentsWorkspaceTab } from "./workspaces/DocumentsWorkspaceTab";
 import { NovaWorkspaceTab } from "./workspaces/NovaWorkspaceTab";
 import { PlaygroundHomeArtwork } from "./workspaces/PlaygroundHomeArtwork";
+import {
+  EmailWorkspaceTab,
+  QuickNoteWorkspaceTab,
+  PatientSearchWorkspaceTab,
+  ContactsWorkspaceTab,
+  InvoiceDeskWorkspaceTab,
+  ScriptsWorkspaceTab,
+  ProofPdfsWorkspaceTab,
+} from "./workspaces/S6WorkspaceTabs";
+import { SketchSurface } from "./sketch/SketchPrimitives";
 import type { PlaygroundWorkspaceDefinition, PlaygroundWorkspace, PlaygroundWorkspaceType } from "./types";
 
 // ─── Patient EHR workspace renderer ───────────────────────────────────────
@@ -56,18 +68,34 @@ function PatientEhrWorkspace({ workspace, isActive }: WorkspaceRenderProps) {
       seedName={workspace.title}
       onBack={undefined}
       onSchedule={undefined}
+      focusSection={workspace.focusSection ?? undefined}
+      focusToken={workspace.focusToken}
     />
   );
 }
 
 function PlaceholderWorkspace({ workspace }: { workspace: PlaygroundWorkspace; isActive: boolean }) {
+  // Sketch empty-state for workspace types that have no real implementation
+  // yet (scaffold). Honest copy — does not pretend the feature exists.
   return (
-    <div className="flex h-full items-center justify-center text-slate-400" data-testid={`workspace-placeholder-${workspace.type}`}>
-      <div className="text-center space-y-2">
-        <div className="text-lg font-medium text-slate-600">{workspace.title}</div>
-        <div className="text-sm">Workspace: {workspace.type}</div>
-        {workspace.patientScreeningId && <div className="text-xs">Patient #{workspace.patientScreeningId}</div>}
-      </div>
+    <div
+      className="flex h-full w-full items-center justify-center bg-transparent p-6"
+      data-testid={`workspace-placeholder-${workspace.type}`}
+    >
+      <SketchSurface seedId={`placeholder-${workspace.type}`} className="max-w-sm text-center">
+        <div className="text-base font-semibold text-slate-800">{workspace.title}</div>
+        <div className="mt-1 text-xs text-slate-500">
+          This workspace is scaffolded — no functional implementation is wired yet.
+        </div>
+        <div className="mt-2 text-[10px] uppercase tracking-wider text-slate-400">
+          {workspace.type}
+        </div>
+        {workspace.patientScreeningId ? (
+          <div className="mt-1 text-[11px] text-slate-500 tabular-nums">
+            Patient #{workspace.patientScreeningId}
+          </div>
+        ) : null}
+      </SketchSurface>
     </div>
   );
 }
@@ -183,11 +211,11 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "email",
     icon: Mail,
-    render: PlaceholderWorkspace,
+    render: EmailWorkspaceTab,
     dedupeKey: singletonDedupeKey("email"),
     supportsPatientContext: true,
     supportsDirtyState: true,
-    keepAlive: true,
+    keepAlive: true, // preserve email draft across tab switches
   },
   {
     type: "documents",
@@ -219,11 +247,11 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "quick_note",
     icon: NotebookPen,
-    render: PlaceholderWorkspace,
+    render: QuickNoteWorkspaceTab,
     dedupeKey: singletonDedupeKey("quick_note"),
     supportsPatientContext: true,
     supportsDirtyState: true,
-    keepAlive: true,
+    keepAlive: true, // preserve note draft across tab switches
   },
   {
     type: "sticky_notes",
@@ -237,7 +265,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "contacts",
     icon: Search,
-    render: PlaceholderWorkspace,
+    render: ContactsWorkspaceTab,
     dedupeKey: singletonDedupeKey("contacts"),
     supportsPatientContext: false,
     supportsDirtyState: false,
@@ -264,7 +292,7 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
   {
     type: "invoice_desk",
     icon: Landmark,
-    render: PlaceholderWorkspace,
+    render: InvoiceDeskWorkspaceTab,
     dedupeKey: singletonDedupeKey("invoice_desk"),
     supportsPatientContext: false,
     supportsDirtyState: false,
@@ -276,6 +304,33 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
     render: PlaceholderWorkspace,
     dedupeKey: contextDedupeKey("custom_tool"),
     supportsPatientContext: false,
+    supportsDirtyState: false,
+    keepAlive: true,
+  },
+  {
+    type: "patient_search",
+    icon: Search,
+    render: PatientSearchWorkspaceTab,
+    dedupeKey: singletonDedupeKey("patient_search"),
+    supportsPatientContext: false,
+    supportsDirtyState: false,
+    keepAlive: true,
+  },
+  {
+    type: "scripts",
+    icon: BookOpen,
+    render: ScriptsWorkspaceTab,
+    dedupeKey: singletonDedupeKey("scripts"),
+    supportsPatientContext: false,
+    supportsDirtyState: false,
+    keepAlive: true,
+  },
+  {
+    type: "proof_pdfs",
+    icon: Megaphone,
+    render: ProofPdfsWorkspaceTab,
+    dedupeKey: singletonDedupeKey("proof_pdfs"),
+    supportsPatientContext: true,
     supportsDirtyState: false,
     keepAlive: true,
   },

@@ -21,7 +21,7 @@ export function PlaygroundBridge() {
   }
 
   return (
-    <div className="h-full w-full overflow-hidden" data-testid="playground-bridge-active">
+    <div className="relative flex min-h-0 w-full flex-1 flex-col bg-transparent" data-testid="playground-bridge-active">
       <PlaygroundCanvas />
     </div>
   );
