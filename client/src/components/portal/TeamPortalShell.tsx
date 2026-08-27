@@ -21,6 +21,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
+import { AncillaryReadinessRow } from "@/components/portal/AncillaryReadinessRow";
 import type { AncillaryServiceContext } from "@/components/portal/AncillaryDocModals";
 import {
   WorkspaceModeSwitcher,
@@ -3329,10 +3330,13 @@ export function TeamPortalShell({
                     compact={rightRailSize === "small"}
                     counts={{
                       callList: workspaceCallList.length,
-                      clinicSchedule:
-                        workspaceClinicSchedule.length > 0
-                          ? workspaceClinicSchedule.length
-                          : patients.length,
+                      // Count MUST match the rows the clinicSchedule body
+                      // actually renders. The body iterates `patients` (from
+                      // /api/portal/today-schedule), not `workspaceClinicSchedule`
+                      // (/api/technician-liaison/clinic-visits), so counting the
+                      // latter could diverge from the visible rows + the in-body
+                      // badge (which also uses patients.length).
+                      clinicSchedule: patients.length,
                       ancillarySchedule: filteredAncillarySchedule.length,
                     }}
                   />
@@ -3694,6 +3698,32 @@ export function TeamPortalShell({
                               </Badge>
                             )}
                           </div>
+                          {/* Document readiness (consent / screening / brainwave)
+                              rendered inline on the row from the already-fetched
+                              row.readiness the server enriches each ancillary
+                              appointment with. ACS-only; the mark/upload actions
+                              hit existing canonical /api/portal/case-readiness
+                              routes keyed on the row's executionCaseId, and a
+                              change refetches the ancillary feed. Clicks inside
+                              this control must not bubble to the row's open-in-
+                              Playground handler. */}
+                          {workspaceCanCompleteProcedure &&
+                            row.readiness && (
+                              <div onClick={(e) => e.stopPropagation()}>
+                                <AncillaryReadinessRow
+                                  executionCaseId={row.executionCaseId ?? null}
+                                  serviceType={row.serviceType ?? null}
+                                  patientName={row.patientName ?? null}
+                                  readiness={row.readiness}
+                                  rowId={String(row.id ?? idx)}
+                                  onChanged={() =>
+                                    queryClient.invalidateQueries({
+                                      queryKey: ["team-workspace-ancillary-schedule"],
+                                    })
+                                  }
+                                />
+                              </div>
+                            )}
                           {/* Document workflows live inside the patient's
                               Playground (opened by clicking anywhere on this row),
                               keeping the schedule row clean and uncluttered. */}
