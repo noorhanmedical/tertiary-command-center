@@ -192,6 +192,13 @@ function CliniciansCard() {
   const [newFacilityIds, setNewFacilityIds] = useState<number[]>([]);
   const [editId, setEditId] = useState<number | null>(null);
   const [editFacilityIds, setEditFacilityIds] = useState<number[]>([]);
+  // Profile edit (display name + credentials) — kept separate from the
+  // facilities editor so saving one never touches the other. A PATCH from
+  // here sends ONLY { displayName, credentials }; it does not include
+  // facilityIds or active, so associations and status are untouched.
+  const [profileEditId, setProfileEditId] = useState<number | null>(null);
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editCredentials, setEditCredentials] = useState("");
 
   const facilityName = useMemo(() => {
     const m = new Map<number, string>();
@@ -232,6 +239,54 @@ function CliniciansCard() {
     updateMut.mutate({ id: c.id, body: { facilityIds: editFacilityIds } }, {
       onSuccess: () => { setEditId(null); toast({ title: "Facilities updated" }); },
     });
+  }
+
+  function startProfileEdit(c: OrgClinician) {
+    // Close the facilities editor if open on the same row so the two inline
+    // editors don't stack.
+    setEditId(null);
+    setProfileEditId(c.id);
+    setEditDisplayName(c.displayName);
+    setEditCredentials(c.credentials ?? "");
+  }
+
+  function saveProfile(c: OrgClinician) {
+    const name = editDisplayName.trim();
+    if (!name) {
+      toast({ title: "Display name is required", variant: "destructive" });
+      return;
+    }
+    // Duplicate warning (non-blocking), ignoring the clinician being edited.
+    if (
+      clinicians.some(
+        (x) => x.id !== c.id && x.displayName.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      toast({
+        title: "Possible duplicate",
+        description: `Another clinician named "${name}" already exists.`,
+        variant: "destructive",
+      });
+    }
+    // Send ONLY the profile fields. Omitting facilityIds/active means the
+    // server leaves associations and status exactly as they are. Credentials
+    // is nullable — an emptied field clears it (null), not "".
+    const cred = editCredentials.trim();
+    updateMut.mutate(
+      { id: c.id, body: { displayName: name, credentials: cred || null } },
+      {
+        onSuccess: () => {
+          setProfileEditId(null);
+          toast({ title: "Clinician updated" });
+        },
+        onError: (e: unknown) =>
+          toast({
+            title: "Update failed",
+            description: e instanceof Error ? e.message : "",
+            variant: "destructive",
+          }),
+      },
+    );
   }
 
   function toggleActive(c: OrgClinician) {
@@ -314,7 +369,10 @@ function CliniciansCard() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Button size="sm" variant="outline" className="h-8 gap-1 rounded-xl text-xs" onClick={() => { setEditId(editId === c.id ? null : c.id); setEditFacilityIds(c.facilityIds); }} data-testid={`button-manage-facilities-${c.id}`}>
+                  <Button size="sm" variant="outline" className="h-8 gap-1 rounded-xl text-xs" onClick={() => (profileEditId === c.id ? setProfileEditId(null) : startProfileEdit(c))} data-testid={`button-edit-clinician-${c.id}`}>
+                    <Pencil className="h-3 w-3" /> Edit
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-8 gap-1 rounded-xl text-xs" onClick={() => { setProfileEditId(null); setEditId(editId === c.id ? null : c.id); setEditFacilityIds(c.facilityIds); }} data-testid={`button-manage-facilities-${c.id}`}>
                     <Pencil className="h-3 w-3" /> Facilities
                   </Button>
                   <Button size="sm" variant="ghost" className="h-8 rounded-xl text-xs" onClick={() => toggleActive(c)} data-testid={`button-toggle-clinician-${c.id}`}>
@@ -322,6 +380,41 @@ function CliniciansCard() {
                   </Button>
                 </div>
               </div>
+              {profileEditId === c.id && (
+                <div className="mt-2 border-t border-slate-100 pt-2" data-testid={`clinician-profile-edit-${c.id}`}>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Display name</label>
+                      <Input
+                        value={editDisplayName}
+                        onChange={(e) => setEditDisplayName(e.target.value)}
+                        placeholder="Display name (e.g. Dr Jane Smith)"
+                        className="mt-1 h-8 w-64 rounded-xl text-sm"
+                        data-testid={`input-edit-clinician-name-${c.id}`}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Credentials</label>
+                      <Input
+                        value={editCredentials}
+                        onChange={(e) => setEditCredentials(e.target.value)}
+                        placeholder="MD, DO, NP (optional)"
+                        className="mt-1 h-8 w-40 rounded-xl text-sm"
+                        data-testid={`input-edit-clinician-credentials-${c.id}`}
+                      />
+                    </div>
+                    <Button size="sm" className="h-8 rounded-xl" onClick={() => saveProfile(c)} disabled={updateMut.isPending} data-testid={`button-save-clinician-profile-${c.id}`}>
+                      <Check className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8 rounded-xl" onClick={() => setProfileEditId(null)}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Editing name/credentials does not change facility associations or active status, and does not alter historical batch attribution.
+                  </p>
+                </div>
+              )}
               {editId === c.id && (
                 <div className="mt-2 border-t border-slate-100 pt-2">
                   <div className="mb-2 flex flex-wrap gap-1.5">
