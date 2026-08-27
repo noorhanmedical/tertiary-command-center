@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useEngagementActivityStream } from "@/hooks/useEngagementActivityStream";
 import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, CalendarPlus, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
@@ -1440,6 +1441,12 @@ export function TeamPortalShell({
       });
     }
   }, [workspaceCallList]);
+
+  // Live cross-user queue refresh. Subscribes to the shared engagement activity
+  // SSE so a reassignment / absence redistribution / manager-logged disposition
+  // made by ANOTHER session refetches this staff member's queue within ~1s,
+  // without a manual reload. Server stays authoritative (PHI-free nudge only).
+  useEngagementActivityStream({ facility, selectedDate });
 
   const { data: workspaceClinicSchedule = [], isLoading: workspaceClinicLoading } = useQuery({
     queryKey: [

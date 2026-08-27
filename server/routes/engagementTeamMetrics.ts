@@ -7,6 +7,23 @@ import { patientScreenings } from "@shared/schema/screening";
 import { getTeamMetrics } from "../services/engagement/teamMetricsService";
 import { startOfTodayUtc } from "../services/engagement/callSettingsService";
 import { listJourneyEvents } from "../repositories/executionCase.repo";
+import {
+  listCallResults,
+  type CallResultsFilters,
+} from "../services/engagement/callResultsService";
+import { allowedFacilities } from "./portal";
+import { subscribeLiveActivity } from "../services/engagement/liveActivityBus";
+
+// Journey-event tokens that represent a canonical ownership / work-state
+// change a Team Portal queue (or Engagement board / Call Results) should
+// refetch on. Matched by token so naming variants are all covered
+// (engagement_assignment_changed, engagement_assigned, call_result_logged,
+// schedule_*, screening_committed, execution_case_*, …). PHI-free.
+const QUEUE_REFRESH_TOKENS = ["assign", "call", "schedul", "engagement", "execution_case"];
+function isQueueRefreshEvent(eventType: string): boolean {
+  const t = eventType.toLowerCase();
+  return QUEUE_REFRESH_TOKENS.some((tok) => t.includes(tok));
+}
 
 // Engagement Center — Phase 3: Live Team Metrics + Activity Feed (admin-only).
 //
@@ -51,6 +68,20 @@ const feedQuerySchema = z.object({
   before: z.string().datetime().optional(),
 });
 
+const callResultsQuerySchema = z.object({
+  search: z.string().trim().min(1).max(120).optional(),
+  patientScreeningId: z.coerce.number().int().positive().optional(),
+  staffUserId: z.string().trim().min(1).optional(),
+  outcome: z.string().trim().min(1).optional(),
+  channel: z.string().trim().min(1).optional(),
+  serviceType: z.string().trim().min(1).optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  callbackStatus: z.enum(["with", "without"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+
 export function registerEngagementTeamMetricsRoutes(
   app: Express,
   requireRole: (...roles: string[]) => RequestHandler,
@@ -78,6 +109,111 @@ export function registerEngagementTeamMetricsRoutes(
       }
     },
   );
+
+  // ─── Call Results record list (operational, searchable) ─────────────────
+  // The Engagement Center "Call Results" tab record list. Primary source is
+  // outreach_calls, enriched with canonical execution-case + patient context.
+  // Permissions (server-authoritative, §13):
+  //   • admin       → all facilities (unrestricted scope);
+  //   • non-admin   → limited to their facility allow-list AND to calls they
+  //                   are attributed to (their own scheduler_user_id). Staff
+  //                   cannot browse other members' call records.
+  // Not admin-gated at the route level: staff read their own scope.
+  app.get(
+    "/api/engagement/call-results-list",
+    async (req: Request, res: Response) => {
+      const userId = (req.session as { userId?: string } | undefined)?.userId ?? null;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated", code: "unauthenticated" });
+      }
+      const parsed = callResultsQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: parsed.error.issues[0]?.message ?? "Invalid query",
+          code: "bad_request",
+        });
+      }
+      const q = parsed.data;
+      const isAdmin = (req.session.role ?? "") === "admin";
+
+      try {
+        const filters: CallResultsFilters = {
+          search: q.search,
+          patientScreeningId: q.patientScreeningId,
+          outcome: q.outcome,
+          channel: q.channel,
+          startDate: q.startDate,
+          endDate: q.endDate,
+          callbackStatus: q.callbackStatus,
+          serviceType: q.serviceType,
+        };
+
+        // Facility scope — admin: unrestricted (undefined). Non-admin: the
+        // resolved allow-list (empty set → returns nothing, honest).
+        if (!isAdmin) {
+          const scope = await allowedFacilities(req);
+          filters.facilities = scope.all ? undefined : Array.from(scope.facilities);
+          // Staff may only see their own attributed calls.
+          filters.staffUserId = userId;
+        } else if (q.staffUserId) {
+          // Admin may optionally narrow to a specific staff member.
+          filters.staffUserId = q.staffUserId;
+        }
+
+        const page = await listCallResults(filters, q.limit ?? 50, q.offset ?? 0);
+        res.json(page);
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/call-results-list:get] error:",
+          error instanceof Error ? error.message : error,
+        );
+        res.status(500).json({
+          error:
+            error instanceof Error ? error.message : "Failed to load call results",
+          code: "internal_error",
+        });
+      }
+    },
+  );
+
+  // ─── Portal-accessible activity stream (SSE) ────────────────────────────
+  // Reuses the SAME liveActivityBus as the admin distribution stream — this is
+  // NOT a second realtime system. It exists because the admin stream is
+  // requireRole("admin") and Team Portal STAFF (liaison/technician) must also
+  // receive queue-refresh nudges for cross-user ownership/work-state changes
+  // (reassignment, absence redistribution, call disposition by a manager…).
+  //
+  // Security (§18): the payload carries ONLY the PHI-free eventType literal.
+  // Clients still fetch their authorized canonical data through the normal
+  // scoped endpoints (the server remains authoritative); this stream only says
+  // "something changed — refetch your queue." Any authenticated user may
+  // subscribe; the data they can then read is still scope-enforced.
+  app.get("/api/engagement/activity-stream", (req: Request, res: Response) => {
+    const userId = (req.session as { userId?: string } | undefined)?.userId ?? null;
+    if (!userId) {
+      return res.status(401).json({ error: "Not authenticated", code: "unauthenticated" });
+    }
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+    res.write(": connected\n\n");
+
+    const unsubscribe = subscribeLiveActivity((signal) => {
+      if (!isQueueRefreshEvent(signal.eventType)) return;
+      res.write(
+        `event: activity\ndata: ${JSON.stringify({ eventType: signal.eventType })}\n\n`,
+      );
+    });
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 25_000);
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+    req.on("close", cleanup);
+    res.on("close", cleanup);
+  });
 
   // ─── Activity feed (admin-only) ─────────────────────────────────────────
   // Day-scoped (today), team-scoped (roster-linked actors), relevant event

@@ -27,6 +27,7 @@
     "seed:testguy-calls": "tsx script/seedTestGuyCalls.ts",
     "seed:testguy-profile": "tsx script/seedTestGuyProfile.ts",
     "seed:qa-matrix": "tsx script/seedQaMatrix.ts",
+    "seed:engagement-qa": "tsx script/seedEngagementQa.ts",
     "reconcile:testguy": "tsx script/reconcileTestGuy.ts",
     "seed:visit-flow": "tsx script/seedVisitPatientFlow.ts",
     "seed:outreach-flow": "tsx script/seedOutreachPatientFlow.ts",

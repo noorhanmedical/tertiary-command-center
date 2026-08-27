@@ -56,6 +56,7 @@ import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
+import { EngagementCallResults } from "@/components/engagement/EngagementCallResults";
 import {
   type BoardResponse,
   type BoardRow,
@@ -511,7 +512,9 @@ export default function EngagementCenterPage() {
       ) : view === "callResults" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
+            {/* KPI summary (retained) + the operational record list beneath it. */}
             <EngagementTeamMetrics />
+            <EngagementCallResults />
           </div>
         </main>
       ) : (

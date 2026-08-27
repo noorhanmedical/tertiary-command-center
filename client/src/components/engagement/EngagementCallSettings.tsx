@@ -104,12 +104,21 @@ function previewTargets(
 
 type OverrideValue = "auto" | "working" | "off";
 
+// NOTE (deprecated per-member fields): the columns
+// engagement_call_settings.base_completed_call_kpi and
+// .scheduled_kpi_percent are LEGACY Phase-1 inputs. They are no longer
+// consumed by the target math (computeCallTargets uses the global config,
+// tier table, and the explicit per-member overrides instead — see
+// server/services/engagement/callSettingsService.ts + shared/schema/
+// engagement.ts). They were never rendered as editable inputs here, and
+// this Draft/patch intentionally NO LONGER carries them so the settings UI
+// cannot round-trip dead values that pretend to control behavior. The
+// server read model (CallSettingsMember) still returns them for backward
+// compatibility, but nothing writes them from this surface.
 interface Draft {
   team: EngagementTeam;
   callWorkdayPercent: number;
   visitPercent: number | null;
-  baseCompletedCallKpi: number;
-  scheduledKpiPercent: number;
   maxDailyCapacity: number | null;
   explicitCompletedKpi: number | null;
   explicitScheduledKpi: number | null;
@@ -123,8 +132,6 @@ function memberToDraft(m: CallSettingsMember): Draft {
     team: m.team,
     callWorkdayPercent: m.callWorkdayPercent,
     visitPercent: m.visitPercent,
-    baseCompletedCallKpi: m.baseCompletedCallKpi,
-    scheduledKpiPercent: m.scheduledKpiPercent,
     maxDailyCapacity: m.maxDailyCapacity,
     explicitCompletedKpi: m.explicitCompletedKpi,
     explicitScheduledKpi: m.explicitScheduledKpi,
@@ -155,8 +162,6 @@ function draftsEqual(a: Draft, b: Draft): boolean {
     a.team === b.team &&
     a.callWorkdayPercent === b.callWorkdayPercent &&
     a.visitPercent === b.visitPercent &&
-    a.baseCompletedCallKpi === b.baseCompletedCallKpi &&
-    a.scheduledKpiPercent === b.scheduledKpiPercent &&
     a.maxDailyCapacity === b.maxDailyCapacity &&
     a.explicitCompletedKpi === b.explicitCompletedKpi &&
     a.explicitScheduledKpi === b.explicitScheduledKpi &&
@@ -660,8 +665,8 @@ function MemberCard({
       team: draft.team,
       callWorkdayPercent: draft.callWorkdayPercent,
       visitPercent: effectiveVisit,
-      baseCompletedCallKpi: draft.baseCompletedCallKpi,
-      scheduledKpiPercent: draft.scheduledKpiPercent,
+      // baseCompletedCallKpi / scheduledKpiPercent intentionally omitted —
+      // deprecated per-member fields, not consumed by the target math.
       maxDailyCapacity: draft.maxDailyCapacity,
       explicitCompletedKpi: draft.explicitCompletedKpi,
       explicitScheduledKpi: draft.explicitScheduledKpi,

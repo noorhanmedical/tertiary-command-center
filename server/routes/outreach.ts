@@ -249,6 +249,29 @@ export function registerOutreachRoutes(app: Express) {
           }
         }
         if (!allowed) {
+          // CANONICAL ownership check. patient_execution_cases
+          // .assignedTeamMemberId (→ outreach_schedulers.id → user_id) is the
+          // authoritative live owner. A staff member who canonically owns the
+          // case (and therefore sees it in their Team Portal queue) must be
+          // able to log a call on it — without this, canonical ownership grants
+          // queue visibility but not the ability to act, stranding the work.
+          // This is an ADDITIVE grant off the canonical field; it does not read
+          // or write scheduler_assignments.
+          const { getExecutionCaseByScreeningId } = await import(
+            "../repositories/executionCase.repo"
+          );
+          const execCase = await getExecutionCaseByScreeningId(
+            parsed.data.patientScreeningId,
+          );
+          if (execCase?.assignedTeamMemberId != null) {
+            const allSchedulers = await storage.getOutreachSchedulers();
+            const owner = allSchedulers.find(
+              (s) => s.id === execCase.assignedTeamMemberId,
+            );
+            if (owner?.userId && owner.userId === userId) allowed = true;
+          }
+        }
+        if (!allowed) {
           return res
             .status(403)
             .json({ error: "Not authorized to log calls for this patient" });
