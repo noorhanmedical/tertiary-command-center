@@ -49,21 +49,28 @@ export async function loadCanonicalFacilities(): Promise<CanonicalFacility[]> {
   return out;
 }
 
-function matchFacility(
+// Exported for unit testing (pure — no DB). Given a candidate facility set,
+// resolve `raw` to a single canonical facility or null. See resolution rules
+// in `createFacilityResolver`.
+export function matchFacility(
   raw: string | null | undefined,
   facilities: CanonicalFacility[],
 ): CanonicalFacility | null {
   if (!raw) return null;
   const k = raw.trim().toLowerCase();
   if (!k) return null;
-  // 1. exact (case-insensitive)
+  // 1. Exact (case-insensitive) — always wins, never ambiguous.
   const exact = facilities.find((f) => f.name.toLowerCase() === k);
   if (exact) return exact;
-  // 2. substring (either direction) — mirrors legacy resolveFacility leniency
-  const partial = facilities.find(
+  // 2. Substring (either direction). Ambiguity safeguard: resolve ONLY when
+  //    exactly one canonical facility matches. If two or more match the same
+  //    substring, treat it as ambiguous and return null rather than silently
+  //    picking one — the caller then surfaces an "unknown facility" error and
+  //    the operator must disambiguate (e.g. via the exact Admin Settings name).
+  const partialMatches = facilities.filter(
     (f) => f.name.toLowerCase().includes(k) || k.includes(f.name.toLowerCase()),
   );
-  return partial ?? null;
+  return partialMatches.length === 1 ? partialMatches[0] : null;
 }
 
 /**
