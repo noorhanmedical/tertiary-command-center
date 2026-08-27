@@ -18,11 +18,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ChevronLeft, FileText, Loader2, Upload, User } from "lucide-react";
-import { VALID_FACILITIES } from "@shared/plexus";
 import {
   parsePlexusIqClinicalImport,
   type PlexusIqClinicalImportRow,
 } from "@/lib/plexusIqClinicalImportParser";
+import { useFacilities } from "@/hooks/api/organization";
+import { ClinicianSelector, type ClinicianContext } from "./ClinicianSelector";
 
 // Two-step bulk-import modal for /plexus-iq.
 //
@@ -83,20 +84,15 @@ function todayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-const FACILITY_LOOKUP: Record<string, string> = (() => {
-  const m: Record<string, string> = {};
-  for (const f of VALID_FACILITIES) m[f.toLowerCase()] = f;
-  return m;
-})();
-
+// Facility names are no longer validated against a hardcoded allowlist on
+// the client. Admin Settings facilities are the canonical source, and the
+// server (server/services/facilityResolver.ts) resolves/validates the name
+// canonically at import time (unioned with legacy VALID_FACILITIES). Here we
+// simply pass through a trimmed non-blank facility string so any settings
+// facility — or a legacy name — flows through untouched.
 function normalizeFacility(raw: string): string | null {
-  const k = raw.trim().toLowerCase();
-  if (!k) return null;
-  if (FACILITY_LOOKUP[k]) return FACILITY_LOOKUP[k];
-  for (const v of VALID_FACILITIES) {
-    if (v.toLowerCase().includes(k)) return v;
-  }
-  return null;
+  const t = raw.trim();
+  return t || null;
 }
 
 function normalizeDate(raw: string): string | null {
@@ -312,12 +308,25 @@ export function PlexusIQBulkImportModal({
   onClose: () => void;
   // Legacy code-path: per-row POST loop (still used for the Start/End
   // label-block and legacy CSV formats so existing behaviour is preserved).
-  onImport: (rows: ParsedRow[], source: "paste" | "import") => Promise<void>;
+  // `clinician` is the selected default-facility clinician (Option A) — the
+  // page applies it ONLY to batches at the selected default facility.
+  onImport: (
+    rows: ParsedRow[],
+    source: "paste" | "import",
+    ctx: { defaultFacility: string; clinician: ClinicianContext | null },
+  ) => Promise<void>;
   // New clinical-spreadsheet code-path: one bulk POST + optional
   // qualification-job kickoff. Supplied by /plexus-iq.tsx.
   onClinicalImport?: (
     rows: PlexusIqClinicalImportRow[],
-    defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+    defaults: {
+      facility: string;
+      scheduleDate: string;
+      patientType: "visit" | "outreach";
+      // Selected default-facility clinician (Option A). Server applies it
+      // ONLY to batches whose facility matches this default facility.
+      clinician?: ClinicianContext | null;
+    },
     source: "paste" | "import",
   ) => Promise<void>;
   pending: boolean;
@@ -328,10 +337,15 @@ export function PlexusIQBulkImportModal({
   defaultFacility?: string;
   defaultScheduleDate?: string;
 }) {
+  // Active facilities from Admin Settings — the canonical dropdown source.
+  const { data: facilities = [] } = useFacilities(false);
   const [step, setStep] = useState<"source" | "preview">("source");
   const [defFacility, setDefFacility] = useState<string>(defaultFacility ?? "");
   const [defDate, setDefDate] = useState<string>(defaultScheduleDate ?? todayIso());
   const [defType, setDefType] = useState<PatientType>("visit");
+  // Selected clinician for the default facility (Option A). Reset whenever
+  // the default facility changes (the selector is facility-aware).
+  const [clinician, setClinician] = useState<ClinicianContext | null>(null);
   const [text, setText] = useState("");
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [errors, setErrors] = useState<ParsedRowError[]>([]);
@@ -354,6 +368,7 @@ export function PlexusIQBulkImportModal({
     setDefFacility(defaultFacility ?? "");
     setDefDate(defaultScheduleDate ?? todayIso());
     setDefType("visit");
+    setClinician(null);
     setText("");
     setFileNotice(null);
     setErrors([]);
@@ -554,12 +569,18 @@ export function PlexusIQBulkImportModal({
           facility: defFacility || preview.clinicalRows[0].facility || "",
           scheduleDate: defDate || preview.clinicalRows[0].scheduleDate || "",
           patientType: defType,
+          // Option A: clinician applies only to the selected default
+          // facility. The server enforces this per-group.
+          clinician,
         },
         usedFile ? "import" : "paste",
       );
       return;
     }
-    await onImport(preview.rows, usedFile ? "import" : "paste");
+    await onImport(preview.rows, usedFile ? "import" : "paste", {
+      defaultFacility: defFacility,
+      clinician,
+    });
   }
 
   return (
@@ -584,22 +605,44 @@ export function PlexusIQBulkImportModal({
 
         {step === "source" ? (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                   Default facility
                 </Label>
-                <Select value={defFacility} onValueChange={setDefFacility}>
+                <Select
+                  value={defFacility}
+                  onValueChange={(v) => {
+                    setDefFacility(v);
+                    // Facility drives the facility-aware clinician list; clear
+                    // any prior selection so it re-seeds for the new facility.
+                    setClinician(null);
+                  }}
+                >
                   <SelectTrigger className="mt-1 h-9" data-testid="plexus-iq-bulk-default-facility">
                     <SelectValue placeholder="Pick a facility…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {VALID_FACILITIES.map((f) => (
-                      <SelectItem key={f} value={f}>{f}</SelectItem>
-                    ))}
+                    {facilities.length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        No active facilities — add one in Admin Settings
+                      </SelectItem>
+                    ) : (
+                      facilities.map((f) => (
+                        <SelectItem key={f.id} value={f.name}>{f.name}</SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
+              {/* Clinician sits right after Facility (facility-dependent). It
+                  applies ONLY to batches at the selected default facility. */}
+              <ClinicianSelector
+                facilityName={defFacility || null}
+                value={clinician}
+                onChange={setClinician}
+                idPrefix="plexus-iq-bulk-clinician"
+              />
               <div>
                 <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                   Default date
@@ -734,6 +777,11 @@ export function PlexusIQBulkImportModal({
             {preview.format === "clinical-spreadsheet" && preview.clinicalRows.length > 0 && (
               <ClinicalPreviewBreakdown rows={preview.clinicalRows} />
             )}
+            <ClinicianAttributionWarning
+              rows={preview.rows}
+              defaultFacility={defFacility}
+              clinician={clinician}
+            />
             <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
               {preview.rows.map((row, idx) => (
                 <PreviewCard key={idx} index={idx + 1} row={row} />
@@ -961,6 +1009,61 @@ function ClinicalPreviewBreakdown({
       <p className="text-[10px] text-slate-500 leading-snug">
         Missing DOB or phone will not block qualification, but must be
         completed before sending to Engagement.
+      </p>
+    </div>
+  );
+}
+
+// Clinician attribution review warning (Option A).
+//
+// When a clinician is selected, it applies ONLY to batches at the selected
+// default facility. If the preview contains rows routing to OTHER facilities,
+// those batches will be created with NO clinician attribution. We surface that
+// clearly here so the reviewer knows before confirming. If no clinician is
+// selected, or every row is at the default facility, nothing is shown.
+function ClinicianAttributionWarning({
+  rows,
+  defaultFacility,
+  clinician,
+}: {
+  rows: ParsedRow[];
+  defaultFacility: string;
+  clinician: ClinicianContext | null;
+}) {
+  // Only meaningful when a clinician is actually selected.
+  if (!clinician || !clinician.clinicianName?.trim()) return null;
+
+  // Facilities present in the preview that differ from the selected default.
+  // Facility resolution is canonicalized server-side; here we compare on the
+  // trimmed display string, which is what the dropdown + rows both carry.
+  const def = defaultFacility.trim();
+  const otherFacilities = Array.from(
+    new Set(
+      rows
+        .map((r) => (r.facility ?? "").trim())
+        .filter((f) => f && f !== def),
+    ),
+  );
+
+  if (otherFacilities.length === 0) return null;
+
+  const otherCount = rows.filter(
+    (r) => (r.facility ?? "").trim() && (r.facility ?? "").trim() !== def,
+  ).length;
+
+  return (
+    <div
+      className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800 space-y-1"
+      data-testid="plexus-iq-bulk-clinician-attribution-warning"
+    >
+      <p className="font-semibold">Clinician applies to {def || "the selected facility"} only</p>
+      <p className="leading-snug">
+        {clinician.clinicianName.trim()} will be attributed to batches at{" "}
+        <strong>{def || "the selected facility"}</strong>. {otherCount} patient
+        {otherCount === 1 ? "" : "s"} route to a different facility (
+        {otherFacilities.join(", ")}) and will be imported with{" "}
+        <strong>no clinician attribution</strong>. Set their clinician later per
+        batch.
       </p>
     </div>
   );

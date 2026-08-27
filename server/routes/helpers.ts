@@ -106,7 +106,12 @@ export async function getQualificationMode(
 
 export const createBatchSchema = z.object({
   name: z.string().optional(),
-  facility: z.enum(VALID_FACILITIES),
+  // Facility is validated/resolved against canonical clinics data in the
+  // route (server/services/facilityResolver.ts), unioned with the legacy
+  // VALID_FACILITIES allowlist for back-compat. We accept any non-blank
+  // string here so Admin Settings facilities (not in VALID_FACILITIES) are
+  // usable; the route rejects names that resolve to no known facility.
+  facility: z.string().trim().min(1, "Facility is required"),
   scheduleDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   // Batch clinician attribution (Plexus IQ). Optional so today's callers are
   // unaffected. When a configured clinician is selected: clinicianId set +

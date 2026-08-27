@@ -47,6 +47,7 @@ import {
   findSchedulerForBatch,
   createAssignmentTask,
 } from "../services/schedulerAssignmentService";
+import { resolveCanonicalFacilityName } from "../services/facilityResolver";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -55,6 +56,19 @@ export function registerBatchRoutes(app: Express) {
     try {
       const parsed = createBatchSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+
+      // Resolve the facility against canonical clinics data (Admin Settings),
+      // unioned with legacy VALID_FACILITIES for back-compat. Batches store
+      // the canonical display name so historical attribution stays stable.
+      const canonicalFacility = await resolveCanonicalFacilityName(parsed.data.facility);
+      if (!canonicalFacility) {
+        return res.status(400).json({
+          error: `Unknown facility "${parsed.data.facility}". Add it in Admin Settings before importing.`,
+        });
+      }
+      // Use the canonical name everywhere downstream (name, sibling lookup,
+      // scheduler assignment, batch row, append validation).
+      const facilityName = canonicalFacility;
 
       // Plexus IQ runtime hardening — Routes step 4.
       // Placement is optional on the wire. When absent, default to
@@ -86,9 +100,9 @@ export function registerBatchRoutes(app: Express) {
             error: `targetBatchId ${placement.targetBatchId} not found`,
           });
         }
-        if (target.facility !== parsed.data.facility) {
+        if (target.facility !== facilityName) {
           return res.status(400).json({
-            error: `targetBatchId ${placement.targetBatchId} belongs to facility "${target.facility ?? ""}", expected "${parsed.data.facility}"`,
+            error: `targetBatchId ${placement.targetBatchId} belongs to facility "${target.facility ?? ""}", expected "${facilityName}"`,
           });
         }
         const expectedDate = parsed.data.scheduleDate ?? null;
@@ -123,11 +137,11 @@ export function registerBatchRoutes(app: Express) {
         const existing = await storage.getAllScreeningBatches();
         const siblings = existing.filter(
           (b) =>
-            b.facility === parsed.data.facility &&
+            b.facility === facilityName &&
             (b.scheduleDate ?? null) === (parsed.data.scheduleDate ?? null),
         );
         if (siblings.length > 0 && parsed.data.scheduleDate) {
-          name = `${parsed.data.facility} - ${parsed.data.scheduleDate} (Run ${siblings.length + 1})`;
+          name = `${facilityName} - ${parsed.data.scheduleDate} (Run ${siblings.length + 1})`;
         } else {
           name = `Batch - ${new Date().toLocaleDateString()}`;
         }
@@ -150,7 +164,7 @@ export function registerBatchRoutes(app: Express) {
         name,
         patientCount: 0,
         status: "draft",
-        facility: parsed.data.facility || null,
+        facility: facilityName,
         scheduleDate: parsed.data.scheduleDate || null,
         clinicianId: clinicianSource === "facility_clinician" ? (parsed.data.clinicianId ?? null) : null,
         clinicianName: clinicianNameTrimmed,
@@ -159,7 +173,7 @@ export function registerBatchRoutes(app: Express) {
       void logAudit(req, "create", "batch", batch.id, { name: batch.name, facility: batch.facility });
 
       const assignment = await findSchedulerForBatch(
-        parsed.data.facility || null,
+        facilityName,
         parsed.data.scheduleDate || null,
       );
 
