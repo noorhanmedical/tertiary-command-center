@@ -219,6 +219,7 @@ export interface IStorage {
   bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]>;
   applySchedulerAssignmentDiff(releaseIds: number[], drafts: InsertSchedulerAssignment[], reason: string): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }>;
   listActiveSchedulerAssignments(filters?: { schedulerId?: number; asOfDate?: string }): Promise<SchedulerAssignment[]>;
+  listSchedulerAssignmentsForSchedulerOnDate(schedulerId: number, asOfDate: string): Promise<SchedulerAssignment[]>;
   getActiveAssignmentForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined>;
   getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string): Promise<SchedulerAssignment | undefined>;
   releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string): Promise<SchedulerAssignment[]>;
@@ -441,6 +442,7 @@ export class DatabaseStorage implements IStorage {
     return schedulerAssignmentsRepository.applyDiff(releaseIds, drafts, reason);
   }
   listActiveSchedulerAssignments(filters: { schedulerId?: number; asOfDate?: string } = {}) { return schedulerAssignmentsRepository.listActive(filters); }
+  listSchedulerAssignmentsForSchedulerOnDate(schedulerId: number, asOfDate: string) { return schedulerAssignmentsRepository.listForSchedulerOnDate(schedulerId, asOfDate); }
   getActiveAssignmentForPatient(patientScreeningId: number) { return schedulerAssignmentsRepository.getActiveForPatient(patientScreeningId); }
   getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string) { return schedulerAssignmentsRepository.getActiveForPatientOnDate(patientScreeningId, asOfDate); }
   releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string) { return schedulerAssignmentsRepository.releaseForScheduler(schedulerId, asOfDate, reason); }

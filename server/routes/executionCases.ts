@@ -1245,18 +1245,92 @@ export function registerExecutionCaseRoutes(app: Express) {
       // scheduler_assignments.asOfDate (a separate table) — see milestone
       // report. Past dates therefore show "cases whose next action was due
       // that day", which is honest but not a membership snapshot.
-      if (typeof q.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.date)) {
-        const dayStart = new Date(`${q.date}T00:00:00.000`);
-        const dayEnd = new Date(`${q.date}T23:59:59.999`);
+      const todayLocal = (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      })();
+      const requestedDate =
+        typeof q.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : null;
+      const isHistorical = requestedDate != null && requestedDate < todayLocal;
+
+      // ── HISTORICAL CALL LIST (read-only snapshot) ──────────────────────────
+      // For a PAST date we do NOT filter the mutable nextActionAt (that would
+      // misrepresent membership). Instead we read the immutable per-day
+      // snapshot from scheduler_assignments (asOfDate + schedulerId), enrich
+      // each row with CURRENT canonical patient identity + the HISTORICAL call
+      // outcome recorded that day (outreach_calls.startedAt). scheduler_
+      // assignments is used ONLY as history here — never for current ownership.
+      // schedulerId is the SAME roster-id space as the locked current filter.
+      if (isHistorical) {
+        const histSchedulerId = assignmentScope.locked
+          ? assignmentScope.schedulerId
+          : (q.assignedTeamMemberId ? parseInt(q.assignedTeamMemberId, 10) : null);
+        if (histSchedulerId == null || Number.isNaN(histSchedulerId)) {
+          return res.json([]);
+        }
+        const snapshot = await storage.listSchedulerAssignmentsForSchedulerOnDate(
+          histSchedulerId,
+          requestedDate!,
+        );
+        if (snapshot.length === 0) {
+          // Honest empty — no snapshot recorded for that PCS/day. We do NOT
+          // fabricate membership from current nextActionAt.
+          return res.json([]);
+        }
+        const dayStartH = new Date(`${requestedDate}T00:00:00.000`);
+        const dayEndH = new Date(`${requestedDate}T23:59:59.999`);
+        const historical = await Promise.all(
+          snapshot.map(async (a) => {
+            const screening = await storage.getPatientScreening(a.patientScreeningId);
+            // Historical outcome: the latest call the PCS logged that day.
+            const dayCalls = (await storage.listOutreachCallsForPatient(a.patientScreeningId))
+              .filter((c) => {
+                const t = c.startedAt ? new Date(c.startedAt).getTime() : NaN;
+                return Number.isFinite(t) && t >= dayStartH.getTime() && t <= dayEndH.getTime();
+              })
+              .sort((x, y) => new Date(y.startedAt).getTime() - new Date(x.startedAt).getTime());
+            const lastCall = dayCalls[0] ?? null;
+            const ec = await getExecutionCaseByScreeningId(a.patientScreeningId).catch(() => null);
+            return {
+              id: `hist:${a.id}`,
+              patientScreeningId: a.patientScreeningId,
+              // CURRENT canonical patient identity (safe to show current name).
+              patientName: screening?.name ?? ec?.patientName ?? "Patient",
+              patientDob: screening?.dob ?? null,
+              facilityId: screening?.facility ?? ec?.facilityId ?? null,
+              executionCaseId: ec?.id ?? null,
+              // HISTORICAL operational fields (not present-day state):
+              assignedTeamMemberId: a.schedulerId,
+              historical: true,
+              asOfDate: a.asOfDate,
+              assignmentStatus: a.status, // active/released/reassigned/completed
+              // Outcome recorded THAT day, if any.
+              lastCallOutcome: lastCall?.outcome ?? null,
+              historicalCallCount: dayCalls.length,
+              historicalCallbackAt: lastCall?.callbackAt
+                ? new Date(lastCall.callbackAt).toISOString()
+                : null,
+              historicalLastActivityAt: lastCall?.startedAt
+                ? new Date(lastCall.startedAt).toISOString()
+                : null,
+              completed: dayCalls.length > 0,
+              nextActionAt: null,
+              selectedServices: ec?.selectedServices ?? screening?.qualifyingTests ?? [],
+            };
+          }),
+        );
+        return res.json(historical);
+      }
+
+      // ── CURRENT/FUTURE CALL LIST (canonical ownership) ─────────────────────
+      if (requestedDate != null) {
+        const dayStart = new Date(`${requestedDate}T00:00:00.000`);
+        const dayEnd = new Date(`${requestedDate}T23:59:59.999`);
         if (!Number.isNaN(dayStart.getTime()) && !Number.isNaN(dayEnd.getTime())) {
           filters.dateStart = dayStart;
           filters.dateEnd = dayEnd;
-          const todayLocal = (() => {
-            const d = new Date();
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-          })();
           // Include backlog only when the requested day is today or later.
-          filters.includeBacklog = q.date >= todayLocal;
+          filters.includeBacklog = requestedDate >= todayLocal;
         }
       }
       const rows = await listSchedulerPortalCases(filters, limit);

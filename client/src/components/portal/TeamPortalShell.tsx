@@ -3950,7 +3950,9 @@ export function TeamPortalShell({
                         >
                           {/* Minimal card: just the patient name + a circular
                               phone button (call) and a circular calendar button
-                              (opens the quick schedule popup). */}
+                              (opens the quick schedule popup). Historical rows
+                              (past dates) show the recorded outcome instead of
+                              live quick-actions — the day is read-only. */}
                           <div className="flex items-center justify-between gap-2">
                             <button
                               type="button"
@@ -3961,14 +3963,34 @@ export function TeamPortalShell({
                             >
                               {row.patientName ?? "Unnamed patient"}
                             </button>
-                            <CallRowQuickActions
-                              row={row}
-                              idx={row.id ?? idx}
-                              canCall={canCall}
-                              onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
-                              onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
-                            />
+                            {row.historical ? (
+                              <span
+                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                                  row.completed
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                                data-testid={`call-historical-status-${row.id ?? idx}`}
+                              >
+                                {row.completed ? "Called" : "No call"}
+                              </span>
+                            ) : (
+                              <CallRowQuickActions
+                                row={row}
+                                idx={row.id ?? idx}
+                                canCall={canCall}
+                                onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                                onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
+                              />
+                            )}
                           </div>
+                          {row.historical && (row.lastCallOutcome || (row.historicalCallCount ?? 0) > 0 || row.historicalCallbackAt) && (
+                            <div className="mt-1 text-[10px] text-slate-500" data-testid={`call-historical-detail-${row.id ?? idx}`}>
+                              {row.lastCallOutcome ? `Outcome: ${row.lastCallOutcome}` : "No outcome logged"}
+                              {(row.historicalCallCount ?? 0) > 0 ? ` · ${row.historicalCallCount} attempt${row.historicalCallCount === 1 ? "" : "s"}` : ""}
+                              {row.historicalCallbackAt ? ` · callback ${new Date(row.historicalCallbackAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+                            </div>
+                          )}
                         </div>
                         );
                       })

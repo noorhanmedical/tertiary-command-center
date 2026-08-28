@@ -90,6 +90,22 @@ export type TeamWorkspaceCallListItem = {
   lastCallOutcome?: string | null;
   /** Engagement bucket: 'visit' | 'outreach' | 'scheduling_triage'. */
   engagementBucket?: string | null;
+  // ── Historical snapshot fields (present only for past-date views, sourced
+  //    from the read-only scheduler_assignments snapshot + that day's calls).
+  /** True when this row is a historical snapshot entry, not current work. */
+  historical?: boolean;
+  /** The snapshot date (YYYY-MM-DD) this row belonged to. */
+  asOfDate?: string | null;
+  /** Snapshot assignment status that day (active/released/reassigned/completed). */
+  assignmentStatus?: string | null;
+  /** Number of calls the PCS logged for this patient that day. */
+  historicalCallCount?: number | null;
+  /** Callback requested on that day's last call, if any. */
+  historicalCallbackAt?: string | null;
+  /** Timestamp of the last call activity that day. */
+  historicalLastActivityAt?: string | null;
+  /** True when at least one call was logged that day. */
+  completed?: boolean;
 };
 
 // Short, human-readable explanation of why a patient is on the call list,
