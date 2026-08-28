@@ -278,6 +278,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
           executionCaseId: r.executionCaseId ?? null,
           patientScreeningId: r.patientScreeningId ?? null,
           serviceType: r.serviceType ?? null,
+          // The appointment's scheduled day drives the dated consent guard
+          // (mirrors the clinic-portal consentForTest rule): a completion
+          // recorded BEFORE this visit's scheduled date does not count.
+          scheduledDate: r.startsAt
+            ? new Date(r.startsAt).toISOString().slice(0, 10)
+            : null,
         })),
       );
       const enriched = rows.map((r) => ({

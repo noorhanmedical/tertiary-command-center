@@ -5,6 +5,7 @@ import { ancillaryDocumentTemplates } from "@shared/schema/ancillaryDocumentTemp
 import { listCaseDocumentReadinessForCases } from "../../repositories/documentReadiness.repo";
 import { getExecutionCaseById, getExecutionCaseByScreeningId } from "../../repositories/executionCase.repo";
 import { getAncillaryCategory } from "@shared/ancillaryCategory";
+import { readinessCountsForSchedule } from "./ancillaryReadinessRules";
 import type { CaseDocumentReadiness } from "@shared/schema/documentReadiness";
 
 type CaseReadinessRow = CaseDocumentReadiness;
@@ -58,10 +59,35 @@ type AncillaryRowLike = {
   executionCaseId?: number | null;
   patientScreeningId?: number | null;
   serviceType?: string | null;
+  /**
+   * The appointment's scheduled date (YYYY-MM-DD), when the caller knows it.
+   * When supplied, a completed readiness item only counts if it was completed
+   * ON/AFTER this date — mirroring the clinic-portal `consentForTest` dated
+   * rule so a stale (pre-scheduled-date) completion on the SAME case does not
+   * mark a new visit ready. This is NOT an expiry period: there is no upper
+   * bound, only the same on/after-scheduledDate lower bound the clinic path
+   * already enforces. When omitted (e.g. the billing gate, which has no
+   * appointment date), the dated guard is skipped and behavior is unchanged.
+   */
+  scheduledDate?: string | null;
 };
 
 function isComplete(status: string | null | undefined): boolean {
   return status != null && COMPLETE_STATUSES.has(status.toLowerCase());
+}
+
+/**
+ * A completed readiness row COUNTS only when it satisfies the dated rule for
+ * the row's appointment (see readinessCountsForSchedule in the pure rules
+ * module). Thin adapter that extracts completedAt from the row.
+ */
+function completedOnOrAfterScheduled(
+  r: CaseReadinessRow | undefined,
+  scheduledDate: string | null | undefined,
+): boolean {
+  if (!r) return false;
+  const completedAtIso = r.completedAt ? new Date(r.completedAt).toISOString() : null;
+  return readinessCountsForSchedule(r.documentStatus, completedAtIso, scheduledDate);
 }
 
 /** Latest non-deleted, non-superseded informed-consent library document id. */
@@ -158,6 +184,13 @@ export async function buildAncillaryReadinessSummaries(
   // surface provenance (completedAt / uploadedByUserId). We key on both
   // executionCaseId and patientScreeningId so either link resolves the row,
   // but the lookup below prefers case-scoped and never bleeds across episodes.
+  // readinessRows arrive newest-first (createdAt DESC from
+  // listCaseDocumentReadinessForCases). When multiple rows share the same
+  // case+service+docType key (e.g. a document re-marked across visits), keep
+  // the NEWEST — set the key only if it is not already present. Previously the
+  // last-iterated (OLDEST) row won, which let a stale completion shadow a
+  // fresher one; combined with the dated guard that would incorrectly mark a
+  // current, valid completion as missing.
   const rowByKey = new Map<string, CaseReadinessRow>();
   const put = (
     prefix: string,
@@ -167,7 +200,8 @@ export async function buildAncillaryReadinessSummaries(
     r: CaseReadinessRow,
   ) => {
     if (id == null) return;
-    rowByKey.set(`${prefix}:${id}:${serviceCat}:${docType}`, r);
+    const key = `${prefix}:${id}:${serviceCat}:${docType}`;
+    if (!rowByKey.has(key)) rowByKey.set(key, r);
   };
   for (const r of readinessRows) {
     const cat = getAncillaryCategory(r.serviceType ?? "");
@@ -198,21 +232,29 @@ export async function buildAncillaryReadinessSummaries(
 
   for (const row of rows) {
     const req = requirementsForService(row.serviceType);
+    const sched = row.scheduledDate ?? null;
+
+    // A readiness item is "complete" only when its persisted row is complete
+    // AND satisfies the dated on/after-scheduledDate guard (when a scheduled
+    // date is supplied). Episode + service keying already isolates by case;
+    // the dated guard blocks a stale same-case completion from a prior visit.
+    const dated = (docType: string): boolean =>
+      completedOnOrAfterScheduled(lookupRow(row, docType), sched);
 
     const informedConsent: ReadinessItemState = req.informedConsent
-      ? isComplete(lookup(row, READINESS_DOC_INFORMED_CONSENT))
+      ? dated(READINESS_DOC_INFORMED_CONSENT)
         ? "complete"
         : "missing"
       : "not_required";
 
     const screeningForm: ReadinessItemState = req.screeningForm
-      ? isComplete(lookup(row, READINESS_DOC_SCREENING_FORM))
+      ? dated(READINESS_DOC_SCREENING_FORM)
         ? "complete"
         : "missing"
       : "not_required";
 
     const brainwavePdf: ReadinessItemState = req.brainwavePdf
-      ? isComplete(lookup(row, READINESS_DOC_BRAINWAVE_PDF))
+      ? dated(READINESS_DOC_BRAINWAVE_PDF)
         ? "complete"
         : "missing"
       : "not_required";
@@ -222,8 +264,8 @@ export async function buildAncillaryReadinessSummaries(
     const reportRow = lookupRow(row, READINESS_DOC_REPORT);
     const brainwaveRow = lookupRow(row, READINESS_DOC_BRAINWAVE_PDF);
     const report: ReadinessItemState =
-      isComplete(reportRow?.documentStatus) ||
-      (req.brainwavePdf && isComplete(brainwaveRow?.documentStatus))
+      completedOnOrAfterScheduled(reportRow, sched) ||
+      (req.brainwavePdf && completedOnOrAfterScheduled(brainwaveRow, sched))
         ? "complete"
         : "missing";
 
