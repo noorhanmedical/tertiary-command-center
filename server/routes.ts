@@ -303,6 +303,7 @@ export async function registerRoutes(
   registerEngagementCallSettingsRoutes(app, requireRole);
   registerEngagementDistributionRoutes(app, requireRole);
   registerCallHandoffRoutes(app);
+  (await import("./routes/teams")).registerTeamRoutes(app, requireRole);
   registerEngagementTeamMetricsRoutes(app, requireRole);
   (await import("./routes/organizationSettings")).registerOrganizationSettingsRoutes(app, requireRole);
   registerBillingRoutes(app);

@@ -78,6 +78,11 @@ export * from "./callHandoffs";
 // case is currently uncovered (category + reason). NOT a second ownership
 // store; the case stays canonically unassigned. Migration 0068.
 export * from "./needsCoverage";
+// Phase 4 (Team Ops) — canonical organizational model (K4): teams,
+// team_memberships (multi-team), manager_relationships (team-level authority),
+// and a relationship-change audit ledger. Admin Settings is the authoritative
+// management surface; Engagement/messaging/tasks consume these. Migration 0069.
+export * from "./teams";
 // Phase 2A — Global Plexus patient identity (six new tables). Every
 // write path is guarded by FEATURE_PLEXUS_IDENTITY_WRITE (default OFF)
 // and the SQL migration (migrations/0049_add_plexus_identity.sql) is
