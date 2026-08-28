@@ -25,6 +25,7 @@ import {
   users,
 } from "@shared/schema";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
+import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
 import { appendJourneyEvent, type AppendJourneyEventInput } from "../journey/appendJourneyEvent";
 import { calculateNextActionAt } from "../callList/nextActionPolicy";
 import {
@@ -425,10 +426,12 @@ export async function gatherDistributionMembers(): Promise<
     settingsRows.map((r) => [r.schedulerId, r]),
   );
 
-  const [carryoverBySched, activeQueueBySched] = await Promise.all([
-    getCarryoverCounts(schedulerIds, startOfTodayUtc()),
-    getActiveQueueCounts(schedulerIds),
-  ]);
+  const [carryoverBySched, activeQueueBySched, priorityHandoffByUser] =
+    await Promise.all([
+      getCarryoverCounts(schedulerIds, startOfTodayUtc()),
+      getActiveQueueCounts(schedulerIds),
+      callHandoffsRepository.countOpenPriorityByRecipient(),
+    ]);
 
   const userIds = schedulers
     .map((s) => s.userId)
@@ -459,6 +462,9 @@ export async function gatherDistributionMembers(): Promise<
     );
     const carryover = carryoverBySched.get(s.id) ?? 0;
     const assigned = activeQueueBySched.get(s.id) ?? 0;
+    const priorityHandoffs = s.userId
+      ? priorityHandoffByUser.get(s.userId) ?? 0
+      : 0;
     const working = deriveWorkingStatus(s.userId, ptoUserIds);
     const workingToday = resolveWorkingToday(
       manualWorkingToday,
@@ -472,7 +478,7 @@ export async function gatherDistributionMembers(): Promise<
       configuredWorkloadPercent: callWorkdayPercent,
       assigned,
       carryover,
-      priorityHandoffs: 0, // Phase 3C populates from call_handoffs.
+      priorityHandoffs, // open P1/P2 handoffs addressed to this member.
       workingToday,
     });
 

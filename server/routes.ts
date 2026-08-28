@@ -13,6 +13,7 @@ import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssi
 import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
 import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
 import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
+import { registerCallHandoffRoutes } from "./routes/callHandoffs";
 import { registerEngagementTeamMetricsRoutes } from "./routes/engagementTeamMetrics";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
@@ -301,6 +302,7 @@ export async function registerRoutes(
   registerEngagementBasketsRoutes(app);
   registerEngagementCallSettingsRoutes(app, requireRole);
   registerEngagementDistributionRoutes(app, requireRole);
+  registerCallHandoffRoutes(app);
   registerEngagementTeamMetricsRoutes(app, requireRole);
   (await import("./routes/organizationSettings")).registerOrganizationSettingsRoutes(app, requireRole);
   registerBillingRoutes(app);

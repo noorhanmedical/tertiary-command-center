@@ -1445,6 +1445,24 @@ export function registerExecutionCaseRoutes(app: Express) {
         }
       }
 
+      // Phase 3C — attach open call handoffs + apply the CENTRALIZED queue
+      // ordering (priority handoffs surface above standard work). The execution
+      // case stays the single ownership record; handoffs are display context.
+      {
+        const { annotateAndOrderQueue } = await import(
+          "../services/engagement/callHandoffService"
+        );
+        const annotated = await annotateAndOrderQueue(rows as never[]);
+        rows.length = 0;
+        for (const a of annotated) {
+          const row = a.case as Record<string, unknown>;
+          row.handoffs = a.handoffs;
+          row.isHandoff = a.isHandoff;
+          row.isCarryover = a.isCarryover;
+          rows.push(row as (typeof rows)[number]);
+        }
+      }
+
       // Phase 2D-C2 — attach the canonical per-service appointment
       // projection when the flag is ON and the caller opts in
       // (?withAppointments=true). One active scheduled event per

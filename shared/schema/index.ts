@@ -69,6 +69,11 @@ export * from "./portalPrefs";
 // conversations + members + team_messages replacing the mock inbox and the
 // orphaned direct_messages path. Migration 0065.
 export * from "./messaging";
+// Phase 3C (Team Ops) — first-class call handoffs (K6): ownership transfer /
+// request between team members with P1..P5 priority, acknowledgement, and
+// provenance. Live ownership stays on patient_execution_cases; this is the
+// transfer source of truth. Migration 0067.
+export * from "./callHandoffs";
 // Phase 2A — Global Plexus patient identity (six new tables). Every
 // write path is guarded by FEATURE_PLEXUS_IDENTITY_WRITE (default OFF)
 // and the SQL migration (migrations/0049_add_plexus_identity.sql) is

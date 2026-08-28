@@ -4,6 +4,7 @@ import { patientExecutionCases } from "@shared/schema/executionCase";
 import { storage } from "../../storage";
 import { listCallResultLoggedEventsInRange } from "../../repositories/executionCase.repo";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
+import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
 import {
   computeCallTargets,
   remainingCapacity,
@@ -311,10 +312,11 @@ export async function getTeamMetrics(
   const startOfToday = startOfTodayUtc(now);
   const endOfToday = endOfTodayUtc(now);
 
-  const [carryoverBySched, activeQueueBySched, calls, callResultEvents] =
+  const [carryoverBySched, activeQueueBySched, priorityHandoffByUser, calls, callResultEvents] =
     await Promise.all([
       getCarryoverCounts(schedulerIds, startOfToday),
       getActiveQueueCounts(schedulerIds),
+      callHandoffsRepository.countOpenPriorityByRecipient(),
       storage.listOutreachCallsInRange(startOfToday, endOfToday),
       // Canonical per-call log from the engagement-center call-result path
       // (the default portal write). See the header note on the split-brain.
@@ -435,7 +437,7 @@ export async function getTeamMetrics(
       configuredWorkloadPercent: merged.callWorkdayPercent,
       assigned: activeQueue,
       carryover,
-      priorityHandoffs: 0, // Phase 3C populates from call_handoffs.
+      priorityHandoffs: s.userId ? priorityHandoffByUser.get(s.userId) ?? 0 : 0,
       workingToday,
     });
 
