@@ -425,6 +425,23 @@ export type RedistributeSummary = {
   unassigned: number;
 };
 
+/**
+ * @deprecated LEGACY / HISTORY-ONLY. Do NOT call from live PTO / absence /
+ * manager redistribution flows.
+ *
+ * This mutates `scheduler_assignments` (the historical call-list snapshot),
+ * NOT the live ownership field `patient_execution_cases.assignedTeamMemberId`.
+ * Per K1 the scheduler_assignments table is history/audit only and must never
+ * be treated as live ownership.
+ *
+ * The canonical live redistribution path is
+ * `releaseAndRedistributeCanonical()` in
+ * `server/services/engagement/absenceRedistribution.ts`, which is used by
+ * absenceWatcher, PTO approval, and manager redistribution alike.
+ *
+ * Retained only so historical tooling / tests that reference the legacy
+ * summary shape still compile. No live route calls this as of Phase 3A.
+ */
 export async function releaseAndRedistribute(
   storage: IStorage,
   schedulerId: number,

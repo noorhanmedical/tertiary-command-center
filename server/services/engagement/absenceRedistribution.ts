@@ -93,13 +93,44 @@ export async function releaseAndRedistributeCanonical(
   }
 
   // 4. Run the canonical distribution engine to reassign the now-unassigned cases.
+  //    applyDistribution operates over ALL currently-unassigned eligible cases,
+  //    not only the ones we just released, so we cannot infer this call's
+  //    outcome from distResult.applied.length alone. Instead we measure the
+  //    fate of *our* released case ids specifically.
+  const releasedIds = activeCases.map((c) => c.id);
   const distResult = await applyDistribution(actorUserId, "scheduler");
+  const appliedReleasedIds = new Set(
+    distResult.applied
+      .filter((a) => releasedIds.includes(a.executionCaseId))
+      .map((a) => a.executionCaseId),
+  );
+
+  // A released case counts as redistributed only if it landed on a DIFFERENT
+  // team member. If the greedy planner handed it back to the same (still
+  // eligible) member, that is neither a redistribution nor an unplaced case —
+  // it simply stayed put, so we exclude it from both tallies.
+  const stillOwnedByOriginal = await db.select({ id: patientExecutionCases.id })
+    .from(patientExecutionCases)
+    .where(
+      and(
+        eq(patientExecutionCases.assignedTeamMemberId, schedulerId),
+        eq(patientExecutionCases.lifecycleStatus, "active"),
+      ),
+    );
+  const retainedIds = new Set(
+    stillOwnedByOriginal.map((r) => r.id).filter((id) => releasedIds.includes(id)),
+  );
+
+  const redistributed = [...appliedReleasedIds].filter((id) => !retainedIds.has(id)).length;
+  const unplaced = releasedIds.filter(
+    (id) => !appliedReleasedIds.has(id) && !retainedIds.has(id),
+  ).length;
 
   return {
     schedulerId,
     released: activeCases.length,
-    redistributed: distResult.applied.length,
-    unplaced: activeCases.length - distResult.applied.length,
+    redistributed,
+    unplaced,
     reason,
   };
 }
