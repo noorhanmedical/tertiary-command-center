@@ -55,11 +55,18 @@ export const TEAM_MEMBER_CAPABILITY_IDS = [
 export type TeamMemberCapabilityId =
   (typeof TEAM_MEMBER_CAPABILITY_IDS)[number];
 
+// Default left-rail tab (Phase 0.5 workspacePrefs concept; Phase 4C persists it
+// in the profile so an admin can set it per member). tools | messaging.
+export const TEAM_MEMBER_LEFT_TABS = ["tools", "messaging"] as const;
+export type TeamMemberLeftTab = (typeof TEAM_MEMBER_LEFT_TABS)[number];
+
 export type TeamMemberProfileSetting = {
   workspaceType: TeamMemberWorkspaceType;
   assignedFacilityIds: string[];
   defaultFacilityId?: string | null;
   defaultMode?: TeamMemberWorkspaceMode;
+  // Default left-rail tab (tools|messaging). Undefined → "tools".
+  defaultLeftTab?: TeamMemberLeftTab;
   capabilities: Partial<Record<TeamMemberCapabilityId, boolean>>;
   allowedServiceTypes?: string[];
   active?: boolean;
@@ -88,7 +95,9 @@ export const defaultAncillaryCareSpecialistProfile: TeamMemberProfileSetting = {
   workspaceType: "ancillaryCareSpecialist",
   assignedFacilityIds: [],
   defaultFacilityId: null,
-  defaultMode: "clinicSchedule",
+  // ACS → Ancillary Schedule (unifies the prior static-table vs profile
+  // mismatch, decision K16). PCS → Call List (below).
+  defaultMode: "ancillarySchedule",
   capabilities: {
     callAndSchedule: true,
     completeProcedure: true,
@@ -162,6 +171,12 @@ export function normalizeTeamMemberProfile(
     ? (raw.defaultMode as TeamMemberWorkspaceMode)
     : base.defaultMode;
 
+  const defaultLeftTab = (TEAM_MEMBER_LEFT_TABS as readonly string[]).includes(
+    raw.defaultLeftTab as string,
+  )
+    ? (raw.defaultLeftTab as TeamMemberLeftTab)
+    : "tools";
+
   const capRaw =
     raw.capabilities && typeof raw.capabilities === "object"
       ? (raw.capabilities as Record<string, unknown>)
@@ -193,6 +208,7 @@ export function normalizeTeamMemberProfile(
     assignedFacilityIds,
     defaultFacilityId,
     defaultMode,
+    defaultLeftTab,
     capabilities,
     allowedServiceTypes,
     active: active ?? true,

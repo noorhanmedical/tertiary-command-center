@@ -46,6 +46,57 @@ export async function getAdminSettingById(id: number): Promise<AdminSetting | un
   return result;
 }
 
+/** Upsert a scoped admin setting by (domain, key, facilityId, userId, testType).
+ *  Reuses the existing row at that EXACT scope (regardless of active status) so
+ *  we reactivate rather than accumulate — Postgres treats NULL scope columns as
+ *  distinct in the unique index, so a plain insert would not collide. This is
+ *  the canonical write path for scoped settings (e.g. workspace_profile). */
+export async function upsertAdminSetting(input: {
+  settingDomain: string;
+  settingKey: string;
+  settingValue: Record<string, unknown>;
+  facilityId?: string | null;
+  userId?: string | null;
+  testType?: string | null;
+  description?: string | null;
+}): Promise<AdminSetting> {
+  const facilityId = input.facilityId ?? null;
+  const userId = input.userId ?? null;
+  const testType = input.testType ?? null;
+  const [existing] = await db
+    .select()
+    .from(adminSettings)
+    .where(
+      and(
+        eq(adminSettings.settingDomain, input.settingDomain),
+        eq(adminSettings.settingKey, input.settingKey),
+        facilityId === null ? isNull(adminSettings.facilityId) : eq(adminSettings.facilityId, facilityId),
+        userId === null ? isNull(adminSettings.userId) : eq(adminSettings.userId, userId),
+        testType === null ? isNull(adminSettings.testType) : eq(adminSettings.testType, testType),
+      ),
+    )
+    .orderBy(desc(adminSettings.id))
+    .limit(1);
+  if (existing) {
+    const updated = await updateAdminSetting(existing.id, {
+      settingValue: input.settingValue,
+      description: input.description ?? existing.description,
+      active: true,
+    });
+    return updated!;
+  }
+  return createAdminSetting({
+    settingDomain: input.settingDomain,
+    settingKey: input.settingKey,
+    settingValue: input.settingValue,
+    facilityId,
+    userId,
+    testType,
+    description: input.description ?? null,
+    active: true,
+  });
+}
+
 // ─── Default seed ──────────────────────────────────────────────────────────
 
 type DefaultAdminSetting = {

@@ -164,4 +164,99 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
     const scope = await resolveManagerScope(String(req.params.userId), null);
     res.json({ teamIds: scope.teamIds, userIds: [...scope.userIds], facilityIds: [...scope.facilityIds] });
   });
+
+  // ─── Coherent per-member operational profile (K9) ────────
+  // ONE call assembling identity + teams + facilities/coverage + portal +
+  // call work + phone + management for the admin Team Member profile surface.
+  app.get("/api/teams/member-profile/:userId", admin, async (req: Request, res: Response) => {
+    const userId = String(req.params.userId);
+    try {
+      const { storage } = await import("../storage");
+      const { facilityCoverageRepository } = await import("../repositories/facilityCoverage.repo");
+      const { engagementCallSettingsRepository } = await import("../repositories/engagementCallSettings.repo");
+      const { getAdminSettingValue, getPhoneProviderPreferences } = await import("../repositories/adminSettings.repo");
+      const { resolveManagerScope } = await import("../services/teams/managerScope");
+      const { normalizeTeamMemberProfile, fallbackWorkspaceTypeForRole, resolveTeamMemberCapabilities } =
+        await import("@shared/teamMemberProfile");
+
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const schedulers = (await storage.getOutreachSchedulers()).filter((s) => s.userId === userId);
+      const schedulerIds = schedulers.map((s) => s.id);
+      const [memberships, coverage, callSettingsRows, mgrRels] = await Promise.all([
+        teamsRepository.listMembershipsForUser(userId, true),
+        facilityCoverageRepository.listForUser(userId),
+        schedulerIds.length ? engagementCallSettingsRepository.listForSchedulers(schedulerIds) : Promise.resolve([]),
+        teamsRepository.listManagerRelationships(userId, true),
+      ]);
+
+      const rawProfile = await getAdminSettingValue<Record<string, unknown>>(
+        "team_member", "workspace_profile", { userId },
+      );
+      const workspaceType = fallbackWorkspaceTypeForRole(user.role);
+      const profile = normalizeTeamMemberProfile(rawProfile, workspaceType);
+      const isManager = mgrRels.length > 0;
+      const capabilities = resolveTeamMemberCapabilities({
+        workspaceType: profile.workspaceType, profile, isManager,
+      });
+      const phone = await getPhoneProviderPreferences({ userId });
+
+      res.json({
+        identity: { userId: user.id, username: user.username, role: user.role, active: user.active },
+        teams: memberships,
+        facilities: { coverage },
+        portal: {
+          workspaceType: profile.workspaceType,
+          defaultMode: profile.defaultMode,
+          defaultLeftTab: (rawProfile as { defaultLeftTab?: string } | null)?.defaultLeftTab ?? "tools",
+          assignedFacilityIds: profile.assignedFacilityIds,
+        },
+        capabilities,
+        callWork: callSettingsRows[0] ?? null,
+        phone,
+        management: { isManager, relationships: mgrRels },
+      });
+    } catch (error: unknown) {
+      console.error("[teams:member-profile] error:", error instanceof Error ? error.message : error);
+      res.status(500).json({ error: "Failed to load member profile" });
+    }
+  });
+
+  // Coverage add/remove for a member (admin). Audited.
+  app.post("/api/teams/member/:userId/coverage", admin, async (req: Request, res: Response) => {
+    const userId = String(req.params.userId);
+    const schema = z.object({
+      facilityId: z.string().min(1),
+      coverageType: z.enum(["primary", "regular", "temporary"]).optional(),
+    });
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    const { facilityCoverageRepository } = await import("../repositories/facilityCoverage.repo");
+    const row = await facilityCoverageRepository.addCoverage({
+      userId, facilityId: parsed.data.facilityId,
+      coverageType: parsed.data.coverageType ?? "regular",
+      primaryCoverage: parsed.data.coverageType === "primary", source: "admin",
+    });
+    await teamsRepository.recordEvent({
+      eventType: "coverage_changed", actorUserId: actor(req), subjectUserId: userId,
+      facilityId: parsed.data.facilityId, summary: `Coverage added: ${parsed.data.facilityId}`,
+      metadata: { coverageType: row.coverageType, action: "add" },
+    });
+    res.json(row);
+  });
+
+  app.delete("/api/teams/member/:userId/coverage/:facilityId", admin, async (req: Request, res: Response) => {
+    const userId = String(req.params.userId);
+    const facilityId = String(req.params.facilityId);
+    const { facilityCoverageRepository } = await import("../repositories/facilityCoverage.repo");
+    const removed = await facilityCoverageRepository.removeCoverage(userId, facilityId);
+    if (removed > 0) {
+      await teamsRepository.recordEvent({
+        eventType: "coverage_changed", actorUserId: actor(req), subjectUserId: userId,
+        facilityId, summary: `Coverage removed: ${facilityId}`, metadata: { action: "remove" },
+      });
+    }
+    res.json({ ok: true, removed });
+  });
 }

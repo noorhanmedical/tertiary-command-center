@@ -24,6 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { OrganizationSettingsSection } from "@/components/settings/OrganizationSettingsSection";
+import { TeamOperationsSettings } from "@/components/settings/TeamOperationsSettings";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -317,6 +318,13 @@ export default function AdminSettingsPage() {
               {/* Team */}
               {activeSection === "team" && (
                 <div className="divide-y divide-slate-200/80" data-testid="panel-team">
+                  <Group
+                    title="Team Operations"
+                    desc="Canonical teams, memberships, managers, and coverage. Engagement, messaging, and tasks consume these."
+                    Icon={Users}
+                  >
+                    <TeamOperationsSettings />
+                  </Group>
                   <Group>
                     <SchedulerTeamSection />
                   </Group>
