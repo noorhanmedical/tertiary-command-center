@@ -1297,17 +1297,26 @@ export function registerExecutionCaseRoutes(app: Express) {
           // fabricate membership from current nextActionAt.
           return res.json([]);
         }
-        const dayStartH = new Date(`${requestedDate}T00:00:00.000`);
-        const dayEndH = new Date(`${requestedDate}T23:59:59.999`);
+        // Day-scope calls by CALENDAR DAY, not a millisecond window.
+        // outreach_calls.startedAt is a naive `timestamp` that the driver
+        // returns re-tagged as UTC; its toISOString() date is the wall-clock
+        // day the row was written (the same frame requestedDate is in).
+        // Building local-parsed millisecond boundaries here instead mixed a
+        // UTC-tagged instant with local boundaries and leaked a call made in
+        // the early-UTC hours into the PRIOR local day — which would let a
+        // TODAY call rewrite YESTERDAY's read-only snapshot. Compare the
+        // startedAt calendar day directly to requestedDate.
+        const callDay = (c: { startedAt: unknown }): string | null => {
+          if (!c.startedAt) return null;
+          const d = new Date(c.startedAt as string);
+          return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+        };
         const historical = await Promise.all(
           snapshot.map(async (a) => {
             const screening = await storage.getPatientScreening(a.patientScreeningId);
             // Historical outcome: the latest call the PCS logged that day.
             const dayCalls = (await storage.listOutreachCallsForPatient(a.patientScreeningId))
-              .filter((c) => {
-                const t = c.startedAt ? new Date(c.startedAt).getTime() : NaN;
-                return Number.isFinite(t) && t >= dayStartH.getTime() && t <= dayEndH.getTime();
-              })
+              .filter((c) => callDay(c) === requestedDate)
               .sort((x, y) => new Date(y.startedAt).getTime() - new Date(x.startedAt).getTime());
             const lastCall = dayCalls[0] ?? null;
             const ec = await getExecutionCaseByScreeningId(a.patientScreeningId).catch(() => null);
