@@ -33,7 +33,13 @@ import {
   type CallCaseContext,
   type CaseProofDoc,
 } from "@/components/portal/caseWorkspace";
-import { ringCentralProvider } from "@/features/command-center/providers/ringCentralProvider";
+import {
+  resolvePhoneProvider,
+  getClientPhoneProviderPreferences,
+  setTeamMemberPhoneProviderOverride,
+  AVAILABLE_PROVIDER_IDS,
+} from "@/features/command-center/providers/phoneProviderResolver";
+import type { PhoneProviderId } from "@/features/command-center/providers/phoneProviderTypes";
 import type { PhoneCallSession } from "@/features/command-center/providers/phoneProviderTypes";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import type { OutreachCallOutcome } from "@shared/schema";
@@ -282,9 +288,21 @@ export function CallWorkspace({
   );
   const [callSession, setCallSession] = useState<PhoneCallSession | null>(null);
   const [dialing, setDialing] = useState(false);
-  const [ringCentralUnwired, setRingCentralUnwired] = useState(false);
+  // The resolved provider reported a not-live/"pending" session (e.g. RingCentral
+  // with no credentials) — surface the honest manual-dial boundary.
+  const [providerUnwired, setProviderUnwired] = useState(false);
 
   const ringCentralEnabled = isRingCentralClickToCallEnabled();
+
+  // Per-call provider switch (null → use the precedence-resolved default).
+  const [providerOverride, setProviderOverride] = useState<PhoneProviderId | null>(null);
+  const providerPrefs = getClientPhoneProviderPreferences();
+  // Effective provider by precedence (team-member → facility → org → manual),
+  // with an optional per-call switch. The UI NEVER hard-wires RingCentral.
+  const resolvedProvider = resolvePhoneProvider(providerPrefs, {
+    ringCentralEnabled,
+    explicitProviderId: providerOverride,
+  });
 
   const commandEnabled = typeof screeningId === "number" && screeningId > 0;
   const { data, isLoading, isError, error } = useQuery<CommandCenterResponse>({
@@ -327,27 +345,34 @@ export function CallWorkspace({
       });
       return;
     }
+    // If the resolved provider isn't live (e.g. RingCentral with no
+    // credentials), don't even attempt — show the manual-dial boundary.
+    if (!resolvedProvider.live) {
+      setProviderUnwired(true);
+      setCallSession(null);
+      return;
+    }
     setDialing(true);
     try {
-      const session = await ringCentralProvider.startCall({
+      const session = await resolvedProvider.adapter.startCall({
         phoneNumber: phone,
         patientName: ctx.patientName,
         patientUuid: screeningId != null ? String(screeningId) : undefined,
       });
-      // The RingCentral adapter is dormant in this environment: it returns a
-      // synthetic "pending" session instead of placing a real call. Never
-      // present that as a live call — surface the honest connection boundary.
+      // A dormant adapter returns a synthetic "pending" session instead of
+      // placing a real call. Never present that as a live call — surface the
+      // honest connection boundary.
       if (!session?.callId || session.callId.includes("pending")) {
-        setRingCentralUnwired(true);
+        setProviderUnwired(true);
         setCallSession(null);
         return;
       }
-      setRingCentralUnwired(false);
+      setProviderUnwired(false);
       setCallSession(session);
     } catch (e) {
       toast({
         title: "Could not start call",
-        description: e instanceof Error ? e.message : "RingCentral call failed.",
+        description: e instanceof Error ? e.message : `${resolvedProvider.adapter.label} call failed.`,
         variant: "destructive",
       });
     } finally {
@@ -358,7 +383,7 @@ export function CallWorkspace({
   async function endCall() {
     if (callSession) {
       try {
-        await ringCentralProvider.endCall(callSession.callId);
+        await resolvedProvider.adapter.endCall(callSession.callId);
       } catch {
         /* ignore — the provider end is best-effort */
       }
@@ -435,26 +460,53 @@ export function CallWorkspace({
       {/* ─── RingCentral dialer panel ───────────────────────────── */}
       <Panel seedId="call-dialer" testId="call-workspace-dialer">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-slate-900">RingCentral dialer</div>
-          {ringCentralEnabled && !ringCentralUnwired ? (
-            <StatusPill label="Click-to-call enabled" tone="emerald" />
-          ) : (
-            <StatusPill label="Integration required" tone="amber" />
-          )}
+          <div className="text-sm font-semibold text-slate-900">Dialer</div>
+          <div className="flex items-center gap-1.5">
+            {/* Provider switcher — pick which calling method to use for this
+                call. Default comes from the precedence chain (team-member →
+                facility → org → manual). Persisting the choice sets the
+                team-member override. */}
+            <select
+              value={resolvedProvider.providerId}
+              onChange={(e) => {
+                const v = e.target.value as PhoneProviderId;
+                setProviderOverride(v);
+                setTeamMemberPhoneProviderOverride(v);
+                setProviderUnwired(false);
+              }}
+              className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-700"
+              data-testid="call-provider-select"
+              title="Calling method"
+            >
+              {AVAILABLE_PROVIDER_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {id === "ringcentral" ? "RingCentral" : id === "manual" ? "Manual" : id}
+                </option>
+              ))}
+            </select>
+            {resolvedProvider.live ? (
+              <StatusPill label="Ready" tone="emerald" />
+            ) : (
+              <StatusPill label="Integration required" tone="amber" />
+            )}
+          </div>
         </div>
 
-        {!ringCentralEnabled || ringCentralUnwired ? (
+        {!resolvedProvider.live || providerUnwired ? (
           <div
             className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-3 text-[12px] text-amber-900"
-            data-testid="call-ringcentral-boundary"
+            data-testid="call-provider-boundary"
           >
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <div className="font-semibold">RingCentral connection required</div>
+              <div className="font-semibold">
+                {resolvedProvider.adapter.label} connection required
+              </div>
               <p className="mt-0.5 text-amber-800">
-                Click-to-call is not connected for this environment. Place the call
-                manually{phone ? ` to ${phone}` : ""}, then log the outcome below. No
-                call is placed from here until RingCentral is connected.
+                {resolvedProvider.adapter.label} click-to-call is not connected for
+                this environment. Place the call manually{phone ? ` to ${phone}` : ""},
+                then log the outcome below. No call is placed from here until a live
+                calling provider is connected.
               </p>
             </div>
           </div>
