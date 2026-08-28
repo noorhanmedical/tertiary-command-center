@@ -256,6 +256,28 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Shift a YYYY-MM-DD operational date by N days using LOCAL calendar math
+// (no UTC parsing) so "yesterday/tomorrow" always land on the intended
+// facility-local operational day and never slip across a UTC boundary.
+function shiftIsoDate(iso: string, deltaDays: number): string {
+  const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
+  if (!y || !m || !d) return iso;
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + deltaDays);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+// Compact, human label for the right-rail date navigator. "Today" /
+// "Yesterday" / "Tomorrow" relative to the local operational day, else the
+// ISO date. Keeps the rail compact while making the selected day obvious.
+function relativeDateLabel(iso: string): string {
+  const today = todayIso();
+  if (iso === today) return "Today";
+  if (iso === shiftIsoDate(today, -1)) return "Yesterday";
+  if (iso === shiftIsoDate(today, 1)) return "Tomorrow";
+  return iso;
+}
+
 function formatTime(t: string | null) {
   if (!t) return "—";
   const m = /^(\d{1,2}):(\d{2})/.exec(t);
@@ -3307,8 +3329,51 @@ export function TeamPortalShell({
                 <div className="sticky top-0 z-10 border-b px-3 pb-1.5 pt-1.5" style={{ borderColor: "rgba(148,163,184,0.4)", backgroundColor: "#FAFBF8" }}>
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Work Queue</span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-slate-500 tabular-nums">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
+                    <div className="flex items-center gap-1">
+                      {/* Compact operational date navigator (Phase 0A). Drives
+                          all three right-rail feeds via `selectedDate`. Local
+                          calendar math (shiftIsoDate) keeps yesterday/tomorrow
+                          on the intended facility-local day. A "Today" shortcut
+                          appears only when off today. Not a full calendar. */}
+                      <div className="flex items-center gap-0.5" data-testid="right-rail-date-nav">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDate((d) => shiftIsoDate(d, -1))}
+                          aria-label="Previous day"
+                          title="Previous day"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-200/60 hover:text-slate-600"
+                          data-testid="button-right-rail-prev-day"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <span
+                          className="min-w-[62px] text-center text-[10px] font-medium text-slate-600 tabular-nums"
+                          title={selectedDate}
+                          data-testid="text-right-rail-selected-date"
+                        >
+                          {relativeDateLabel(selectedDate)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDate((d) => shiftIsoDate(d, 1))}
+                          aria-label="Next day"
+                          title="Next day"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-200/60 hover:text-slate-600"
+                          data-testid="button-right-rail-next-day"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                        {selectedDate !== todayIso() && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDate(todayIso())}
+                            className="ml-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[color:var(--sketch-blue)] hover:bg-slate-200/60"
+                            data-testid="button-right-rail-today"
+                          >
+                            Today
+                          </button>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => setRightRailPinned((v) => !v)}

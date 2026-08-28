@@ -187,7 +187,19 @@ export function registerPlexusTasksRoutes(app: Express) {
       const q = String(req.query.q ?? "").trim();
       if (!q || q.length < 2) return res.json([]);
       const patients = await storage.searchPatientsByName(q);
-      res.json(patients.map((p) => ({ id: p.id, name: p.name, dob: p.dob, insurance: p.insurance })));
+      // qualifyingTests is additive on this response (existing consumers ignore
+      // extra fields). The Team Portal quick-schedule popover uses it to offer
+      // the patient's ACTUAL Plexus IQ–qualified services instead of a static
+      // list, so a PCS never schedules a test the patient isn't qualified for.
+      res.json(
+        patients.map((p) => ({
+          id: p.id,
+          name: p.name,
+          dob: p.dob,
+          insurance: p.insurance,
+          qualifyingTests: Array.isArray(p.qualifyingTests) ? p.qualifyingTests : [],
+        })),
+      );
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
