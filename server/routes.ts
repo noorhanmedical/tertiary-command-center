@@ -501,7 +501,46 @@ export async function registerRoutes(
         recErr instanceof Error ? recErr.message : recErr,
       );
     }
+    // Relationship-change audit (K25).
+    try {
+      const { teamsRepository } = await import("./repositories/teams.repo");
+      await teamsRepository.recordEvent({
+        eventType: "user_deactivated", actorUserId: req.session.userId ?? null, subjectUserId: String(id),
+        summary: `User ${target.username} deactivated`, metadata: { recovery },
+      });
+    } catch { /* best-effort */ }
     return res.json({ ok: true, recovery });
+  });
+
+  // Phase 4E — reactivate a user. Restores operational eligibility (users.active
+  // + engagement_call_settings.active) but NEVER resurrects historical ownership
+  // — the user starts with an empty live queue and receives new work via the
+  // normal distribution path. Team memberships / coverage history stand as-is.
+  app.patch("/api/users/:id/reactivate", requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const target = await storage.getUser(String(id));
+    if (!target) return res.status(404).json({ error: "User not found" });
+    await storage.reactivateUser(String(id));
+    let eligibility: unknown = null;
+    try {
+      const { reactivateUserEligibility } = await import(
+        "./services/engagement/reactivateUser"
+      );
+      eligibility = await reactivateUserEligibility(String(id));
+    } catch (err) {
+      console.error(
+        "[users:reactivate] eligibility restore failed (user still reactivated):",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    try {
+      const { teamsRepository } = await import("./repositories/teams.repo");
+      await teamsRepository.recordEvent({
+        eventType: "user_reactivated", actorUserId: req.session.userId ?? null, subjectUserId: String(id),
+        summary: `User ${target.username} reactivated`, metadata: { eligibility },
+      });
+    } catch { /* best-effort */ }
+    return res.json({ ok: true, eligibility });
   });
 
   app.patch("/api/users/:id/role", requireAdmin, async (req, res) => {

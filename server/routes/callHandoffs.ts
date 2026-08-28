@@ -128,14 +128,26 @@ export function registerCallHandoffRoutes(app: Express) {
     }
   });
 
-  // Manager cross-team view (admin-gated until Phase 4 manager relationships).
+  // Manager cross-team view (Phase 4E): admin sees all; a team manager sees
+  // handoffs to/from users in their scope; ordinary staff forbidden.
   app.get("/api/engagement/handoffs/manager", async (req: Request, res: Response) => {
-    if (sessionRole(req) !== "admin") {
-      return res.status(403).json({ error: "Manager view requires admin" });
-    }
+    const userId = sessionUserId(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
+      const { resolveManagerScope, isManagerOrAdmin, scopeCoversUser } =
+        await import("../services/teams/managerScope");
+      const scope = await resolveManagerScope(userId, sessionRole(req));
+      if (!isManagerOrAdmin(scope)) {
+        return res.status(403).json({ error: "Manager view requires admin or a team-manager role" });
+      }
       const rows = await callHandoffsRepository.listForManager(200);
-      return res.json(rows);
+      const scoped = scope.isAdmin
+        ? rows
+        : rows.filter((h) =>
+            (h.toUserId && scopeCoversUser(scope, h.toUserId)) ||
+            (h.fromUserId && scopeCoversUser(scope, h.fromUserId)),
+          );
+      return res.json(scoped);
     } catch (err) {
       return handleError(res, err);
     }

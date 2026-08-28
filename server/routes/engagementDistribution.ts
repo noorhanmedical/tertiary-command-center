@@ -18,6 +18,7 @@ import {
   ACTIVITY_EVENT_TYPES,
 } from "../services/engagement/distributionService";
 import { subscribeLiveActivity } from "../services/engagement/liveActivityBus";
+import { requireManagerOrAdmin, schedulerIdsInScope, type ManagerScope } from "../services/teams/managerScope";
 
 type RequireRole = (
   ...roles: string[]
@@ -157,7 +158,7 @@ export function registerEngagementDistributionRoutes(
   // ─── OWNERSHIP TIMELINE (K17) — manager-visible per-case history ─────────
   app.get(
     "/api/engagement/cases/:executionCaseId/ownership-timeline",
-    requireRole("admin"),
+    requireManagerOrAdmin,
     async (req: Request, res: Response) => {
       const executionCaseId = Number(req.params.executionCaseId);
       if (!Number.isInteger(executionCaseId) || executionCaseId <= 0) {
@@ -167,7 +168,24 @@ export function registerEngagementDistributionRoutes(
         const { getOwnershipTimeline } = await import(
           "../services/engagement/ownershipTimelineService"
         );
-        return res.json(await getOwnershipTimeline(executionCaseId));
+        const timeline = await getOwnershipTimeline(executionCaseId);
+        // Manager scope: a non-admin may only view a timeline for a case
+        // currently or historically owned by a member in their scope.
+        const scope = (req as { managerScope?: ManagerScope }).managerScope;
+        if (scope && !scope.isAdmin) {
+          const inScope = await schedulerIdsInScope(scope);
+          const scopeSet = new Set(inScope ?? []);
+          const touchesScope =
+            (timeline.currentOwnerSchedulerId != null && scopeSet.has(timeline.currentOwnerSchedulerId)) ||
+            timeline.entries.some((e) =>
+              (e.toSchedulerId != null && scopeSet.has(e.toSchedulerId)) ||
+              (e.fromSchedulerId != null && scopeSet.has(e.fromSchedulerId)),
+            );
+          if (!touchesScope) {
+            return res.status(403).json({ error: "Case is outside your team scope" });
+          }
+        }
+        return res.json(timeline);
       } catch (error: unknown) {
         console.error(
           "[engagement/ownership-timeline] error:",
@@ -183,7 +201,7 @@ export function registerEngagementDistributionRoutes(
   // List open (unresolved) needs-coverage rows + a per-category summary.
   app.get(
     "/api/engagement/needs-coverage",
-    requireRole("admin"),
+    requireManagerOrAdmin,
     async (req: Request, res: Response) => {
       try {
         const { needsCoverageRepository } = await import(
@@ -191,10 +209,17 @@ export function registerEngagementDistributionRoutes(
         );
         const category = req.query.category ? String(req.query.category) : undefined;
         const facilityId = req.query.facilityId ? String(req.query.facilityId) : undefined;
-        const [items, byCategory] = await Promise.all([
+        let [items, byCategory] = await Promise.all([
           needsCoverageRepository.listOpen({ category, facilityId }),
           needsCoverageRepository.countOpenByCategory(),
         ]);
+        // Manager scope: narrow to the facilities the manager's team(s) cover
+        // (admin sees all). When a manager's scope has no facility narrowing,
+        // they still see all rows (facility-agnostic teams).
+        const scope = (req as { managerScope?: ManagerScope }).managerScope;
+        if (scope && !scope.isAdmin && scope.facilityIds.size > 0) {
+          items = items.filter((i) => i.facilityId && scope.facilityIds.has(i.facilityId));
+        }
         return res.json({ items, byCategory, total: items.length });
       } catch (error: unknown) {
         console.error(

@@ -349,8 +349,13 @@ export function registerPlexusTasksRoutes(app: Express) {
     try {
       const userId = uid(req);
       const actor = await storage.getUser(userId);
-      if ((actor?.role ?? "") !== "admin") {
-        return res.status(403).json({ error: "Manager task view requires admin role" });
+      // Phase 4E — admin sees org-wide; a manager sees only tasks owned by
+      // members of the team(s) they manage; ordinary staff are forbidden.
+      const { resolveManagerScope, scopeCoversUser, isManagerOrAdmin } =
+        await import("../services/teams/managerScope");
+      const scope = await resolveManagerScope(userId, actor?.role ?? null);
+      if (!isManagerOrAdmin(scope)) {
+        return res.status(403).json({ error: "Manager task view requires admin or a team-manager role" });
       }
       const q = req.query as Record<string, string | undefined>;
       const filters: ManagerTaskFilters = {};
@@ -361,7 +366,16 @@ export function registerPlexusTasksRoutes(app: Express) {
       if (q.overdueOnly === "true") filters.overdueOnly = true;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 200, 500) : 200;
 
-      const tasks = await storage.getTasksForManager(filters, limit);
+      const allTasks = await storage.getTasksForManager(filters, limit);
+      // Manager scope filter (admin: no filter). A task is in scope if its
+      // assignee OR its creator is a scoped user (covers unassigned team tasks
+      // a manager created too).
+      const tasks = scope.isAdmin
+        ? allTasks
+        : allTasks.filter((t) =>
+            (t.assignedToUserId && scopeCoversUser(scope, t.assignedToUserId)) ||
+            (t.createdByUserId && scopeCoversUser(scope, t.createdByUserId)),
+          );
       const withNames = await enrichWithPatientNames(tasks);
 
       // Resolve owner/creator/completer usernames in one batch.

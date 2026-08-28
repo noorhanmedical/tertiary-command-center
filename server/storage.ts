@@ -117,6 +117,7 @@ export interface IStorage {
   updateUserRole(id: string, role: string): Promise<void>;
   validateUserPassword(username: string, plaintext: string): Promise<User | null>;
   deactivateUser(id: string): Promise<void>;
+  reactivateUser(id: string): Promise<void>;
   deleteUser(id: string): Promise<void>;
 
   createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch>;
@@ -335,6 +336,7 @@ export class DatabaseStorage implements IStorage {
   getAllUsers() { return usersRepository.listAll(); }
   getUsersByRole(role: string) { return usersRepository.listByRole(role); }
   deactivateUser(id: string) { return usersRepository.deactivate(id); }
+  reactivateUser(id: string) { return usersRepository.reactivate(id); }
   deleteUser(id: string) { return usersRepository.remove(id); }
 
   // Screening batches + patient screenings

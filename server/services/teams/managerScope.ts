@@ -32,6 +32,12 @@ export async function resolveManagerScope(
   const scope: ManagerScope = { isAdmin, teamIds: [], userIds: new Set(), facilityIds: new Set() };
   if (isAdmin || !userId) return scope;
 
+  // A DEACTIVATED manager loses authority (K13): even if active manager
+  // relationships remain, an inactive user account cannot authorize access.
+  const { storage } = await import("../../storage");
+  const manager = await storage.getUser(userId);
+  if (manager && manager.active === false) return scope;
+
   const rels = await teamsRepository.listManagerRelationships(userId, true);
   const teamIds = new Set<number>();
   for (const r of rels) {
@@ -66,4 +72,45 @@ export function scopeCoversTeam(scope: ManagerScope, teamId: number): boolean {
 /** True when the caller has ANY management authority (admin or a manager). */
 export function isManagerOrAdmin(scope: ManagerScope): boolean {
   return scope.isAdmin || scope.teamIds.length > 0 || scope.userIds.size > 0;
+}
+
+/**
+ * Resolve the outreach_schedulers.id set within a manager's scope. Engagement
+ * endpoints key off roster scheduler ids (assignedTeamMemberId), but scope is
+ * expressed in login user ids — this bridges the two. Returns null for admin
+ * (meaning "no filter — all"). For a manager, returns the scheduler ids of the
+ * users in their team scope.
+ */
+export async function schedulerIdsInScope(scope: ManagerScope): Promise<number[] | null> {
+  if (scope.isAdmin) return null;
+  const { storage } = await import("../../storage");
+  const rosters = await storage.getOutreachSchedulers();
+  const ids = rosters
+    .filter((r) => r.userId && scope.userIds.has(r.userId))
+    .map((r) => r.id);
+  return ids;
+}
+
+// ─── Express middleware: allow admin OR any active team manager ──────────────
+// Attaches the resolved ManagerScope to req.managerScope for the handler to
+// filter with. Ordinary staff (no management authority) get 403.
+export async function requireManagerOrAdmin(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction,
+): Promise<void> {
+  const session = (req as { session?: { userId?: string; role?: string } }).session;
+  const userId = session?.userId ?? null;
+  const role = session?.role ?? null;
+  if (!userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  const scope = await resolveManagerScope(userId, role);
+  if (!isManagerOrAdmin(scope)) {
+    res.status(403).json({ error: "Requires admin or a team-manager role" });
+    return;
+  }
+  (req as { managerScope?: ManagerScope }).managerScope = scope;
+  next();
 }

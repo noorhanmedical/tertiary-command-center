@@ -244,6 +244,30 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
     }
   });
 
+  // Deactivation safety report (K13): open tasks still owned by INACTIVE users.
+  // We do NOT auto-reassign (no product rule) — we surface them as an exception
+  // so an admin/manager can act. Messages/membership history is never deleted.
+  app.get("/api/teams/deactivation-report", admin, async (_req: Request, res: Response) => {
+    try {
+      const { storage } = await import("../storage");
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+      const allUsers = await storage.getAllUsers();
+      const inactiveIds = allUsers.filter((u) => u.active === false).map((u) => u.id);
+      if (inactiveIds.length === 0) return res.json({ inactiveUsers: 0, orphanedTasks: [] });
+      const rows: any = await db.execute(sql`
+        SELECT id, title, status, assigned_to_user_id
+        FROM plexus_tasks
+        WHERE assigned_to_user_id = ANY(${inactiveIds})
+          AND status NOT IN ('done','closed')
+        ORDER BY created_at DESC LIMIT 200`);
+      return res.json({ inactiveUsers: inactiveIds.length, orphanedTasks: rows.rows });
+    } catch (error: unknown) {
+      console.error("[teams:deactivation-report] error:", error instanceof Error ? error.message : error);
+      return res.status(500).json({ error: "Failed to build deactivation report" });
+    }
+  });
+
   // Coverage add/remove for a member (admin). Audited.
   app.post("/api/teams/member/:userId/coverage", admin, async (req: Request, res: Response) => {
     const userId = String(req.params.userId);

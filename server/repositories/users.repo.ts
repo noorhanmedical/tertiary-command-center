@@ -21,6 +21,7 @@ export interface IUsersRepository {
   listAll(): Promise<Omit<User, "password">[]>;
   listByRole(role: string): Promise<Omit<User, "password">[]>;
   deactivate(id: string): Promise<void>;
+  reactivate(id: string): Promise<void>;
   remove(id: string): Promise<void>;
 }
 
@@ -84,6 +85,10 @@ export class DbUsersRepository implements IUsersRepository {
 
   async deactivate(id: string): Promise<void> {
     await db.update(users).set({ active: false }).where(eq(users.id, id));
+  }
+
+  async reactivate(id: string): Promise<void> {
+    await db.update(users).set({ active: true }).where(eq(users.id, id));
   }
 
   async remove(id: string): Promise<void> {
