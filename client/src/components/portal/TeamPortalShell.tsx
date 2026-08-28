@@ -1570,8 +1570,10 @@ export function TeamPortalShell({
       // because it would be ignored anyway (locked override).
       fetchWorkspaceCallList({
         facilityId: facility || null,
-        startDate: workspaceDayStartIso,
-        endDate: workspaceDayEndIso,
+        // Server-side operational-day scoping (Phase 0/#11). Backlog is
+        // included only for today/future by the server; past dates show
+        // cases whose next action was due that day.
+        date: selectedDate,
         limit: 100,
         viewAsTeamMemberId,
         workspace: workspaceCallListContext ?? null,

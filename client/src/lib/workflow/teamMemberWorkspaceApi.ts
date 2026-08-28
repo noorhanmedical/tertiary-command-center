@@ -172,6 +172,11 @@ type CallListParams = {
   assignedRole?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  /** Operational day (YYYY-MM-DD). When set, the SERVER scopes the call list
+   *  to cases whose nextActionAt falls on that local day, including backlog
+   *  (null nextActionAt) only for today/future. Preferred over client-side
+   *  startDate/endDate filtering. */
+  date?: string | null;
   limit?: number;
   /** ADMIN VIEW-AS — only honored when the caller is admin. */
   viewAsTeamMemberId?: string | null;
@@ -370,13 +375,11 @@ export async function schedulePatientAncillary(input: {
   return res.json();
 }
 
-// /api/scheduler-portal/cases doesn't support startDate/endDate, so we
-// fetch by facility/assigned and filter `nextActionAt` client-side when
-// a date window is supplied. Cases with NO next-action date are assigned
-// backlog (the Engagement Center shows them with no date) — they must
-// always appear in the member's call list rather than being dropped by
-// the day window. Only cases that DO carry a scheduled next-action date
-// are narrowed to the selected window.
+// Call list day scoping. PREFERRED: pass `date=YYYY-MM-DD` — the SERVER scopes
+// by nextActionAt and includes backlog (null nextActionAt) only for
+// today/future (see /api/scheduler-portal/cases). LEGACY fallback: when only
+// startDate/endDate are given (no `date`), the old client-side nextActionAt
+// filter still applies and keeps null-nextActionAt backlog on every day.
 export async function fetchWorkspaceCallList(
   params: CallListParams = {},
 ): Promise<TeamWorkspaceCallListItem[]> {
@@ -384,6 +387,7 @@ export async function fetchWorkspaceCallList(
   appendIf(qs, "facilityId", params.facilityId);
   appendIf(qs, "assignedTeamMemberId", params.assignedTeamMemberId);
   appendIf(qs, "assignedRole", params.assignedRole);
+  appendIf(qs, "date", params.date);
   appendIf(qs, "limit", params.limit ?? 100);
   appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
   appendIf(qs, "workspace", params.workspace);
@@ -391,7 +395,10 @@ export async function fetchWorkspaceCallList(
   const rows = await fetchJson<unknown[]>(url);
   if (!Array.isArray(rows)) return [];
   let out = rows as TeamWorkspaceCallListItem[];
-  if (params.startDate || params.endDate) {
+  // Server-side date scoping is authoritative when `date` is supplied — do NOT
+  // re-filter client-side. The legacy startDate/endDate client filter only runs
+  // for callers that still pass a window without `date`.
+  if (!params.date && (params.startDate || params.endDate)) {
     const startMs = params.startDate ? new Date(params.startDate).getTime() : -Infinity;
     const endMs = params.endDate ? new Date(params.endDate).getTime() : Infinity;
     out = out.filter((row) => {

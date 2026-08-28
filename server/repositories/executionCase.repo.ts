@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc, sql, inArray, notInArray, isNull } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray, notInArray, isNull, gte, lte } from "drizzle-orm";
 import { publishLiveActivity } from "../services/engagement/liveActivityBus";
 import {
   patientExecutionCases,
@@ -648,6 +648,18 @@ export type ListSchedulerPortalCasesFilters = {
   lifecycleStatus?: string;
   engagementStatus?: string;
   qualificationStatus?: string;
+  // Operational-day window (server-side date navigation). When provided, only
+  // cases whose `nextActionAt` falls within [dateStart, dateEnd] are returned.
+  // `includeBacklog` controls null-nextActionAt (backlog) rows: they are the
+  // "due/overdue now" pool with no scheduled day, so they belong ONLY to
+  // today/future views — never to a strictly-past date (that would repeat the
+  // whole backlog on every historical day). Callers pass includeBacklog=false
+  // for past dates. NOTE: this is a forward/current-day filter over the mutable
+  // nextActionAt pointer, NOT a historical membership reconstruction — see the
+  // scheduler_assignments.asOfDate limitation reported in the milestone notes.
+  dateStart?: Date;
+  dateEnd?: Date;
+  includeBacklog?: boolean;
 };
 
 const SCHEDULER_DEFAULT_BUCKETS = ["visit", "outreach", "scheduling_triage"] as const;
@@ -678,6 +690,21 @@ export async function listSchedulerPortalCases(
   if (filters.assignedTeamMemberId != null) conditions.push(eq(patientExecutionCases.assignedTeamMemberId, filters.assignedTeamMemberId));
   if (filters.facilityId) conditions.push(eq(patientExecutionCases.facilityId, filters.facilityId));
   if (filters.qualificationStatus) conditions.push(eq(patientExecutionCases.qualificationStatus, filters.qualificationStatus));
+
+  // Operational-day window over nextActionAt. Backlog (null nextActionAt) is
+  // kept only when includeBacklog is true (today/future); on past dates it is
+  // excluded so a historical view doesn't repeat the entire undated backlog.
+  if (filters.dateStart && filters.dateEnd) {
+    const inWindow = and(
+      gte(patientExecutionCases.nextActionAt, filters.dateStart),
+      lte(patientExecutionCases.nextActionAt, filters.dateEnd),
+    );
+    conditions.push(
+      filters.includeBacklog
+        ? (or(isNull(patientExecutionCases.nextActionAt), inWindow) as typeof inWindow)
+        : inWindow,
+    );
+  }
 
   if (filters.lifecycleStatus) {
     conditions.push(eq(patientExecutionCases.lifecycleStatus, filters.lifecycleStatus));

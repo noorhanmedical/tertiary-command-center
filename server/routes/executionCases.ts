@@ -1233,6 +1233,32 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
+
+      // Operational-day navigation (server-side). `date=YYYY-MM-DD` scopes the
+      // call list to cases whose nextActionAt falls on that local day. Backlog
+      // (null nextActionAt) is the "due now" pool with no scheduled day, so it
+      // is included ONLY for today/future dates — never for a strictly-past
+      // date (which would otherwise repeat the whole backlog every day).
+      // NOTE: this filters the mutable nextActionAt pointer for the current/
+      // forward operational day; it is NOT a historical call-list-membership
+      // reconstruction. Faithful past-day membership lives in
+      // scheduler_assignments.asOfDate (a separate table) — see milestone
+      // report. Past dates therefore show "cases whose next action was due
+      // that day", which is honest but not a membership snapshot.
+      if (typeof q.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.date)) {
+        const dayStart = new Date(`${q.date}T00:00:00.000`);
+        const dayEnd = new Date(`${q.date}T23:59:59.999`);
+        if (!Number.isNaN(dayStart.getTime()) && !Number.isNaN(dayEnd.getTime())) {
+          filters.dateStart = dayStart;
+          filters.dateEnd = dayEnd;
+          const todayLocal = (() => {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          })();
+          // Include backlog only when the requested day is today or later.
+          filters.includeBacklog = q.date >= todayLocal;
+        }
+      }
       const rows = await listSchedulerPortalCases(filters, limit);
 
       // Phase 2E final review — attach the EXACT, SERVICE-AWARE ancillary case
