@@ -20,6 +20,7 @@ import type {
   TrayTab,
   PlaygroundLayout,
   CalendarBehavior,
+  LeftTab,
 } from "./workspacePrefs";
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -74,6 +75,18 @@ export function WorkspaceSettingsDialog({
         </div>
 
         <div className="divide-y divide-slate-200/60">
+          <Row label="Default left tab" hint="Which left-rail tab opens first: Tools or Messaging.">
+            <SketchSelect
+              seedId="setting-default-left-tab"
+              value={prefs.defaultLeftTab}
+              onChange={(e) => updatePref("defaultLeftTab", e.target.value as LeftTab)}
+              data-testid="setting-default-left-tab"
+            >
+              <option value="tools">Tools</option>
+              <option value="messaging">Messaging</option>
+            </SketchSelect>
+          </Row>
+
           <Row label="Default tray tab" hint="Which communication tab opens first.">
             <SketchSelect
               seedId="setting-default-tray-tab"

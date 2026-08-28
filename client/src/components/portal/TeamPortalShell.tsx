@@ -91,7 +91,7 @@ import { ToolDock, type DockTool, type DockGroup } from "@/components/portal/too
 import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
 import { CommunicationTray } from "@/components/portal/tools/CommunicationTray";
 import { WorkspaceSettingsDialog } from "@/components/portal/tools/WorkspaceSettingsDialog";
-import { useWorkspacePrefs, type TrayTab } from "@/components/portal/tools/workspacePrefs";
+import { useWorkspacePrefs, DEFAULT_WORKSPACE_PREFS, type TrayTab } from "@/components/portal/tools/workspacePrefs";
 import {
   useWorkspaceWidgets,
   PlaygroundWidgetLayer,
@@ -1346,9 +1346,14 @@ export function TeamPortalShell({
     markRead: markMessagingRead,
     sendMessage: sendMessagingMessage,
   } = usePortalMessages();
-  // Which top-level tab the left panel shows: the new Messaging inbox or the
-  // existing Tools dock (calendar + tray + tool launchers).
-  const [leftPanelTab, setLeftPanelTab] = useState<"messaging" | "tools">("messaging");
+  // Which top-level tab the left panel shows: the Messaging inbox or the
+  // Tools dock (calendar + tray + tool launchers). K7 — seeded from the
+  // persisted defaultLeftTab pref (default "tools") once prefs hydrate;
+  // user clicks win after that. NOT hardcoded.
+  const [leftPanelTab, setLeftPanelTab] = useState<"messaging" | "tools">(
+    DEFAULT_WORKSPACE_PREFS.defaultLeftTab,
+  );
+  const leftPanelTabInitRef = useRef(false);
   const [messagesWindowOpen, setMessagesWindowOpen] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const openMessagesConversation = useCallback(
@@ -1392,6 +1397,13 @@ export function TeamPortalShell({
     trayTabInitRef.current = true;
     setTrayTab(workspacePrefs.defaultTrayTab);
   }, [workspacePrefs.defaultTrayTab, workspacePrefsHydrated]);
+  useEffect(() => {
+    // K7 — seed the top-level left tab from the persisted default ONCE,
+    // after prefs hydrate; user tab clicks win after that.
+    if (leftPanelTabInitRef.current || !workspacePrefsHydrated) return;
+    leftPanelTabInitRef.current = true;
+    setLeftPanelTab(workspacePrefs.defaultLeftTab);
+  }, [workspacePrefs.defaultLeftTab, workspacePrefsHydrated]);
   const leftRailRef = useRef<HTMLDivElement>(null);
   // Task #643 — Playground surface ref for drop-point math (drag tool → widget).
   const playgroundSurfaceRef = useRef<HTMLDivElement>(null);
@@ -3401,13 +3413,20 @@ export function TeamPortalShell({
                           icon: BookOpen,
                           onClick: () => dispatchOpenWorkspace({ type: "scripts", title: "Scripts" }),
                           active: activeKind === "resources",
+                          // Phase 0.5 — honest signal: Scripts is a static
+                          // resources preview (no backend yet), not a live
+                          // managed template library.
+                          badge: <SketchBadge tone="graphite">preview</SketchBadge>,
                           testId: "left-rail-tool-resources",
                         },
                         {
+                          // K/Phase 0.5 — honest rename. This tool is the
+                          // marketing-materials sender (/api/outreach/materials),
+                          // NOT a "proof PDFs" store. Labeled for what it is.
                           id: "marketing",
-                          label: "Proof/PDFs",
+                          label: "Marketing",
                           icon: Megaphone,
-                          onClick: () => dispatchOpenWorkspace({ type: "proof_pdfs", title: "Proof/PDFs" }),
+                          onClick: () => dispatchOpenWorkspace({ type: "proof_pdfs", title: "Marketing Materials" }),
                           active: activeKind === "marketing",
                           testId: "left-rail-tool-marketing",
                         },
@@ -3470,6 +3489,9 @@ export function TeamPortalShell({
                           icon: Landmark,
                           onClick: () => dispatchOpenWorkspace({ type: "invoice_desk", title: "Invoice Desk" }),
                           active: activeKind === "invoiceDesk",
+                          // Phase 0.5 — honest signal: Invoice Desk runs on a
+                          // demo store, not the canonical billing module yet.
+                          badge: <SketchBadge tone="gold">demo</SketchBadge>,
                           testId: "left-rail-tool-invoice-desk",
                         },
                       ],
