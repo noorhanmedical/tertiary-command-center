@@ -482,7 +482,25 @@ export async function registerRoutes(
       return res.status(404).json({ error: "User not found" });
     }
     await storage.deactivateUser(String(id));
-    return res.json({ ok: true });
+
+    // Phase 3E — canonically release + redistribute the deactivated user's
+    // active call cases immediately (do not wait for absenceWatcher). Anything
+    // that cannot be re-placed lands in structured NEEDS COVERAGE
+    // (deactivated_owner). Non-blocking: a recovery hiccup never blocks the
+    // deactivation itself.
+    let recovery: unknown = null;
+    try {
+      const { recoverDeactivatedUser } = await import(
+        "./services/engagement/deactivatedUserRecovery"
+      );
+      recovery = await recoverDeactivatedUser(String(id), req.session.userId ?? null);
+    } catch (recErr) {
+      console.error(
+        "[users:deactivate] canonical recovery failed (user still deactivated):",
+        recErr instanceof Error ? recErr.message : recErr,
+      );
+    }
+    return res.json({ ok: true, recovery });
   });
 
   app.patch("/api/users/:id/role", requireAdmin, async (req, res) => {

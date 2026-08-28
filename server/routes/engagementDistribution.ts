@@ -154,6 +154,30 @@ export function registerEngagementDistributionRoutes(
     },
   );
 
+  // ─── OWNERSHIP TIMELINE (K17) — manager-visible per-case history ─────────
+  app.get(
+    "/api/engagement/cases/:executionCaseId/ownership-timeline",
+    requireRole("admin"),
+    async (req: Request, res: Response) => {
+      const executionCaseId = Number(req.params.executionCaseId);
+      if (!Number.isInteger(executionCaseId) || executionCaseId <= 0) {
+        return res.status(400).json({ error: "Invalid executionCaseId" });
+      }
+      try {
+        const { getOwnershipTimeline } = await import(
+          "../services/engagement/ownershipTimelineService"
+        );
+        return res.json(await getOwnershipTimeline(executionCaseId));
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/ownership-timeline] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({ error: "Failed to load ownership timeline" });
+      }
+    },
+  );
+
   // ─── NEEDS COVERAGE (K8) — manager view of uncovered cases + hold/clear ──
 
   // List open (unresolved) needs-coverage rows + a per-category summary.
