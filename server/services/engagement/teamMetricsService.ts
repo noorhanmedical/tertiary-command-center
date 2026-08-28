@@ -7,6 +7,7 @@ import { engagementCallSettingsRepository } from "../../repositories/engagementC
 import {
   computeCallTargets,
   remainingCapacity,
+  computeMemberCapacityState,
   getCarryoverCounts,
   getPtoUserIdsForToday,
   deriveWorkingStatus,
@@ -169,6 +170,12 @@ export interface TeamMetricsMember {
   activeQueue: number; // active non-terminal cases assigned to this member
   carryover: number; // past-due active cases (call-settings carryover)
   remainingCapacity: number; // call-settings capacity = max(0, kpi − carryover)
+  // Canonical capacity state (K2/K3) — same math the distribution engine uses.
+  configuredWorkloadPercent: number;
+  dailyCallCapacity: number; // completed-call KPI, capped by maxDailyCapacity
+  effectiveWorkload: number; // assigned + priority handoffs
+  priorityHandoffs: number; // outstanding P1/P2 handoffs (Phase 3C populates)
+  overCapacity: number; // max(0, effectiveWorkload − capacity)
 }
 
 export interface TeamMetricsTotals {
@@ -419,6 +426,18 @@ export async function getTeamMetrics(
       merged.manualWorkingToday,
       working.calendarWorkingToday,
     );
+    const activeQueue = activeQueueBySched.get(s.id) ?? 0;
+
+    // Canonical capacity state — identical math to the distribution engine so
+    // the workload display and auto-distribution never show different numbers.
+    const capacity = computeMemberCapacityState({
+      targets,
+      configuredWorkloadPercent: merged.callWorkdayPercent,
+      assigned: activeQueue,
+      carryover,
+      priorityHandoffs: 0, // Phase 3C populates from call_handoffs.
+      workingToday,
+    });
 
     return {
       schedulerId: s.id,
@@ -438,9 +457,14 @@ export async function getTeamMetrics(
         targets.scheduledKpi,
         scheduledToday,
       ),
-      activeQueue: activeQueueBySched.get(s.id) ?? 0,
+      activeQueue,
       carryover,
-      remainingCapacity: remainingCapacity(targets.completedCallKpi, carryover),
+      remainingCapacity: capacity.remainingCapacity,
+      configuredWorkloadPercent: capacity.configuredWorkloadPercent,
+      dailyCallCapacity: capacity.dailyCallCapacity,
+      effectiveWorkload: capacity.effectiveWorkload,
+      priorityHandoffs: capacity.priorityHandoffs,
+      overCapacity: capacity.overCapacity,
     };
   });
 

@@ -30,6 +30,7 @@ import { calculateNextActionAt } from "../callList/nextActionPolicy";
 import {
   computeCallTargets,
   remainingCapacity,
+  computeMemberCapacityState,
   getCarryoverCounts,
   getPtoUserIdsForToday,
   deriveWorkingStatus,
@@ -59,6 +60,15 @@ export interface DistributionMemberInput {
   // Per-lane sub-caps; visitTarget + outreachTarget == completedCallKpi.
   visitTarget: number;
   outreachTarget: number;
+  // ─ Canonical capacity-state display fields (K2/K3, Phase 3B) ─
+  // Carried through to memberSummaries so the manager preview shows the SAME
+  // numbers as the workload display. The pure allocator ignores these for
+  // planning (it only reads remainingCapacity + lane targets).
+  configuredWorkloadPercent: number;
+  dailyCallCapacity: number; // completed-call KPI capped by maxDailyCapacity
+  assigned: number; // current standard workload (live owned queue)
+  carryover: number; // past-due carryover
+  priorityHandoffs: number; // outstanding P1/P2 handoffs (Phase 3C populates)
 }
 
 export interface DistributionCaseInput {
@@ -99,11 +109,19 @@ export interface MemberAllocationSummary {
   remainingCapacity: number;
   visitTarget: number;
   outreachTarget: number;
-  assignedTotal: number;
+  assignedTotal: number; // NEW cases this plan proposes for the member
   assignedVisit: number;
   assignedOutreach: number;
   workingToday: boolean;
   active: boolean;
+  // ─ Canonical capacity state (K2/K3) — pre-plan standing + projections ─
+  configuredWorkloadPercent: number;
+  dailyCallCapacity: number;
+  carryover: number;
+  priorityHandoffs: number;
+  standardWorkload: number; // current owned queue BEFORE this plan (member.assigned)
+  projectedEffectiveWorkload: number; // standardWorkload + priorityHandoffs + assignedTotal
+  overCapacity: number; // max(0, projectedEffectiveWorkload − dailyCallCapacity)
 }
 
 export interface DistributionPlan {
@@ -243,19 +261,36 @@ export function buildDistributionPlan(
     });
   }
 
-  const memberSummaries: MemberAllocationSummary[] = state.map((m) => ({
-    schedulerId: m.schedulerId,
-    name: m.name,
-    facility: m.facility,
-    remainingCapacity: m.remainingCapacity,
-    visitTarget: m.visitTarget,
-    outreachTarget: m.outreachTarget,
-    assignedTotal: m.assignedTotal,
-    assignedVisit: m.assignedVisit,
-    assignedOutreach: m.assignedOutreach,
-    workingToday: m.workingToday,
-    active: m.active,
-  }));
+  const memberSummaries: MemberAllocationSummary[] = state.map((m) => {
+    const standardWorkload = Math.max(0, m.assigned);
+    const priorityHandoffs = Math.max(0, m.priorityHandoffs);
+    const projectedEffectiveWorkload =
+      standardWorkload + priorityHandoffs + m.assignedTotal;
+    const overCapacity = Math.max(
+      0,
+      projectedEffectiveWorkload - m.dailyCallCapacity,
+    );
+    return {
+      schedulerId: m.schedulerId,
+      name: m.name,
+      facility: m.facility,
+      remainingCapacity: m.remainingCapacity,
+      visitTarget: m.visitTarget,
+      outreachTarget: m.outreachTarget,
+      assignedTotal: m.assignedTotal,
+      assignedVisit: m.assignedVisit,
+      assignedOutreach: m.assignedOutreach,
+      workingToday: m.workingToday,
+      active: m.active,
+      configuredWorkloadPercent: m.configuredWorkloadPercent,
+      dailyCallCapacity: m.dailyCallCapacity,
+      carryover: m.carryover,
+      priorityHandoffs,
+      standardWorkload,
+      projectedEffectiveWorkload,
+      overCapacity,
+    };
+  });
 
   return {
     assignments,
@@ -390,10 +425,10 @@ export async function gatherDistributionMembers(): Promise<
     settingsRows.map((r) => [r.schedulerId, r]),
   );
 
-  const carryoverBySched = await getCarryoverCounts(
-    schedulerIds,
-    startOfTodayUtc(),
-  );
+  const [carryoverBySched, activeQueueBySched] = await Promise.all([
+    getCarryoverCounts(schedulerIds, startOfTodayUtc()),
+    getActiveQueueCounts(schedulerIds),
+  ]);
 
   const userIds = schedulers
     .map((s) => s.userId)
@@ -423,11 +458,23 @@ export async function gatherDistributionMembers(): Promise<
       tiers,
     );
     const carryover = carryoverBySched.get(s.id) ?? 0;
+    const assigned = activeQueueBySched.get(s.id) ?? 0;
     const working = deriveWorkingStatus(s.userId, ptoUserIds);
     const workingToday = resolveWorkingToday(
       manualWorkingToday,
       working.calendarWorkingToday,
     );
+
+    // Canonical capacity state — one source of truth shared with the workload
+    // display (teamMetricsService uses the same computeMemberCapacityState).
+    const capacity = computeMemberCapacityState({
+      targets,
+      configuredWorkloadPercent: callWorkdayPercent,
+      assigned,
+      carryover,
+      priorityHandoffs: 0, // Phase 3C populates from call_handoffs.
+      workingToday,
+    });
 
     return {
       schedulerId: s.id,
@@ -436,11 +483,46 @@ export async function gatherDistributionMembers(): Promise<
       active,
       workingToday,
       facilitiesCovered,
-      remainingCapacity: remainingCapacity(targets.completedCallKpi, carryover),
+      remainingCapacity: capacity.remainingCapacity,
       visitTarget: targets.visitTarget,
       outreachTarget: targets.outreachTarget,
+      configuredWorkloadPercent: capacity.configuredWorkloadPercent,
+      dailyCallCapacity: capacity.dailyCallCapacity,
+      assigned: capacity.assigned,
+      carryover: capacity.carryover,
+      priorityHandoffs: capacity.priorityHandoffs,
     };
   });
+}
+
+/** Active (non-terminal) execution cases currently owned by each member,
+ *  keyed by outreach_schedulers.id — the member's live standard workload.
+ *  Mirrors teamMetricsService.getActiveQueueCounts so distribution and the
+ *  workload display measure "assigned" identically. */
+async function getActiveQueueCounts(
+  schedulerIds: number[],
+): Promise<Map<number, number>> {
+  const result = new Map<number, number>();
+  if (schedulerIds.length === 0) return result;
+  const rows = await db
+    .select({
+      schedulerId: patientExecutionCases.assignedTeamMemberId,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(patientExecutionCases)
+    .where(
+      and(
+        isNotNull(patientExecutionCases.assignedTeamMemberId),
+        inArray(patientExecutionCases.assignedTeamMemberId, schedulerIds),
+        eq(patientExecutionCases.lifecycleStatus, "active"),
+        sql`${patientExecutionCases.engagementStatus} NOT IN ('completed','scheduled','cancelled','archived','closed')`,
+      ),
+    )
+    .groupBy(patientExecutionCases.assignedTeamMemberId);
+  for (const r of rows) {
+    if (r.schedulerId != null) result.set(r.schedulerId, Number(r.n));
+  }
+  return result;
 }
 
 /** One-shot read-only preview: gather the live pool + roster and run the

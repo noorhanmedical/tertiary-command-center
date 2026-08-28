@@ -38,6 +38,20 @@ export type AssignmentDraft = {
   reason?: string | null;
 };
 
+/**
+ * @deprecated LEGACY CAPACITY MODEL — history-only (K2/K3).
+ *
+ * capacityPercent × baseDailyTarget (default 60) is NOT the live capacity
+ * model. Live call-workforce distribution uses the canonical Call Settings
+ * model (completedCallKpi / remainingCapacity / maxDailyCapacity via
+ * computeMemberCapacityState in callSettingsService.ts), consumed by
+ * distributionService and surfaced identically in the workload display.
+ *
+ * This function survives only inside the scheduler_assignments HISTORY builder
+ * (buildDailyAssignments + assignNewlyEligiblePatient), which produces the
+ * prior-day call-list snapshot and never mutates live ownership
+ * (patient_execution_cases.assignedTeamMemberId). Do not introduce new callers.
+ */
 export function dailyCapacity(scheduler: OutreachScheduler, baseDailyTarget = DEFAULT_BASE_DAILY_TARGET): number {
   const pct = Math.max(0, Math.min(100, scheduler.capacityPercent ?? 100));
   return Math.max(0, Math.round((pct / 100) * baseDailyTarget));
