@@ -154,6 +154,69 @@ export function registerEngagementDistributionRoutes(
     },
   );
 
+  // ─── NEEDS COVERAGE (K8) — manager view of uncovered cases + hold/clear ──
+
+  // List open (unresolved) needs-coverage rows + a per-category summary.
+  app.get(
+    "/api/engagement/needs-coverage",
+    requireRole("admin"),
+    async (req: Request, res: Response) => {
+      try {
+        const { needsCoverageRepository } = await import(
+          "../repositories/needsCoverage.repo"
+        );
+        const category = req.query.category ? String(req.query.category) : undefined;
+        const facilityId = req.query.facilityId ? String(req.query.facilityId) : undefined;
+        const [items, byCategory] = await Promise.all([
+          needsCoverageRepository.listOpen({ category, facilityId }),
+          needsCoverageRepository.countOpenByCategory(),
+        ]);
+        return res.json({ items, byCategory, total: items.length });
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/needs-coverage:list] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({ error: "Failed to load needs coverage" });
+      }
+    },
+  );
+
+  // Manager places a case on hold (structured manager_hold) — it stays
+  // canonically unassigned but the reason is explicit.
+  app.post(
+    "/api/engagement/needs-coverage/hold",
+    requireRole("admin"),
+    async (req: Request, res: Response) => {
+      const schema = z.object({
+        executionCaseId: z.number().int().positive(),
+        reason: z.string().min(1).max(500),
+      });
+      const parsed = schema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      try {
+        const { needsCoverageRepository } = await import(
+          "../repositories/needsCoverage.repo"
+        );
+        const row = await needsCoverageRepository.upsert({
+          executionCaseId: parsed.data.executionCaseId,
+          category: "manager_hold",
+          reason: parsed.data.reason,
+          source: "manager",
+        });
+        return res.json(row);
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/needs-coverage:hold] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({ error: "Failed to place hold" });
+      }
+    },
+  );
+
   app.post(
     "/api/engagement/distribution/apply",
     requireRole("admin"),

@@ -74,6 +74,10 @@ export * from "./messaging";
 // provenance. Live ownership stays on patient_execution_cases; this is the
 // transfer source of truth. Migration 0067.
 export * from "./callHandoffs";
+// Phase 3D (Team Ops) — structured NEEDS COVERAGE state (K8): records WHY a
+// case is currently uncovered (category + reason). NOT a second ownership
+// store; the case stays canonically unassigned. Migration 0068.
+export * from "./needsCoverage";
 // Phase 2A — Global Plexus patient identity (six new tables). Every
 // write path is guarded by FEATURE_PLEXUS_IDENTITY_WRITE (default OFF)
 // and the SQL migration (migrations/0049_add_plexus_identity.sql) is

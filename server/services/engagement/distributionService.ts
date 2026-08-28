@@ -23,9 +23,11 @@ import {
   patientScreenings,
   screeningBatches,
   users,
+  type NeedsCoverageCategory,
 } from "@shared/schema";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
 import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
+import { needsCoverageRepository } from "../../repositories/needsCoverage.repo";
 import { appendJourneyEvent, type AppendJourneyEventInput } from "../journey/appendJourneyEvent";
 import { calculateNextActionAt } from "../callList/nextActionPolicy";
 import {
@@ -101,6 +103,9 @@ export interface UnplacedCase {
   facility: string | null;
   lane: DistributionLane;
   reason: string;
+  // Structured NEEDS COVERAGE category (K8) so the manager view can group /
+  // filter, not just read a free-text string.
+  category: NeedsCoverageCategory;
 }
 
 export interface MemberAllocationSummary {
@@ -223,13 +228,15 @@ export function buildDistributionPlan(
     );
 
     if (eligible.length === 0) {
+      const { category, reason } = explainUnplaced(workingPool, c, lane);
       unplaced.push({
         executionCaseId: c.executionCaseId,
         patientScreeningId: c.patientScreeningId,
         patientName: c.patientName,
         facility: c.facility,
         lane,
-        reason: explainUnplaced(workingPool, c, lane),
+        reason,
+        category,
       });
       continue;
     }
@@ -306,27 +313,37 @@ export function buildDistributionPlan(
   };
 }
 
-// Human-readable reason a case could not be placed, narrowing from broad to
-// specific so the UI can show a clear, actionable warning.
+// Structured + human-readable reason a case could not be placed, narrowing
+// from broad to specific so the manager view can group by category (K8) and
+// show a clear, actionable warning.
 function explainUnplaced(
   workingPool: MemberState[],
   c: DistributionCaseInput,
   lane: DistributionLane,
-): string {
+): { category: NeedsCoverageCategory; reason: string } {
   if (workingPool.length === 0) {
-    return "No team members are working today.";
+    return { category: "no_eligible_staff", reason: "No team members are working today." };
   }
   const facilityMembers = workingPool.filter((m) => coversFacility(m, c.facility));
   if (facilityMembers.length === 0) {
-    return `No working team member covers ${c.facility ? `facility "${c.facility}"` : "this patient's (missing) facility"}.`;
+    return {
+      category: "facility_coverage_mismatch",
+      reason: `No working team member covers ${c.facility ? `facility "${c.facility}"` : "this patient's (missing) facility"}.`,
+    };
   }
   const laneMembers = facilityMembers.filter(
     (m) => laneAssigned(m, lane) < laneTarget(m, lane),
   );
   if (laneMembers.length === 0) {
-    return `All covering members have reached their ${lane} target.`;
+    return {
+      category: "capacity_exhausted",
+      reason: `All covering members have reached their ${lane} target.`,
+    };
   }
-  return "All covering members are at their remaining capacity.";
+  return {
+    category: "capacity_exhausted",
+    reason: "All covering members are at their remaining capacity.",
+  };
 }
 
 // ─── DB gather: build the live pool + roster capacity ───────────────────────
@@ -1010,12 +1027,17 @@ export async function applyDistribution(
   // apply forever. Deferring the (best-effort) audit write past commit keeps
   // the previous "audit failure never rolls back the assignment" semantics.
   const pendingEvents: AppendJourneyEventInput[] = [];
+  // Captured from inside the tx so we can sync structured NEEDS COVERAGE state
+  // (K8) after commit — cases the allocator could not place enter needs-coverage
+  // instead of being silently dropped (overflow, req 14).
+  let planUnplaced: UnplacedCase[] = [];
   const result = await db.transaction(async (tx) => {
     const [cases, members] = await Promise.all([
       gatherCases(tx),
       gatherMembers(),
     ]);
     const plan = buildDistributionPlan(cases, members);
+    planUnplaced = plan.unplaced;
     const memberById = new Map(members.map((m) => [m.schedulerId, m]));
 
     const applied: AppliedAssignment[] = [];
@@ -1188,6 +1210,32 @@ export async function applyDistribution(
         err instanceof Error ? err.message : err,
       );
     }
+  }
+
+  // ── Sync structured NEEDS COVERAGE (K8, req 14) — post-commit, best-effort.
+  // Cases that got an owner are resolved; cases the allocator could not place
+  // are recorded with a structured category so nothing is silently dropped.
+  try {
+    const appliedIds = result.applied.map((a) => a.executionCaseId);
+    if (appliedIds.length > 0) {
+      await needsCoverageRepository.resolveForCases(appliedIds, actorUserId);
+    }
+    for (const u of planUnplaced) {
+      await needsCoverageRepository.upsert({
+        executionCaseId: u.executionCaseId,
+        patientScreeningId: u.patientScreeningId ?? null,
+        facilityId: u.facility ?? null,
+        category: u.category,
+        reason: u.reason,
+        source: "distribution",
+        metadata: { lane: u.lane },
+      });
+    }
+  } catch (err) {
+    console.error(
+      "[engagement/distribution] needs-coverage sync failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
   }
 
   return result;
