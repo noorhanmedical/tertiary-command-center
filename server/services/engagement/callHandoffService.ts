@@ -23,6 +23,7 @@ import {
 import { storage } from "../../storage";
 import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
+import { facilityCoverageRepository } from "../../repositories/facilityCoverage.repo";
 import { appendJourneyEvent } from "../journey/appendJourneyEvent";
 import { openDirectConversation, postSystemMessage } from "../messaging/messagingService";
 import { computeCallTargets, remainingCapacity, getCarryoverCounts, getGlobalCallConfig } from "./callSettingsService";
@@ -113,10 +114,13 @@ export async function checkHandoffEligibility(input: {
     return { eligible: false, code: "recipient_inactive", reason: "Recipient is not active." };
   }
 
-  // Facility coverage: a member with an explicit facilitiesCovered list must
-  // cover this facility (a member's own facility always counts). Empty/unset
-  // list => covers any facility.
-  const covered = (saved?.facilitiesCovered ?? []).filter(Boolean);
+  // Facility coverage (CANONICAL, Phase 4B): the recipient's
+  // team_member_facility_coverage rows. Falls back to the legacy
+  // engagement_call_settings.facilitiesCovered only while a member has no
+  // canonical rows yet. A member's own roster facility always counts.
+  // Empty/unset coverage => covers any facility.
+  const canonicalCovered = await facilityCoverageRepository.coveredFacilityIdsForUser(input.toUserId);
+  const covered = (canonicalCovered.length > 0 ? canonicalCovered : saved?.facilitiesCovered ?? []).filter(Boolean);
   if (input.facilityId && covered.length > 0) {
     const coversOwn = sched.facility === input.facilityId;
     if (!coversOwn && !covered.includes(input.facilityId)) {

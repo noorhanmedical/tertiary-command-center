@@ -41,8 +41,11 @@ export const engagementCallSettings = pgTable("engagement_call_settings", {
   // All nullable: null means "fall back to the tier/global formula".
   explicitCompletedKpi: integer("explicit_completed_call_kpi"),
   explicitScheduledKpi: integer("explicit_scheduled_kpi"),
-  // Facilities this member covers (informational/edited here; routing use
-  // arrives with the distribution engine — Phase 2).
+  // @deprecated Phase 4B — superseded by canonical team_member_facility_coverage
+  // (keyed by users.id). Distribution + handoff eligibility now read the
+  // canonical source and only fall back to this array while a member has no
+  // canonical coverage rows yet. Kept for backward compatibility / transition;
+  // do not add new consumers.
   facilitiesCovered: text("facilities_covered").array(),
   // Legacy Phase-1 inputs — superseded by the global config + explicit
   // overrides above and no longer used in the target math. Kept (non-null,

@@ -83,6 +83,10 @@ export * from "./needsCoverage";
 // and a relationship-change audit ledger. Admin Settings is the authoritative
 // management surface; Engagement/messaging/tasks consume these. Migration 0069.
 export * from "./teams";
+// Phase 4B (Team Ops) — canonical facility coverage: ONE source for which
+// facilities a team member serves (converges roster home + facilitiesCovered).
+// Migration 0070.
+export * from "./facilityCoverage";
 // Phase 2A — Global Plexus patient identity (six new tables). Every
 // write path is guarded by FEATURE_PLEXUS_IDENTITY_WRITE (default OFF)
 // and the SQL migration (migrations/0049_add_plexus_identity.sql) is

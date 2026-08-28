@@ -28,6 +28,7 @@ import {
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
 import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
 import { needsCoverageRepository } from "../../repositories/needsCoverage.repo";
+import { facilityCoverageRepository } from "../../repositories/facilityCoverage.repo";
 import { appendJourneyEvent, type AppendJourneyEventInput } from "../journey/appendJourneyEvent";
 import { calculateNextActionAt } from "../callList/nextActionPolicy";
 import {
@@ -453,7 +454,10 @@ export async function gatherDistributionMembers(): Promise<
   const userIds = schedulers
     .map((s) => s.userId)
     .filter((id): id is string => !!id);
-  const ptoUserIds = await getPtoUserIdsForToday(userIds);
+  const [ptoUserIds, canonicalCoverageByUser] = await Promise.all([
+    getPtoUserIdsForToday(userIds),
+    facilityCoverageRepository.coveredFacilitiesForUsers(userIds),
+  ]);
 
   return schedulers.map((s) => {
     const saved = settingsByScheduler.get(s.id);
@@ -462,7 +466,14 @@ export async function gatherDistributionMembers(): Promise<
     const explicitCompletedKpi = saved?.explicitCompletedKpi ?? null;
     const explicitScheduledKpi = saved?.explicitScheduledKpi ?? null;
     const maxDailyCapacity = saved?.maxDailyCapacity ?? null;
-    const facilitiesCovered = saved?.facilitiesCovered ?? null;
+    // CANONICAL coverage (Phase 4B): the team_member_facility_coverage rows for
+    // this member's login. Falls back to the legacy engagement_call_settings
+    // .facilitiesCovered only while a member has no canonical rows yet (safe
+    // transition). Empty/null list still means "covers ANY facility".
+    const canonicalCovered = s.userId ? canonicalCoverageByUser.get(s.userId) ?? [] : [];
+    const facilitiesCovered = canonicalCovered.length > 0
+      ? canonicalCovered
+      : saved?.facilitiesCovered ?? null;
     const manualWorkingToday = saved?.manualWorkingToday ?? null;
     const active = saved?.active ?? true;
 
