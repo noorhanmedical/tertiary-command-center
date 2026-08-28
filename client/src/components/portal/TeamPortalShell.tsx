@@ -41,6 +41,7 @@ import {
   type ViewAsTeamMember,
   type ViewAsWorkspaceType,
   type TeamWorkspaceCallListItem,
+  type TeamWorkspaceAncillaryAppointment,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
 import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
 import { useLocation } from "wouter";
@@ -136,6 +137,17 @@ type WorkspaceRole =
 // `PublicWorkspaceRole` and let the capability resolver drive gating.
 type Role = "technician" | "liaison";
 type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart" | "calendar" | "chat";
+
+// A same-patient visit block on the Ancillary Schedule (Phase 1). `events`
+// preserves the underlying canonical service instances (each with its own
+// executionCaseId / readiness) — grouping is presentation only.
+type AncillaryVisitGroup = {
+  key: string;
+  patientName: string;
+  /** Earliest start time (ms) in the block; null when all events are undated. */
+  anchorMs: number | null;
+  events: TeamWorkspaceAncillaryAppointment[];
+};
 
 type PortalTask = {
   id: number;
@@ -1524,6 +1536,70 @@ export function TeamPortalShell({
       return lowered.some((needle) => st.includes(needle));
     });
   }, [workspaceAncillarySchedule, allowedServiceTypes]);
+
+  // Phase 1 — same-patient visit-block grouping (UI ONLY; the underlying
+  // canonical service instances / executionCaseIds are preserved intact on
+  // `group.events`). Rule (approved): group rows that share the SAME patient
+  // AND the SAME operational date AND whose start times fall within a
+  // 90-minute visit block; services more than 90 minutes apart render as
+  // SEPARATE chronological entries. Rows are ordered chronologically by
+  // startsAt; a group's time is its earliest start. Patients with a single
+  // service just render as a one-service group.
+  const ANCILLARY_VISIT_BLOCK_MS = 90 * 60 * 1000;
+  const groupedAncillarySchedule = useMemo<AncillaryVisitGroup[]>(() => {
+    type Row = (typeof filteredAncillarySchedule)[number];
+    const ms = (iso: string | null | undefined): number | null => {
+      if (!iso) return null;
+      const t = new Date(iso).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+    const localDay = (iso: string | null | undefined): string => {
+      if (!iso) return "no-date";
+      const d = new Date(iso);
+      return Number.isFinite(d.getTime())
+        ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+        : "no-date";
+    };
+    // Chronological order first (nulls last), stable by row id.
+    const sorted = [...filteredAncillarySchedule].sort((a, b) => {
+      const ta = ms(a.startsAt);
+      const tb = ms(b.startsAt);
+      if (ta == null && tb == null) return 0;
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      return ta - tb;
+    });
+    const groups: AncillaryVisitGroup[] = [];
+    // Track the open group per (patient + local day) so an interleaved
+    // schedule still blocks correctly, and close it when the 90-min window
+    // from the block's anchor is exceeded.
+    const openByKey = new Map<string, AncillaryVisitGroup>();
+    for (const row of sorted) {
+      const patientKey = ancillaryPatientKey(row);
+      const day = localDay(row.startsAt);
+      const key = `${patientKey}|${day}`;
+      const startMs = ms(row.startsAt);
+      const open = openByKey.get(key);
+      const withinBlock =
+        open != null &&
+        (open.anchorMs == null || startMs == null
+          ? open.anchorMs == null && startMs == null // both undated → same block
+          : startMs - open.anchorMs <= ANCILLARY_VISIT_BLOCK_MS);
+      if (open && withinBlock) {
+        open.events.push(row as Row);
+      } else {
+        const g: AncillaryVisitGroup = {
+          key: `${key}|${row.id ?? groups.length}`,
+          patientName: row.patientName ?? "Unnamed patient",
+          anchorMs: startMs,
+          events: [row as Row],
+        };
+        groups.push(g);
+        openByKey.set(key, g);
+      }
+    }
+    return groups;
+  }, [filteredAncillarySchedule]);
 
   // Key a patient's ancillary rows so the doc workflows can offer a compact
   // "which ancillary" selector when a patient has more than one active test.
@@ -3659,7 +3735,46 @@ export function TeamPortalShell({
                           : "No ancillary tests scheduled for this facility/date."}
                       </div>
                     ) : (
-                      filteredAncillarySchedule.map((row, idx) => {
+                      groupedAncillarySchedule.map((group) => {
+                        // Multi-service visit block: render the patient name +
+                        // block time-range ONCE as a header, then the per-service
+                        // rows below it (each still carries its own service/time/
+                        // readiness/executionCaseId). Single-service groups skip
+                        // the header and render just the one row as before.
+                        const isBlock = group.events.length > 1;
+                        const blockTimes = group.events
+                          .map((e) =>
+                            e.startsAt
+                              ? new Date(e.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+                              : null,
+                          )
+                          .filter(Boolean);
+                        const blockRange =
+                          blockTimes.length > 0
+                            ? blockTimes.length > 1
+                              ? `${blockTimes[0]}–${blockTimes[blockTimes.length - 1]}`
+                              : blockTimes[0]
+                            : "—";
+                        return (
+                          <div
+                            key={group.key}
+                            className={isBlock ? "rounded-xl border border-violet-200/70 bg-violet-50/30 p-1" : ""}
+                            data-testid={isBlock ? `ancillary-visit-block-${group.key}` : undefined}
+                          >
+                            {isBlock && (
+                              <div
+                                className="flex items-center justify-between gap-2 px-1.5 pb-1 pt-0.5"
+                                data-testid={`ancillary-visit-block-header-${group.key}`}
+                              >
+                                <span className="truncate text-sm font-semibold text-slate-800">
+                                  {group.patientName}
+                                </span>
+                                <span className="shrink-0 text-[10px] text-slate-500 tabular-nums">
+                                  {blockRange} · {group.events.length} tests
+                                </span>
+                              </div>
+                            )}
+                            {group.events.map((row, idx) => {
                         const rowKey = `ancillary:${row.id ?? idx}`;
                         const removing = removingRowKeys.has(rowKey);
                         if (rightRailSize === "small" && !removing) {
@@ -3826,6 +3941,9 @@ export function TeamPortalShell({
                               </div>
                             )}
                         </div>
+                        );
+                            })}
+                          </div>
                         );
                       })
                     )}
