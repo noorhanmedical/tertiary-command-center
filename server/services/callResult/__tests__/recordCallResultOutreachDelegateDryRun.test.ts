@@ -14,19 +14,31 @@ const failures: string[] = [];
 function check(c: boolean, m: string) { if (!c) failures.push(m); }
 function eq<T>(a: T, b: T, label: string) { if (a !== b) failures.push(`${label}: expected ${String(b)} got ${String(a)}`); }
 
-// §1 — Flag accessor default + truthy values.
+// §1 — Flag accessor defaults ON (canonical convergence), with
+// explicit opt-out and global rollback overrides.
 {
   const before = process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE;
+  const beforeRb = process.env.LEGACY_CALL_RESULT_ROLLBACK;
+  delete process.env.LEGACY_CALL_RESULT_ROLLBACK;
   delete process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE;
-  eq(isRecordCallResultOutreachDelegateEnabled(), false, "§1: default OFF");
+  eq(isRecordCallResultOutreachDelegateEnabled(), true, "§1: default ON");
   process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE = "1";
   eq(isRecordCallResultOutreachDelegateEnabled(), true, "§1: '1' truthy");
   process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE = "yes";
   eq(isRecordCallResultOutreachDelegateEnabled(), true, "§1: 'yes' truthy");
   process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE = "no";
-  eq(isRecordCallResultOutreachDelegateEnabled(), false, "§1: 'no' falsy");
+  eq(isRecordCallResultOutreachDelegateEnabled(), false, "§1: explicit opt-out 'no'");
+  process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE = "0";
+  eq(isRecordCallResultOutreachDelegateEnabled(), false, "§1: explicit opt-out '0'");
+  // Global rollback wins over the default-ON.
+  delete process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE;
+  process.env.LEGACY_CALL_RESULT_ROLLBACK = "1";
+  eq(isRecordCallResultOutreachDelegateEnabled(), false, "§1: global rollback wins");
+  delete process.env.LEGACY_CALL_RESULT_ROLLBACK;
   if (before === undefined) delete process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE;
   else process.env.USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE = before;
+  if (beforeRb === undefined) delete process.env.LEGACY_CALL_RESULT_ROLLBACK;
+  else process.env.LEGACY_CALL_RESULT_ROLLBACK = beforeRb;
 }
 
 // Synthetic raw outreach_calls row shape — the future route delegation

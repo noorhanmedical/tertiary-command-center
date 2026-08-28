@@ -83,19 +83,31 @@ function makeCapturingDeps(): {
   return { deps, captured };
 }
 
-// §1 — Flag accessor exists and defaults OFF.
+// §1 — Flag accessor defaults ON (canonical convergence), with
+// explicit opt-out and global rollback overrides.
 {
   const before = process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE;
+  const beforeRb = process.env.LEGACY_CALL_RESULT_ROLLBACK;
+  delete process.env.LEGACY_CALL_RESULT_ROLLBACK;
   delete process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE;
-  eq(isRecordCallResultEngagementDelegateEnabled(), false, "§1: flag default OFF");
+  eq(isRecordCallResultEngagementDelegateEnabled(), true, "§1: flag default ON");
   process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE = "1";
   eq(isRecordCallResultEngagementDelegateEnabled(), true, "§1: flag truthy '1'");
   process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE = "yes";
   eq(isRecordCallResultEngagementDelegateEnabled(), true, "§1: flag truthy 'yes'");
   process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE = "no";
-  eq(isRecordCallResultEngagementDelegateEnabled(), false, "§1: flag falsy 'no'");
+  eq(isRecordCallResultEngagementDelegateEnabled(), false, "§1: explicit opt-out 'no'");
+  process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE = "0";
+  eq(isRecordCallResultEngagementDelegateEnabled(), false, "§1: explicit opt-out '0'");
+  // Global rollback wins over the default-ON.
+  delete process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE;
+  process.env.LEGACY_CALL_RESULT_ROLLBACK = "1";
+  eq(isRecordCallResultEngagementDelegateEnabled(), false, "§1: global rollback wins");
+  delete process.env.LEGACY_CALL_RESULT_ROLLBACK;
   if (before === undefined) delete process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE;
   else process.env.USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE = before;
+  if (beforeRb === undefined) delete process.env.LEGACY_CALL_RESULT_ROLLBACK;
+  else process.env.LEGACY_CALL_RESULT_ROLLBACK = beforeRb;
 }
 
 // §2 — Every fixture outcome can rebuild a legacy-shaped response

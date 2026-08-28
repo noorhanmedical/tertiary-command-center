@@ -679,6 +679,27 @@ export function registerExecutionCaseRoutes(app: Express) {
         }
       }
 
+      // Resolve the effective settings + attempt-count plan BEFORE the
+      // delegation branch so the canonical delegation path and the
+      // legacy path apply the SAME attempt-count semantics
+      // (callAttemptCount / lastCallOutcome / lastAttemptAt /
+      // unable_to_reach transition). Without this the delegation path
+      // silently dropped attempt tracking — a parity break caught in
+      // Item 4 parity testing.
+      const effectiveBundle = await getEffectiveAdminSettings({
+        facilityId: facilityId ?? null,
+        userId: auditIdentity.actorUserId ?? null,
+      });
+      // Phase 2 hardening — read the prior attempt count from the
+      // resolved execution case (may be null/undefined for legacy
+      // rows without the column populated; treat as 0).
+      const previousAttemptCount = executionCase?.callAttemptCount ?? 0;
+      const attemptPlan = planCallAttempt({
+        currentAttemptCount: previousAttemptCount,
+        outcome: data.callResult,
+        maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
+      });
+
       // ─── Engagement-route DELEGATION (Batch 3 of Engagement completion run) ──
       //
       // Default-OFF delegate-flag accessor (isRecordCallResultEngagement
@@ -764,7 +785,8 @@ export function registerExecutionCaseRoutes(app: Express) {
           },
           updateExecutionCaseEngagement: async (args: UpdateExecutionCaseEngagementArgs) => {
             if (!executionCase) return;
-            const updates: Record<string, unknown> = { updatedAt: new Date() };
+            const nowTimestamp = new Date();
+            const updates: Record<string, unknown> = { updatedAt: nowTimestamp };
             // Re-apply the legacy "don't overwrite terminal" guard.
             if (
               args.engagementStatus &&
@@ -777,6 +799,19 @@ export function registerExecutionCaseRoutes(app: Express) {
             }
             if (args.assignedRole && args.assignedRole !== executionCase.assignedRole) {
               updates.assignedRole = args.assignedRole;
+            }
+            // Attempt-count plan — byte-equivalent to the legacy path.
+            // Always write the new count (may equal the old one when the
+            // outcome did not count as an attempt) so the column stays
+            // consistent with the latest call.
+            updates.callAttemptCount = attemptPlan.newAttemptCount;
+            updates.lastCallOutcome = data.callResult;
+            if (attemptPlan.updateLastAttempt) {
+              updates.lastAttemptAt = nowTimestamp;
+            }
+            if (attemptPlan.transitionToUnableToReach) {
+              updates.unableToReachAt = nowTimestamp;
+              updates.engagementStatus = "unable_to_reach";
             }
             // Re-apply ownership-preservation guard.
             if (assignedTeamCandidate !== null) {
@@ -915,25 +950,10 @@ export function registerExecutionCaseRoutes(app: Express) {
 
       // ─── Legacy code path (flag OFF, non-canonical outcome, or no screening) ─
 
-      // PR 2.2 — resolve the effective settings + the routing plan
-      // so the legacy path also records WHICH settings drove the
-      // outcome. The plan is currently advisory (the route still
-      // owns DB writes) but the appliedSettings + nextActionReason
-      // get added to the journey-event metadata so QA / audits can
-      // trace settings-driven decisions across PRs.
-      const effectiveBundle = await getEffectiveAdminSettings({
-        facilityId: facilityId ?? null,
-        userId: auditIdentity.actorUserId ?? null,
-      });
-      // Phase 2 hardening — read the prior attempt count from the
-      // resolved execution case (may be null/undefined for legacy
-      // rows without the column populated; treat as 0).
-      const previousAttemptCount = executionCase?.callAttemptCount ?? 0;
-      const attemptPlan = planCallAttempt({
-        currentAttemptCount: previousAttemptCount,
-        outcome: data.callResult,
-        maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
-      });
+      // PR 2.2 — routing plan (advisory; the route still owns DB
+      // writes). effectiveBundle + attemptPlan are resolved earlier
+      // (before the delegation branch) so BOTH the delegation path
+      // and the legacy path apply the identical attempt-count plan.
       const routingPlan = applyCallResultRouting(
         {
           outcome: data.callResult,
