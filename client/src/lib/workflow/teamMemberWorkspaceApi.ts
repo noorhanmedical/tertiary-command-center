@@ -29,6 +29,11 @@ export type TeamWorkspaceClinicVisit = {
 
 export type AncillaryReadinessItemState = "complete" | "missing" | "not_required";
 
+export type AncillaryReadinessProvenance = {
+  completedAt: string | null;
+  completedByUserId: string | null;
+};
+
 export type AncillaryReadinessSummary = {
   informedConsent: AncillaryReadinessItemState;
   screeningForm: AncillaryReadinessItemState;
@@ -36,6 +41,13 @@ export type AncillaryReadinessSummary = {
   report: AncillaryReadinessItemState;
   informedConsentDocId: number | null;
   screeningFormDocId: number | null;
+  // Provenance (who/when) for completed items; null when missing/not_required.
+  informedConsentProvenance?: AncillaryReadinessProvenance | null;
+  screeningFormProvenance?: AncillaryReadinessProvenance | null;
+  reportProvenance?: AncillaryReadinessProvenance | null;
+  // True when the row has no execution-case link → readiness is not
+  // episode-accurate (honest legacy signal for the UI).
+  legacyUnlinked?: boolean;
 };
 
 export type TeamWorkspaceAncillaryAppointment = {

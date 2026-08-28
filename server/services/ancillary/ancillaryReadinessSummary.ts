@@ -5,6 +5,15 @@ import { ancillaryDocumentTemplates } from "@shared/schema/ancillaryDocumentTemp
 import { listCaseDocumentReadinessForCases } from "../../repositories/documentReadiness.repo";
 import { getExecutionCaseById, getExecutionCaseByScreeningId } from "../../repositories/executionCase.repo";
 import { getAncillaryCategory } from "@shared/ancillaryCategory";
+import type { CaseDocumentReadiness } from "@shared/schema/documentReadiness";
+
+type CaseReadinessRow = CaseDocumentReadiness;
+
+/** Provenance for a completed readiness item (who/when), surfaced to the UI. */
+export type ReadinessProvenance = {
+  completedAt: string | null;
+  completedByUserId: string | null;
+};
 
 // Canonical readiness document-type keys persisted in case_document_readiness.
 export const READINESS_DOC_INFORMED_CONSENT = "informed_consent";
@@ -33,6 +42,15 @@ export type AncillaryReadinessSummary = {
   report: ReadinessItemState;
   informedConsentDocId: number | null;
   screeningFormDocId: number | null;
+  // Provenance for the completed items (who/when), when available. Null when
+  // the item is missing / not_required or the source row has no provenance.
+  informedConsentProvenance: ReadinessProvenance | null;
+  screeningFormProvenance: ReadinessProvenance | null;
+  reportProvenance: ReadinessProvenance | null;
+  // True when this row has NO execution-case link and readiness could only be
+  // resolved (if at all) by the looser patient key — an honest "legacy" signal
+  // the UI can surface instead of implying episode-accurate state.
+  legacyUnlinked: boolean;
 };
 
 type AncillaryRowLike = {
@@ -133,27 +151,50 @@ export async function buildAncillaryReadinessSummaries(
     resolveScreeningFormDocByCategory(),
   ]);
 
-  // Index readiness statuses by case key + documentType. We key on both
-  // executionCaseId and patientScreeningId so either link resolves the row.
-  const statusByKey = new Map<string, string>();
-  const put = (prefix: string, id: number | null | undefined, docType: string, status: string) => {
+  // Index readiness rows by case key + SERVICE + documentType. Keying on the
+  // service (normalized to its ancillary category) enforces the strict rule:
+  // a consent/screening completed for one service must NOT mark a different
+  // service complete on the same case. We also retain the row itself so we can
+  // surface provenance (completedAt / uploadedByUserId). We key on both
+  // executionCaseId and patientScreeningId so either link resolves the row,
+  // but the lookup below prefers case-scoped and never bleeds across episodes.
+  const rowByKey = new Map<string, CaseReadinessRow>();
+  const put = (
+    prefix: string,
+    id: number | null | undefined,
+    serviceCat: string,
+    docType: string,
+    r: CaseReadinessRow,
+  ) => {
     if (id == null) return;
-    statusByKey.set(`${prefix}:${id}:${docType}`, status);
+    rowByKey.set(`${prefix}:${id}:${serviceCat}:${docType}`, r);
   };
   for (const r of readinessRows) {
-    put("ec", r.executionCaseId, r.documentType, r.documentStatus);
-    put("ps", r.patientScreeningId, r.documentType, r.documentStatus);
+    const cat = getAncillaryCategory(r.serviceType ?? "");
+    put("ec", r.executionCaseId, cat, r.documentType, r);
+    put("ps", r.patientScreeningId, cat, r.documentType, r);
   }
-  const lookup = (row: AncillaryRowLike, docType: string): string | undefined => {
+  // Episode + service isolation (Option A + strict consent rule). Resolution:
+  //   1. When the row carries an executionCaseId, resolve ONLY by the
+  //      case+service key — never fall back to patientScreeningId — so a prior
+  //      same-service episode's completion cannot bleed into a new episode
+  //      (e.g. 2025 vs 2026 BrainWave).
+  //   2. The service is matched by ancillary CATEGORY so "BrainWave" consent
+  //      never satisfies "Ultrasound", even on a multi-service case.
+  //   3. The patientScreeningId key is used ONLY for legacy rows with no
+  //      execution-case link at all.
+  const lookupRow = (row: AncillaryRowLike, docType: string): CaseReadinessRow | undefined => {
+    const cat = getAncillaryCategory(row.serviceType ?? "");
     if (row.executionCaseId != null) {
-      const v = statusByKey.get(`ec:${row.executionCaseId}:${docType}`);
-      if (v != null) return v;
+      return rowByKey.get(`ec:${row.executionCaseId}:${cat}:${docType}`);
     }
     if (row.patientScreeningId != null) {
-      return statusByKey.get(`ps:${row.patientScreeningId}:${docType}`);
+      return rowByKey.get(`ps:${row.patientScreeningId}:${cat}:${docType}`);
     }
     return undefined;
   };
+  const lookup = (row: AncillaryRowLike, docType: string): string | undefined =>
+    lookupRow(row, docType)?.documentStatus;
 
   for (const row of rows) {
     const req = requirementsForService(row.serviceType);
@@ -178,11 +219,22 @@ export async function buildAncillaryReadinessSummaries(
 
     // Report applies to every ancillary. For BrainWave the result lives under
     // the dedicated brainwave_pdf item, so treat either as satisfying report.
+    const reportRow = lookupRow(row, READINESS_DOC_REPORT);
+    const brainwaveRow = lookupRow(row, READINESS_DOC_BRAINWAVE_PDF);
     const report: ReadinessItemState =
-      isComplete(lookup(row, READINESS_DOC_REPORT)) ||
-      (req.brainwavePdf && isComplete(lookup(row, READINESS_DOC_BRAINWAVE_PDF)))
+      isComplete(reportRow?.documentStatus) ||
+      (req.brainwavePdf && isComplete(brainwaveRow?.documentStatus))
         ? "complete"
         : "missing";
+
+    // Provenance (who/when) surfaced only for completed items.
+    const provOf = (r: CaseReadinessRow | undefined): ReadinessProvenance | null =>
+      r && isComplete(r.documentStatus)
+        ? {
+            completedAt: r.completedAt ? new Date(r.completedAt).toISOString() : null,
+            completedByUserId: r.uploadedByUserId ?? null,
+          }
+        : null;
 
     result.set(String(row.id), {
       informedConsent,
@@ -193,6 +245,19 @@ export async function buildAncillaryReadinessSummaries(
       screeningFormDocId: req.screeningForm
         ? screeningDocByCategory.get(req.category) ?? null
         : null,
+      informedConsentProvenance:
+        informedConsent === "complete"
+          ? provOf(lookupRow(row, READINESS_DOC_INFORMED_CONSENT))
+          : null,
+      screeningFormProvenance:
+        screeningForm === "complete"
+          ? provOf(lookupRow(row, READINESS_DOC_SCREENING_FORM))
+          : null,
+      reportProvenance:
+        report === "complete" ? provOf(reportRow ?? brainwaveRow) : null,
+      // Honest legacy signal: the row has no execution-case link, so readiness
+      // is not episode-accurate (only a patient-wide key was available).
+      legacyUnlinked: row.executionCaseId == null,
     });
   }
 
