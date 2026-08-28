@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, ClipboardList } from "lucide-react";
+import { Loader2, ClipboardList, ExternalLink } from "lucide-react";
 import {
   SketchSurface,
   SketchSectionHeader,
   SketchBadge,
 } from "@/components/playground/sketch/SketchPrimitives";
+import { dispatchOpenWorkspace } from "@/components/playground/playgroundEvents";
 
 // Plexus Tasks tab — embeds the canonical Plexus task feed for the
 // session user (or a single patient when one is selected). Reads
@@ -18,9 +19,14 @@ type PlexusTask = {
   taskType: string | null;
   urgency: string | null;
   priority: string | null;
+  priorityLevel: string | null;
   status: string | null;
   dueDate: string | null;
   patientScreeningId: number | null;
+  executionCaseId: number | null;
+  ancillaryCaseId: number | null;
+  facilityId: string | null;
+  patientName?: string | null;
   assignedToUserId: string | null;
   createdByUserId: string | null;
 };
@@ -70,35 +76,76 @@ export function PortalPlexusTasksTab({
           </div>
         ) : (
           <ul className="divide-y divide-slate-200/60" data-testid="portal-plexus-tasks-list">
-            {data.map((t) => (
-              <li
-                key={t.id}
-                className="px-1 py-2.5"
-                data-testid={`portal-plexus-task-${t.id}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-xs font-medium text-slate-900 truncate">{t.title}</div>
-                    <div className="text-[10px] text-slate-500 truncate">
-                      {t.taskType ?? "task"}
-                      {t.urgency ? ` · ${t.urgency}` : ""}
-                      {t.dueDate ? ` · due ${t.dueDate}` : ""}
+            {data.map((t) => {
+              // Phase 2 — a task can open its patient/case context in the
+              // Playground when it carries a patientScreeningId. The
+              // execution/ancillary case ids are threaded through so the EHR
+              // workspace lands on the right episode. Tasks with no patient
+              // context are not clickable (nothing to open).
+              const canOpenPatient = t.patientScreeningId != null && t.patientScreeningId > 0;
+              const openPatient = () => {
+                if (!canOpenPatient) return;
+                dispatchOpenWorkspace({
+                  type: "patient_ehr",
+                  title: t.patientName ?? "Patient",
+                  patientScreeningId: t.patientScreeningId!,
+                  executionCaseId: t.executionCaseId ?? null,
+                  facilityId: t.facilityId ?? null,
+                  focusSection: "ancillary-journey",
+                });
+              };
+              return (
+                <li
+                  key={t.id}
+                  className={`px-1 py-2.5 ${canOpenPatient ? "cursor-pointer hover:bg-slate-50/70" : ""}`}
+                  data-testid={`portal-plexus-task-${t.id}`}
+                  onClick={canOpenPatient ? openPatient : undefined}
+                  role={canOpenPatient ? "button" : undefined}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-slate-900 truncate">{t.title}</span>
+                        {canOpenPatient ? (
+                          <ExternalLink className="h-3 w-3 shrink-0 text-slate-400" />
+                        ) : null}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {t.taskType ?? "task"}
+                        {t.urgency && t.urgency !== "none" ? ` · ${t.urgency}` : ""}
+                        {t.dueDate ? ` · due ${t.dueDate}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {t.priorityLevel ? (
+                        <SketchBadge tone={priorityLevelTone(t.priorityLevel)}>{t.priorityLevel}</SketchBadge>
+                      ) : null}
+                      {t.status && (
+                        <SketchBadge tone={taskStatusTone(t.status)}>{t.status}</SketchBadge>
+                      )}
                     </div>
                   </div>
-                  {t.status && (
-                    <SketchBadge tone={taskStatusTone(t.status)}>{t.status}</SketchBadge>
-                  )}
-                </div>
-                {t.description ? (
-                  <div className="mt-1 text-[11px] text-slate-700 line-clamp-3">{t.description}</div>
-                ) : null}
-              </li>
-            ))}
+                  {t.description ? (
+                    <div className="mt-1 text-[11px] text-slate-700 line-clamp-3">{t.description}</div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </SketchSurface>
     </div>
   );
+}
+
+// Map the canonical P1..P5 priority level to a muted tone.
+function priorityLevelTone(level: string): "graphite" | "blue" | "green" | "gold" | "red" {
+  switch (level.toUpperCase()) {
+    case "P1": return "red";
+    case "P2": return "gold";
+    case "P3": return "blue";
+    default: return "graphite"; // P4 / P5
+  }
 }
 
 // Map a task status to a muted colored-pencil tone.

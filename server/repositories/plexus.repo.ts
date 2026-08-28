@@ -19,6 +19,15 @@ import {
   type InsertPlexusTaskEvent,
 } from "@shared/schema/plexus";
 
+export type ManagerTaskFilters = {
+  status?: string;
+  assignedToUserId?: string;
+  facilityId?: string;
+  priorityLevel?: string;
+  /** When true, only tasks past their dueDate and not terminal. */
+  overdueOnly?: boolean;
+};
+
 export interface IPlexusRepository {
   // Projects
   createProject(record: InsertPlexusProject): Promise<PlexusProject>;
@@ -36,6 +45,7 @@ export interface IPlexusRepository {
   listTasksByCreator(userId: string): Promise<PlexusTask[]>;
   listTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   listTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
+  listTasksForManager(filters?: ManagerTaskFilters, limit?: number): Promise<PlexusTask[]>;
   listUrgentTasks(): Promise<PlexusTask[]>;
   listOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
@@ -135,6 +145,27 @@ export class DbPlexusRepository implements IPlexusRepository {
     return db.select().from(plexusTasks)
       .where(and(eq(plexusTasks.assignedToUserId, userId), ne(plexusTasks.status, "closed")))
       .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  async listTasksForManager(filters: ManagerTaskFilters = {}, limit = 200): Promise<PlexusTask[]> {
+    const safeLimit = Math.min(Math.max(1, limit), 500);
+    const conds = [];
+    if (filters.status) conds.push(eq(plexusTasks.status, filters.status));
+    if (filters.assignedToUserId) conds.push(eq(plexusTasks.assignedToUserId, filters.assignedToUserId));
+    if (filters.facilityId) conds.push(eq(plexusTasks.facilityId, filters.facilityId));
+    if (filters.priorityLevel) conds.push(eq(plexusTasks.priorityLevel, filters.priorityLevel));
+    if (filters.overdueOnly) {
+      const today = new Date().toISOString().slice(0, 10);
+      // dueDate is a TEXT YYYY-MM-DD; string comparison is date-correct.
+      conds.push(sql`${plexusTasks.dueDate} IS NOT NULL AND ${plexusTasks.dueDate} < ${today}`);
+      conds.push(ne(plexusTasks.status, "done"));
+      conds.push(ne(plexusTasks.status, "closed"));
+    }
+    const query = db.select().from(plexusTasks).$dynamic();
+    const rows = conds.length > 0
+      ? await query.where(and(...conds)).orderBy(desc(plexusTasks.createdAt)).limit(safeLimit)
+      : await query.orderBy(desc(plexusTasks.createdAt)).limit(safeLimit);
+    return rows;
   }
 
   async listTasksByCreator(userId: string): Promise<PlexusTask[]> {

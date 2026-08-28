@@ -28,6 +28,7 @@ import {
   marketingMaterialsRepository,
   documentLibraryRepository,
 } from "./repositories";
+import type { ManagerTaskFilters } from "./repositories/plexus.repo";
 
 import type {
   ScreeningBatch,
@@ -263,6 +264,7 @@ export interface IStorage {
   getTasksByCreator(userId: string): Promise<PlexusTask[]>;
   getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   getTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
+  getTasksForManager(filters?: ManagerTaskFilters, limit?: number): Promise<PlexusTask[]>;
   getUrgentTasks(): Promise<PlexusTask[]>;
   getOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
@@ -485,6 +487,7 @@ export class DatabaseStorage implements IStorage {
   getTasksByCreator(userId: string) { return plexusRepository.listTasksByCreator(userId); }
   getTasksByCreatorWithActivity(userId: string) { return plexusRepository.listTasksByCreatorWithActivity(userId); }
   getTasksByPatient(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
+  getTasksForManager(filters?: ManagerTaskFilters, limit?: number) { return plexusRepository.listTasksForManager(filters, limit); }
   getTasksByPatientScreeningId(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
   getUrgentTasks() { return plexusRepository.listUrgentTasks(); }
   getOverdueTasksForUser(userId: string) { return plexusRepository.listOverdueTasksForUser(userId); }
