@@ -24,6 +24,11 @@
 import type { PhoneProviderAdapter, PhoneProviderId, PhoneProviderConfig } from "./phoneProviderTypes";
 import { manualPhoneProvider } from "./manualPhoneProvider";
 import { ringCentralProvider } from "./ringCentralProvider";
+import type {
+  PhoneProviderPreferencesDTO,
+  PhoneProviderDescriptor,
+  SelectablePhoneProviderId,
+} from "@shared/phoneProvider";
 
 // Registry of KNOWN adapters. Additional providers (dialpad/aircall/8x8/goto)
 // register here as they are implemented; until then only manual + ringcentral
@@ -120,30 +125,52 @@ export function resolvePhoneProvider(
   };
 }
 
-// Client preference seed. Team-member override is read from localStorage
-// (set by a future per-user preference control); org/facility defaults come
-// from env until the Admin-Settings server wiring lands. Everything is
-// optional → falls back to manual.
+// Client preference seed.
+//
+// SOURCE OF TRUTH: the persisted admin_settings-backed preferences supplied via
+// `persisted` (fetched with usePhoneProviderPreferences). Each persisted layer
+// wins for its scope. localStorage (team-member) and VITE_DEFAULT_PHONE_PROVIDER
+// (org) are FALLBACK ONLY — used when nothing is persisted for that layer.
 const TEAM_MEMBER_PROVIDER_LS_KEY = "plexus.phoneProvider.teamMemberOverride";
 
-export function getClientPhoneProviderPreferences(): PhoneProviderPreferences {
-  let teamMemberProviderId: PhoneProviderId | null = null;
+function readLocalStorageTeamMemberOverride(): PhoneProviderId | null {
   try {
     const v = localStorage.getItem(TEAM_MEMBER_PROVIDER_LS_KEY);
     if (v && (AVAILABLE_PROVIDER_IDS as string[]).includes(v)) {
-      teamMemberProviderId = v as PhoneProviderId;
+      return v as PhoneProviderId;
     }
   } catch {
     /* localStorage unavailable — ignore */
   }
+  return null;
+}
+
+function readEnvOrgDefault(): PhoneProviderId | null {
   const envOrg = (import.meta.env.VITE_DEFAULT_PHONE_PROVIDER as string | undefined) ?? null;
+  return envOrg && (AVAILABLE_PROVIDER_IDS as string[]).includes(envOrg)
+    ? (envOrg as PhoneProviderId)
+    : null;
+}
+
+/**
+ * Build the resolver's precedence layers. Persisted settings (from the
+ * settings API) are authoritative; env/localStorage only fill layers the API
+ * left unset. Pass `persisted` from usePhoneProviderPreferences; when it is
+ * undefined (still loading / API unavailable) the fallbacks alone are used so
+ * the Call UI degrades gracefully to manual.
+ */
+export function getClientPhoneProviderPreferences(
+  persisted?: PhoneProviderPreferencesDTO | null,
+): PhoneProviderPreferences {
+  const teamMemberProviderId =
+    (persisted?.teamMemberProviderId as PhoneProviderId | null | undefined) ??
+    readLocalStorageTeamMemberOverride();
+  const facilityProviderId = (persisted?.facilityProviderId as PhoneProviderId | null | undefined) ?? null;
   const orgProviderId =
-    envOrg && (AVAILABLE_PROVIDER_IDS as string[]).includes(envOrg)
-      ? (envOrg as PhoneProviderId)
-      : null;
+    (persisted?.orgProviderId as PhoneProviderId | null | undefined) ?? readEnvOrgDefault();
   return {
-    teamMemberProviderId,
-    facilityProviderId: null, // populated by Admin Settings server wiring (future)
+    teamMemberProviderId: teamMemberProviderId ?? null,
+    facilityProviderId,
     orgProviderId,
   };
 }
@@ -160,4 +187,27 @@ export function setTeamMemberPhoneProviderOverride(providerId: PhoneProviderId |
 export function providerConfigFor(providerId: PhoneProviderId): PhoneProviderConfig {
   const adapter = REGISTRY[providerId] ?? manualPhoneProvider;
   return { providerId: adapter.id, displayName: adapter.label };
+}
+
+/**
+ * Registry descriptors for the selectable providers (Item 7 clinic-phone /
+ * caller-id concept). Each descriptor carries providerId + displayName +
+ * optional facility + honest readiness — enough for a facility-scoped
+ * clinic-phone entry to be added to the registry WITHOUT rewriting the Call UI.
+ * `facilityId` lets a future clinic-phone descriptor be scoped to one facility;
+ * today the built-in adapters are facility-agnostic (facilityId = null).
+ */
+export function listProviderDescriptors(opts: {
+  ringCentralEnabled: boolean;
+  facilityId?: string | null;
+}): PhoneProviderDescriptor[] {
+  return AVAILABLE_PROVIDER_IDS.map((id) => {
+    const adapter = REGISTRY[id] ?? manualPhoneProvider;
+    return {
+      providerId: id as SelectablePhoneProviderId,
+      displayName: adapter.label,
+      facilityId: opts.facilityId ?? null,
+      live: isProviderLive(id, { ringCentralEnabled: opts.ringCentralEnabled }),
+    };
+  });
 }

@@ -427,3 +427,139 @@ export async function savePatientDirectorySectionAccessMatrix(
   }
   return normalized;
 }
+
+// ─── Phone provider defaults ──────────────────────────────────────────
+
+import {
+  PHONE_PROVIDER_DOMAIN,
+  PHONE_PROVIDER_DEFAULT_KEY,
+  isSelectablePhoneProviderId,
+  type SelectablePhoneProviderId,
+  type PhoneProviderScopeLevel,
+  type PhoneProviderPreferencesDTO,
+} from "@shared/phoneProvider";
+
+/** Read the persisted default provider at a specific scope level (exact match,
+ *  not precedence). Returns null when nothing is persisted for that scope. */
+async function readPhoneProviderAtScope(
+  facilityId: string | null,
+  userId: string | null,
+): Promise<SelectablePhoneProviderId | null> {
+  const row = await findOneSetting(
+    PHONE_PROVIDER_DOMAIN,
+    PHONE_PROVIDER_DEFAULT_KEY,
+    facilityId,
+    userId,
+  );
+  const raw = (row?.settingValue as { providerId?: unknown } | undefined)?.providerId;
+  return isSelectablePhoneProviderId(raw) ? raw : null;
+}
+
+/** Find the phone-provider row at an exact scope REGARDLESS of active status.
+ *  Used by save/clear so we reuse (reactivate) an existing row instead of
+ *  accumulating rows — Postgres treats NULL scope columns as distinct in the
+ *  unique index, so a plain insert would NOT collide. */
+async function findPhoneProviderRowAnyActive(
+  facilityId: string | null,
+  userId: string | null,
+): Promise<AdminSetting | undefined> {
+  const [row] = await db
+    .select()
+    .from(adminSettings)
+    .where(
+      and(
+        eq(adminSettings.settingDomain, PHONE_PROVIDER_DOMAIN),
+        eq(adminSettings.settingKey, PHONE_PROVIDER_DEFAULT_KEY),
+        facilityId === null ? isNull(adminSettings.facilityId) : eq(adminSettings.facilityId, facilityId),
+        userId === null ? isNull(adminSettings.userId) : eq(adminSettings.userId, userId),
+        isNull(adminSettings.testType),
+      ),
+    )
+    .orderBy(desc(adminSettings.id))
+    .limit(1);
+  return row;
+}
+
+/** Resolve the persisted phone-provider preferences for an optional
+ *  (facilityId, userId) scope. Each layer is the EXACT-scope persisted value
+ *  (org = global, facility = facility-scoped, team-member = user-scoped) so the
+ *  client resolver can apply its own precedence. Never falls back to env or
+ *  localStorage — those are the client's fallback only. */
+export async function getPhoneProviderPreferences(scope?: {
+  facilityId?: string | null;
+  userId?: string | null;
+}): Promise<PhoneProviderPreferencesDTO> {
+  const facilityId = scope?.facilityId ?? null;
+  const userId = scope?.userId ?? null;
+  const [orgProviderId, facilityProviderId, teamMemberProviderId] = await Promise.all([
+    readPhoneProviderAtScope(null, null),
+    facilityId !== null ? readPhoneProviderAtScope(facilityId, null) : Promise.resolve(null),
+    userId !== null ? readPhoneProviderAtScope(null, userId) : Promise.resolve(null),
+  ]);
+  return {
+    orgProviderId,
+    facilityProviderId,
+    teamMemberProviderId,
+    facilityId,
+  };
+}
+
+/** Upsert the default phone provider at a given scope level. Idempotent:
+ *  reuses the existing (domain, key, facility, user) row when present, else
+ *  inserts. Never overwrites a different scope's row. */
+export async function savePhoneProviderDefault(input: {
+  scope: PhoneProviderScopeLevel;
+  providerId: SelectablePhoneProviderId;
+  facilityId?: string | null;
+  userId?: string | null;
+}): Promise<AdminSetting> {
+  let facilityId: string | null = null;
+  let userId: string | null = null;
+  if (input.scope === "facility") {
+    if (!input.facilityId) throw new Error("facilityId is required for facility scope");
+    facilityId = input.facilityId;
+  } else if (input.scope === "team_member") {
+    if (!input.userId) throw new Error("userId is required for team_member scope");
+    userId = input.userId;
+  }
+
+  const existing = await findPhoneProviderRowAnyActive(facilityId, userId);
+  const settingValue = { providerId: input.providerId };
+  if (existing) {
+    const updated = await updateAdminSetting(existing.id, { settingValue, active: true });
+    if (!updated) throw new Error("Failed to update phone provider default");
+    return updated;
+  }
+  return createAdminSetting({
+    settingDomain: PHONE_PROVIDER_DOMAIN,
+    settingKey: PHONE_PROVIDER_DEFAULT_KEY,
+    settingValue,
+    facilityId,
+    userId,
+    description:
+      input.scope === "organization"
+        ? "Organization default phone provider."
+        : input.scope === "facility"
+          ? `Facility default phone provider (${facilityId}).`
+          : "Team-member default phone provider.",
+    active: true,
+  });
+}
+
+/** Clear (deactivate) the persisted default at a scope level so resolution
+ *  falls through to the next precedence layer. */
+export async function clearPhoneProviderDefault(input: {
+  scope: PhoneProviderScopeLevel;
+  facilityId?: string | null;
+  userId?: string | null;
+}): Promise<boolean> {
+  let facilityId: string | null = null;
+  let userId: string | null = null;
+  if (input.scope === "facility") facilityId = input.facilityId ?? null;
+  else if (input.scope === "team_member") userId = input.userId ?? null;
+
+  const existing = await findPhoneProviderRowAnyActive(facilityId, userId);
+  if (!existing || !existing.active) return false;
+  await updateAdminSetting(existing.id, { active: false });
+  return true;
+}

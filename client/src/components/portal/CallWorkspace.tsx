@@ -39,6 +39,11 @@ import {
   setTeamMemberPhoneProviderOverride,
   AVAILABLE_PROVIDER_IDS,
 } from "@/features/command-center/providers/phoneProviderResolver";
+import {
+  usePhoneProviderPreferences,
+  useSavePhoneProviderDefault,
+} from "@/features/command-center/providers/phoneProviderSettingsApi";
+import { isSelectablePhoneProviderId } from "@shared/phoneProvider";
 import type { PhoneProviderId } from "@/features/command-center/providers/phoneProviderTypes";
 import type { PhoneCallSession } from "@/features/command-center/providers/phoneProviderTypes";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
@@ -295,14 +300,25 @@ export function CallWorkspace({
   const ringCentralEnabled = isRingCentralClickToCallEnabled();
 
   // Per-call provider switch (null → use the precedence-resolved default).
+  // A per-call switch NEVER persists; making it the saved default is an
+  // explicit action (the "Make default" control below).
   const [providerOverride, setProviderOverride] = useState<PhoneProviderId | null>(null);
-  const providerPrefs = getClientPhoneProviderPreferences();
+
+  // Persisted defaults (admin_settings-backed) are the source of truth;
+  // localStorage/env are fallback only. Scope the facility layer to this case.
+  const { data: persistedPrefs } = usePhoneProviderPreferences(ctx.facilityId ?? null);
+  const saveDefault = useSavePhoneProviderDefault(ctx.facilityId ?? null);
+  const providerPrefs = getClientPhoneProviderPreferences(persistedPrefs ?? null);
   // Effective provider by precedence (team-member → facility → org → manual),
   // with an optional per-call switch. The UI NEVER hard-wires RingCentral.
   const resolvedProvider = resolvePhoneProvider(providerPrefs, {
     ringCentralEnabled,
     explicitProviderId: providerOverride,
   });
+  // The provider currently shown in the switcher (per-call override wins).
+  const activeProviderId = providerOverride ?? resolvedProvider.providerId;
+  // Is the shown provider already the persisted team-member default?
+  const isSavedTeamMemberDefault = persistedPrefs?.teamMemberProviderId === activeProviderId;
 
   const commandEnabled = typeof screeningId === "number" && screeningId > 0;
   const { data, isLoading, isError, error } = useQuery<CommandCenterResponse>({
@@ -467,16 +483,17 @@ export function CallWorkspace({
                 facility → org → manual). Persisting the choice sets the
                 team-member override. */}
             <select
-              value={resolvedProvider.providerId}
+              value={activeProviderId}
               onChange={(e) => {
+                // Per-call switch ONLY — does NOT overwrite the saved default.
+                // Making it the default is the explicit "Make default" action.
                 const v = e.target.value as PhoneProviderId;
                 setProviderOverride(v);
-                setTeamMemberPhoneProviderOverride(v);
                 setProviderUnwired(false);
               }}
               className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-700"
               data-testid="call-provider-select"
-              title="Calling method"
+              title="Calling method (this call only)"
             >
               {AVAILABLE_PROVIDER_IDS.map((id) => (
                 <option key={id} value={id}>
@@ -484,6 +501,32 @@ export function CallWorkspace({
                 </option>
               ))}
             </select>
+            {/* Explicit make-default: persists the shown provider as this
+                team member's saved default (does not affect other users).
+                Also mirrors to localStorage so the offline fallback agrees. */}
+            {isSavedTeamMemberDefault ? (
+              <span
+                className="text-[10px] font-medium text-emerald-600"
+                data-testid="call-provider-default-badge"
+              >
+                Default
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isSelectablePhoneProviderId(activeProviderId)) return;
+                  saveDefault.mutate({ scope: "team_member", providerId: activeProviderId });
+                  setTeamMemberPhoneProviderOverride(activeProviderId);
+                }}
+                disabled={saveDefault.isPending}
+                className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                data-testid="call-provider-make-default"
+                title="Save as my default calling method"
+              >
+                Make default
+              </button>
+            )}
             {resolvedProvider.live ? (
               <StatusPill label="Ready" tone="emerald" />
             ) : (
