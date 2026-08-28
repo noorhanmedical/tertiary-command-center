@@ -23,6 +23,10 @@ import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
 import { AncillaryReadinessRow } from "@/components/portal/AncillaryReadinessRow";
 import type { AncillaryServiceContext } from "@/components/portal/AncillaryDocModals";
+import { QualifyingEvidence } from "@/components/patient-directory/PatientChartSections";
+import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
+import { getAncillaryCategory } from "@shared/ancillaryCategory";
+import type { EmrQualifyingTest } from "@/types/emr";
 import {
   WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
@@ -288,6 +292,121 @@ function relativeDateLabel(iso: string): string {
   if (iso === shiftIsoDate(today, -1)) return "Yesterday";
   if (iso === shiftIsoDate(today, 1)) return "Tomorrow";
   return iso;
+}
+
+// Canonical Plexus IQ category → dot color (reuses the existing ancillary
+// color language: brainwave = violet, vitalwave = rose, ultrasound = emerald).
+// NOT a new color meaning — mirrors client/src/features/schedule/ancillaryMeta.
+function qualificationDotClass(category: string): string {
+  switch (category) {
+    case "brainwave":
+      return "bg-violet-500";
+    case "vitalwave":
+      return "bg-rose-500";
+    case "ultrasound":
+      return "bg-emerald-500";
+    default:
+      return "bg-slate-400";
+  }
+}
+
+// Map a qualifying-test name + the patient's stored reasoning into the
+// EmrQualifyingTest shape QualifyingEvidence consumes. Mirrors emrModel.ts;
+// no recompute — reads canonical stored evidence only.
+function toClinicQualifyingTest(
+  serviceName: string,
+  reasoning: Record<string, unknown> | null | undefined,
+): EmrQualifyingTest {
+  const r = (reasoning?.[serviceName] ?? null) as Record<string, unknown> | null;
+  const cat = getAncillaryCategory(serviceName);
+  const bucket: EmrQualifyingTest["bucket"] =
+    cat === "brainwave" || cat === "vitalwave" || cat === "ultrasound" ? cat : "ultrasound";
+  const arr = (v: unknown): string[] | null => (Array.isArray(v) ? (v as string[]) : null);
+  return {
+    testName: serviceName,
+    bucket,
+    clinicianUnderstanding: (r?.clinician_understanding as string) ?? null,
+    patientTalkingPoints: (r?.patient_talking_points as string) ?? null,
+    confidence: (r?.confidence as string) ?? null,
+    qualifyingFactors: arr(r?.qualifying_factors),
+    icd10Codes: arr(r?.icd10_codes),
+    pearls: arr(r?.pearls),
+    approvalRequired: typeof r?.approvalRequired === "boolean" ? (r.approvalRequired as boolean) : null,
+  };
+}
+
+// Clinic-schedule qualification dots: one colored dot per qualifying service
+// (category color), clicking opens a popup with the stored Plexus IQ evidence
+// for THAT service. Reasoning is fetched lazily (only when the popup opens)
+// from the canonical /api/patients/:id read, so the row stays cheap.
+function ClinicQualificationDots({
+  patientScreeningId,
+  qualifyingTests,
+}: {
+  patientScreeningId: number | null;
+  qualifyingTests: string[];
+}) {
+  const [openTest, setOpenTest] = useState<string | null>(null);
+  const { data: screening } = useQuery<{
+    diagnoses: string | null;
+    medications: string | null;
+    reasoning: Record<string, unknown> | null;
+  } | null>({
+    queryKey: ["/api/patients", patientScreeningId, "clinic-qual-evidence"],
+    queryFn: async () => {
+      if (patientScreeningId == null) return null;
+      const res = await fetch(`/api/patients/${patientScreeningId}`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: patientScreeningId != null && openTest != null,
+    staleTime: 30_000,
+  });
+
+  const tests = (qualifyingTests ?? []).filter(Boolean);
+  if (tests.length === 0) return null;
+
+  const splitList = (s: string | null | undefined): string[] =>
+    s ? s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean) : [];
+
+  return (
+    <div className="mt-1 flex items-center gap-1" data-testid={`clinic-qual-dots-${patientScreeningId ?? "x"}`}>
+      {tests.slice(0, 8).map((t) => {
+        const cat = getAncillaryCategory(t);
+        return (
+          <button
+            key={t}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenTest(t);
+            }}
+            className={`h-2.5 w-2.5 rounded-full ${qualificationDotClass(cat)} ring-1 ring-white/70 transition-transform hover:scale-125`}
+            title={`${t} — why qualified`}
+            aria-label={`${t} qualification`}
+            data-testid={`clinic-qual-dot-${patientScreeningId ?? "x"}-${t}`}
+          />
+        );
+      })}
+      <Dialog open={openTest != null} onOpenChange={(o) => !o && setOpenTest(null)}>
+        <DialogContent className="max-w-lg z-[95]" data-testid="clinic-qual-evidence-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <span className={`h-3 w-3 rounded-full ${qualificationDotClass(getAncillaryCategory(openTest ?? ""))}`} />
+              {openTest}
+            </DialogTitle>
+          </DialogHeader>
+          {openTest && (
+            <QualifyingEvidence
+              test={toClinicQualifyingTest(openTest, screening?.reasoning)}
+              diagnoses={splitList(screening?.diagnoses)}
+              medications={splitList(screening?.medications)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
 }
 
 function formatTime(t: string | null) {
@@ -1094,6 +1213,12 @@ export function TeamPortalShell({
   }, [workspaceProfile, profileViewAllFacilities, profileAssignedFacilities.join("|"), facility]);
 
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
+  // Clinic Schedule clinician filter (Phase 2). null = "All clinicians".
+  // Facility-scoped clinician list comes from the canonical
+  // /api/org/clinicians-by-facility-name (facility_clinicians). The clinic
+  // schedule already returns a per-patient clinicianName (from the batch
+  // snapshot), so filtering is a client-side match on that name.
+  const [clinicClinicianFilter, setClinicClinicianFilter] = useState<string | null>(null);
   // ═══════════════════════════════════════════════════════════════════════
   // LEGACY CENTER STATE — DO NOT USE FOR NEW WORKSPACE NAVIGATION.
   // The Playground workspace engine (PlaygroundWorkspaceProvider) is the sole
@@ -1739,7 +1864,47 @@ export function TeamPortalShell({
   // Phase 1 Slice 1.1: render only real-feed patients. The legacy
   // demo-patient prepend was removed to expose the actual canonical
   // /api/portal/today + workspace feeds.
-  const patients = livePatients;
+  const allClinicPatients = livePatients;
+
+  // Phase 2 — facility clinician directory for the Clinic Schedule selector.
+  // Canonical source: /api/org/clinicians-by-facility-name (facility_clinicians).
+  const { data: clinicClinicianData } = useQuery<{
+    facilityId: number | null;
+    clinicians: Array<{ id: number; displayName: string; credentials: string | null }>;
+  }>({
+    queryKey: ["/api/org/clinicians-by-facility-name", facility],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/org/clinicians-by-facility-name?name=${encodeURIComponent(facility)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) return { facilityId: null, clinicians: [] };
+      return res.json();
+    },
+    enabled: !!facility,
+    staleTime: 60_000,
+  });
+  const facilityClinicians = useMemo(
+    () => clinicClinicianData?.clinicians ?? [],
+    [clinicClinicianData],
+  );
+
+  // Reset the clinician filter when the facility changes (its clinician list
+  // changes) so a stale selection from another facility can't hide everyone.
+  useEffect(() => {
+    setClinicClinicianFilter(null);
+  }, [facility]);
+
+  // Clinic patients filtered by the selected clinician (client-side match on
+  // the per-patient clinicianName the schedule feed returns). "All" shows
+  // everyone. Patients with no recorded clinician are kept only under "All".
+  const patients = useMemo(() => {
+    if (!clinicClinicianFilter) return allClinicPatients;
+    const target = clinicClinicianFilter.toLowerCase();
+    return allClinicPatients.filter(
+      (p) => (p.clinicianName ?? "").toLowerCase() === target,
+    );
+  }, [allClinicPatients, clinicClinicianFilter]);
 
   const selected = useMemo(() => patients.find((p) => p.patientScreeningId === selectedPatientId) ?? null, [patients, selectedPatientId]);
 
@@ -3518,13 +3683,42 @@ export function TeamPortalShell({
                 >
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex items-center justify-between gap-2">
                   <span data-testid="badge-patient-count">
                     <SketchBadge tone="graphite">{patients.length}</SketchBadge>
                   </span>
+                  {/* Phase 2 — facility-scoped clinician filter. Options come
+                      from the canonical facility_clinicians directory; "All"
+                      clears the filter. Selection persists across date changes
+                      within the same facility (reset on facility change). */}
+                  {facilityClinicians.length > 0 && (
+                    <select
+                      value={clinicClinicianFilter ?? "__all__"}
+                      onChange={(e) =>
+                        setClinicClinicianFilter(
+                          e.target.value === "__all__" ? null : e.target.value,
+                        )
+                      }
+                      className="h-7 max-w-[60%] rounded-lg border border-slate-200 bg-white px-1.5 text-[11px] text-slate-700"
+                      data-testid="select-clinic-clinician-filter"
+                      title="Filter by clinician"
+                    >
+                      <option value="__all__">All clinicians</option>
+                      {facilityClinicians.map((c) => (
+                        <option key={c.id} value={c.displayName}>
+                          {c.displayName}
+                          {c.credentials ? `, ${c.credentials}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 {patients.length === 0 ? (
-                  <div className="text-xs text-slate-600 py-4 text-center">No patients scheduled.</div>
+                  <div className="text-xs text-slate-600 py-4 text-center">
+                    {clinicClinicianFilter
+                      ? `No patients for ${clinicClinicianFilter} on this day.`
+                      : "No patients scheduled."}
+                  </div>
                 ) : (
                   <div className="space-y-1">
                     {patients.map((p) => {
@@ -3572,6 +3766,7 @@ export function TeamPortalShell({
                                 <div className="text-sm font-medium truncate">{p.name}</div>
                                 <div className="text-[10px] text-slate-500">
                                   {formatTime(p.time)} · {p.appointments.length} test{p.appointments.length === 1 ? "" : "s"}
+                                  {p.clinicianName ? ` · ${p.clinicianName}` : ""}
                                 </div>
                               </div>
                               {consentDone ? (
@@ -3585,6 +3780,29 @@ export function TeamPortalShell({
                               )}
                             </div>
                           </button>
+
+                          {/* Plexus IQ qualification dots (category color) +
+                              Atlas quick access. Outside the name button so
+                              their clicks don't toggle the row selection. */}
+                          <div className="mt-1 flex items-center justify-between gap-2">
+                            <ClinicQualificationDots
+                              patientScreeningId={p.patientScreeningId}
+                              qualifyingTests={p.qualifyingTests}
+                            />
+                            {p.patientScreeningId != null && (
+                              <PatientPdfActions
+                                patient={{
+                                  id: p.patientScreeningId,
+                                  name: p.name,
+                                  dob: p.dob,
+                                  qualifyingTests: p.qualifyingTests,
+                                } as never}
+                                facility={p.facility}
+                                scheduleDate={selectedDate}
+                                iconOnly
+                              />
+                            )}
+                          </div>
 
                           <div className="mt-2 flex items-center justify-end gap-1">
                             <button
