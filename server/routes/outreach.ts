@@ -213,6 +213,17 @@ export function registerOutreachRoutes(app: Express) {
       const patient = await storage.getPatientScreening(parsed.data.patientScreeningId);
       if (!patient) return res.status(404).json({ error: "Patient screening not found" });
 
+      // Canonical call-record closeout — idempotency. When the caller supplies
+      // a stable externalCallId, a repeat submission of the SAME attempt
+      // resolves the existing durable row instead of inserting a duplicate.
+      // ONE real attempt → ONE outreach_calls row, even across retries.
+      if (parsed.data.externalCallId) {
+        const existing = await storage.findOutreachCallByExternalId(parsed.data.externalCallId);
+        if (existing) {
+          return res.status(200).json(existing);
+        }
+      }
+
       const prior = await storage.listOutreachCallsForPatient(parsed.data.patientScreeningId);
       const attemptNumber = parsed.data.attemptNumber ?? prior.length + 1;
       const desiredStatus = deriveAppointmentStatus(parsed.data.outcome);

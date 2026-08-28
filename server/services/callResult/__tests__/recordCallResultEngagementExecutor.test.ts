@@ -436,6 +436,47 @@ check(
   }
 }
 
+// §5 — Canonical call-record closeout: createDurableCallRecord opt-in
+//      un-suppresses outreachCallCreated so the engagement surface owns
+//      exactly ONE durable call record. assignmentCompleted stays
+//      suppressed. Default (opt-out) preserves legacy suppression.
+{
+  // Opt-IN: outreachCallCreated runs (createOutreachCall dep called once),
+  // assignmentCompleted still skipped.
+  const { deps, log } = fakeDeps();
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "no_answer",
+      createDurableCallRecord: true,
+    },
+    deps,
+  );
+  eq(log.createOutreachCall.length, 1, "§5: durable record → createOutreachCall called exactly once");
+  eq(log.createOutreachCall[0].sourceSurface, "engagement_center_route", "§5: source surface set");
+  const outreachStep = r.steps.find((s) => s.step === "outreachCallCreated");
+  eq(outreachStep?.status, "ran", "§5: outreachCallCreated ran under opt-in");
+  const assignStep = r.steps.find((s) => s.step === "assignmentCompleted");
+  eq(assignStep?.status, "skipped", "§5: assignmentCompleted still suppressed under opt-in");
+
+  // Opt-OUT (default / false): outreachCallCreated stays suppressed.
+  const { deps: deps2, log: log2 } = fakeDeps();
+  const r2 = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "no_answer",
+      createDurableCallRecord: false,
+    },
+    deps2,
+  );
+  eq(log2.createOutreachCall.length, 0, "§5: opt-out → no durable record");
+  const outreachStep2 = r2.steps.find((s) => s.step === "outreachCallCreated");
+  eq(outreachStep2?.status, "skipped", "§5: outreachCallCreated skipped when opt-out");
+  eq(outreachStep2?.reason, "surface does not own", "§5: skip reason canonical when opt-out");
+}
+
 if (failures.length > 0) {
   console.error("Engagement executor test FAILED:");
   for (const f of failures) console.error(`- ${f}`);

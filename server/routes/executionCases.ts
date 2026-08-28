@@ -108,10 +108,12 @@ import {
 import type {
   CallResultExecutionDependencies,
   AppendJourneyEventArgs,
+  CreateOutreachCallArgs,
   UpdateExecutionCaseEngagementArgs,
   UpsertTriageCaseArgs,
   CreateFollowUpTaskArgs,
 } from "../services/callResult/recordCallResultExecutionAdapter";
+import { ensureCanonicalCallRecord } from "../services/callResult/canonicalCallRecord";
 
 /**
  * Outcomes the canonical recordCallResult planner understands. The
@@ -169,6 +171,14 @@ const callResultBodySchema = z.object({
   cancelReason: z.string().optional().nullable(),
   noShowReason: z.string().optional().nullable(),
   newStartsAt: z.string().optional().nullable(),
+  // Canonical call-record closeout: idempotency key for the durable
+  // outreach_calls attempt record (client-minted UUID or provider session id).
+  // Repeat submissions with the same key resolve the existing row (no dup).
+  callKey: z.string().min(1).max(128).optional().nullable(),
+  // When explicitly false, this disposition is an administrative / note-only /
+  // schedule-only action, NOT a real dialed attempt → no call record is
+  // created. Defaults to true (a logged call result represents a real call).
+  isCallAttempt: z.boolean().optional(),
 });
 
 const CALL_RESULTS_NEEDING_TRIAGE = new Set([
@@ -617,6 +627,32 @@ export function registerExecutionCaseRoutes(app: Express) {
         });
       }
 
+      // ── Canonical call-record closeout — IDEMPOTENT REPLAY ─────────────
+      // If the caller supplied a callKey that already maps to a durable call
+      // record, this is a retry of the SAME attempt. Return the current state
+      // WITHOUT re-applying any side effects (no second attempt-count
+      // increment, no duplicate journey/triage/task, no duplicate call row).
+      // The guarantee is exactly-once per real attempt.
+      if (data.callKey) {
+        const existingCall = await storage.findOutreachCallByExternalId(data.callKey);
+        if (existingCall) {
+          const currentEc =
+            executionCaseId !== null
+              ? await getExecutionCaseById(executionCaseId).catch(() => null)
+              : executionCase;
+          return res.json({
+            ok: true,
+            executionCase: currentEc ?? executionCase,
+            journeyEvent: null,
+            triageCase: null,
+            task: null,
+            ownershipUpdated: false,
+            callRecordCreated: false,
+            idempotentReplay: true,
+          });
+        }
+      }
+
       // ── Phase 2D-B3: canonical scheduling bridge ───────────────
       // When the flag is ON, route scheduling-state outcomes
       // (cancelled / no_show / reschedule) through the canonical
@@ -759,9 +795,34 @@ export function registerExecutionCaseRoutes(app: Express) {
         let delegatedExecutionCase = executionCase;
         let delegatedOwnershipUpdated = false;
 
+        // Canonical call-record closeout: a real dialed attempt through the
+        // engagement surface must create exactly ONE durable outreach_calls
+        // row so it appears in Call Results (which reads only outreach_calls).
+        // All ENGAGEMENT_DELEGATION_CANONICAL_OUTCOMES represent a real dial;
+        // callers submitting an administrative / note-only action pass
+        // isCallAttempt:false to opt out. Idempotency via data.callKey.
+        const shouldCreateCallRecord = data.isCallAttempt !== false;
+        let delegatedCallRecordCreated = false;
+
         const deps: CallResultExecutionDependencies = {
-          createOutreachCall: () => {
-            // engagement-suppressed step; never reached.
+          createOutreachCall: async (args: CreateOutreachCallArgs) => {
+            // Insert-only durable record. NEVER mutates appointmentStatus
+            // (Item 2F) — that is the outreach surface's concern, applied
+            // there via createOutreachCallAtomic. Idempotent by callKey.
+            const { created } = await ensureCanonicalCallRecord({
+              patientScreeningId: patientScreeningId as number,
+              outcome: data.callResult,
+              // Consistent with the attempt-count plan the exec-case executor
+              // writes, so the record's attemptNumber matches the case counter.
+              attemptNumber: attemptPlan.newAttemptCount,
+              schedulerUserId: actorUserId,
+              callbackAt: args.callbackAt ?? computedNextActionAt ?? null,
+              notes: data.note ?? null,
+              durationSeconds: args.durationSeconds ?? null,
+              externalCallId: data.callKey ?? null,
+              sourceSurface: "engagement_center_route",
+            });
+            delegatedCallRecordCreated = created;
           },
           appendJourneyEvent: async (args: AppendJourneyEventArgs) => {
             try {
@@ -905,6 +966,7 @@ export function registerExecutionCaseRoutes(app: Express) {
             | "facility_specific_issue",
           callbackAt: computedNextActionAt ? computedNextActionAt.toISOString() : null,
           notes: data.note ?? null,
+          createDurableCallRecord: shouldCreateCallRecord,
           assignedTeamMemberId:
             assignedTeamCandidate !== null ? String(assignedTeamCandidate) : null,
           assignedRole: data.assignedRole ?? null,
@@ -945,6 +1007,7 @@ export function registerExecutionCaseRoutes(app: Express) {
           triageCase: delegatedTriageCase,
           task: delegatedTask,
           ownershipUpdated: delegatedOwnershipUpdated,
+          callRecordCreated: delegatedCallRecordCreated,
         });
       }
 

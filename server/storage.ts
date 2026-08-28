@@ -209,6 +209,7 @@ export interface IStorage {
 
   createOutreachCall(record: InsertOutreachCall): Promise<OutreachCall>;
   createOutreachCallAtomic(record: InsertOutreachCall, desiredStatus: string): Promise<OutreachCall>;
+  findOutreachCallByExternalId(externalCallId: string): Promise<OutreachCall | undefined>;
   listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
@@ -429,6 +430,7 @@ export class DatabaseStorage implements IStorage {
 
   createOutreachCall(record: InsertOutreachCall) { return outreachRepository.createCall(record); }
   createOutreachCallAtomic(record: InsertOutreachCall, desiredStatus: string) { return outreachRepository.createCallAtomic(record, desiredStatus); }
+  findOutreachCallByExternalId(externalCallId: string) { return outreachRepository.findCallByExternalId(externalCallId); }
   listOutreachCallsForPatient(patientScreeningId: number) { return outreachRepository.listCallsForPatient(patientScreeningId); }
   listOutreachCallsForPatients(patientScreeningIds: number[]) { return outreachRepository.listCallsForPatients(patientScreeningIds); }
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string) { return outreachRepository.listCallsForSchedulerToday(schedulerUserId, todayIso); }

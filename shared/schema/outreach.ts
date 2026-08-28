@@ -88,6 +88,14 @@ export const outreachCalls = pgTable("outreach_calls", {
   index("idx_outreach_calls_callback_at").on(table.callbackAt),
   index("idx_outreach_calls_ancillary_case").on(table.ancillaryCaseId),
   index("idx_outreach_calls_channel").on(table.channel),
+  // Idempotency key for the canonical call-attempt record. When a caller
+  // supplies a stable external_call_id (client-minted UUID or provider
+  // session id), the same real call attempt maps to exactly ONE outreach_calls
+  // row across retries and across surfaces. Partial (WHERE NOT NULL) so legacy
+  // rows without a key are unaffected. Mirrors uq_cpa_idempotency.
+  uniqueIndex("uq_outreach_calls_external_call_id")
+    .on(table.externalCallId)
+    .where(sql`external_call_id IS NOT NULL`),
 ]);
 
 export const insertOutreachCallSchema = createInsertSchema(outreachCalls).omit({
