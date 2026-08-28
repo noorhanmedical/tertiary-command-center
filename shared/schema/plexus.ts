@@ -41,7 +41,10 @@ export const plexusTasks = pgTable("plexus_tasks", {
   priorityLevel: text("priority_level"),
   assignedToUserId: varchar("assigned_to_user_id").references(() => users.id, { onDelete: "set null" }),
   // Phase 2 — team/workgroup assignment. FK wired to canonical teams in
-  // Phase 4 (K4); nullable until then. Lets a task be owned by a team.
+  // Phase 4D (migration 0071). Nullable. A task is owned by a USER
+  // (assignedToUserId) OR a TEAM (assignedTeamId); a team task sits in the
+  // team pool until an authorized member claims it (which sets
+  // assignedToUserId while keeping assignedTeamId as the origin team).
   assignedTeamId: integer("assigned_team_id"),
   createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),

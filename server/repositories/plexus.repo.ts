@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { and, asc, desc, eq, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import {
   plexusProjects,
   plexusTasks,
@@ -46,6 +46,7 @@ export interface IPlexusRepository {
   listTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   listTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
   listTasksForManager(filters?: ManagerTaskFilters, limit?: number): Promise<PlexusTask[]>;
+  listTeamPoolTasks(teamIds: number[], includeClaimed?: boolean): Promise<PlexusTask[]>;
   listUrgentTasks(): Promise<PlexusTask[]>;
   listOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
@@ -171,6 +172,22 @@ export class DbPlexusRepository implements IPlexusRepository {
   async listTasksByCreator(userId: string): Promise<PlexusTask[]> {
     return db.select().from(plexusTasks)
       .where(eq(plexusTasks.createdByUserId, userId))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  /** Team work pool: tasks assigned to any of `teamIds`. By default only
+   *  UNCLAIMED (assignedToUserId IS NULL) non-terminal tasks — the pool an
+   *  authorized member can claim. Pass includeClaimed to also see claimed ones. */
+  async listTeamPoolTasks(teamIds: number[], includeClaimed = false): Promise<PlexusTask[]> {
+    if (teamIds.length === 0) return [];
+    const conds = [
+      inArray(plexusTasks.assignedTeamId, teamIds),
+      ne(plexusTasks.status, "done"),
+      ne(plexusTasks.status, "closed"),
+    ];
+    if (!includeClaimed) conds.push(isNull(plexusTasks.assignedToUserId));
+    return db.select().from(plexusTasks)
+      .where(and(...conds))
       .orderBy(desc(plexusTasks.createdAt));
   }
 

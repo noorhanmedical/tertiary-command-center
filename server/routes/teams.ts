@@ -64,6 +64,13 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
       facilityId: team.facilityId, summary: `Team "${team.name}" (${team.type}) created`,
       metadata: { slug: team.slug, type: team.type },
     });
+    // Create the team's messaging channel (Phase 4D). Non-blocking.
+    try {
+      const { ensureTeamConversation } = await import("../services/messaging/teamChannelService");
+      await ensureTeamConversation(team.id);
+    } catch (err) {
+      console.error("[teams:create] team channel create failed (non-fatal):", err instanceof Error ? err.message : err);
+    }
     res.json(team);
   });
 
@@ -106,6 +113,13 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
       teamId, summary: `User added to team ${teamId} as ${membership.membershipRole}`,
       metadata: { membershipRole: membership.membershipRole, primaryTeam: membership.primaryTeam },
     });
+    // Sync the team channel membership (join → gain channel access). Non-blocking.
+    try {
+      const { syncTeamConversationMembers } = await import("../services/messaging/teamChannelService");
+      await syncTeamConversationMembers(teamId);
+    } catch (err) {
+      console.error("[teams:add-member] channel sync failed (non-fatal):", err instanceof Error ? err.message : err);
+    }
     res.json(membership);
   });
 
@@ -119,6 +133,13 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
         eventType: "membership_removed", actorUserId: actor(req), subjectUserId: userId,
         teamId, summary: `User removed from team ${teamId}`, metadata: {},
       });
+      // Revoke team-channel access (history preserved). Non-blocking.
+      try {
+        const { removeUserFromTeamChannel } = await import("../services/messaging/teamChannelService");
+        await removeUserFromTeamChannel(teamId, userId);
+      } catch (err) {
+        console.error("[teams:remove-member] channel revoke failed (non-fatal):", err instanceof Error ? err.message : err);
+      }
     }
     res.json({ ok: true, ended });
   });

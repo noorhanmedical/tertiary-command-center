@@ -453,6 +453,51 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
+  // Phase 4D — TEAM WORK POOL. Unclaimed tasks assigned to the caller's active
+  // teams. An authorized team member can claim one (below). A team task is NOT
+  // duplicated into N per-member tasks — it stays one task in the pool.
+  app.get("/api/plexus/tasks/team-pool", async (req: Request, res: Response) => {
+    try {
+      const userId = uid(req);
+      const { teamsRepository } = await import("../repositories/teams.repo");
+      const memberships = await teamsRepository.listMembershipsForUser(userId, true);
+      const teamIds = memberships.map((m) => m.teamId);
+      const tasks = teamIds.length ? await storage.getTeamPoolTasks(teamIds) : [];
+      res.json(await enrichWithPatientNames(tasks));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Claim a team-pool task: sets assignedToUserId to the caller (keeping
+  // assignedTeamId as the origin team) so it leaves the pool and enters the
+  // member's my-work. Only an active member of the task's team may claim.
+  app.post("/api/plexus/tasks/:id/claim", async (req: Request, res: Response) => {
+    try {
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
+      const userId = uid(req);
+      const task = await storage.getTaskById(id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      if (task.assignedTeamId == null) return res.status(400).json({ error: "Task is not a team task" });
+      if (task.assignedToUserId != null) {
+        return res.status(409).json({ error: "Task already claimed", claimedBy: task.assignedToUserId });
+      }
+      const { teamsRepository } = await import("../repositories/teams.repo");
+      const memberships = await teamsRepository.listMembershipsForUser(userId, true);
+      const isMember = memberships.some((m) => m.teamId === task.assignedTeamId);
+      const actor = await storage.getUser(userId);
+      const isAdmin = (actor?.role ?? "") === "admin";
+      if (!isMember && !isAdmin) {
+        return res.status(403).json({ error: "Only an active member of the task's team can claim it" });
+      }
+      const updated = await storage.updateTask(id, { assignedToUserId: userId });
+      await writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: null, to: userId, claimedFromTeam: task.assignedTeamId } });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Policy: urgent tasks (high/critical urgency, non-closed) are visible to all authenticated
   // clinic staff so team members can volunteer via the Help button. This is intentional
   // operational coordination policy — all users are authenticated clinic personnel.

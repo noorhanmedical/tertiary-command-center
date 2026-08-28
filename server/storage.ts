@@ -261,6 +261,7 @@ export interface IStorage {
   getTaskById(id: number): Promise<PlexusTask | undefined>;
   getTasksByProject(projectId: number): Promise<PlexusTask[]>;
   getTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  getTeamPoolTasks(teamIds: number[], includeClaimed?: boolean): Promise<PlexusTask[]>;
   getTasksByCreator(userId: string): Promise<PlexusTask[]>;
   getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   getTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
@@ -488,6 +489,7 @@ export class DatabaseStorage implements IStorage {
   getTasksByCreatorWithActivity(userId: string) { return plexusRepository.listTasksByCreatorWithActivity(userId); }
   getTasksByPatient(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
   getTasksForManager(filters?: ManagerTaskFilters, limit?: number) { return plexusRepository.listTasksForManager(filters, limit); }
+  getTeamPoolTasks(teamIds: number[], includeClaimed?: boolean) { return plexusRepository.listTeamPoolTasks(teamIds, includeClaimed); }
   getTasksByPatientScreeningId(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
   getUrgentTasks() { return plexusRepository.listUrgentTasks(); }
   getOverdueTasksForUser(userId: string) { return plexusRepository.listOverdueTasksForUser(userId); }
