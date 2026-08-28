@@ -10,6 +10,7 @@ import type { ComponentType, ReactNode } from "react";
 export type PlaygroundWorkspaceType =
   | "playground_home"
   | "patient_ehr"
+  | "ancillary_workflow"
   | "call"
   | "tasks"
   | "task"

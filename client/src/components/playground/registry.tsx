@@ -29,6 +29,7 @@ import {
   Search,
   BookOpen,
   Megaphone,
+  Stethoscope,
 } from "lucide-react";
 import { NovaDockIcon } from "@/components/nova/NovaDockIcon";
 import { CallWorkspaceTab } from "./workspaces/CallWorkspaceTab";
@@ -52,7 +53,22 @@ import type { PlaygroundWorkspaceDefinition, PlaygroundWorkspace, PlaygroundWork
 // ─── Patient EHR workspace renderer ───────────────────────────────────────
 // Uses the existing PortalPatientDirectory which wraps PatientProfileWorkspace → PatientChart.
 import { PortalPatientDirectory } from "@/components/portal/PortalPatientDirectory";
+import { AncillaryWorkflowWorkspace } from "@/components/portal/AncillaryWorkflowWorkspace";
 import type { WorkspaceRenderProps } from "./types";
+
+// ACS ancillary clinic-day workflow surface (consent / screening / report +
+// why-qualified + Atlas + Open EHR). Deduped per execution case + service.
+function AncillaryWorkflowWorkspaceTab({ workspace }: WorkspaceRenderProps) {
+  return (
+    <AncillaryWorkflowWorkspace
+      patientScreeningId={workspace.patientScreeningId ?? null}
+      executionCaseId={workspace.executionCaseId ?? null}
+      serviceKey={workspace.serviceKey ?? null}
+      facilityId={workspace.facilityId ?? null}
+      patientName={workspace.title ?? null}
+    />
+  );
+}
 
 function PatientEhrWorkspace({ workspace, isActive }: WorkspaceRenderProps) {
   if (!workspace.patientScreeningId) {
@@ -118,6 +134,15 @@ function patientWorkspaceDedupeKey(type: string): (ws: Partial<PlaygroundWorkspa
   return (ws) => `${type}:${ws.patientScreeningId ?? ws.patientId ?? "unknown"}`;
 }
 
+// Ancillary workflow dedupes PER SERVICE INSTANCE: a patient can have multiple
+// concurrent ancillary services (each its own execution case), so keying on
+// executionCase + service keeps distinct services in distinct tabs while
+// re-clicking the same service focuses the existing one.
+function ancillaryWorkflowDedupeKey(ws: Partial<PlaygroundWorkspace>): string {
+  const caseKey = ws.executionCaseId ?? ws.patientScreeningId ?? ws.patientId ?? "unknown";
+  return `ancillary_workflow:${caseKey}:${ws.serviceKey ?? "?"}`;
+}
+
 function contextDedupeKey(type: string): (ws: Partial<PlaygroundWorkspace>) => string {
   return (ws) => `${type}:${ws.taskId ?? ws.documentId ?? ws.conversationId ?? ws.appointmentId ?? Math.random()}`;
 }
@@ -143,6 +168,16 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
     supportsPatientContext: true,
     supportsDirtyState: false,
     keepAlive: false, // Unmount inactive EHRs for performance
+  },
+  {
+    type: "ancillary_workflow",
+    icon: Stethoscope,
+    titleResolver: (ws) => ws.title || "Ancillary Workflow",
+    render: AncillaryWorkflowWorkspaceTab,
+    dedupeKey: ancillaryWorkflowDedupeKey,
+    supportsPatientContext: true,
+    supportsDirtyState: false,
+    keepAlive: false,
   },
   {
     type: "call",

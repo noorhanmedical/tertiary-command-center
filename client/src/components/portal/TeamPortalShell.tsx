@@ -1899,6 +1899,38 @@ export function TeamPortalShell({
     });
   }
 
+  // Open (or focus) the ACS ancillary WORKFLOW workspace for a scheduled
+  // ancillary row — the consent/screening/report surface centered on this
+  // service. Deduped per execution case + service by the Playground registry.
+  // Preserves canonical IDs; falls back to the scheduling playground only when
+  // there is no patient identity to open a workflow against.
+  function openAncillaryWorkflow(row: TeamWorkspaceAncillaryAppointment) {
+    if (row.patientScreeningId != null || row.executionCaseId != null) {
+      dispatchOpenWorkspace({
+        type: "ancillary_workflow",
+        title: row.patientName ?? "Ancillary",
+        patientScreeningId: row.patientScreeningId ?? null,
+        executionCaseId: row.executionCaseId ?? null,
+        serviceKey: row.serviceType ?? null,
+        facilityId: row.facilityId ?? facility ?? null,
+      });
+      return;
+    }
+    // Walk-in / unlinked row — no canonical patient to open a workflow on.
+    openSchedulePatientPlayground({
+      patient: {
+        patientName: row.patientName ?? null,
+        patientDob: row.patientDob ?? null,
+        facilityId: row.facilityId ?? null,
+        patientScreeningId: row.patientScreeningId ?? null,
+        executionCaseId: row.executionCaseId ?? null,
+        serviceType: row.serviceType ?? null,
+      },
+      selectedDate,
+      ancillaries: ancillariesByPatient.get(ancillaryPatientKey(row)),
+    });
+  }
+
   // Map a call-list row into the shared CallCaseContext consumed by the
   // Call / Schedule / Case Overview Playground tabs.
   function callRowToCaseContext(row: TeamWorkspaceCallListItem): CallCaseContext {
@@ -3789,22 +3821,7 @@ export function TeamPortalShell({
                               }
                               serviceType={row.serviceType ?? "Ancillary"}
                               testIdKey={row.id ?? idx}
-                              onClick={() =>
-                                openSchedulePatientPlayground({
-                                  patient: {
-                                    patientName: row.patientName ?? null,
-                                    patientDob: row.patientDob ?? null,
-                                    facilityId: row.facilityId ?? null,
-                                    patientScreeningId: row.patientScreeningId ?? null,
-                                    executionCaseId: row.executionCaseId ?? null,
-                                    serviceType: row.serviceType ?? null,
-                                  },
-                                  selectedDate,
-                                  ancillaries: ancillariesByPatient.get(
-                                    ancillaryPatientKey(row),
-                                  ),
-                                })
-                              }
+                              onClick={() => openAncillaryWorkflow(row)}
                             />
                           );
                         }
@@ -3813,40 +3830,12 @@ export function TeamPortalShell({
                           key={`${row.id ?? idx}`}
                           role="button"
                           tabIndex={0}
-                          title="Open patient workspace"
-                          onClick={() =>
-                            openSchedulePatientPlayground({
-                              patient: {
-                                patientName: row.patientName ?? null,
-                                patientDob: row.patientDob ?? null,
-                                facilityId: row.facilityId ?? null,
-                                patientScreeningId: row.patientScreeningId ?? null,
-                                executionCaseId: row.executionCaseId ?? null,
-                                serviceType: row.serviceType ?? null,
-                              },
-                              selectedDate,
-                              ancillaries: ancillariesByPatient.get(
-                                ancillaryPatientKey(row),
-                              ),
-                            })
-                          }
+                          title="Open ancillary workflow"
+                          onClick={() => openAncillaryWorkflow(row)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
-                              openSchedulePatientPlayground({
-                                patient: {
-                                  patientName: row.patientName ?? null,
-                                  patientDob: row.patientDob ?? null,
-                                  facilityId: row.facilityId ?? null,
-                                  patientScreeningId: row.patientScreeningId ?? null,
-                                  executionCaseId: row.executionCaseId ?? null,
-                                  serviceType: row.serviceType ?? null,
-                                },
-                                selectedDate,
-                                ancillaries: ancillariesByPatient.get(
-                                  ancillaryPatientKey(row),
-                                ),
-                              });
+                              openAncillaryWorkflow(row);
                             }
                           }}
                           className={`cursor-pointer overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
