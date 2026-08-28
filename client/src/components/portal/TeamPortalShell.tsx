@@ -114,7 +114,7 @@ import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
 import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
-import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
+import { useTeamMessages } from "@/components/portal/messaging/teamMessagesApi";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy
@@ -1340,12 +1340,6 @@ export function TeamPortalShell({
   // A single source of truth for the inbox panel + floating window. No
   // backend — the real Twilio/direct/team messaging still lives in the
   // Communication Tray under the Tools tab and is untouched.
-  const {
-    conversations: messagingConversations,
-    totalUnread: messagingUnread,
-    markRead: markMessagingRead,
-    sendMessage: sendMessagingMessage,
-  } = usePortalMessages();
   // Which top-level tab the left panel shows: the Messaging inbox or the
   // Tools dock (calendar + tray + tool launchers). K7 — seeded from the
   // persisted defaultLeftTab pref (default "tools") once prefs hydrate;
@@ -1356,6 +1350,15 @@ export function TeamPortalShell({
   const leftPanelTabInitRef = useRef(false);
   const [messagesWindowOpen, setMessagesWindowOpen] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  // Phase 1 — REAL messaging. The Messaging inbox + floating window are now
+  // backed by the canonical /api/messaging/* conversation model (was the
+  // mockPortalMessages local state). Same UI contract; real data.
+  const {
+    conversations: messagingConversations,
+    totalUnread: messagingUnread,
+    markRead: markMessagingRead,
+    sendMessage: sendMessagingMessage,
+  } = useTeamMessages(currentUserId ?? null, activeConversationId);
   const openMessagesConversation = useCallback(
     (id: string) => {
       setActiveConversationId(id);
@@ -1849,9 +1852,9 @@ export function TeamPortalShell({
   // key), so opening the tray reuses this data and the mark-read there
   // invalidates this too.
   const { data: dmRosterData } = useQuery<{ roster: { id: string; username: string; role: string | null; unread: number }[] }>({
-    queryKey: ["/api/portal/direct-messages/roster"],
+    queryKey: ["/api/messaging/roster"],
     queryFn: async () => {
-      const res = await fetch("/api/portal/direct-messages/roster", { credentials: "include" });
+      const res = await fetch("/api/messaging/roster", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load teammates");
       return res.json();
     },

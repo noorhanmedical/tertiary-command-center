@@ -55,6 +55,11 @@ import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
 // default; when the flag is off the routes 501 back and the client
 // keeps using mockPortalMessages local state.
 import { registerDirectMessagesRoutes } from "./routes/directMessages";
+// Phase 1 (Team Ops) — first-class internal team messaging. The ONE
+// canonical messaging backend (conversations + members + team_messages).
+// Not feature-flagged; supersedes the flag-gated /api/internal-messages
+// path and the mock inbox.
+import { registerMessagingRoutes } from "./routes/messaging";
 import { registerPortalAssistantRoutes } from "./routes/portalAssistant";
 // Phase 4C — Clinical Intelligence live persistence deferred. The
 // canonical schema `shared/schema/clinicalIntelligence.ts` is already
@@ -324,6 +329,8 @@ export async function registerRoutes(
   registerPortalPrefsRoutes(app);
   // Phase 4 — internal direct messages (feature-flagged OFF by default).
   registerDirectMessagesRoutes(app);
+  // Phase 1 (Team Ops) — first-class internal team messaging (canonical).
+  registerMessagingRoutes(app);
   // Phase 4 — Portal Assistant (AI, feature-flagged OFF by default).
   registerPortalAssistantRoutes(app);
   // Phase 4C — Clinical Intelligence live persistence deferred (see

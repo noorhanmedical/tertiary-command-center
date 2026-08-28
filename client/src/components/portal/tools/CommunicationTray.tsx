@@ -2,9 +2,9 @@
 //
 // iMessage-style tray docked in the bottom half of the Team Portal Tools
 // panel. Two tabs, both wired to real internal backends:
-//   - Direct: real 1:1 person-to-person messaging between team members
-//             (/api/portal/direct-messages/*). Sender attribution is decided
-//             server-side from the session, so nothing is fabricated.
+//   - Direct: real 1:1 person-to-person messaging between team members via the
+//             canonical /api/messaging/* conversation model (Phase 1). Sender
+//             attribution is decided server-side from the session.
 //   - Team:   real Plexus task-message threads (/api/plexus/tasks/:id/messages)
 //             used for group / task conversations.
 //
@@ -143,10 +143,13 @@ function DirectMessagesTab({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useComposerFocus(focusNonce);
 
+  // Phase 1 — repointed to the canonical /api/messaging backend (was the
+  // broken /api/portal/direct-messages/* path). Roster + per-recipient
+  // conversation resolution + list/send all use /api/messaging/*.
   const rosterQuery = useQuery<{ roster: RosterEntry[] }>({
-    queryKey: ["/api/portal/direct-messages/roster"],
+    queryKey: ["/api/messaging/roster"],
     queryFn: async () => {
-      const res = await fetch("/api/portal/direct-messages/roster", { credentials: "include" });
+      const res = await fetch("/api/messaging/roster", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load teammates");
       return res.json();
     },
@@ -165,14 +168,26 @@ function DirectMessagesTab({
 
   const activePerson = roster.find((r) => r.id === activeUserId) ?? null;
 
-  const messagesQuery = useQuery<{ messages: DirectMessage[] }>({
-    queryKey: ["/api/portal/direct-messages", activeUserId],
+  // Resolve (find-or-create) the 1:1 conversation id for the active recipient.
+  const conversationQuery = useQuery<{ conversationId: number }>({
+    queryKey: ["/api/messaging/direct", activeUserId],
     queryFn: async () => {
-      const res = await fetch(`/api/portal/direct-messages/${activeUserId}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load conversation");
+      const res = await apiRequest("POST", "/api/messaging/direct", { otherUserId: activeUserId });
       return res.json();
     },
     enabled: activeUserId != null,
+    staleTime: 5 * 60 * 1000,
+  });
+  const conversationId = conversationQuery.data?.conversationId ?? null;
+
+  const messagesQuery = useQuery<{ messages: DirectMessage[] }>({
+    queryKey: ["/api/messaging/conversations", conversationId, "messages"],
+    queryFn: async () => {
+      const res = await fetch(`/api/messaging/conversations/${conversationId}/messages`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load conversation");
+      return res.json();
+    },
+    enabled: conversationId != null,
     refetchInterval: 8000,
   });
 
@@ -180,16 +195,13 @@ function DirectMessagesTab({
 
   const sendMutation = useMutation({
     mutationFn: async (body: string) => {
-      if (activeUserId == null) throw new Error("No recipient selected");
-      return apiRequest("POST", "/api/portal/direct-messages", {
-        recipientUserId: activeUserId,
-        body,
-      });
+      if (conversationId == null) throw new Error("No conversation selected");
+      return apiRequest("POST", `/api/messaging/conversations/${conversationId}/messages`, { body });
     },
     onSuccess: () => {
       setDraft("");
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/direct-messages", activeUserId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/direct-messages/roster"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messaging/conversations", conversationId, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messaging/roster"] });
     },
   });
 
@@ -300,7 +312,7 @@ function DirectMessagesTab({
           <button
             type="button"
             onClick={() => draft.trim() && sendMutation.mutate(draft.trim())}
-            disabled={!draft.trim() || sendMutation.isPending || activeUserId == null}
+            disabled={!draft.trim() || sendMutation.isPending || conversationId == null}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white transition hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
             data-testid="tray-direct-send"
           >
