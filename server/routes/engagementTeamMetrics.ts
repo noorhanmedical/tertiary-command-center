@@ -86,13 +86,25 @@ export function registerEngagementTeamMetricsRoutes(
   app: Express,
   requireRole: (...roles: string[]) => RequestHandler,
 ) {
-  // ─── Live team metrics (admin-only) ─────────────────────────────────────
+  // ─── Live team metrics (admin = all; manager = own team scope) ──────────
   app.get(
     "/api/engagement/team-metrics",
-    requireRole("admin"),
-    async (_req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       try {
+        const { resolveManagerScope, isManagerOrAdmin, schedulerIdsInScope } =
+          await import("../services/teams/managerScope");
+        const session = (req as { session?: { userId?: string; role?: string } }).session;
+        const scope = await resolveManagerScope(session?.userId ?? null, session?.role ?? null);
+        if (!isManagerOrAdmin(scope)) {
+          return res.status(403).json({ error: "Requires admin or a team-manager role" });
+        }
         const metrics = await getTeamMetrics();
+        // Manager sees only members in their scope (admin: all).
+        const scopedIds = await schedulerIdsInScope(scope);
+        if (scopedIds != null) {
+          const allow = new Set(scopedIds);
+          metrics.members = metrics.members.filter((m) => allow.has(m.schedulerId));
+        }
         res.json(metrics);
       } catch (error: unknown) {
         console.error(

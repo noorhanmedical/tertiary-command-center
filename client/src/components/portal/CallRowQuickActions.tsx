@@ -1,4 +1,4 @@
-import { Phone, Calendar as CalendarIcon } from "lucide-react";
+import { Phone, Calendar as CalendarIcon, ArrowRightLeft } from "lucide-react";
 import type { TeamWorkspaceCallListItem } from "@/lib/workflow/teamMemberWorkspaceApi";
 
 // Minimal action cluster for a call-list row: a circular phone button (opens
@@ -18,6 +18,9 @@ export type CallRowQuickActionsProps = {
   onOpenSchedule: () => void;
   /** Open the Case Overview workflow tab. Optional / no longer rendered. */
   onOpenCase?: () => void;
+  /** Open the Handoff dialog for this row (Phase 5C). Optional — rendered only
+   *  when the row has an execution case to hand off. */
+  onHandoff?: () => void;
 };
 
 export function CallRowQuickActions({
@@ -26,6 +29,7 @@ export function CallRowQuickActions({
   canCall,
   onOpenCall,
   onOpenSchedule,
+  onHandoff,
 }: CallRowQuickActionsProps) {
   const key = row.id ?? idx;
   const name = row.patientName ?? "patient";
@@ -56,6 +60,20 @@ export function CallRowQuickActions({
       >
         <CalendarIcon className="h-4 w-4" />
       </button>
+
+      {onHandoff ? (
+        <button
+          type="button"
+          onClick={onHandoff}
+          aria-label={`Hand off ${name}`}
+          title="Hand off to a teammate"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors hover:bg-slate-900/[0.04]"
+          style={{ borderColor: "rgba(31,41,55,0.45)", backgroundColor: "#FAFBFD", color: "#8250DF" }}
+          data-testid={`button-call-handoff-${key}`}
+        >
+          <ArrowRightLeft className="h-4 w-4" />
+        </button>
+      ) : null}
     </div>
   );
 }

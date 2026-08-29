@@ -56,6 +56,7 @@ import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
+import { ManagerWorkloadPanel, NeedsCoveragePanel } from "@/components/portal/handoff/ManagerWorkforcePanel";
 import { EngagementCallResults } from "@/components/engagement/EngagementCallResults";
 import {
   type BoardResponse,
@@ -102,6 +103,17 @@ function HeaderMetric({
 }
 
 export default function EngagementCenterPage() {
+  // Phase 5C — admin flag for manager-panel controls (assign/preview). The
+  // panels themselves are backend-scoped; this only toggles admin-only actions.
+  const { data: meUser } = useQuery<{ role?: string | null } | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      return res.ok ? res.json() : null;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const isAdmin = (meUser?.role ?? "") === "admin";
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -505,7 +517,12 @@ export default function EngagementCenterPage() {
         </main>
       ) : view === "callSettings" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-          <div className="mx-auto max-w-6xl">
+          <div className="mx-auto max-w-6xl space-y-4">
+            {/* Phase 5C — manager-scoped workforce panels (self-hide for
+                non-managers via backend 403). Canonical capacity + structured
+                needs-coverage; distribution preview from the same engine. */}
+            <ManagerWorkloadPanel />
+            <NeedsCoveragePanel isAdmin={isAdmin} />
             <EngagementCallSettings />
           </div>
         </main>

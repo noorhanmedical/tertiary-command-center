@@ -65,6 +65,8 @@ import {
 import { CalendarQuickScheduleDialog } from "@/components/portal/CalendarQuickScheduleDialog";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
+import { HandoffDialog } from "@/components/portal/handoff/HandoffDialog";
+import { PriorityHandoffsInbox } from "@/components/portal/handoff/PriorityHandoffsInbox";
 import {
   CompactCallRow,
   CompactClinicRow,
@@ -1301,6 +1303,13 @@ export function TeamPortalShell({
   // instead of navigating to a Playground tab. CallWorkspace owns the honest
   // RingCentral boundary (manual-dial fallback when the provider is unwired).
   const [callWorkspaceCtx, setCallWorkspaceCtx] = useState<CallCaseContext | null>(null);
+  // Phase 5C — Handoff dialog target (execution case + facility + patient name).
+  const [handoffCtx, setHandoffCtx] = useState<{ executionCaseId: number; facilityId: string | null; patientName: string } | null>(null);
+  const openHandoffForRow = useCallback((row: TeamWorkspaceCallListItem) => {
+    const execId = row.executionCaseId ?? (typeof row.id === "number" ? row.id : null);
+    if (execId == null) return;
+    setHandoffCtx({ executionCaseId: execId, facilityId: row.facilityId ?? facility ?? null, patientName: row.patientName ?? "Patient" });
+  }, [facility]);
   // Step 5 — keys of call/ancillary rows mid-exit. We add a key here on a
   // one-click complete, let the row animate up (max-h-0 + opacity-0), then
   // refetch so the row disappears smoothly instead of popping out.
@@ -3961,6 +3970,9 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "callList" && (
                   <div className="space-y-1" data-testid="workspace-mode-body-callList">
+                    {/* Phase 5C — inbound PRIORITY / TEAM HANDOFFS surface above
+                        standard assigned work (self-hides when empty). */}
+                    <PriorityHandoffsInbox />
                     {workspaceCallListLoading ? (
                       <div className="text-xs text-slate-600 py-4 text-center">Loading call list…</div>
                     ) : workspaceCallList.length === 0 ? (
@@ -4026,6 +4038,7 @@ export function TeamPortalShell({
                                 canCall={canCall}
                                 onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
                                 onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
+                                onHandoff={() => openHandoffForRow(row)}
                               />
                             )}
                           </div>
@@ -4542,6 +4555,17 @@ export function TeamPortalShell({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Phase 5C — Handoff dialog (from a call-list row's handoff action). */}
+      {handoffCtx ? (
+        <HandoffDialog
+          open={!!handoffCtx}
+          onOpenChange={(o) => { if (!o) setHandoffCtx(null); }}
+          executionCaseId={handoffCtx.executionCaseId}
+          facilityId={handoffCtx.facilityId}
+          patientName={handoffCtx.patientName}
+        />
+      ) : null}
 
       {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
       <CanonicalCommandCalendar
