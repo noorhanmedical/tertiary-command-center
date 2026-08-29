@@ -25,6 +25,10 @@ export const CALL_HANDOFF_STATUSES = [
   "acknowledged",  // recipient has acknowledged (required for P1/P2)
   "completed",     // recipient completed the underlying call/work
   "cancelled",     // sender/manager recalled it before completion
+  // Phase 6B (req 6) — a NEWER handoff moved ownership of the same case to a
+  // different recipient before this one was completed. The record is kept for
+  // audit (never deleted); the losing recipient no longer sees it as active.
+  "superseded",
 ] as const;
 export type CallHandoffStatus = (typeof CALL_HANDOFF_STATUSES)[number];
 

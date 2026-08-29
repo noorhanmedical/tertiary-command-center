@@ -50,6 +50,8 @@ export interface IPlexusRepository {
   listUrgentTasks(): Promise<PlexusTask[]>;
   listOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
+  claimTeamTask(id: number, teamId: number, userId: string): Promise<PlexusTask | undefined>;
+  transitionTaskStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
   deleteTask(id: number): Promise<void>;
 
   // Collaborators
@@ -156,9 +158,15 @@ export class DbPlexusRepository implements IPlexusRepository {
     if (filters.facilityId) conds.push(eq(plexusTasks.facilityId, filters.facilityId));
     if (filters.priorityLevel) conds.push(eq(plexusTasks.priorityLevel, filters.priorityLevel));
     if (filters.overdueOnly) {
+      // Phase 6B — CANONICAL time-aware overdue: prefer the dueAt timestamp
+      // (compared against the DB clock, tz-correct). Fall back to the legacy
+      // dueDate TEXT (end-of-day string compare) only for rows that predate
+      // the dueAt backfill / were created without one.
       const today = new Date().toISOString().slice(0, 10);
-      // dueDate is a TEXT YYYY-MM-DD; string comparison is date-correct.
-      conds.push(sql`${plexusTasks.dueDate} IS NOT NULL AND ${plexusTasks.dueDate} < ${today}`);
+      conds.push(sql`(
+        (${plexusTasks.dueAt} IS NOT NULL AND ${plexusTasks.dueAt} < now())
+        OR (${plexusTasks.dueAt} IS NULL AND ${plexusTasks.dueDate} IS NOT NULL AND ${plexusTasks.dueDate} < ${today})
+      )`);
       conds.push(ne(plexusTasks.status, "done"));
       conds.push(ne(plexusTasks.status, "closed"));
     }
@@ -228,6 +236,10 @@ export class DbPlexusRepository implements IPlexusRepository {
   }
 
   async listOverdueTasksForUser(userId: string): Promise<PlexusTask[]> {
+    // Phase 6B — returns tasks due up to and including TODAY (the route splits
+    // strictly-overdue vs due-today). Prefer the canonical dueAt timestamp
+    // (due at/before end of today), falling back to legacy dueDate text for
+    // rows without a dueAt.
     const today = new Date().toISOString().slice(0, 10);
     return db.select().from(plexusTasks)
       .where(and(
@@ -237,16 +249,59 @@ export class DbPlexusRepository implements IPlexusRepository {
         ),
         ne(plexusTasks.status, "closed"),
         ne(plexusTasks.status, "done"),
-        sql`${plexusTasks.dueDate} IS NOT NULL`,
-        lte(plexusTasks.dueDate, today),
+        sql`(
+          (${plexusTasks.dueAt} IS NOT NULL AND ${plexusTasks.dueAt} <= (date_trunc('day', now()) + interval '1 day' - interval '1 millisecond'))
+          OR (${plexusTasks.dueAt} IS NULL AND ${plexusTasks.dueDate} IS NOT NULL AND ${plexusTasks.dueDate} <= ${today})
+        )`,
       ))
-      .orderBy(asc(plexusTasks.dueDate));
+      .orderBy(asc(sql`COALESCE(${plexusTasks.dueAt}::text, ${plexusTasks.dueDate})`));
   }
 
   async updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined> {
     const [result] = await db.update(plexusTasks)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(plexusTasks.id, id))
+      .returning();
+    return result;
+  }
+
+  /** Atomically transition a task's status only when it is still in the
+   *  expected `fromStatus` (Phase 6B, req 19). The `status = fromStatus` guard
+   *  is part of the UPDATE's WHERE so two concurrent status changes are
+   *  serialized: exactly one observes the expected prior status and wins
+   *  (returns the row), the other gets `undefined` (→ 409, status moved). The
+   *  winning transition's completion provenance (completedAt/By) is set/cleared
+   *  atomically in the same statement, plus any extra coherent fields. */
+  async transitionTaskStatus(
+    id: number,
+    fromStatus: string,
+    toStatus: string,
+    extra: Partial<InsertPlexusTask> = {},
+  ): Promise<PlexusTask | undefined> {
+    const [result] = await db.update(plexusTasks)
+      .set({ ...extra, status: toStatus, updatedAt: new Date() })
+      .where(and(
+        eq(plexusTasks.id, id),
+        eq(plexusTasks.status, fromStatus),
+      ))
+      .returning();
+    return result;
+  }
+
+  /** Atomically claim an UNCLAIMED team task for a user (Phase 6B, req 18).
+   *  The `assigned_to_user_id IS NULL` guard is part of the UPDATE's WHERE, so
+   *  two concurrent claims are serialized by the row write — exactly one wins
+   *  (returns the row) and the loser gets `undefined` (→ 409 already claimed).
+   *  Also requires the task still belong to `teamId` so a task that changed
+   *  teams between read and write is not silently claimed. */
+  async claimTeamTask(id: number, teamId: number, userId: string): Promise<PlexusTask | undefined> {
+    const [result] = await db.update(plexusTasks)
+      .set({ assignedToUserId: userId, updatedAt: new Date() })
+      .where(and(
+        eq(plexusTasks.id, id),
+        eq(plexusTasks.assignedTeamId, teamId),
+        isNull(plexusTasks.assignedToUserId),
+      ))
       .returning();
     return result;
   }

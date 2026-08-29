@@ -270,6 +270,8 @@ export interface IStorage {
   getUrgentTasks(): Promise<PlexusTask[]>;
   getOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
+  claimTeamTask(id: number, teamId: number, userId: string): Promise<PlexusTask | undefined>;
+  transitionTaskStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
 
   addCollaborator(record: InsertPlexusTaskCollaborator): Promise<PlexusTaskCollaborator>;
   getCollaborators(taskId: number): Promise<PlexusTaskCollaborator[]>;
@@ -496,6 +498,8 @@ export class DatabaseStorage implements IStorage {
   getUrgentTasks() { return plexusRepository.listUrgentTasks(); }
   getOverdueTasksForUser(userId: string) { return plexusRepository.listOverdueTasksForUser(userId); }
   updateTask(id: number, updates: Partial<InsertPlexusTask>) { return plexusRepository.updateTask(id, updates); }
+  claimTeamTask(id: number, teamId: number, userId: string) { return plexusRepository.claimTeamTask(id, teamId, userId); }
+  transitionTaskStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsertPlexusTask>) { return plexusRepository.transitionTaskStatus(id, fromStatus, toStatus, extra); }
   deleteTask(id: number) { return plexusRepository.deleteTask(id); }
 
   addCollaborator(record: InsertPlexusTaskCollaborator) { return plexusRepository.addCollaborator(record); }

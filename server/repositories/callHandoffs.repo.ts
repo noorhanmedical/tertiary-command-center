@@ -120,4 +120,32 @@ export const callHandoffsRepository = {
       .where(eq(callHandoffs.executionCaseId, executionCaseId))
       .orderBy(callHandoffs.createdAt);
   },
+
+  /** Phase 6B (req 6) — mark all OPEN handoffs on a case as `superseded`,
+   *  EXCLUDING the given handoff id (the winner). Kept for audit (never
+   *  deleted). Returns the affected rows so the caller can clear their
+   *  now-stale recipient notifications. Atomic single UPDATE with a WHERE guard
+   *  on the open statuses so it can't clobber a concurrently completed row. */
+  async supersedeOpenForCase(
+    executionCaseId: number,
+    exceptHandoffId: number,
+    supersededByHandoffId: number,
+  ): Promise<CallHandoff[]> {
+    const rows = await db
+      .update(callHandoffs)
+      .set({
+        status: "superseded",
+        updatedAt: new Date(),
+        metadata: sql`COALESCE(${callHandoffs.metadata}, '{}'::jsonb) || ${JSON.stringify({ supersededByHandoffId })}::jsonb`,
+      })
+      .where(
+        and(
+          eq(callHandoffs.executionCaseId, executionCaseId),
+          sql`${callHandoffs.id} <> ${exceptHandoffId}`,
+          inArray(callHandoffs.status, OPEN_STATUSES as unknown as string[]),
+        ),
+      )
+      .returning();
+    return rows;
+  },
 };

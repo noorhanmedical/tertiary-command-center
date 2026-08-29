@@ -298,6 +298,30 @@ export async function createHandoff(input: CreateHandoffInput): Promise<{
     },
   });
 
+  // ── Supersede any OTHER open handoffs on this case (req 6) ──
+  // Ownership just moved to this handoff's recipient. Any earlier still-open
+  // handoff on the same case is no longer the current transfer — mark it
+  // `superseded` (kept for audit) so a losing recipient never sees two active
+  // handoffs for one case. Clear those recipients' stale notifications too.
+  try {
+    const superseded = await callHandoffsRepository.supersedeOpenForCase(
+      input.executionCaseId,
+      handoff.id,
+      handoff.id,
+    );
+    for (const s of superseded) {
+      if (s.toUserId) await clearHandoffNotifications(s.toUserId, s.id);
+    }
+  } catch (err) {
+    // Non-blocking: the new transfer + record already stand. A supersede
+    // hiccup only risks a transient duplicate in a recipient's inbox, which
+    // the next read reconciles.
+    console.error(
+      "[call-handoff] supersede prior open handoffs failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   // ── Audit / journey event ──
   try {
     await appendJourneyEvent({
@@ -371,6 +395,42 @@ export async function createHandoff(input: CreateHandoffInput): Promise<{
   });
 
   return { handoff, ownershipTransferred: true, notified };
+}
+
+// ─── SLA / ack-age exposure (req 7) ──────────────────────────────────────────
+// We do NOT auto-escalate (no business rule defines the escalation timing).
+// We only EXPOSE age + overdue so the recipient/manager can act. `dueAt` is the
+// SLA anchor when present; otherwise a P1/P2 that has been pending for longer
+// than its soft target is flagged as awaiting acknowledgement.
+export interface HandoffSla {
+  ageMs: number;
+  isOverdue: boolean;          // past dueAt (when set)
+  awaitingAck: boolean;         // P1/P2 still pending (not yet acknowledged)
+  overdueForAck: boolean;       // awaiting ack AND past dueAt
+}
+
+export function computeHandoffSla(h: CallHandoff, now: Date = new Date()): HandoffSla {
+  const created = h.createdAt ? new Date(h.createdAt).getTime() : now.getTime();
+  const ageMs = Math.max(0, now.getTime() - created);
+  const due = h.dueAt ? new Date(h.dueAt).getTime() : null;
+  const isOpen = h.status === "pending" || h.status === "acknowledged";
+  const isOverdue = isOpen && due != null && due < now.getTime();
+  const awaitingAck =
+    h.status === "pending" && handoffRequiresAcknowledgement(h.priorityLevel);
+  return {
+    ageMs,
+    isOverdue,
+    awaitingAck,
+    overdueForAck: awaitingAck && isOverdue,
+  };
+}
+
+/** Annotate handoff rows with their SLA fields for a read endpoint. */
+export function annotateHandoffsWithSla<T extends CallHandoff>(
+  rows: T[],
+  now: Date = new Date(),
+): (T & { sla: HandoffSla })[] {
+  return rows.map((h) => ({ ...h, sla: computeHandoffSla(h, now) }));
 }
 
 /** Recipient acknowledges a handoff (required for P1/P2). */

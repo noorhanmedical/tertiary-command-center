@@ -21,6 +21,7 @@ import {
   cancelHandoff,
   checkHandoffEligibility,
   callHandoffsRepository,
+  annotateHandoffsWithSla,
   HandoffError,
 } from "../services/engagement/callHandoffService";
 
@@ -122,7 +123,9 @@ export function registerCallHandoffRoutes(app: Express) {
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
       const rows = await callHandoffsRepository.listOpenForRecipient(userId);
-      return res.json(rows);
+      // Phase 6B (req 7) — expose SLA/age so the inbox can show
+      // overdue/awaiting-acknowledgement without inventing auto-escalation.
+      return res.json(annotateHandoffsWithSla(rows));
     } catch (err) {
       return handleError(res, err);
     }
@@ -147,7 +150,8 @@ export function registerCallHandoffRoutes(app: Express) {
             (h.toUserId && scopeCoversUser(scope, h.toUserId)) ||
             (h.fromUserId && scopeCoversUser(scope, h.fromUserId)),
           );
-      return res.json(scoped);
+      // Expose SLA/age for the manager view too (req 7).
+      return res.json(annotateHandoffsWithSla(scoped));
     } catch (err) {
       return handleError(res, err);
     }

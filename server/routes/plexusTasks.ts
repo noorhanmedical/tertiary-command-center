@@ -14,12 +14,50 @@ import {
   levelToLegacyPriority,
   effectiveTaskPriorityLevel,
   type PlexusTaskPriorityLevel,
+  type InsertPlexusTask,
 } from "@shared/schema/plexus";
 import type { ManagerTaskFilters } from "../repositories/plexus.repo";
 import { featureFlags } from "../lib/featureFlags";
 
 // Terminal task statuses that stamp completion provenance.
 const TERMINAL_TASK_STATUSES = new Set(["done", "closed"]);
+
+/** Phase 6B — keep the CANONICAL `dueAt` timestamp and the LEGACY `dueDate`
+ *  text (YYYY-MM-DD) coherent on create/update. New SLA logic reads dueAt; the
+ *  legacy dueDate column is kept in sync for backward compatibility.
+ *
+ *  Facility/local-time interpretation: an incoming date-only value (YYYY-MM-DD)
+ *  is treated as END OF THAT DAY in UTC (23:59:59.999Z), matching the legacy
+ *  end-of-day backfill semantics (migration 0072) so a same-day task is not
+ *  considered overdue until the day is actually over. A full ISO datetime is
+ *  used verbatim. Returns the fields to merge into the task payload. */
+function coherentDueFields(due: string | Date | null | undefined): {
+  dueAt?: Date | null;
+  dueDate?: string | null;
+} {
+  if (due === undefined) return {};
+  if (due === null) return { dueAt: null, dueDate: null };
+  let at: Date | null = null;
+  let dateText: string | null = null;
+  if (due instanceof Date) {
+    at = Number.isNaN(due.getTime()) ? null : due;
+    dateText = at ? at.toISOString().slice(0, 10) : null;
+  } else {
+    const s = due.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      // Date-only → end of that day (UTC), matching the 0072 backfill.
+      at = new Date(`${s}T23:59:59.999Z`);
+      dateText = s;
+    } else {
+      const parsed = new Date(s);
+      if (!Number.isNaN(parsed.getTime())) {
+        at = parsed;
+        dateText = parsed.toISOString().slice(0, 10);
+      }
+    }
+  }
+  return { dueAt: at, dueDate: dateText };
+}
 
 /** Keep the legacy `priority` and canonical `priorityLevel` coherent on a
  *  create/update payload. Whichever the caller supplied drives the other so a
@@ -392,7 +430,13 @@ export function registerPlexusTasksRoutes(app: Express) {
       const today = new Date().toISOString().slice(0, 10);
       const enriched = withNames.map((t) => {
         const isTerminal = t.status === "done" || t.status === "closed";
-        const overdue = !isTerminal && !!t.dueDate && t.dueDate < today;
+        // Phase 6B — prefer the canonical dueAt timestamp; fall back to legacy
+        // dueDate text only when a row has no dueAt.
+        const overdue = !isTerminal && (
+          t.dueAt
+            ? new Date(t.dueAt).getTime() < Date.now()
+            : (!!t.dueDate && t.dueDate < today)
+        );
         return {
           ...t,
           priorityLevel: effectiveTaskPriorityLevel(t),
@@ -504,7 +548,21 @@ export function registerPlexusTasksRoutes(app: Express) {
       if (!isMember && !isAdmin) {
         return res.status(403).json({ error: "Only an active member of the task's team can claim it" });
       }
-      const updated = await storage.updateTask(id, { assignedToUserId: userId });
+      // Phase 6B (req 18) — ATOMIC claim. The conditional UPDATE (WHERE
+      // assigned_to_user_id IS NULL AND assigned_team_id = teamId) is the
+      // race arbiter: exactly one concurrent claimant wins; the loser gets
+      // undefined and a 409. The read-then-write null check above is only a
+      // fast pre-check, NOT the correctness guarantee.
+      const updated = await storage.claimTeamTask(id, task.assignedTeamId, userId);
+      if (!updated) {
+        // Someone else won the race (or the task left the team pool). Re-read
+        // for an accurate "claimed by" without trusting the stale pre-check.
+        const current = await storage.getTaskById(id);
+        return res.status(409).json({
+          error: "Task already claimed",
+          claimedBy: current?.assignedToUserId ?? null,
+        });
+      }
       await writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: null, to: userId, claimedFromTeam: task.assignedTeamId } });
       // Durable notification for the claimer (best-effort; Phase 6A).
       try {
@@ -540,10 +598,25 @@ export function registerPlexusTasksRoutes(app: Express) {
     try {
       const userId = uid(req);
       const tasks = await storage.getOverdueTasksForUser(userId);
+      const now = Date.now();
       const today = new Date().toISOString().slice(0, 10);
       const enriched = await enrichWithPatientNames(tasks);
-      const overdue = enriched.filter((t) => (t.dueDate ?? "") < today);
-      const dueToday = enriched.filter((t) => t.dueDate === today);
+      // Phase 6B — split using the CANONICAL dueAt timestamp when present
+      // (strictly past = overdue; still-today = dueToday), falling back to the
+      // legacy dueDate text only for rows without a dueAt.
+      const isOverdue = (t: (typeof enriched)[number]): boolean => {
+        if (t.dueAt) return new Date(t.dueAt).getTime() < now;
+        return (t.dueDate ?? "") < today;
+      };
+      const isDueToday = (t: (typeof enriched)[number]): boolean => {
+        if (t.dueAt) {
+          const d = new Date(t.dueAt).getTime();
+          return d >= now && new Date(t.dueAt).toISOString().slice(0, 10) === today;
+        }
+        return t.dueDate === today;
+      };
+      const overdue = enriched.filter(isOverdue);
+      const dueToday = enriched.filter(isDueToday);
       res.json({ overdue, dueToday, overdueCount: overdue.length, dueTodayCount: dueToday.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -690,7 +763,9 @@ export function registerPlexusTasksRoutes(app: Express) {
         executionCaseId: executionCaseId ?? null,
         ancillaryCaseId: data.ancillaryCaseId ?? null,
         facilityId: data.facilityId ?? null,
-        dueDate: data.dueAt ?? null,
+        // Phase 6B — write BOTH the canonical timestamp (dueAt) and legacy text
+        // (dueDate) coherently so time-aware overdue works on new tasks.
+        ...coherentDueFields(data.dueAt),
         createdByUserId: userId,
       });
 
@@ -756,6 +831,9 @@ export function registerPlexusTasksRoutes(app: Express) {
       const task = await storage.createTask({
         ...parsed.data,
         ...coherentPriorityFields(parsed.data),
+        // Phase 6B — derive the canonical dueAt timestamp from the supplied
+        // dueDate so time-aware overdue works (keeps dueDate coherent too).
+        ...coherentDueFields(parsed.data.dueDate),
         createdByUserId: userId,
       });
       await writeEvent({ taskId: task.id, userId, eventType: "created", payload: { title: task.title } });
@@ -795,26 +873,56 @@ export function registerPlexusTasksRoutes(app: Express) {
       // Build the normalized update: keep priority↔priorityLevel coherent and
       // stamp/clear completion provenance when status crosses the terminal
       // boundary (was only inferable from status+updatedAt before Phase 2).
+      const statusChanging = !!parsed.data.status && parsed.data.status !== prev.status;
       const updates: Record<string, unknown> = {
         ...parsed.data,
         ...coherentPriorityFields(parsed.data),
+        // Phase 6B — keep dueAt coherent with any dueDate change.
+        ...coherentDueFields(parsed.data.dueDate),
       };
-      if (parsed.data.status && parsed.data.status !== prev.status) {
-        const nowTerminal = TERMINAL_TASK_STATUSES.has(parsed.data.status);
+      // Completion provenance for a status crossing the terminal boundary.
+      const completionFields: Partial<InsertPlexusTask> = {};
+      if (statusChanging) {
+        const nowTerminal = TERMINAL_TASK_STATUSES.has(parsed.data.status!);
         const wasTerminal = TERMINAL_TASK_STATUSES.has(prev.status);
         if (nowTerminal && !wasTerminal) {
-          updates.completedAt = new Date();
-          updates.completedByUserId = userId;
+          completionFields.completedAt = new Date();
+          completionFields.completedByUserId = userId;
         } else if (!nowTerminal && wasTerminal) {
-          // Reopened — clear completion provenance.
-          updates.completedAt = null;
-          updates.completedByUserId = null;
+          // Reopened — clear completion provenance (only when accepted, req 19).
+          completionFields.completedAt = null;
+          completionFields.completedByUserId = null;
         }
       }
-      const task = await storage.updateTask(id, updates);
+
+      // Phase 6B (req 19) — deterministic status transition under concurrency.
+      // When the status is changing, apply it via an ATOMIC conditional update
+      // guarded by the observed prior status, so two racing complete/reopen
+      // requests can't both "win": the loser sees the status already moved and
+      // gets a 409 (with the current status). completedAt/By + coherent fields
+      // are written in the SAME statement so provenance matches the winner.
+      let task: typeof prev | undefined;
+      if (statusChanging) {
+        // Non-status fields (priority, dueAt, title, …) go with the transition.
+        const { status: _omitStatus, ...restUpdates } = updates as Record<string, unknown>;
+        task = await storage.transitionTaskStatus(id, prev.status, parsed.data.status!, {
+          ...(restUpdates as Partial<InsertPlexusTask>),
+          ...completionFields,
+        });
+        if (!task) {
+          const current = await storage.getTaskById(id);
+          return res.status(409).json({
+            error: "Task status changed since you loaded it. Refresh and retry.",
+            code: "status_conflict",
+            currentStatus: current?.status ?? null,
+          });
+        }
+      } else {
+        task = await storage.updateTask(id, { ...updates, ...completionFields } as Partial<InsertPlexusTask>);
+      }
       const eventWrites: Promise<void>[] = [];
-      if (parsed.data.status && parsed.data.status !== prev.status) {
-        eventWrites.push(writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status } }));
+      if (statusChanging) {
+        eventWrites.push(writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status! } }));
       }
       if (parsed.data.assignedToUserId !== undefined && parsed.data.assignedToUserId !== prev.assignedToUserId) {
         eventWrites.push(writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: prev.assignedToUserId, to: parsed.data.assignedToUserId } }));
