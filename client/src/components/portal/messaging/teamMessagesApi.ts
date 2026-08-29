@@ -8,7 +8,7 @@
 // source changes (mock → real). Conversation ids are numeric server-side and
 // surfaced as strings to match the existing UI contract.
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Conversation, ConversationType, Message } from "./mockPortalMessages";
@@ -83,6 +83,29 @@ export function useTeamMessages(
   activeConversationId: string | null,
 ) {
   const queryClient = useQueryClient();
+
+  // Phase 5A — PHI-safe SSE live refresh. On a 'message_sent' signal, refetch
+  // conversations + the active thread within ~1s. Polling (below) remains the
+  // fallback if the stream drops.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof EventSource === "undefined") return;
+    const es = new EventSource("/api/messaging/stream", { withCredentials: true });
+    es.addEventListener("message", () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_KEY });
+        void queryClient.invalidateQueries({ queryKey: ["/api/messaging/conversations", "team"] });
+        if (activeConversationId != null) {
+          void queryClient.invalidateQueries({ queryKey: messagesKey(activeConversationId) });
+        }
+      }, 250);
+    });
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      es.close();
+    };
+  }, [queryClient, activeConversationId]);
 
   const conversationsQuery = useQuery<ServerConversation[]>({
     queryKey: CONVERSATIONS_KEY,

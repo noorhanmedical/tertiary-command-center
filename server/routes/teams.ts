@@ -186,22 +186,35 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
     res.json({ teamIds: scope.teamIds, userIds: [...scope.userIds], facilityIds: [...scope.facilityIds] });
   });
 
+  // ─── Self-serve: the CALLER's own canonical member profile (Phase 5A) ────
+  // The Team Portal shell consumes this to drive capabilities / defaultMode /
+  // defaultLeftTab from the canonical model instead of inline PCS/ACS
+  // inference. Any authenticated user may read THEIR OWN profile; the admin
+  // cross-member endpoint below stays admin-gated.
+  app.get("/api/teams/member-profile/me", async (req: Request, res: Response) => {
+    const userId = actor(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    return sendMemberProfile(req, res, userId);
+  });
+
   // ─── Coherent per-member operational profile (K9) ────────
   // ONE call assembling identity + teams + facilities/coverage + portal +
   // call work + phone + management for the admin Team Member profile surface.
   app.get("/api/teams/member-profile/:userId", admin, async (req: Request, res: Response) => {
-    const userId = String(req.params.userId);
+    return sendMemberProfile(req, res, String(req.params.userId));
+  });
+
+  async function sendMemberProfile(req: Request, res: Response, userId: string): Promise<void> {
     try {
       const { storage } = await import("../storage");
       const { facilityCoverageRepository } = await import("../repositories/facilityCoverage.repo");
       const { engagementCallSettingsRepository } = await import("../repositories/engagementCallSettings.repo");
       const { getAdminSettingValue, getPhoneProviderPreferences } = await import("../repositories/adminSettings.repo");
-      const { resolveManagerScope } = await import("../services/teams/managerScope");
       const { normalizeTeamMemberProfile, fallbackWorkspaceTypeForRole, resolveTeamMemberCapabilities } =
         await import("@shared/teamMemberProfile");
 
       const user = await storage.getUser(userId);
-      if (!user) return res.status(404).json({ error: "User not found" });
+      if (!user) { res.status(404).json({ error: "User not found" }); return; }
 
       const schedulers = (await storage.getOutreachSchedulers()).filter((s) => s.userId === userId);
       const schedulerIds = schedulers.map((s) => s.id);
@@ -215,7 +228,28 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
       const rawProfile = await getAdminSettingValue<Record<string, unknown>>(
         "team_member", "workspace_profile", { userId },
       );
-      const workspaceType = fallbackWorkspaceTypeForRole(user.role);
+      // Canonical workspace-type fallback (Phase 5A): when no explicit profile
+      // row exists, derive PCS/ACS from the user's CANONICAL team membership
+      // (PCS team → patientCareSpecialist, ACS team → ancillaryCareSpecialist),
+      // preferring their primary team. This makes team membership — not the
+      // legacy role string — authoritative (e.g. a "liaison" on the PCS team
+      // resolves to PCS, not ACS). Falls back to role only when no PCS/ACS
+      // membership exists.
+      let membershipType: "patientCareSpecialist" | "ancillaryCareSpecialist" | null = null;
+      if (memberships.length > 0) {
+        const teamsById = new Map(
+          (await Promise.all(memberships.map((m) => teamsRepository.getTeam(m.teamId))))
+            .filter((t): t is NonNullable<typeof t> => !!t)
+            .map((t) => [t.id, t]),
+        );
+        const ordered = [...memberships].sort((a, b) => Number(b.primaryTeam) - Number(a.primaryTeam));
+        for (const m of ordered) {
+          const t = teamsById.get(m.teamId);
+          if (t?.type === "PCS") { membershipType = "patientCareSpecialist"; break; }
+          if (t?.type === "ACS") { membershipType = "ancillaryCareSpecialist"; break; }
+        }
+      }
+      const workspaceType = membershipType ?? fallbackWorkspaceTypeForRole(user.role);
       const profile = normalizeTeamMemberProfile(rawProfile, workspaceType);
       const isManager = mgrRels.length > 0;
       const capabilities = resolveTeamMemberCapabilities({
@@ -242,7 +276,7 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
       console.error("[teams:member-profile] error:", error instanceof Error ? error.message : error);
       res.status(500).json({ error: "Failed to load member profile" });
     }
-  });
+  }
 
   // Deactivation safety report (K13): open tasks still owned by INACTIVE users.
   // We do NOT auto-reassign (no product rule) — we surface them as an exception

@@ -47,7 +47,7 @@ import {
   type TeamWorkspaceCallListItem,
   type TeamWorkspaceAncillaryAppointment,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
-import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
+import { fetchTeamMemberProfile, fetchMyMemberProfile, fetchMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
 import { useLocation } from "wouter";
 // Left-rail tool components — shared between PCS + ACS (identical
 // shell + layout).
@@ -1108,6 +1108,21 @@ export function TeamPortalShell({
     enabled: !!profileTargetUserId,
   });
 
+  // Phase 5A — CANONICAL member profile. Drives the PCS/ACS workspace type +
+  // operational capabilities + portal defaults from the canonical Team-Ops
+  // model (teams / memberships / coverage / capabilities) instead of inline
+  // role-string inference. Self-serve `/me` for the logged-in user; the
+  // admin-gated `/:userId` for the view-as target.
+  const { data: canonicalProfile } = useQuery({
+    queryKey: ["/api/teams/member-profile", profileTargetUserId, isAdmin && selectedViewAsCandidate?.userId ? "viewas" : "me"],
+    queryFn: () =>
+      isAdmin && selectedViewAsCandidate?.userId
+        ? fetchMemberProfile(selectedViewAsCandidate.userId)
+        : fetchMyMemberProfile(),
+    enabled: !!profileTargetUserId,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // facData refetches on admin view-as change so the facility picker
   // narrows to the selected team-member's allow-list.
   const { data: facData } = useQuery<{ facilities: string[] }>({
@@ -1124,14 +1139,16 @@ export function TeamPortalShell({
   const profileViewAllFacilities = !!workspaceProfile?.capabilities?.viewAllFacilities;
   const profileAssignedFacilities = workspaceProfile?.assignedFacilityIds ?? [];
 
-  // Profile capability overrides — driven purely by the stored profile so
-  // the workspace name (PCS vs ACS) does not gate behavior. The
-  // resolver below ensures procedure-side capability ALWAYS requires
-  // an ACS-typed workspace at runtime (defense-in-depth).
+  // Profile capability overrides. Phase 5A: the PCS/ACS workspace type is now
+  // sourced from the CANONICAL member profile (portal.workspaceType) when it
+  // has resolved, falling back to the role-derived flag only until then. This
+  // makes the canonical Team-Ops model — not inline role inference — the single
+  // source of the workspace type. resolvePortalCapabilities still derives the
+  // UI scheduling/procedure gates (and hard-ANDs procedure caps with ACS).
+  const canonicalWorkspaceType = canonicalProfile?.portal?.workspaceType
+    ?? (workspaceIsAncillaryCareSpecialist ? "ancillaryCareSpecialist" : "patientCareSpecialist");
   const portalCapabilities = resolvePortalCapabilities({
-    workspaceType: workspaceIsAncillaryCareSpecialist
-      ? "ancillaryCareSpecialist"
-      : "patientCareSpecialist",
+    workspaceType: canonicalWorkspaceType,
     profile: workspaceProfile ?? null,
   });
   workspaceCanCallAndSchedule =
@@ -1181,16 +1198,19 @@ export function TeamPortalShell({
     if (facilities.includes(target)) setFacility(target);
   }, [isAdmin, selectedViewAsCandidate?.facility, facilities, facility]);
 
-  // Seed the right-panel default mode from the profile once it loads.
+  // Seed the right-panel default mode once it loads. Phase 5A: prefer the
+  // CANONICAL profile's portal.defaultMode (PCS→callList / ACS→ancillarySchedule,
+  // unified in Phase 4C); fall back to the raw workspace_profile.defaultMode.
   const profileSeededRef = useRef(false);
+  const seededDefaultMode = canonicalProfile?.portal?.defaultMode ?? workspaceProfile?.defaultMode;
   useEffect(() => {
     if (profileSeededRef.current) return;
-    if (workspaceProfile?.defaultMode) {
+    if (seededDefaultMode) {
       profileSeededRef.current = true;
-      setActiveWorkspaceMode(workspaceProfile.defaultMode);
+      setActiveWorkspaceMode(seededDefaultMode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceProfile?.defaultMode]);
+  }, [seededDefaultMode]);
 
   // Enforce profile facility scope: if the active facility falls outside
   // the assigned-facility allow-list (and viewAllFacilities is off), snap

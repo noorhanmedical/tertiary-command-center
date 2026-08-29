@@ -141,6 +141,29 @@ export function registerMessagingRoutes(app: Express) {
     }
   });
 
+  // Phase 5A — PHI-safe SSE nudge. Forwards the liveActivityBus 'message_sent'
+  // signal so clients refetch conversations/unread within ~1s instead of
+  // waiting on the polling tick. Payload carries only the event type — never
+  // message bodies, patient identity, or conversation contents.
+  app.get("/api/messaging/stream", requireAuthAndClinic, async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+    res.write(": connected\n\n");
+
+    const { subscribeLiveActivity } = await import("../services/engagement/liveActivityBus");
+    const unsubscribe = subscribeLiveActivity((signal) => {
+      if (signal.eventType !== "message_sent") return;
+      res.write(`event: message\ndata: ${JSON.stringify({ eventType: signal.eventType })}\n\n`);
+    });
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 25_000);
+    const cleanup = () => { clearInterval(heartbeat); unsubscribe(); };
+    req.on("close", cleanup);
+    res.on("close", cleanup);
+  });
+
   app.post("/api/messaging/conversations/:id/mark-read", requireAuthAndClinic, async (req, res) => {
     try {
       const conversationId = parseId(req.params.id);
