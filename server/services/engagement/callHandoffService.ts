@@ -26,6 +26,7 @@ import { engagementCallSettingsRepository } from "../../repositories/engagementC
 import { facilityCoverageRepository } from "../../repositories/facilityCoverage.repo";
 import { appendJourneyEvent } from "../journey/appendJourneyEvent";
 import { openDirectConversation, postSystemMessage } from "../messaging/messagingService";
+import { notifyHandoffReceived, clearHandoffNotifications } from "../notifications/notificationService";
 import { computeCallTargets, remainingCapacity, getCarryoverCounts, getGlobalCallConfig } from "./callSettingsService";
 
 export interface CreateHandoffInput {
@@ -353,6 +354,22 @@ export async function createHandoff(input: CreateHandoffInput): Promise<{
     );
   }
 
+  // ── Durable operational notification (Phase 6A, req 21) ──
+  // Independent of the messaging notification above: even if the direct-message
+  // send failed (no clinic context, etc.) the recipient still gets a durable,
+  // click-through notification in their center. Best-effort — never blocks the
+  // transfer. P1/P2 raise a distinct ack-required notification.
+  await notifyHandoffReceived({
+    recipientUserId: input.toUserId,
+    handoffId: handoff.id,
+    executionCaseId: input.executionCaseId,
+    patientScreeningId: ec.patientScreeningId ?? null,
+    facilityId,
+    priorityLevel: input.priorityLevel,
+    reason: input.reason,
+    ackRequired: handoffRequiresAcknowledgement(input.priorityLevel),
+  });
+
   return { handoff, ownershipTransferred: true, notified };
 }
 
@@ -376,6 +393,9 @@ export async function acknowledgeHandoff(
     acknowledgedByUserId: actorUserId,
     viewedAt: h.viewedAt ?? now,
   });
+  // Stale-state convergence: the "needs acknowledgement" notification is now
+  // handled — expire it so the center doesn't keep nagging (best-effort).
+  await clearHandoffNotifications(h.toUserId, handoffId);
   return updated!;
 }
 
@@ -411,6 +431,7 @@ export async function completeHandoff(
     status: "completed",
     completedAt: new Date(),
   });
+  await clearHandoffNotifications(h.toUserId, handoffId);
   return updated!;
 }
 
@@ -435,6 +456,9 @@ export async function cancelHandoff(
     cancelledAt: new Date(),
     cancelledByUserId: actorUserId,
   });
+  // Recalled → the recipient's inbound handoff notification is no longer
+  // actionable; expire it (best-effort).
+  await clearHandoffNotifications(h.toUserId, handoffId);
   return updated!;
 }
 

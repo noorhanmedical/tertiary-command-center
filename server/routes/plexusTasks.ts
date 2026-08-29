@@ -506,6 +506,18 @@ export function registerPlexusTasksRoutes(app: Express) {
       }
       const updated = await storage.updateTask(id, { assignedToUserId: userId });
       await writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: null, to: userId, claimedFromTeam: task.assignedTeamId } });
+      // Durable notification for the claimer (best-effort; Phase 6A).
+      try {
+        const { notifyTaskAssigned } = await import("../services/notifications/notificationService");
+        await notifyTaskAssigned({
+          recipientUserId: userId,
+          taskId: id,
+          title: task.title,
+          priorityLevel: effectiveTaskPriorityLevel(task),
+          patientScreeningId: task.patientScreeningId ?? null,
+          facilityId: task.facilityId ?? null,
+        });
+      } catch { /* best-effort */ }
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -806,6 +818,25 @@ export function registerPlexusTasksRoutes(app: Express) {
       }
       if (parsed.data.assignedToUserId !== undefined && parsed.data.assignedToUserId !== prev.assignedToUserId) {
         eventWrites.push(writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: prev.assignedToUserId, to: parsed.data.assignedToUserId } }));
+        // Notify the new assignee (unless they assigned it to themselves).
+        const newAssignee = parsed.data.assignedToUserId;
+        if (newAssignee && newAssignee !== userId) {
+          eventWrites.push(
+            (async () => {
+              try {
+                const { notifyTaskAssigned } = await import("../services/notifications/notificationService");
+                await notifyTaskAssigned({
+                  recipientUserId: newAssignee,
+                  taskId: id,
+                  title: prev.title,
+                  priorityLevel: effectiveTaskPriorityLevel(prev),
+                  patientScreeningId: prev.patientScreeningId ?? null,
+                  facilityId: prev.facilityId ?? null,
+                });
+              } catch { /* best-effort */ }
+            })(),
+          );
+        }
       }
       const DEDICATED_EVENTS = new Set(["status", "assignedToUserId"]);
       const otherChangedFields = Object.fromEntries(

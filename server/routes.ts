@@ -19,6 +19,7 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
 import { registerEmailRoutes } from "./routes/email";
+import { registerNotificationRoutes } from "./routes/notifications";
 import { registerPtoRoutes } from "./routes/pto";
 import { registerSchedulerAssignmentRoutes } from "./routes/schedulerAssignments";
 import { registerSchedulerAiRoutes } from "./routes/schedulerAi";
@@ -310,6 +311,7 @@ export async function registerRoutes(
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);
   registerEmailRoutes(app);
+  registerNotificationRoutes(app);
   registerPtoRoutes(app);
   registerSchedulerAssignmentRoutes(app);
   registerSchedulerAiRoutes(app);

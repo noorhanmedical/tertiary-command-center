@@ -112,6 +112,7 @@ import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import { SketchButton, SketchBadge } from "@/components/playground/sketch/SketchPrimitives";
 import { SKETCH_COLORS } from "@/components/playground/sketch/sketchTokens";
 import { dispatchOpenWorkspace } from "@/components/playground/playgroundEvents";
+import { NotificationCenter } from "@/components/portal/notifications/NotificationCenter";
 import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
 import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
@@ -2613,6 +2614,9 @@ export function TeamPortalShell({
             )}
             {facilities.map((f) => <option key={f} value={f}>{f}</option>)}
           </SketchSelect>
+          {/* Phase 6A — compact operational notification center (unread count +
+              recent items with click-through to the canonical workspace). */}
+          <NotificationCenter />
           <SketchButton
             variant="icon"
             size="sm"

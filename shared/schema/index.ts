@@ -78,6 +78,10 @@ export * from "./callHandoffs";
 // case is currently uncovered (category + reason). NOT a second ownership
 // store; the case stays canonically unassigned. Migration 0068.
 export * from "./needsCoverage";
+// Phase 6A (Team Ops resilience) — unified operational NOTIFICATIONS: a
+// lightweight delivery/signal layer that points at canonical records (task /
+// handoff / conversation / case) without duplicating them. Migration 0073.
+export * from "./notifications";
 // Phase 4 (Team Ops) — canonical organizational model (K4): teams,
 // team_memberships (multi-team), manager_relationships (team-level authority),
 // and a relationship-change audit ledger. Admin Settings is the authoritative

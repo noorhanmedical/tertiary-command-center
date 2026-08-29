@@ -213,7 +213,12 @@ export function registerEngagementTeamMetricsRoutes(
     res.write(": connected\n\n");
 
     const unsubscribe = subscribeLiveActivity((signal) => {
-      if (!isQueueRefreshEvent(signal.eventType)) return;
+      // Forward queue-refresh events AND the PHI-safe notification nudge
+      // (Phase 6A) so the Team Portal notification center refetches within ~1s.
+      const relevant =
+        isQueueRefreshEvent(signal.eventType) ||
+        signal.eventType === "notification_created";
+      if (!relevant) return;
       res.write(
         `event: activity\ndata: ${JSON.stringify({ eventType: signal.eventType })}\n\n`,
       );
