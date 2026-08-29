@@ -278,6 +278,52 @@ export function registerTeamRoutes(app: Express, requireRole: RequireRole) {
     }
   }
 
+  // ─── Canonical internal directory (Phase 5B / K12) ───────
+  // A searchable internal team directory derived from users + teams +
+  // memberships + facility coverage — NO manually-seeded contact rows. Any
+  // authenticated user may read it (for messaging / task-assign / handoff
+  // recipient pickers). Inactive users are excluded.
+  app.get("/api/teams/directory", async (req: Request, res: Response) => {
+    if (!actor(req)) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const { storage } = await import("../storage");
+      const { facilityCoverageRepository } = await import("../repositories/facilityCoverage.repo");
+      const allUsers = (await storage.getAllUsers()).filter((u) => u.active !== false);
+      const userIds = allUsers.map((u) => u.id);
+      const [membershipRows, coverageByUser, allTeams] = await Promise.all([
+        teamsRepository.listActiveMembershipsForUsers(userIds),
+        facilityCoverageRepository.coveredFacilitiesForUsers(userIds),
+        teamsRepository.listTeams({ activeOnly: true }),
+      ]);
+      const teamById = new Map(allTeams.map((t) => [t.id, t]));
+      const teamsByUser = new Map<string, { teamId: number; name: string; type: string; primary: boolean }[]>();
+      for (const m of membershipRows) {
+        const t = teamById.get(m.teamId);
+        if (!t) continue;
+        const list = teamsByUser.get(m.userId) ?? [];
+        list.push({ teamId: t.id, name: t.name, type: t.type, primary: m.primaryTeam });
+        teamsByUser.set(m.userId, list);
+      }
+      const directory = allUsers.map((u) => ({
+        userId: u.id,
+        username: u.username,
+        role: u.role,
+        teams: teamsByUser.get(u.id) ?? [],
+        facilities: coverageByUser.get(u.id) ?? [],
+      }))
+        // Members with a team or coverage first, then the rest; alpha by name.
+        .sort((a, b) => {
+          const aw = a.teams.length + a.facilities.length > 0 ? 0 : 1;
+          const bw = b.teams.length + b.facilities.length > 0 ? 0 : 1;
+          return aw - bw || a.username.localeCompare(b.username);
+        });
+      res.json({ directory, total: directory.length });
+    } catch (error: unknown) {
+      console.error("[teams:directory] error:", error instanceof Error ? error.message : error);
+      res.status(500).json({ error: "Failed to load directory" });
+    }
+  });
+
   // Deactivation safety report (K13): open tasks still owned by INACTIVE users.
   // We do NOT auto-reassign (no product rule) — we surface them as an exception
   // so an admin/manager can act. Messages/membership history is never deleted.

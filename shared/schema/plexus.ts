@@ -55,7 +55,11 @@ export const plexusTasks = pgTable("plexus_tasks", {
   ancillaryCaseId: integer("ancillary_case_id"),
   facilityId: text("facility_id"),
   batchId: integer("batch_id").references(() => screeningBatches.id, { onDelete: "set null" }),
+  // Legacy day-granularity due date (YYYY-MM-DD text). PRESERVED for backward
+  // compatibility. New SLA workflow uses `dueAt` (a real timestamp) so overdue
+  // no longer relies on string comparison. Migration 0072.
   dueDate: text("due_date"),
+  dueAt: timestamp("due_at"),
   // Phase 2 — explicit completion provenance (was only inferable from
   // status='done'/'closed' + updatedAt). Set when status becomes terminal.
   completedAt: timestamp("completed_at"),
