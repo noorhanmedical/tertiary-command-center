@@ -203,7 +203,7 @@ export function PortalEmailComposerTab({
         <div className="mt-1 text-[10px] text-slate-500">
           {emailConfigured
             ? "SMTP is configured — sends go out via the canonical /api/outreach/send-email + /send-material routes."
-            : "SMTP is NOT configured (set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM). Sends will fail loudly — the composer never pretends to have sent."}
+            : "Requires SMTP activation (SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM). Until then sends fail loudly — the composer never pretends to have sent."}
         </div>
       </SketchSurface>
 
