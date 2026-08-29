@@ -13,6 +13,80 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
+// ─── Manager Exceptions (Phase 6D) — consolidated operational exceptions ─────
+type ManagerExceptions = {
+  needsCoverage: { total: number; byCategory: Record<string, number> };
+  failedRedistribution: number;
+  unacknowledgedHandoffs: { total: number; overdue: number };
+  tasksOwnedByInactiveUsers: number;
+  overCapacityMembers: number;
+  totalExceptions: number;
+};
+
+export function ManagerExceptionsPanel() {
+  const { data, isLoading, isError, error } = useQuery<ManagerExceptions>({
+    queryKey: ["/api/engagement/exceptions"],
+    queryFn: async () => {
+      const res = await fetch("/api/engagement/exceptions", { credentials: "include" });
+      if (res.status === 403) throw new Error("__forbidden__");
+      if (!res.ok) throw new Error("Failed to load exceptions");
+      return res.json();
+    },
+    refetchInterval: 30_000,
+  });
+  const forbidden = isError && error instanceof Error && error.message === "__forbidden__";
+  if (forbidden) return null; // ordinary staff don't see this panel
+
+  const rows: Array<{ label: string; value: number; danger?: boolean; testId: string }> = data
+    ? [
+        { label: "Needs coverage", value: data.needsCoverage.total, danger: data.needsCoverage.total > 0, testId: "exc-needs-coverage" },
+        { label: "Failed redistributions", value: data.failedRedistribution, danger: data.failedRedistribution > 0, testId: "exc-failed-redistribution" },
+        { label: "Unacknowledged P1/P2 handoffs", value: data.unacknowledgedHandoffs.total, danger: data.unacknowledgedHandoffs.overdue > 0, testId: "exc-unack-handoffs" },
+        { label: "Tasks owned by inactive users", value: data.tasksOwnedByInactiveUsers, danger: data.tasksOwnedByInactiveUsers > 0, testId: "exc-inactive-owner-tasks" },
+        { label: "Over-capacity members", value: data.overCapacityMembers, danger: data.overCapacityMembers > 0, testId: "exc-over-capacity" },
+      ]
+    : [];
+
+  return (
+    <Card data-testid="manager-exceptions-panel">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ShieldAlert className="h-4 w-4" /> Operational Exceptions
+          {data?.totalExceptions ? <Badge variant="destructive" data-testid="exc-total-badge">{data.totalExceptions}</Badge> : null}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">Everything in your scope that needs attention — from canonical data.</p>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+        ) : isError ? (
+          <div className="text-sm text-red-600">{(error as Error).message}</div>
+        ) : !data || data.totalExceptions === 0 ? (
+          <div className="text-sm text-muted-foreground" data-testid="exc-none">No open exceptions in your scope.</div>
+        ) : (
+          <div className="space-y-1">
+            {rows.map((r) => (
+              <div key={r.testId} className="flex items-center justify-between gap-2 text-sm" data-testid={r.testId}>
+                <span className="text-slate-700">{r.label}</span>
+                {r.value > 0 ? (
+                  <Badge variant={r.danger ? "destructive" : "secondary"}>{r.value}</Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">0</span>
+                )}
+              </div>
+            ))}
+            {data.unacknowledgedHandoffs.overdue > 0 && (
+              <div className="pt-1 text-[11px] text-rose-600" data-testid="exc-overdue-note">
+                {data.unacknowledgedHandoffs.overdue} handoff(s) past their acknowledgement deadline.
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Needs Coverage ──────────────────────────────────────────────────────────
 type NeedsCoverageItem = {
   executionCaseId: number;

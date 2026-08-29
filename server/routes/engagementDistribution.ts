@@ -196,6 +196,32 @@ export function registerEngagementDistributionRoutes(
     },
   );
 
+  // ─── MANAGER EXCEPTIONS (Phase 6D, req 24) ──────────────────────────────
+  // One consolidated, manager-scoped summary of the operational exceptions a
+  // manager must act on (needs-coverage incl. failed redistribution,
+  // unacknowledged/overdue P1-P2 handoffs, tasks owned by inactive users,
+  // over-capacity members). Reads existing canonical sources only — no new
+  // store. Feeds the compact "Exceptions" panel in the Engagement manager view.
+  app.get(
+    "/api/engagement/exceptions",
+    requireManagerOrAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const scope = (req as { managerScope?: ManagerScope }).managerScope!;
+        const { getManagerExceptions } = await import(
+          "../services/engagement/managerExceptionsService"
+        );
+        return res.json(await getManagerExceptions(scope));
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/exceptions] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({ error: "Failed to load exceptions" });
+      }
+    },
+  );
+
   // ─── NEEDS COVERAGE (K8) — manager view of uncovered cases + hold/clear ──
 
   // List open (unresolved) needs-coverage rows + a per-category summary.

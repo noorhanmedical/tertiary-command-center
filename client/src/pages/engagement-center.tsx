@@ -56,7 +56,7 @@ import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
-import { ManagerWorkloadPanel, NeedsCoveragePanel } from "@/components/portal/handoff/ManagerWorkforcePanel";
+import { ManagerWorkloadPanel, NeedsCoveragePanel, ManagerExceptionsPanel } from "@/components/portal/handoff/ManagerWorkforcePanel";
 import { EngagementCallResults } from "@/components/engagement/EngagementCallResults";
 import {
   type BoardResponse,
@@ -518,6 +518,10 @@ export default function EngagementCenterPage() {
       ) : view === "callSettings" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl space-y-4">
+            {/* Phase 6D — consolidated operational exceptions (self-hides for
+                non-managers via backend 403). One at-a-glance summary of
+                everything in scope needing attention, from canonical data. */}
+            <ManagerExceptionsPanel />
             {/* Phase 5C — manager-scoped workforce panels (self-hide for
                 non-managers via backend 403). Canonical capacity + structured
                 needs-coverage; distribution preview from the same engine. */}
