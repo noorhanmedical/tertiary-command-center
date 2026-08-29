@@ -24,6 +24,14 @@ type Handoff = {
   dueAt: string | null;
   status: string;
   acknowledgedAt: string | null;
+  // Phase 6B — SLA exposure (age / overdue / awaiting-ack). Present on the
+  // inbox read; drives the overdue indicator (no auto-escalation).
+  sla?: {
+    ageMs: number;
+    isOverdue: boolean;
+    awaitingAck: boolean;
+    overdueForAck: boolean;
+  };
 };
 
 function requiresAck(pl: string): boolean {
@@ -78,7 +86,15 @@ export function PriorityHandoffsInbox() {
                   <SketchBadge tone={h.priorityLevel === "P1" ? "red" : h.priorityLevel === "P2" ? "gold" : "blue"}>{h.priorityLevel}</SketchBadge>
                   <span className="truncate text-xs font-medium text-slate-900">{h.reason}</span>
                 </div>
-                <SketchBadge tone={h.status === "acknowledged" ? "green" : "graphite"}>{h.status}</SketchBadge>
+                <div className="flex shrink-0 items-center gap-1">
+                  {/* Phase 6B — overdue / awaiting-ack SLA indicator. */}
+                  {h.sla?.overdueForAck ? (
+                    <SketchBadge tone="red" data-testid={`handoff-overdue-${h.id}`}>overdue ack</SketchBadge>
+                  ) : h.sla?.isOverdue ? (
+                    <SketchBadge tone="red" data-testid={`handoff-overdue-${h.id}`}>overdue</SketchBadge>
+                  ) : null}
+                  <SketchBadge tone={h.status === "acknowledged" ? "green" : "graphite"}>{h.status}</SketchBadge>
+                </div>
               </div>
               {h.note ? <div className="mt-0.5 text-[11px] text-slate-600 line-clamp-2">{h.note}</div> : null}
               <div className="mt-1 flex items-center gap-1.5">
