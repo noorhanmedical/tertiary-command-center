@@ -13,8 +13,11 @@ import { patientExecutionCases } from "@shared/schema/executionCase";
 import { storage } from "../../storage";
 import { releaseAndRedistributeCanonical } from "./absenceRedistribution";
 import { needsCoverageRepository } from "../../repositories/needsCoverage.repo";
+import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
 import { appendJourneyEvent } from "../journey/appendJourneyEvent";
+import { resolveManagersOfUser } from "../teams/managerScope";
+import { notifyManagerException, clearHandoffNotifications } from "../notifications/notificationService";
 
 export interface DeactivatedUserRecoveryResult {
   userId: string;
@@ -22,6 +25,10 @@ export interface DeactivatedUserRecoveryResult {
   released: number;
   redistributed: number;
   unplaced: number;
+  // Phase 6C — broader work-type recovery beyond calls.
+  teamTasksReleased: number;   // open TEAM tasks returned to the pool
+  personalTasksFlagged: number; // open team-less tasks surfaced to managers
+  handoffsCancelled: number;    // inbound open handoffs cancelled
 }
 
 /**
@@ -45,8 +52,14 @@ export async function recoverDeactivatedUser(
     released: 0,
     redistributed: 0,
     unplaced: 0,
+    teamTasksReleased: 0,
+    personalTasksFlagged: 0,
+    handoffsCancelled: 0,
   };
-  if (schedulerIds.length === 0) return result;
+  // NOTE: call-ownership recovery below is gated on the user having roster
+  // (scheduler) rows. Task + handoff recovery is NOT — a deactivated user may
+  // own tasks / have inbound handoffs without being a call scheduler — so those
+  // run unconditionally (after this block).
 
   // Mark the deactivated member's call settings inactive FIRST so the
   // canonical distribution engine (which reads engagement_call_settings.active)
@@ -104,6 +117,102 @@ export async function recoverDeactivatedUser(
     }
   }
 
+  // ── TASKS (Phase 6C, req 11) ──
+  // Open TEAM tasks go back to their team pool (any active member can claim
+  // them). Open PERSONAL (team-less) tasks stay assigned but are surfaced to
+  // the user's manager(s) so they can reassign — we never delete work.
+  let openTasks: Awaited<ReturnType<typeof storage.getOpenTasksByAssignee>> = [];
+  try {
+    openTasks = await storage.getOpenTasksByAssignee(userId);
+    const released = await storage.releaseTeamTasksForUser(userId);
+    result.teamTasksReleased = released.length;
+    result.personalTasksFlagged = openTasks.filter((t) => t.assignedTeamId == null).length;
+  } catch (err) {
+    console.error(
+      "[deactivated-user-recovery] task release failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // ── HANDOFFS (Phase 6C, req 11) ──
+  // Inbound OPEN handoffs to the deactivated user are no longer actionable by
+  // them — cancel (kept for audit) and clear their stale notifications.
+  let cancelledHandoffs: Awaited<ReturnType<typeof callHandoffsRepository.cancelOpenForRecipient>> = [];
+  try {
+    cancelledHandoffs = await callHandoffsRepository.cancelOpenForRecipient(
+      userId,
+      `recipient_deactivated:${userId}`,
+      actorUserId,
+    );
+    result.handoffsCancelled = cancelledHandoffs.length;
+    for (const h of cancelledHandoffs) {
+      await clearHandoffNotifications(userId, h.id);
+    }
+  } catch (err) {
+    console.error(
+      "[deactivated-user-recovery] handoff cancel failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // ── MESSAGING access (Phase 6C, req 11/16) ──
+  // Revoke active conversation memberships (defense-in-depth beyond session
+  // gating). History is preserved; the user simply cannot send/read as an
+  // active member anymore.
+  try {
+    const { deactivateAllConversationMembershipsForUser } = await import(
+      "../messaging/teamChannelService"
+    );
+    await deactivateAllConversationMembershipsForUser(userId);
+  } catch (err) {
+    console.error(
+      "[deactivated-user-recovery] messaging membership revoke failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // ── Notify the user's manager(s) (Phase 6C) ──
+  // One consolidated HIGH-signal notification per manager summarizing the work
+  // released so they can pick up personal tasks / re-place cancelled handoffs.
+  try {
+    const managerIds = await resolveManagersOfUser(userId);
+    const deactivatedUser = await storage.getUser(userId);
+    const uname = deactivatedUser?.username ?? userId;
+    if (
+      managerIds.length > 0 &&
+      (result.unplaced > 0 || result.personalTasksFlagged > 0 || result.handoffsCancelled > 0 || result.teamTasksReleased > 0)
+    ) {
+      const parts: string[] = [];
+      if (result.released > 0) parts.push(`${result.released} call(s) released`);
+      if (result.unplaced > 0) parts.push(`${result.unplaced} to needs-coverage`);
+      if (result.teamTasksReleased > 0) parts.push(`${result.teamTasksReleased} team task(s) returned to pool`);
+      if (result.personalTasksFlagged > 0) parts.push(`${result.personalTasksFlagged} personal task(s) need reassignment`);
+      if (result.handoffsCancelled > 0) parts.push(`${result.handoffsCancelled} inbound handoff(s) cancelled`);
+      for (const mgrId of managerIds) {
+        await notifyManagerException({
+          recipientUserId: mgrId,
+          type: "user_deactivated_work_released",
+          title: `Work released — ${uname} was deactivated`,
+          shortBody: parts.join("; "),
+          dedupeKey: `deactivated_work:${userId}`,
+          metadata: {
+            deactivatedUserId: userId,
+            released: result.released,
+            unplaced: result.unplaced,
+            teamTasksReleased: result.teamTasksReleased,
+            personalTasksFlagged: result.personalTasksFlagged,
+            handoffsCancelled: result.handoffsCancelled,
+          },
+        });
+      }
+    }
+  } catch (err) {
+    console.error(
+      "[deactivated-user-recovery] manager notification failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   // Audit the recovery at the account level (PHI-safe — no patient identity).
   try {
     await appendJourneyEvent({
@@ -111,13 +220,16 @@ export async function recoverDeactivatedUser(
       eventType: "engagement_assignment_changed",
       eventSource: "deactivated_user_recovery",
       actorUserId: actorUserId ?? undefined,
-      summary: `Deactivated-user recovery: released ${result.released}, redistributed ${result.redistributed}, ${result.unplaced} to needs-coverage.`,
+      summary: `Deactivated-user recovery: released ${result.released}, redistributed ${result.redistributed}, ${result.unplaced} to needs-coverage; ${result.teamTasksReleased} team tasks to pool, ${result.personalTasksFlagged} personal tasks flagged, ${result.handoffsCancelled} handoffs cancelled.`,
       metadata: {
         deactivatedUserId: userId,
         schedulerIds,
         released: result.released,
         redistributed: result.redistributed,
         unplaced: result.unplaced,
+        teamTasksReleased: result.teamTasksReleased,
+        personalTasksFlagged: result.personalTasksFlagged,
+        handoffsCancelled: result.handoffsCancelled,
       },
     });
   } catch {

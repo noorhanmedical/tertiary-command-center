@@ -121,6 +121,34 @@ export const callHandoffsRepository = {
       .orderBy(callHandoffs.createdAt);
   },
 
+  /** Phase 6C — cancel all OPEN handoffs addressed TO a user (e.g. the
+   *  recipient was deactivated: an inbound pending handoff must not remain
+   *  silently actionable). Kept for audit; metadata records the reason.
+   *  Returns the affected rows so the caller can notify managers + clear the
+   *  recipient's notifications. */
+  async cancelOpenForRecipient(
+    toUserId: string,
+    reason: string,
+    cancelledByUserId: string | null,
+  ): Promise<CallHandoff[]> {
+    return db
+      .update(callHandoffs)
+      .set({
+        status: "cancelled",
+        cancelledAt: new Date(),
+        cancelledByUserId,
+        updatedAt: new Date(),
+        metadata: sql`COALESCE(${callHandoffs.metadata}, '{}'::jsonb) || ${JSON.stringify({ cancelReason: reason })}::jsonb`,
+      })
+      .where(
+        and(
+          eq(callHandoffs.toUserId, toUserId),
+          inArray(callHandoffs.status, OPEN_STATUSES as unknown as string[]),
+        ),
+      )
+      .returning();
+  },
+
   /** Phase 6B (req 6) — mark all OPEN handoffs on a case as `superseded`,
    *  EXCLUDING the given handoff id (the winner). Kept for audit (never
    *  deleted). Returns the affected rows so the caller can clear their

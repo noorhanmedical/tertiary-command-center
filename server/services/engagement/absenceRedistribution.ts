@@ -15,6 +15,7 @@ import { db } from "../../db";
 import { patientExecutionCases } from "@shared/schema/executionCase";
 import { appendJourneyEvent } from "../journey/appendJourneyEvent";
 import { applyDistribution } from "./distributionService";
+import { needsCoverageRepository } from "../../repositories/needsCoverage.repo";
 
 export type CanonicalRedistributionResult = {
   schedulerId: number;
@@ -98,7 +99,41 @@ export async function releaseAndRedistributeCanonical(
   //    outcome from distResult.applied.length alone. Instead we measure the
   //    fate of *our* released case ids specifically.
   const releasedIds = activeCases.map((c) => c.id);
-  const distResult = await applyDistribution(actorUserId, "scheduler");
+  let distResult: Awaited<ReturnType<typeof applyDistribution>>;
+  try {
+    distResult = await applyDistribution(actorUserId, "scheduler");
+  } catch (err) {
+    // Phase 6C (req 9/10) — the release (step 2) already committed, so these
+    // cases are now UNASSIGNED. If re-placement fails we must NOT leave them
+    // silently dropped: record each still-unassigned released case into
+    // structured NEEDS COVERAGE (failed_redistribution) so a manager sees the
+    // exception, then re-throw so the caller's error path logs it. The next
+    // distribution run / manual assign resolves them (needs_coverage clears
+    // when a case gets an owner).
+    console.error(
+      "[absence-redistribution] applyDistribution failed after release — recording failed_redistribution coverage:",
+      err instanceof Error ? err.message : err,
+    );
+    for (const c of activeCases) {
+      const [row] = await db
+        .select({ owner: patientExecutionCases.assignedTeamMemberId })
+        .from(patientExecutionCases)
+        .where(eq(patientExecutionCases.id, c.id))
+        .limit(1);
+      if (row && row.owner == null) {
+        try {
+          await needsCoverageRepository.upsert({
+            executionCaseId: c.id,
+            patientScreeningId: c.patientScreeningId ?? null,
+            category: "failed_redistribution",
+            reason: `Redistribution failed after release (${reason}). Case is unassigned and awaiting coverage.`,
+            source: "system",
+          });
+        } catch { /* best-effort — visibility, never blocks */ }
+      }
+    }
+    throw err;
+  }
   const appliedReleasedIds = new Set(
     distResult.applied
       .filter((a) => releasedIds.includes(a.executionCaseId))

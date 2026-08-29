@@ -111,6 +111,18 @@ export const teamsRepository = {
       and(eq(managerRelationships.teamId, teamId), eq(managerRelationships.active, true)),
     );
   },
+  /** Phase 6C — active user-scoped managers of a specific subordinate (direct
+   *  reports). Complements team-scoped managers when notifying "the manager(s)
+   *  of this user" about a workforce exception. */
+  async listUserScopedManagersForSubordinate(subordinateUserId: string): Promise<ManagerRelationship[]> {
+    return db.select().from(managerRelationships).where(
+      and(
+        eq(managerRelationships.subordinateUserId, subordinateUserId),
+        eq(managerRelationships.scopeType, "user"),
+        eq(managerRelationships.active, true),
+      ),
+    );
+  },
 
   // ─── Audit ───────────────────────────────────────────────
   async recordEvent(input: InsertTeamRelationshipEvent): Promise<void> {

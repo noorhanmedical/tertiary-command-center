@@ -64,6 +64,38 @@ export function scopeCoversUser(scope: ManagerScope, targetUserId: string): bool
   return scope.isAdmin || scope.userIds.has(targetUserId);
 }
 
+/**
+ * Phase 6C — resolve the ACTIVE manager user ids responsible for `subjectUserId`
+ * (for notifying "this user's manager(s)" about a workforce exception, e.g. the
+ * user was deactivated / a redistribution failed). Union of:
+ *   • team-scoped managers of every team the subject is an active member of, and
+ *   • user-scoped managers whose direct-report override targets the subject.
+ * Deactivated managers are excluded (their relationships may remain but an
+ * inactive account holds no authority — K13). Never includes the subject.
+ */
+export async function resolveManagersOfUser(subjectUserId: string): Promise<string[]> {
+  const { storage } = await import("../../storage");
+  const managerIds = new Set<string>();
+
+  const memberships = await teamsRepository.listMembershipsForUser(subjectUserId, true);
+  for (const m of memberships) {
+    const mgrs = await teamsRepository.listManagersForTeam(m.teamId);
+    for (const r of mgrs) if (r.managerUserId) managerIds.add(r.managerUserId);
+  }
+  const userScoped = await teamsRepository.listUserScopedManagersForSubordinate(subjectUserId);
+  for (const r of userScoped) if (r.managerUserId) managerIds.add(r.managerUserId);
+
+  managerIds.delete(subjectUserId);
+
+  // Drop deactivated manager accounts (no authority → no actionable notice).
+  const active: string[] = [];
+  for (const id of managerIds) {
+    const u = await storage.getUser(id);
+    if (u && u.active !== false) active.push(id);
+  }
+  return active;
+}
+
 /** True when the caller may manage `teamId`. */
 export function scopeCoversTeam(scope: ManagerScope, teamId: number): boolean {
   return scope.isAdmin || scope.teamIds.includes(teamId);

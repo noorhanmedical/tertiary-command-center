@@ -42,6 +42,8 @@ export interface IPlexusRepository {
   getTask(id: number): Promise<PlexusTask | undefined>;
   listTasksByProject(projectId: number): Promise<PlexusTask[]>;
   listTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  listOpenTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  releaseTeamTasksForUser(userId: string): Promise<PlexusTask[]>;
   listTasksByCreator(userId: string): Promise<PlexusTask[]>;
   listTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   listTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
@@ -148,6 +150,35 @@ export class DbPlexusRepository implements IPlexusRepository {
     return db.select().from(plexusTasks)
       .where(and(eq(plexusTasks.assignedToUserId, userId), ne(plexusTasks.status, "closed")))
       .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  /** Phase 6C — NON-terminal (open/in_progress) tasks currently assigned to a
+   *  user. Used by deactivation recovery to surface/release their live work. */
+  async listOpenTasksByAssignee(userId: string): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(and(
+        eq(plexusTasks.assignedToUserId, userId),
+        ne(plexusTasks.status, "closed"),
+        ne(plexusTasks.status, "done"),
+      ))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  /** Phase 6C — release a deactivated user's open TEAM tasks back to their team
+   *  pool (clear assignee, keep assignedTeamId). Only tasks that HAVE an
+   *  assignedTeamId are returned to the pool; personal (team-less) tasks are
+   *  left assigned but surfaced to managers by the caller. Atomic single UPDATE
+   *  guarded so it can't touch terminal rows. Returns the released rows. */
+  async releaseTeamTasksForUser(userId: string): Promise<PlexusTask[]> {
+    return db.update(plexusTasks)
+      .set({ assignedToUserId: null, updatedAt: new Date() })
+      .where(and(
+        eq(plexusTasks.assignedToUserId, userId),
+        sql`${plexusTasks.assignedTeamId} IS NOT NULL`,
+        ne(plexusTasks.status, "closed"),
+        ne(plexusTasks.status, "done"),
+      ))
+      .returning();
   }
 
   async listTasksForManager(filters: ManagerTaskFilters = {}, limit = 200): Promise<PlexusTask[]> {

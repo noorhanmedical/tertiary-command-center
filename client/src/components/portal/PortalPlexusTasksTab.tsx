@@ -8,7 +8,7 @@ import {
   SketchButton,
 } from "@/components/playground/sketch/SketchPrimitives";
 import { dispatchOpenWorkspace } from "@/components/playground/playgroundEvents";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, ApiError } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 // Plexus Tasks tab — the canonical Team Portal task surface (Phase 5B).
@@ -95,7 +95,21 @@ export function PortalPlexusTasksTab({
       toast({ title: "Task claimed", description: "It's now in your My Tasks." });
       queryClient.invalidateQueries({ queryKey: ["portal-plexus-tasks"] });
     },
-    onError: (e: Error) => toast({ title: "Could not claim", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => {
+      // Phase 6C — stale-state recovery. A 409 means someone else won the claim
+      // race (or the task left the pool). Surface it plainly and refetch so the
+      // now-claimed task drops out of this user's team-pool view immediately.
+      if (e instanceof ApiError && e.status === 409) {
+        toast({
+          title: "Already claimed",
+          description: "A teammate claimed this task first. Refreshing the pool.",
+          variant: "destructive",
+        });
+        queryClient.invalidateQueries({ queryKey: ["portal-plexus-tasks"] });
+        return;
+      }
+      toast({ title: "Could not claim", description: e.message, variant: "destructive" });
+    },
   });
 
   const forbidden = isError && error instanceof Error && error.message === "__forbidden__";

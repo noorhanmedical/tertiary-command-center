@@ -121,3 +121,20 @@ export async function removeUserFromTeamChannel(teamId: number, userId: string):
       eq(messageConversationMembers.active, true),
     ));
 }
+
+/** Phase 6C — revoke a deactivated user's ACTIVE conversation memberships
+ *  across ALL conversations (team + direct), defense-in-depth beyond session
+ *  gating. History is preserved (rows kept, active=false). Returns the count.
+ *  Reactivation deliberately does NOT auto-restore these — a reactivated user
+ *  regains access through the normal membership sync, not by resurrecting old
+ *  conversation rows. */
+export async function deactivateAllConversationMembershipsForUser(userId: string): Promise<number> {
+  const rows = await db.update(messageConversationMembers)
+    .set({ active: false, leftAt: new Date() })
+    .where(and(
+      eq(messageConversationMembers.userId, userId),
+      eq(messageConversationMembers.active, true),
+    ))
+    .returning({ id: messageConversationMembers.id });
+  return rows.length;
+}
