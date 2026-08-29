@@ -3495,7 +3495,11 @@ export function TeamPortalShell({
                           id: "calls",
                           label: "Calls",
                           icon: PhoneCall,
-                          onClick: () => dispatchOpenWorkspace({ type: "call", title: "Calls" }),
+                          // Phase 5E — opens the real calls repository / history
+                          // (closed + completed cases with recall), NOT an empty
+                          // single-call console. Per-patient call consoles open
+                          // separately from a specific call-list row.
+                          onClick: () => dispatchOpenWorkspace({ type: "calls_repository", title: "Calls" }),
                           active: activeKind === "calls",
                           testId: "left-rail-tool-calls",
                         },

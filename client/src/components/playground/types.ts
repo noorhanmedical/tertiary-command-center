@@ -12,6 +12,7 @@ export type PlaygroundWorkspaceType =
   | "patient_ehr"
   | "ancillary_workflow"
   | "call"
+  | "calls_repository"
   | "tasks"
   | "task"
   | "schedule"

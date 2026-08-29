@@ -9,9 +9,10 @@
 // The tool does not show patient detail. Detail belongs in the
 // center canvas. The left-rail tool is a general writer surface.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, NotebookPen, Search } from "lucide-react";
+import { usePlaygroundOptional } from "@/components/playground/PlaygroundWorkspaceProvider";
 import {
   SketchSurface,
   SketchButton,
@@ -24,9 +25,10 @@ import { createPatientNote } from "@/lib/patientNotesApi";
 
 type PickedPatient = { patientScreeningId: number; name: string };
 
-export function QuickNoteTool() {
+export function QuickNoteTool({ workspaceId }: { workspaceId?: string } = {}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const playground = usePlaygroundOptional();
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<PickedPatient | null>(null);
   const [body, setBody] = useState("");
@@ -58,6 +60,34 @@ export function QuickNoteTool() {
     onError: (err: Error) =>
       toast({ title: "Could not save note", description: err.message, variant: "destructive" }),
   });
+
+  // Phase 5E — integrate with the Playground dirty-state so closing a tab with
+  // an unsaved note prompts Save/Discard/Cancel instead of silently dropping
+  // it. Only active when rendered as a Playground workspace (workspaceId set).
+  const hasDraft = body.trim().length > 0;
+  useEffect(() => {
+    if (!playground || !workspaceId) return;
+    playground.setDirty(workspaceId, hasDraft, "You have an unsaved quick note.");
+  }, [playground, workspaceId, hasDraft]);
+
+  useEffect(() => {
+    if (!playground || !workspaceId) return;
+    // Save & Close: persist the note (if a patient is picked + body present),
+    // then allow the close. Keep the tab open if the save cannot proceed.
+    const unregister = playground.registerSaveHandler(workspaceId, async () => {
+      if (!picked || !body.trim()) {
+        toast({ title: "Pick a patient and write a note before saving", variant: "destructive" });
+        return false;
+      }
+      try {
+        await saveMutation.mutateAsync();
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    return unregister;
+  }, [playground, workspaceId, picked, body, saveMutation, toast]);
 
   return (
     <div

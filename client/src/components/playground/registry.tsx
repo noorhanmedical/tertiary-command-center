@@ -41,6 +41,7 @@ import { PlaygroundHomeArtwork } from "./workspaces/PlaygroundHomeArtwork";
 import {
   EmailWorkspaceTab,
   QuickNoteWorkspaceTab,
+  CallsRepositoryWorkspaceTab,
   PatientSearchWorkspaceTab,
   ContactsWorkspaceTab,
   InvoiceDeskWorkspaceTab,
@@ -187,6 +188,18 @@ const DEFINITIONS: PlaygroundWorkspaceDefinition[] = [
     dedupeKey: patientWorkspaceDedupeKey("call"),
     supportsPatientContext: true,
     supportsDirtyState: true,
+    keepAlive: true,
+  },
+  {
+    // Phase 5E — Calls repository / history (left-rail "Calls" tile). Real data
+    // over closed/completed cases + recall; a singleton, not per-patient.
+    type: "calls_repository",
+    icon: Phone,
+    titleResolver: (ws) => ws.title || "Calls",
+    render: CallsRepositoryWorkspaceTab,
+    dedupeKey: singletonDedupeKey("calls_repository"),
+    supportsPatientContext: false,
+    supportsDirtyState: false,
     keepAlive: true,
   },
   {

@@ -76,6 +76,19 @@ export function PortalEmailComposerTab({
   const [body, setBody] = useState("");
   const [attachedIds, setAttachedIds] = useState<Set<string | number>>(new Set());
 
+  // Phase 5E — honest LIVE / NOT CONFIGURED signal. Reads whether SMTP is set
+  // (boolean only) so the composer never pretends to be a working sender.
+  const { data: emailStatus } = useQuery<{ configured: boolean }>({
+    queryKey: ["/api/outreach/email-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/outreach/email-status", { credentials: "include" });
+      if (!res.ok) return { configured: false };
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const emailConfigured = emailStatus?.configured ?? false;
+
   // Adopt the prefilled template handed off from Templates / Resources.
   useEffect(() => {
     if (prefilledTemplate) {
@@ -172,16 +185,25 @@ export function PortalEmailComposerTab({
       data-testid="portal-email-composer"
     >
       <SketchSurface seedId="email-header">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-          <Mail className="h-4 w-4 text-slate-500" />
-          Email Composer
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Mail className="h-4 w-4 text-slate-500" />
+            Email Composer
+          </div>
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+              emailConfigured ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+            }`}
+            data-testid="email-status-badge"
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${emailConfigured ? "bg-emerald-500" : "bg-amber-500"}`} />
+            {emailConfigured ? "Live" : "Not configured"}
+          </span>
         </div>
         <div className="mt-1 text-[10px] text-slate-500">
-          Sends through the canonical /api/outreach/send-email and
-          /api/outreach/send-material routes. Requires SMTP activation
-          (SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM) —
-          without it, sends fail loudly and the composer does NOT pretend
-          to have sent.
+          {emailConfigured
+            ? "SMTP is configured — sends go out via the canonical /api/outreach/send-email + /send-material routes."
+            : "SMTP is NOT configured (set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM). Sends will fail loudly — the composer never pretends to have sent."}
         </div>
       </SketchSurface>
 

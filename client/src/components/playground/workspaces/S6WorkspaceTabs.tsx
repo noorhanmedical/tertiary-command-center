@@ -6,6 +6,7 @@
 // Each wrapper renders directly on the continuous Playground canvas (a
 // transparent `h-full overflow-auto` host) — no full-workspace tile.
 
+import { useQuery } from "@tanstack/react-query";
 import { usePlayground } from "../PlaygroundWorkspaceProvider";
 import { dispatchOpenWorkspace } from "../playgroundEvents";
 import type { WorkspaceRenderProps } from "../types";
@@ -14,6 +15,7 @@ import { PortalEmailComposerTab } from "@/components/portal/PortalEmailComposerT
 import { QuickNoteTool } from "@/components/portal/QuickNoteTool";
 import { PortalPatientSearchTab } from "@/components/portal/PortalPatientSearchTab";
 import { InternalContactsTool } from "@/components/portal/InternalContactsTool";
+import { CallsRepositoryPanel } from "@/components/portal/CallsRepositoryPanel";
 import InvoiceDeskPanel from "@/components/portal/InvoiceDeskPanel";
 import { PortalTemplatesResourcesTab } from "@/components/portal/PortalTemplatesResourcesTab";
 import { PortalMarketingTab } from "@/components/portal/PortalMarketingTab";
@@ -43,7 +45,34 @@ export function EmailWorkspaceTab({ workspace }: WorkspaceRenderProps) {
 export function QuickNoteWorkspaceTab({ workspace }: WorkspaceRenderProps) {
   return (
     <Host testId={`workspace-quick-note-${workspace.id}`}>
-      <QuickNoteTool />
+      <QuickNoteTool workspaceId={workspace.id} />
+    </Host>
+  );
+}
+
+// ─── Calls Repository ─────────────────────────────────────────────────────────
+// The left-rail "Calls" tile opens this call-HISTORY / repository view (real
+// data: closed/completed execution cases + patient search + one-click recall
+// via /api/scheduler-portal/call-list/recall) — NOT an empty single-call
+// console. A single-patient `call` workspace is still opened separately from a
+// specific call-list row (which carries patient context).
+export function CallsRepositoryWorkspaceTab({ workspace }: WorkspaceRenderProps) {
+  const { data: facData } = useQuery<{ facilities: string[] }>({
+    queryKey: ["/api/portal/my-facilities"],
+    queryFn: async () => {
+      const res = await fetch("/api/portal/my-facilities", { credentials: "include" });
+      if (!res.ok) return { facilities: [] };
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+  const facility =
+    (workspace.facilityId != null ? String(workspace.facilityId) : null) ??
+    facData?.facilities?.[0] ??
+    null;
+  return (
+    <Host testId={`workspace-calls-repository-${workspace.id}`}>
+      <CallsRepositoryPanel facility={facility} />
     </Host>
   );
 }
