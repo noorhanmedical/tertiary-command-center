@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, ApiError } from "@/lib/queryClient";
 import type { Conversation, ConversationType, Message } from "./mockPortalMessages";
 
 // ── Server shapes (mirror server/repositories/messaging.repo.ts) ────────────
@@ -63,6 +63,20 @@ async function fetchConversations(): Promise<ServerConversation[]> {
   return json.conversations ?? [];
 }
 
+// An eligible messaging recipient (active team member in the resolved clinic).
+export type RosterPerson = {
+  id: string;
+  username: string;
+  role: string | null;
+  unread: number;
+};
+
+async function fetchRoster(): Promise<RosterPerson[]> {
+  const res = await apiRequest("GET", "/api/messaging/roster");
+  const json = (await res.json()) as { roster: RosterPerson[] };
+  return json.roster ?? [];
+}
+
 async function fetchMessages(conversationId: string): Promise<ServerMessage[]> {
   const res = await apiRequest("GET", `/api/messaging/conversations/${conversationId}/messages`);
   const json = (await res.json()) as { messages: ServerMessage[] };
@@ -77,12 +91,18 @@ async function fetchMessages(conversationId: string): Promise<ServerMessage[]> {
  *
  * @param currentUserId the logged-in user id (to flag `fromMe`)
  * @param activeConversationId the currently open conversation (string id)
+ * @param selectedClinic the currently selected Team Portal clinic name. Part
+ *   of the query keys so switching clinic (which changes the messaging tenancy
+ *   header) refetches conversations/roster against the new clinic instead of
+ *   serving a stale result (or a stale CLINIC_NOT_SELECTED error).
  */
 export function useTeamMessages(
   currentUserId: string | null,
   activeConversationId: string | null,
+  selectedClinic: string | null = null,
 ) {
   const queryClient = useQueryClient();
+  const clinicKey = selectedClinic ?? "__none__";
 
   // Phase 5A — PHI-safe SSE live refresh. On a 'message_sent' signal, refetch
   // conversations + the active thread within ~1s. Polling (below) remains the
@@ -108,10 +128,42 @@ export function useTeamMessages(
   }, [queryClient, activeConversationId]);
 
   const conversationsQuery = useQuery<ServerConversation[]>({
-    queryKey: CONVERSATIONS_KEY,
+    queryKey: [...CONVERSATIONS_KEY, clinicKey],
     queryFn: fetchConversations,
     refetchInterval: 15_000,
     staleTime: 5_000,
+    retry: false,
+  });
+
+  // Admin with no selected clinic → the server returns 409 CLINIC_NOT_SELECTED.
+  // Surface it as a first-class flag so the UI shows a clear "select a clinic"
+  // state + disables Compose, instead of a raw error toast.
+  const clinicNotSelected =
+    conversationsQuery.error instanceof ApiError &&
+    conversationsQuery.error.code === "CLINIC_NOT_SELECTED";
+
+  // Eligible recipients for the compose people-picker (active team members in
+  // the resolved clinic, excluding self — enforced server-side). Skipped when
+  // no clinic is selected.
+  const rosterQuery = useQuery<RosterPerson[]>({
+    queryKey: ["/api/messaging/roster", clinicKey],
+    queryFn: fetchRoster,
+    refetchInterval: 20_000,
+    staleTime: 10_000,
+    retry: false,
+    enabled: selectedClinic != null,
+  });
+
+  // Compose: find-or-create a 1:1 direct conversation with the chosen person.
+  const openDirectMutation = useMutation({
+    mutationFn: async (otherUserId: string): Promise<string> => {
+      const res = await apiRequest("POST", "/api/messaging/direct", { otherUserId });
+      const json = (await res.json()) as { conversationId: number };
+      return String(json.conversationId);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_KEY });
+    },
   });
 
   const activeMessagesQuery = useQuery<ServerMessage[]>({
@@ -198,5 +250,26 @@ export function useTeamMessages(
   // POSTs). A full clientMessageId idempotency key is a documented seam (see
   // tests/acceptance / release report) — not added here to avoid a messaging
   // rewrite.
-  return { conversations, totalUnread, markRead, sendMessage, sendPending: sendMutation.isPending } as const;
+  // Compose helper: open (find-or-create) a direct conversation and return its
+  // id so the caller can immediately open + focus it.
+  const openDirect = useCallback(
+    (otherUserId: string): Promise<string> => openDirectMutation.mutateAsync(otherUserId),
+    [openDirectMutation],
+  );
+
+  const roster = rosterQuery.data ?? [];
+
+  return {
+    conversations,
+    totalUnread,
+    markRead,
+    sendMessage,
+    sendPending: sendMutation.isPending,
+    // Compose + tenancy state (Stage 2).
+    roster,
+    rosterLoading: rosterQuery.isLoading,
+    openDirect,
+    openDirectPending: openDirectMutation.isPending,
+    clinicNotSelected,
+  } as const;
 }

@@ -25,6 +25,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { messagingFetch } from "@/lib/portalClinicContext";
 
 export type TrayTab = "direct" | "team";
 
@@ -157,7 +158,7 @@ function DirectMessagesTab({
   const rosterQuery = useQuery<{ roster: RosterEntry[] }>({
     queryKey: ["/api/messaging/roster"],
     queryFn: async () => {
-      const res = await fetch("/api/messaging/roster", { credentials: "include" });
+      const res = await messagingFetch("/api/messaging/roster");
       if (!res.ok) throw new Error("Failed to load teammates");
       return res.json();
     },
@@ -191,7 +192,7 @@ function DirectMessagesTab({
   const messagesQuery = useQuery<{ messages: DirectMessage[] }>({
     queryKey: ["/api/messaging/conversations", conversationId, "messages"],
     queryFn: async () => {
-      const res = await fetch(`/api/messaging/conversations/${conversationId}/messages`, { credentials: "include" });
+      const res = await messagingFetch(`/api/messaging/conversations/${conversationId}/messages`);
       if (!res.ok) throw new Error("Failed to load conversation");
       return res.json();
     },
@@ -357,7 +358,7 @@ function TeamChatTab({
   const conversationsQuery = useQuery<TeamConversation[]>({
     queryKey: ["/api/messaging/conversations", "team"],
     queryFn: async () => {
-      const res = await fetch("/api/messaging/conversations", { credentials: "include" });
+      const res = await messagingFetch("/api/messaging/conversations");
       if (!res.ok) throw new Error("Failed to load team channels");
       const json = (await res.json()) as { conversations: TeamConversation[] };
       return (json.conversations ?? []).filter((c) => c.type === "team");
@@ -377,9 +378,7 @@ function TeamChatTab({
   const messagesQuery = useQuery<{ messages: TeamConvMessage[] }>({
     queryKey: ["/api/messaging/conversations", activeConversationId, "messages"],
     queryFn: async () => {
-      const res = await fetch(`/api/messaging/conversations/${activeConversationId}/messages`, {
-        credentials: "include",
-      });
+      const res = await messagingFetch(`/api/messaging/conversations/${activeConversationId}/messages`);
       if (!res.ok) throw new Error("Failed to load messages");
       return res.json();
     },

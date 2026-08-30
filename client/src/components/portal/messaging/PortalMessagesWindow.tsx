@@ -8,11 +8,11 @@
 // Left sidebar = conversation list, right
 // = the active thread with a header (name + type + patient/facility chip),
 // bubbles (outgoing purple/white, incoming light-gray), and an input bar with
-// a plus + send. Team threads label the sender above each incoming bubble;
+// a send control. Team threads label the sender above each incoming bubble;
 // patient threads surface a context chip in the header.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare, Users, Smartphone, Plus, Send, X, Search } from "lucide-react";
+import { MessageSquare, Users, Smartphone, Send, X, Search } from "lucide-react";
 import {
   type Conversation,
   type ConversationType,
@@ -85,12 +85,8 @@ export function PortalMessagesWindow({
         {/* Sidebar */}
         <div className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-50">
           <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2.5">
-            <div className="flex gap-1.5">
-              <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-              <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
-              <span className="h-3 w-3 rounded-full bg-[#28c840]" />
-            </div>
-            <span className="ml-1 text-xs font-semibold text-slate-700">Messages</span>
+            <MessageSquare className="h-4 w-4 text-purple-600" />
+            <span className="text-xs font-semibold text-slate-700">Messages</span>
           </div>
           <div className="p-2">
             <div className="relative">
@@ -233,15 +229,6 @@ export function PortalMessagesWindow({
           {/* Input bar */}
           <div className="border-t border-slate-200 bg-white p-2.5">
             <div className="flex items-end gap-2">
-              <button
-                type="button"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50"
-                data-testid="messages-window-plus"
-                title="Add attachment"
-                disabled={!active}
-              >
-                <Plus className="h-4 w-4" />
-              </button>
               <textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}

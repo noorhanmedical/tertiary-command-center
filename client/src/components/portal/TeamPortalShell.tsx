@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { setPortalClinic, messagingFetch } from "@/lib/portalClinicContext";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
@@ -508,6 +509,12 @@ const RIGHT_RAIL_WIDTH: Record<RailSize, string> = {
   small: "w-[220px]",
   normal: "w-[340px]",
 };
+// Numeric px twins of the rail widths above. Used to pad the center canvas when
+// a rail is PINNED so the Playground content + tab bar re-center in the
+// remaining space (instead of hiding behind the rail). Kept in lockstep with
+// the width classes so padding and rail width never drift.
+const LEFT_RAIL_PX: Record<RailSize, number> = { small: 84, normal: 320 };
+const RIGHT_RAIL_PX: Record<RailSize, number> = { small: 220, normal: 340 };
 
 function MonthlyMiniCalendar({ facility, selectedDate, onSelect }: { facility: string; selectedDate: string; onSelect: (d: string) => void }) {
   const [cursor, setCursor] = useState(() => {
@@ -1188,6 +1195,16 @@ export function TeamPortalShell({
     }
   }, [facilities, facility, workspaceProfile?.defaultFacilityId]);
 
+  // Publish the ONE selected Team Portal clinic to the request layer so
+  // tenancy-scoped endpoints (messaging) resolve against it. For an admin
+  // (org-wide, no fixed clinicId) this selected clinic IS the messaging
+  // tenancy; PCS/ACS keep their own canonical clinic server-side and the
+  // hint is ignored. Cleared on unmount so it never leaks to other surfaces.
+  useEffect(() => {
+    setPortalClinic(facility || null);
+    return () => setPortalClinic(null);
+  }, [facility]);
+
   // Admin view-as: snap the selected facility to the viewed-as roster
   // member's clinic so every right-panel feed (call list, clinic +
   // ancillary schedule) observes the same facility the member would see.
@@ -1390,7 +1407,12 @@ export function TeamPortalShell({
     markRead: markMessagingRead,
     sendMessage: sendMessagingMessage,
     sendPending: messagingSendPending,
-  } = useTeamMessages(currentUserId ?? null, activeConversationId);
+    roster: messagingRoster,
+    rosterLoading: messagingRosterLoading,
+    openDirect: messagingOpenDirect,
+    openDirectPending: messagingOpenDirectPending,
+    clinicNotSelected: messagingClinicNotSelected,
+  } = useTeamMessages(currentUserId ?? null, activeConversationId, facility || null);
   const openMessagesConversation = useCallback(
     (id: string) => {
       setActiveConversationId(id);
@@ -1886,7 +1908,7 @@ export function TeamPortalShell({
   const { data: dmRosterData } = useQuery<{ roster: { id: string; username: string; role: string | null; unread: number }[] }>({
     queryKey: ["/api/messaging/roster"],
     queryFn: async () => {
-      const res = await fetch("/api/messaging/roster", { credentials: "include" });
+      const res = await messagingFetch("/api/messaging/roster");
       if (!res.ok) throw new Error("Failed to load teammates");
       return res.json();
     },
@@ -2639,7 +2661,16 @@ export function TeamPortalShell({
           <div className="absolute inset-0" style={{ backgroundColor: "#FAFBF8" }} />
         </div>
 
-        <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
+        <div
+          className="absolute inset-0 z-[1] overflow-auto px-6 py-5 transition-[padding] duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]"
+          style={{
+            // Reserve space for PINNED rails only, so the Playground content
+            // and workspace tab bar re-center in the remaining area and stay
+            // visible. Transient hover-peek keeps overlaying (ephemeral glance).
+            paddingLeft: leftRailPinned ? LEFT_RAIL_PX[leftRailSize] : undefined,
+            paddingRight: rightRailPinned ? RIGHT_RAIL_PX[rightRailSize] : undefined,
+          }}
+        >
           <div
             ref={playgroundSurfaceRef}
             className="relative mx-auto flex h-full min-h-full w-full flex-col bg-transparent px-6 pt-2 pb-6"
@@ -3249,58 +3280,58 @@ export function TeamPortalShell({
             {...(!leftRailOpen ? { inert: "" as unknown as boolean } : {})}
           >
             <div className="relative flex h-full flex-col">
-            {/* Blue header band (step 1) — top-level tab switcher (Task #740).
-                Messaging shows the iMessage-style inbox; Tools shows the
-                existing dock + calendar + communication tray. */}
-            <div
-              className="flex items-center justify-between gap-1.5 border-b px-2 py-1.5"
-              style={{ borderColor: "rgba(148,163,184,0.4)", backgroundColor: "#FAFBF8" }}
-            >
-              <div className="flex items-center gap-1" data-testid="left-panel-tabs">
+            {/* Rail header — matches the right-rail Work Queue header
+                (portal-rail-header): a premium title row (title left, pin
+                right) then the tab strip beneath. Tab order: Tools first,
+                Messaging second. */}
+            <div className="portal-rail-header sticky top-0 z-10 border-b px-3 pb-1.5 pt-2">
+              <div className="mb-1.5 flex items-center justify-between px-0.5">
+                <span className="portal-rail-title" data-testid="left-rail-title">
+                  Team Workspace
+                </span>
                 <button
                   type="button"
+                  onClick={() => setLeftRailPinned((v) => !v)}
+                  aria-label={leftRailPinned ? "Unpin panel" : "Pin panel"}
+                  title={leftRailPinned ? "Unpin panel" : "Pin panel"}
+                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${leftRailPinned ? "text-[color:var(--sketch-blue)]" : "text-slate-400 hover:text-slate-600"}`}
+                  data-testid="button-pin-left-rail"
+                >
+                  {leftRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+              <div className="flex items-center gap-1" role="tablist" data-testid="left-panel-tabs">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={leftPanelTab === "tools"}
+                  onClick={() => setLeftPanelTab("tools")}
+                  className={`portal-rail-tab ${leftPanelTab === "tools" ? "portal-rail-tab-active" : ""}`}
+                  data-testid="left-panel-tab-tools"
+                >
+                  <Wrench className="h-3.5 w-3.5" />
+                  Tools
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={leftPanelTab === "messaging"}
                   onClick={() => setLeftPanelTab("messaging")}
-                  className={`relative inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-                    leftPanelTab === "messaging"
-                      ? "text-slate-900"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
-                  style={leftPanelTab === "messaging" ? { boxShadow: "inset 0 -2px 0 var(--sketch-blue)" } : undefined}
+                  className={`portal-rail-tab ${leftPanelTab === "messaging" ? "portal-rail-tab-active" : ""}`}
                   data-testid="left-panel-tab-messaging"
                 >
-                  <MessageCircle className="h-3 w-3" />
+                  <MessageCircle className="h-3.5 w-3.5" />
                   Messaging
                   {messagingUnread > 0 ? (
-                    <span data-testid="left-panel-tab-messaging-badge">
-                      <SketchBadge tone="violet">{messagingUnread}</SketchBadge>
+                    <span
+                      className="ml-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-violet-500 px-1 text-[9px] font-semibold text-white"
+                      data-testid="left-panel-tab-messaging-badge"
+                    >
+                      {messagingUnread}
                     </span>
                   ) : null}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setLeftPanelTab("tools")}
-                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-                    leftPanelTab === "tools"
-                      ? "text-slate-900"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
-                  style={leftPanelTab === "tools" ? { boxShadow: "inset 0 -2px 0 var(--sketch-blue)" } : undefined}
-                  data-testid="left-panel-tab-tools"
-                >
-                  <Wrench className="h-3 w-3" />
-                  Tools
-                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setLeftRailPinned((v) => !v)}
-                aria-label={leftRailPinned ? "Unpin panel" : "Pin panel"}
-                title={leftRailPinned ? "Unpin panel" : "Pin panel"}
-                className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${leftRailPinned ? "text-[color:var(--sketch-blue)]" : "text-slate-400 hover:text-slate-600"}`}
-                data-testid="button-pin-left-rail"
-              >
-                {leftRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
-              </button>
             </div>
             {leftPanelTab === "messaging" ? (
               <div className="flex min-h-0 flex-1 flex-col p-3" data-testid="left-rail-messaging">
@@ -3308,6 +3339,11 @@ export function TeamPortalShell({
                   conversations={messagingConversations}
                   activeConversationId={messagesWindowOpen ? activeConversationId : null}
                   onOpenConversation={openMessagesConversation}
+                  roster={messagingRoster}
+                  rosterLoading={messagingRosterLoading}
+                  onCompose={messagingOpenDirect}
+                  composePending={messagingOpenDirectPending}
+                  clinicNotSelected={messagingClinicNotSelected}
                 />
               </div>
             ) : (
@@ -3324,19 +3360,13 @@ export function TeamPortalShell({
                 data-testid="left-rail-tools-rail"
               >
                 {/*
-                  Layout contract:
-                  This container is `flex min-h-0 flex-1 flex-col`. It
-                  hosts TWO children: the dock/calendar block (this div)
-                  and the communication tray (below). Without an
-                  explicit flex share on THIS child, its natural
-                  content height would consume the entire rail and the
-                  tray below (which has `flex-1 min-h-0`) would collapse
-                  to zero px — the tray was mounted but hidden.
-                  Setting `min-h-0 flex-1` here makes both children
-                  share the vertical space (~50/50); `overflow-y-auto`
-                  ensures the dock scrolls internally when its content
-                  is taller than its share. The tray therefore always
-                  has a real visible flex area.
+                  Layout contract (Stage 1 rail refinement):
+                  Tools now owns the ENTIRE left rail. The lower
+                  CommunicationTray was removed — messaging lives in the
+                  Messaging tab, not duplicated under Tools. This single
+                  scroll child fills the rail: the tool grid scrolls
+                  internally when tall, and the compact calendar is
+                  anchored beneath it (both share this scroll area).
                 */}
                 <div className={`min-h-0 flex-1 overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
                 {/* TEAM PORTAL LEFT TOOLS RAIL (Phase 1.6)
@@ -3451,10 +3481,10 @@ export function TeamPortalShell({
                           icon: BookOpen,
                           onClick: () => dispatchOpenWorkspace({ type: "scripts", title: "Scripts" }),
                           active: activeKind === "resources",
-                          // Phase 0.5 — honest signal: Scripts is a static
-                          // resources preview (no backend yet), not a live
-                          // managed template library.
-                          badge: <SketchBadge tone="graphite">preview</SketchBadge>,
+                          // Stage 1: the "preview" pill was removed from the
+                          // rail tile (kept the rail clean). The honest
+                          // preview/not-live state is shown INSIDE the Scripts
+                          // workspace after opening, not on the tool grid.
                           testId: "left-rail-tool-resources",
                         },
                         {
@@ -3531,9 +3561,9 @@ export function TeamPortalShell({
                           icon: Landmark,
                           onClick: () => dispatchOpenWorkspace({ type: "invoice_desk", title: "Invoice Desk" }),
                           active: activeKind === "invoiceDesk",
-                          // Phase 0.5 — honest signal: Invoice Desk runs on a
-                          // demo store, not the canonical billing module yet.
-                          badge: <SketchBadge tone="gold">demo</SketchBadge>,
+                          // Stage 1: the "demo" pill was removed from the rail
+                          // tile. The honest demo/not-live state is shown INSIDE
+                          // the Invoice Desk workspace after opening.
                           testId: "left-rail-tool-invoice-desk",
                         },
                       ],
@@ -3564,6 +3594,7 @@ export function TeamPortalShell({
                 {!leftNarrow && (
                   <LeftRailCompactCalendar
                     selectedDate={selectedDate}
+                    facility={facility}
                     onSelectDate={(iso) => {
                       setSelectedDate(iso);
                       openQuickScheduleForDate(iso);
@@ -3575,30 +3606,9 @@ export function TeamPortalShell({
                   />
                 )}
                 </div>
-
-                {/* Communication tray (Task #643) — bottom half of the
-                    Tools panel. Hidden in the narrow icon rail (too small).
-                    Honest boundaries: no fabricated messages/sends. */}
-                {!leftNarrow && (
-                  <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-xl border" style={{ borderColor: "rgba(148,163,184,0.4)", backgroundColor: SKETCH_COLORS.paper }}>
-                    <CommunicationTray
-                      activeTab={trayTab}
-                      onTabChange={setTrayTab}
-                      currentUserId={currentUser?.id ?? null}
-                      teamTasks={trayTeamTasks}
-                      directUnread={directUnread}
-                      focusNonce={chatFocusNonce}
-                      onExpand={() => {
-                        setCenterMode("chat");
-                        setChatFocusNonce((n) => n + 1);
-                      }}
-                      directActiveUserId={chatDirectActiveUserId}
-                      onDirectActiveUserIdChange={setChatDirectActiveUserId}
-                      teamActiveTaskId={chatTeamActiveTaskId}
-                      onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
-                    />
-                  </div>
-                )}
+                {/* Stage 1: the lower CommunicationTray was removed from the
+                    Tools view — Tools now owns the full rail. Direct/Team chat
+                    live under the Messaging tab, not duplicated here. */}
               </div>
               );
             })()
@@ -3665,9 +3675,9 @@ export function TeamPortalShell({
                 <WorkspaceWorkQueueComposition
                   canonicalSection={<CanonicalLifecycleSection workspaceRole={workspaceRole} />}
                   header={
-                <div className="sticky top-0 z-10 border-b px-3 pb-1.5 pt-1.5" style={{ borderColor: "rgba(148,163,184,0.4)", backgroundColor: "#FAFBF8" }}>
+                <div className="portal-rail-header sticky top-0 z-10 border-b px-3 pb-1.5 pt-2">
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Work Queue</span>
+                    <span className="portal-rail-title" data-testid="right-rail-title">Work Queue</span>
                     <div className="flex items-center gap-1">
                       {/* Compact operational date navigator (Phase 0A). Drives
                           all three right-rail feeds via `selectedDate`. Local

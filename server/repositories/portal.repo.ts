@@ -9,6 +9,7 @@ import { db } from "../db";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
   ancillaryAppointments,
+  clinics,
   documentSurfaceAssignments,
   documents as documentsTable,
   users as usersTable,
@@ -42,6 +43,19 @@ export async function listDistinctAncillaryFacilities(): Promise<string[]> {
     .selectDistinct({ facility: ancillaryAppointments.facility })
     .from(ancillaryAppointments);
   return rows.map((r) => r.facility);
+}
+
+// Canonical active clinic/facility names from the Admin Settings `clinics`
+// table — the single source of truth for which facilities exist. Used by the
+// Team Portal facility selector (admin sees all ACTIVE configured clinics)
+// instead of the legacy distinct-ancillary-facility strings, which leaked
+// non-canonical names (e.g. seeded "Plexus Imaging") into the picker.
+export async function listActiveClinicNames(): Promise<string[]> {
+  const rows = await db
+    .select({ name: clinics.name })
+    .from(clinics)
+    .where(eq(clinics.active, true));
+  return rows.map((r) => r.name).filter((n): n is string => !!n);
 }
 
 // User ids can be either numeric or the string form (session-derived),

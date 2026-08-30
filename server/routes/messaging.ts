@@ -23,8 +23,13 @@ import {
   postMessage,
   markRead,
 } from "../services/messaging/messagingService";
+import { createFacilityResolver } from "../services/facilityResolver";
 
-function resolveClinicId(req: Request): number | null {
+// Header carrying the currently selected Team Portal clinic (canonical
+// facility name). Must match client/src/lib/portalClinicContext.ts.
+const PORTAL_CLINIC_HEADER = "X-Portal-Clinic";
+
+function sessionClinicId(req: Request): number | null {
   const raw =
     (req.session as { clinicId?: number } | undefined)?.clinicId ??
     (req as { clinicId?: number | null }).clinicId ??
@@ -33,10 +38,48 @@ function resolveClinicId(req: Request): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function requireAuthAndClinic(req: Request, res: Response, next: NextFunction) {
+// Resolve the clinic tenancy for a messaging request.
+//   - Non-admin: ALWAYS their own canonical session.clinicId. The
+//     X-Portal-Clinic hint is ignored (defense in depth — a scoped user can
+//     never message into another clinic).
+//   - Admin: organization-wide with no fixed clinicId, so the messaging
+//     tenancy is the CURRENTLY SELECTED Team Portal clinic, sent as the
+//     `X-Portal-Clinic` header (a canonical facility name). We resolve it to
+//     an ACTIVE clinics row id via the canonical facility resolver. When the
+//     admin has no clinic selected (or it doesn't resolve), we return null so
+//     the guard can respond with a clear "select a clinic" signal instead of a
+//     confusing raw 403.
+async function resolveMessagingClinicId(req: Request): Promise<number | null> {
+  const isAdmin = (req.session?.role ?? "") === "admin";
+  if (!isAdmin) return sessionClinicId(req);
+
+  const header = req.get(PORTAL_CLINIC_HEADER);
+  const selected = (header ?? "").trim();
+  if (!selected) return null;
+  const { resolve } = await createFacilityResolver();
+  const match = resolve(selected);
+  // Only an active canonical clinics row (carries a clinicId) is a valid
+  // messaging tenancy. Legacy VALID_FACILITIES entries (clinicId null) are not.
+  return match?.clinicId ?? null;
+}
+
+async function requireAuthAndClinic(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
-  const clinicId = resolveClinicId(req);
+  const isAdmin = (req.session?.role ?? "") === "admin";
+  let clinicId: number | null = null;
+  try {
+    clinicId = await resolveMessagingClinicId(req);
+  } catch {
+    return res.status(500).json({ error: "Failed to resolve clinic tenancy" });
+  }
   if (clinicId == null) {
+    // Admin with no/invalid selected clinic → a clear, structured signal the
+    // UI turns into "Select a clinic to use messaging" (not a raw 403 error).
+    if (isAdmin) {
+      return res
+        .status(409)
+        .json({ error: "Select a clinic to use messaging", code: "CLINIC_NOT_SELECTED" });
+    }
     return res.status(403).json({ error: "No clinic tenancy resolved for this session" });
   }
   (req as Request & { resolvedClinicId?: number }).resolvedClinicId = clinicId;

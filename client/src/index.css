@@ -522,14 +522,60 @@
      is applied inline per side (left rail rounds its right edge, right rail its
      left edge). */
   .portal-rail-glass {
-    background: rgba(255, 255, 255, 0.62);
-    -webkit-backdrop-filter: blur(18px) saturate(135%);
-    backdrop-filter: blur(18px) saturate(135%);
-    border: 1px solid rgba(255, 255, 255, 0.45);
+    /* Premium icy-glass: a very light cool-blue frost (restrained, clinical,
+       not a heavy winter theme). A faint top highlight + soft cool shadow give
+       depth without borders everywhere. */
+    background: linear-gradient(
+      180deg,
+      rgba(240, 246, 253, 0.72) 0%,
+      rgba(230, 240, 251, 0.66) 100%
+    );
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    backdrop-filter: blur(22px) saturate(140%);
+    border: 1px solid rgba(191, 214, 240, 0.55);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.5),
-      0 8px 30px rgba(15, 23, 42, 0.08);
+      inset 0 1px 0 rgba(255, 255, 255, 0.75),
+      0 10px 34px rgba(58, 96, 150, 0.12);
     will-change: transform;
+  }
+
+  /* Shared rail header treatment — used by BOTH the left rail (Team Workspace)
+     and the right rail (Work Queue) so header height, padding, and title
+     typography match. Faint translucent band + hairline separator. */
+  .portal-rail-header {
+    background: rgba(255, 255, 255, 0.32);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border-bottom-color: rgba(148, 178, 214, 0.35);
+  }
+  /* Premium panel title — reads clearly as a title, not body text. */
+  .portal-rail-title {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    color: #1e293b;
+  }
+  /* Rail tab (Tools / Messaging on the left). */
+  .portal-rail-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 8px;
+    padding: 0.28rem 0.6rem;
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+  }
+  .portal-rail-tab:hover {
+    color: #334155;
+    background-color: rgba(255, 255, 255, 0.5);
+  }
+  .portal-rail-tab-active {
+    color: #0f172a;
+    background-color: rgba(255, 255, 255, 0.6);
+    box-shadow: inset 0 -2px 0 var(--sketch-blue);
   }
 
   .dark .portal-rail-glass {
@@ -539,6 +585,158 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.08),
       0 8px 30px rgba(0, 0, 0, 0.30);
   }
+
+  /* ── PREVIEW-ONLY: light icy-blue frosted-glass RAILS ─────────────────────
+     Scoped strictly under .rail-glass-preview (the /team-portal-glass-preview
+     route wrapper). The LIVE portal is UNAFFECTED, and within the preview the
+     HEADER ("The Playground") and the PLAYGROUND CANVAS are left EXACTLY as
+     live — only the left/right rails are restyled.
+
+     Rails: light airy icy-blue frost; inner bands transparent so the rail
+     reads as one clean panel; rows are flat (no cards) with a soft blue
+     left-accent; tool buttons are premium simple frosted-white tiles. Sketch
+     pencil strokes are hidden INSIDE THE RAILS ONLY. */
+
+  /* Rail panel — LIGHT, airy icy-blue frosted glass (matches the winter-home
+     reference). Very translucent so the snowy playground shows through; a soft
+     pale-blue tint + heavy blur + a faint white inner glow. */
+  .rail-glass-preview .portal-rail-glass {
+    background: linear-gradient(
+      180deg,
+      rgba(226, 240, 253, 0.55) 0%,
+      rgba(205, 227, 248, 0.5) 100%
+    ) !important;
+    -webkit-backdrop-filter: blur(26px) saturate(140%);
+    backdrop-filter: blur(26px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.6) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.8),
+      0 10px 40px rgba(120, 160, 210, 0.2) !important;
+    color: #1e293b;
+  }
+
+  /* One solid look: strip inner band / surface / tile fills inside the rails so
+     nothing paints its own background over the light frost. Targets the inline
+     #FAFBF8, #FAFBFD, #F6F4EE fills the shell + sketch primitives use. */
+  .rail-glass-preview .portal-rail-glass [style*="FAFBF8"],
+  .rail-glass-preview .portal-rail-glass [style*="rgb(250, 251, 248)"],
+  .rail-glass-preview .portal-rail-glass [style*="#FAFBFD"],
+  .rail-glass-preview .portal-rail-glass [style*="rgb(250, 251, 253)"],
+  .rail-glass-preview .portal-rail-glass [style*="#F6F4EE"],
+  .rail-glass-preview .portal-rail-glass [style*="rgb(246, 244, 238)"] {
+    background-color: transparent !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    border-color: rgba(120, 160, 210, 0.25) !important;
+  }
+
+  /* Remove hand-drawn SketchUI strokes INSIDE THE RAILS ONLY (so the rails read
+     as clean frosted glass). The playground canvas keeps its normal look. */
+  .rail-glass-preview .portal-rail-glass canvas[aria-hidden="true"] {
+    display: none !important;
+  }
+
+  /* ── Rails: NO cards/tiles. Flatten every row + inner surface + button so the
+     rail is one solid panel. ─────────────────────────────────────────────── */
+  /* Rail rows: no cards — flat, sitting on the light frost. Subtle blue
+     left-accent divider + dark text so they read on the pale glass. */
+  .rail-glass-preview .portal-rail-glass [data-testid^="workspace-call-"],
+  .rail-glass-preview .portal-rail-glass [data-testid^="workspace-ancillary-"],
+  .rail-glass-preview .portal-rail-glass [data-testid^="ancillary-visit-block-"],
+  .rail-glass-preview .portal-rail-glass [style*="#FAFBFD"],
+  .rail-glass-preview .portal-rail-glass [style*="#F6F4EE"] {
+    background-color: transparent !important;
+    border: 0 !important;
+    border-left: 2px solid rgba(96, 145, 214, 0.55) !important; /* soft blue divider accent, not a card */
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .rail-glass-preview .portal-rail-glass [data-testid^="workspace-call-"]:hover,
+  .rail-glass-preview .portal-rail-glass [data-testid^="workspace-ancillary-"]:hover {
+    background-color: rgba(255, 255, 255, 0.35) !important;
+    box-shadow: none !important;
+  }
+
+  /* Dark, legible text throughout the light rails. */
+  .rail-glass-preview .portal-rail-glass .text-slate-900,
+  .rail-glass-preview .portal-rail-glass .text-slate-800,
+  .rail-glass-preview .portal-rail-glass .text-slate-700,
+  .rail-glass-preview .portal-rail-glass .text-slate-600,
+  .rail-glass-preview .portal-rail-glass .text-slate-500 {
+    color: #1e293b !important;
+  }
+
+  /* Rail buttons → premium, simple frosted-white tiles with a subtle blue
+     accent. Clean, quiet, legible on the light icy rail. */
+  .rail-glass-preview .portal-rail-glass button[data-variant] {
+    background-color: rgba(255, 255, 255, 0.72) !important;
+    border: 1px solid rgba(148, 180, 220, 0.55) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgba(80, 120, 180, 0.12) !important;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    color: #334155 !important;
+    transition: background-color 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+  }
+  .rail-glass-preview .portal-rail-glass button[data-variant]:hover {
+    background-color: rgba(255, 255, 255, 0.92) !important;
+    border-color: rgba(96, 145, 214, 0.7) !important;
+    box-shadow: 0 3px 10px rgba(80, 120, 180, 0.2) !important;
+  }
+  .rail-glass-preview .portal-rail-glass button[data-variant] svg {
+    color: #3b6fb0 !important;
+  }
+  /* Active/selected tile — soft blue wash + blue border + blue icon. */
+  .rail-glass-preview .portal-rail-glass button[data-active="true"] {
+    background-color: rgba(219, 234, 254, 0.9) !important;
+    border-color: rgba(59, 130, 246, 0.8) !important;
+    box-shadow:
+      inset 0 0 0 1px rgba(59, 130, 246, 0.25),
+      0 2px 8px rgba(59, 130, 246, 0.2) !important;
+  }
+  .rail-glass-preview .portal-rail-glass button[data-active="true"] svg {
+    color: #2563eb !important;
+  }
+
+  /* Left-rail TOOL tiles → clean squares that FIT the 3-col grid. Icon centered
+     over a small quiet label. Premium simple: even padding, gentle radius. */
+  .rail-glass-preview [data-testid="portal-left-rail"] button[data-variant] {
+    aspect-ratio: 1 / 1;
+    min-height: 0 !important;      /* let the grid + aspect-ratio size it — no overflow */
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 14px !important;
+    padding: 4px !important;
+    gap: 3px !important;
+  }
+  .rail-glass-preview [data-testid="portal-left-rail"] button[data-variant] svg {
+    width: 1.35rem !important;
+    height: 1.35rem !important;
+  }
+  .rail-glass-preview [data-testid="portal-left-rail"] button[data-variant] span:last-child {
+    font-size: 9.5px !important;
+    line-height: 1.1 !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em !important;
+    color: #475569 !important;
+  }
+  .rail-glass-preview [data-testid="portal-left-rail"] button[data-active="true"] span:last-child {
+    color: #2563eb !important;
+  }
+  /* A touch more breathing room between tiles in the tool grid. */
+  .rail-glass-preview [data-testid^="tool-dock-grid-"] {
+    gap: 0.6rem !important;
+  }
+
+  /* NOTE: The playground canvas + header + background are intentionally LEFT
+     UNTOUCHED — the preview restyles ONLY the rails (and neutralizes SketchUI
+     canvas strokes). The "The Playground" header and the canvas look exactly
+     like the live portal. */
 
   /* ── Home Preview (Task #622): navy / slate / white command center ──
      Scoped utilities used ONLY by /home-preview. The live /home page keeps

@@ -1,11 +1,18 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import {
+  buildCommandCalendarCells,
+  type CommandCalendarSummaryRow,
+} from "@/lib/calendar/commandCalendarViewModel";
 
 // Compact Global Calendar — small fitted calendar tile that lives in
 // the Team Portal left tools rail. NOT patient-centric. Shows the
-// month grid + today highlight + selected-date highlight. Clicking a
-// date hands off to the caller (which opens the center playground at
-// that date so the operator can plan / promote to the scheduler).
+// month grid + today highlight + selected-date highlight + canonical
+// per-day ancillary service dots (BrainWave / VitalWave / Ultrasound),
+// reusing the same calendar-summary feed + ANCILLARY_DOT_CLASS colors
+// every other Plexus calendar uses. Clicking a date hands off to the
+// caller.
 
 export type LeftRailCompactCalendarProps = {
   selectedDate: string; // YYYY-MM-DD
@@ -13,6 +20,9 @@ export type LeftRailCompactCalendarProps = {
   /** Fired when the operator clicks the header (or a date) to promote
    *  the calendar to the center playground / canvas. */
   onExpandToCanvas: () => void;
+  /** Facility scope for the service dots. When set, only this facility's
+   *  scheduled ancillary activity lights dots. */
+  facility?: string | null;
   testId?: string;
 };
 
@@ -39,8 +49,27 @@ export function LeftRailCompactCalendar({
   selectedDate,
   onSelectDate,
   onExpandToCanvas,
+  facility = null,
   testId = "left-rail-compact-calendar",
 }: LeftRailCompactCalendarProps) {
+  // Canonical calendar-summary feed (one row per screening batch) — the same
+  // source Plexus IQ / PCS / ACS use. buildCommandCalendarCells turns each
+  // day's ancillary categories into the shared ANCILLARY_DOT_CLASS dots.
+  const { data: summary = [] } = useQuery<CommandCalendarSummaryRow[]>({
+    queryKey: ["/api/screening-batches/calendar-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Calendar summary fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+  const dayCells = useMemo(
+    () => buildCommandCalendarCells({ summary, facility }),
+    [summary, facility],
+  );
   const [cursor, setCursor] = useState<{ year: number; monthZero: number }>(() => {
     const d = new Date(selectedDate + "T00:00:00");
     if (Number.isNaN(d.getTime())) {
@@ -135,13 +164,14 @@ export function LeftRailCompactCalendar({
           }
           const isToday = c.iso === today;
           const isSelected = c.iso === selectedDate;
+          const dots = dayCells[c.iso]?.dots ?? [];
           return (
             <button
               key={c.iso}
               type="button"
               onClick={() => onSelectDate(c.iso!)}
               className={[
-                "h-6 rounded text-[10px] transition-colors",
+                "relative flex h-7 flex-col items-center justify-center rounded text-[10px] transition-colors",
                 isSelected
                   ? "bg-slate-900 text-white"
                   : isToday
@@ -150,7 +180,21 @@ export function LeftRailCompactCalendar({
               ].join(" ")}
               data-testid={`left-rail-compact-calendar-day-${c.iso}`}
             >
-              {c.day}
+              <span className="leading-none">{c.day}</span>
+              {dots.length > 0 && (
+                <span
+                  className="mt-0.5 flex items-center justify-center gap-[2px]"
+                  data-testid={`left-rail-compact-calendar-dots-${c.iso}`}
+                >
+                  {dots.slice(0, 3).map((d, di) => (
+                    <span
+                      key={di}
+                      className={`h-1 w-1 rounded-full ${d.className}`}
+                      title={d.title}
+                    />
+                  ))}
+                </span>
+              )}
             </button>
           );
         })}
