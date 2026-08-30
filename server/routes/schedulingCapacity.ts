@@ -104,6 +104,7 @@ export function registerSchedulingCapacityRoutes(app: Express) {
           durationMinutes: row.durationMinutes,
           minutesPerStudy: row.minutesPerStudy,
           turnoverMinutes: row.turnoverMinutes,
+          operatingDays: row.operatingDays,
         });
         res.json(row);
       } catch (e) {

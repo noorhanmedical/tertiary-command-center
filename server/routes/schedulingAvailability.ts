@@ -29,6 +29,117 @@ const availabilityBodySchema = z.object({
 });
 
 export function registerSchedulingAvailabilityRoutes(app: Express) {
+  // GET /api/scheduling/patient-qualification/:screeningId
+  // Plexus IQ preselection source for the scheduler: the patient's canonical
+  // qualifying ancillary services (patient_screenings.qualifyingTests) mapped
+  // to registry internalCode + resource pool, each annotated with its current
+  // Admin Review status. Scheduling is NOT blocked by review status — the tag
+  // is informational so PCS/ACS can proceed.
+  app.get(
+    "/api/scheduling/patient-qualification/:screeningId",
+    async (req: Request, res: Response) => {
+      const screeningId = parseInt(String(req.params.screeningId), 10);
+      if (Number.isNaN(screeningId)) {
+        return res.status(400).json({ error: "Invalid screening id" });
+      }
+      try {
+        const { storage } = await import("../storage");
+        const screening = await storage.getPatientScreening(screeningId);
+        if (!screening) return res.status(404).json({ error: "Patient not found" });
+
+        const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
+        const { listServices } = await import(
+          "../repositories/ancillaryServiceRegistry.repo"
+        );
+        const { listAncillaryCasesForScreening } = await import(
+          "../repositories/ancillaryCases.repo"
+        ).catch(() => ({ listAncillaryCasesForScreening: null as never }));
+
+        const registry = await listServices({ activeOnly: true });
+        const byName = new Map(registry.map((r) => [r.displayName.toLowerCase(), r]));
+        const byCode = new Map(registry.map((r) => [r.internalCode.toLowerCase(), r]));
+
+        // Per-service admin-review status from canonical ancillary cases.
+        let reviewByService = new Map<string, string>();
+        try {
+          if (listAncillaryCasesForScreening) {
+            const cases = await listAncillaryCasesForScreening(screeningId);
+            reviewByService = new Map(
+              cases
+                .filter(
+                  (c) =>
+                    c.lifecycleStatus === "new" ||
+                    c.lifecycleStatus === "active" ||
+                    c.lifecycleStatus === "on_hold",
+                )
+                .map((c) => [c.serviceType.toLowerCase(), c.adminReviewStatus ?? "pending"]),
+            );
+          }
+        } catch {
+          /* flag/migration guards — fall back to the screening projection */
+        }
+
+        const qualifyingTests: string[] = Array.isArray(
+          (screening as { qualifyingTests?: string[] }).qualifyingTests,
+        )
+          ? ((screening as { qualifyingTests?: string[] }).qualifyingTests as string[])
+          : [];
+
+        const services = qualifyingTests
+          .map((raw) => {
+            // qualifyingTests may carry CPT suffixes like "Bilateral Carotid Duplex (93880)".
+            const clean = raw.replace(/\s*\(\d{4,5}\)\s*$/, "").trim();
+            const match =
+              byCode.get(clean.toLowerCase()) ??
+              byName.get(clean.toLowerCase()) ??
+              registry.find(
+                (r) =>
+                  clean.toLowerCase().includes(r.displayName.toLowerCase()) ||
+                  r.displayName.toLowerCase().includes(clean.toLowerCase()),
+              ) ??
+              null;
+            const internalCode = match?.internalCode ?? clean;
+            const cat = getAncillaryCategory(internalCode);
+            if (cat === "other") return null;
+            const reviewStatus =
+              reviewByService.get(internalCode.toLowerCase()) ??
+              reviewByService.get(clean.toLowerCase()) ??
+              null;
+            return {
+              rawTest: raw,
+              internalCode,
+              displayName: match?.displayName ?? clean,
+              resourceType: cat,
+              cptCode: match?.cptCode ?? null,
+              adminReviewStatus: reviewStatus, // approved | pending | needs_info | rejected | null
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+
+        // Summary review status across the qualifying services.
+        const statuses = services.map((s) => s.adminReviewStatus).filter(Boolean) as string[];
+        const adminReviewSummary =
+          statuses.length === 0
+            ? "not_reviewed"
+            : statuses.every((s) => s === "approved")
+              ? "approved"
+              : statuses.some((s) => s === "rejected" || s === "needs_info")
+                ? "partially_reviewed"
+                : "pending";
+
+        res.json({
+          screeningId,
+          patientName: (screening as { name?: string }).name ?? null,
+          facility: (screening as { facility?: string }).facility ?? null,
+          services,
+          adminReviewSummary,
+        });
+      } catch (e) {
+        res.status(500).json({ error: e instanceof Error ? e.message : "Qualification lookup failed" });
+      }
+    },
+  );
+
   // POST /api/scheduling/availability
   app.post("/api/scheduling/availability", async (req: Request, res: Response) => {
     const parsed = availabilityBodySchema.safeParse(req.body);

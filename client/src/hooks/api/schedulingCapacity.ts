@@ -14,6 +14,8 @@ export type ResourceCapacityConfig = {
   durationMinutes: number;
   minutesPerStudy: number | null;
   turnoverMinutes: number;
+  /** Weekdays this resource is normally offered (0=Sun … 6=Sat). */
+  operatingDays: number[];
 };
 
 export type TemporaryOverride = {

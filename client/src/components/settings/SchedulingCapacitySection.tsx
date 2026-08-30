@@ -86,6 +86,7 @@ function ResourceRow({
   const [durationMinutes, setDurationMinutes] = useState(cfg.durationMinutes);
   const [minutesPerStudy, setMinutesPerStudy] = useState(cfg.minutesPerStudy ?? 15);
   const [turnoverMinutes, setTurnoverMinutes] = useState(cfg.turnoverMinutes);
+  const [operatingDays, setOperatingDays] = useState<number[]>(cfg.operatingDays ?? []);
 
   // Reset local edit state when the facility/config changes.
   useEffect(() => {
@@ -93,13 +94,24 @@ function ResourceRow({
     setDurationMinutes(cfg.durationMinutes);
     setMinutesPerStudy(cfg.minutesPerStudy ?? 15);
     setTurnoverMinutes(cfg.turnoverMinutes);
+    setOperatingDays(cfg.operatingDays ?? []);
   }, [cfg]);
 
+  const daysEqual =
+    operatingDays.length === (cfg.operatingDays ?? []).length &&
+    [...operatingDays].sort().join(",") === [...(cfg.operatingDays ?? [])].sort().join(",");
   const dirty =
     machineCount !== cfg.machineCount ||
     durationMinutes !== cfg.durationMinutes ||
     (isUltrasound && minutesPerStudy !== (cfg.minutesPerStudy ?? 15)) ||
-    (isUltrasound && turnoverMinutes !== cfg.turnoverMinutes);
+    (isUltrasound && turnoverMinutes !== cfg.turnoverMinutes) ||
+    !daysEqual;
+
+  function toggleDay(d: number) {
+    setOperatingDays((prev) =>
+      prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b),
+    );
+  }
 
   function save() {
     if (durationMinutes < 1 || (isUltrasound && minutesPerStudy < 1)) {
@@ -114,6 +126,7 @@ function ResourceRow({
           durationMinutes,
           minutesPerStudy: isUltrasound ? minutesPerStudy : null,
           turnoverMinutes: isUltrasound ? turnoverMinutes : 0,
+          operatingDays,
         },
       },
       {
@@ -126,35 +139,73 @@ function ResourceRow({
 
   return (
     <div
-      className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3"
+      className="rounded-xl border border-slate-200 bg-white px-4 py-3"
       data-testid={`capacity-row-${cfg.resourceType}`}
     >
-      <div className="flex min-w-[110px] items-center gap-2">
-        <Activity className={`h-4 w-4 ${meta.accent}`} />
-        <span className="text-sm font-semibold text-slate-900">{meta.label}</span>
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="flex min-w-[110px] items-center gap-2">
+          <Activity className={`h-4 w-4 ${meta.accent}`} />
+          <span className="text-sm font-semibold text-slate-900">{meta.label}</span>
+        </div>
+        <NumberField label="Machines" value={machineCount} onChange={setMachineCount} min={0} testId={`capacity-${cfg.resourceType}-machines`} />
+        {isUltrasound ? (
+          <>
+            <NumberField label="Per study" value={minutesPerStudy} onChange={setMinutesPerStudy} min={1} suffix="min" testId={`capacity-${cfg.resourceType}-per-study`} />
+            <NumberField label="Patient turnover" value={turnoverMinutes} onChange={setTurnoverMinutes} min={0} suffix="min" testId={`capacity-${cfg.resourceType}-turnover`} />
+          </>
+        ) : (
+          <NumberField label="Duration" value={durationMinutes} onChange={setDurationMinutes} min={1} suffix="min" testId={`capacity-${cfg.resourceType}-duration`} />
+        )}
+        <Button
+          size="sm"
+          variant={dirty ? "default" : "outline"}
+          disabled={!dirty || updateMut.isPending}
+          onClick={save}
+          className="ml-auto h-8"
+          data-testid={`capacity-${cfg.resourceType}-save`}
+        >
+          <Save className="mr-1.5 h-3.5 w-3.5" /> Save
+        </Button>
       </div>
-      <NumberField label="Machines" value={machineCount} onChange={setMachineCount} min={0} testId={`capacity-${cfg.resourceType}-machines`} />
-      {isUltrasound ? (
-        <>
-          <NumberField label="Per study" value={minutesPerStudy} onChange={setMinutesPerStudy} min={1} suffix="min" testId={`capacity-${cfg.resourceType}-per-study`} />
-          <NumberField label="Patient turnover" value={turnoverMinutes} onChange={setTurnoverMinutes} min={0} suffix="min" testId={`capacity-${cfg.resourceType}-turnover`} />
-        </>
-      ) : (
-        <NumberField label="Duration" value={durationMinutes} onChange={setDurationMinutes} min={1} suffix="min" testId={`capacity-${cfg.resourceType}-duration`} />
-      )}
-      <Button
-        size="sm"
-        variant={dirty ? "default" : "outline"}
-        disabled={!dirty || updateMut.isPending}
-        onClick={save}
-        className="ml-auto h-8"
-        data-testid={`capacity-${cfg.resourceType}-save`}
-      >
-        <Save className="mr-1.5 h-3.5 w-3.5" /> Save
-      </Button>
+      {/* Operating days — weekday toggles. Off-days are a soft constraint the
+          scheduler warns on and can override. */}
+      <div className="mt-3 flex items-center gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Days</span>
+        <div className="flex flex-wrap gap-1" data-testid={`capacity-${cfg.resourceType}-days`}>
+          {WEEKDAY_TOGGLES.map(({ day, label }) => {
+            const on = operatingDays.includes(day);
+            return (
+              <button
+                key={day}
+                type="button"
+                onClick={() => toggleDay(day)}
+                className={`h-6 rounded-md border px-2 text-[11px] font-medium transition-colors ${
+                  on
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                }`}
+                data-testid={`capacity-${cfg.resourceType}-day-${day}`}
+                aria-pressed={on}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
+
+const WEEKDAY_TOGGLES: Array<{ day: number; label: string }> = [
+  { day: 1, label: "Mon" },
+  { day: 2, label: "Tue" },
+  { day: 3, label: "Wed" },
+  { day: 4, label: "Thu" },
+  { day: 5, label: "Fri" },
+  { day: 6, label: "Sat" },
+  { day: 0, label: "Sun" },
+];
 
 function TemporaryOverrides({ facility }: { facility: string }) {
   const { toast } = useToast();
