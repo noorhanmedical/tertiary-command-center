@@ -355,6 +355,7 @@ export async function registerRoutes(
   // both the full UnifiedScheduler and Quick Schedule popover consume.
   (await import("./routes/schedulingCapacity")).registerSchedulingCapacityRoutes(app);
   (await import("./routes/schedulingAvailability")).registerSchedulingAvailabilityRoutes(app);
+  (await import("./routes/schedulingVisit")).registerSchedulingVisitRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);
   registerCooldownRoutes(app);
