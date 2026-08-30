@@ -122,6 +122,11 @@ export * from "./plexusClinicalFindings";
 // Phase 4 — Ancillary Service Registry (centralized service definitions,
 // CPT codes, qualification criteria, cooldown rules). Migration 0058.
 export * from "./ancillaryServiceRegistry";
+// Scheduling Resource Capacity — per-facility equipment machine counts +
+// service durations + ultrasound turnover, plus temporary (date-range)
+// capacity overrides for machine outages. Read by the capacity-aware
+// scheduling availability engine. Migration 0074.
+export * from "./schedulingCapacity";
 // Phase 5 — Note Addenda (traceable addenda for signed clinical documents).
 // Migration 0059.
 export * from "./noteAddenda";
