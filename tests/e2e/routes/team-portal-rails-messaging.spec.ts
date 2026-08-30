@@ -116,3 +116,61 @@ for (const role of ["patientCareSpecialist", "ancillaryCareSpecialist"] as const
     });
   });
 }
+
+// Rail title + layout: title is "Workspace"; the compact calendar sits under
+// the tool groups (no dead gap) and is visible without scrolling at desktop.
+test.describe("Left rail layout", () => {
+  test("title is 'Workspace' and calendar is visible with no dead gap", async ({ page }) => {
+    const { loginAs } = await import("../fixtures/auth");
+    await loginAs(page, "admin");
+    await page.goto(PCS_PORTAL);
+    await revealLeftRail(page);
+    await expect(page.getByTestId("left-rail-title")).toHaveText("Workspace");
+    const metrics = await page.evaluate(() => {
+      const rail = document.querySelector('[data-testid="left-rail-tools-rail"]');
+      const sys = document.querySelector('[data-testid="tool-dock-group-system"]');
+      const cal = document.querySelector('[data-testid="left-rail-compact-calendar"]');
+      const r = rail?.getBoundingClientRect();
+      const s = sys?.getBoundingClientRect();
+      const c = cal?.getBoundingClientRect();
+      return {
+        gap: s && c ? c.top - s.bottom : 9999,
+        calVisible: r && c ? c.bottom <= r.bottom + 1 : false,
+      };
+    });
+    expect(metrics.calVisible).toBe(true);
+    // Gap between System and Calendar is a small fixed gap, not a huge spacer.
+    expect(metrics.gap).toBeLessThan(80);
+  });
+});
+
+// Dock hover hitbox: the dock wakes only over its own footprint, not along the
+// full bottom edge.
+test.describe("GlobalDock hover hitbox", () => {
+  test("dock stays asleep at bottom edges/center-outside, wakes only over the dock", async ({ page }) => {
+    const { loginAs } = await import("../fixtures/auth");
+    await loginAs(page, "admin");
+    await page.goto(PCS_PORTAL);
+    await page.waitForTimeout(800);
+    const dock = page.locator('[data-team-portal-shell] [data-testid="global-dock"]');
+    const size = page.viewportSize()!;
+
+    await page.mouse.move(30, size.height - 6);
+    await page.waitForTimeout(250);
+    expect(await dock.getAttribute("data-expanded")).toBe("false");
+
+    await page.mouse.move(size.width - 30, size.height - 6);
+    await page.waitForTimeout(250);
+    expect(await dock.getAttribute("data-expanded")).toBe("false");
+
+    await page.mouse.move(size.width / 2 - 260, size.height - 6);
+    await page.waitForTimeout(250);
+    expect(await dock.getAttribute("data-expanded")).toBe("false");
+
+    const box = await dock.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.waitForTimeout(250);
+    expect(await dock.getAttribute("data-expanded")).toBe("true");
+  });
+});

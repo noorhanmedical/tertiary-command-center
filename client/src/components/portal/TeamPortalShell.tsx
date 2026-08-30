@@ -3287,7 +3287,7 @@ export function TeamPortalShell({
             <div className="portal-rail-header sticky top-0 z-10 border-b px-3 pb-1.5 pt-2">
               <div className="mb-1.5 flex items-center justify-between px-0.5">
                 <span className="portal-rail-title" data-testid="left-rail-title">
-                  Team Workspace
+                  Workspace
                 </span>
                 <button
                   type="button"
@@ -3361,14 +3361,16 @@ export function TeamPortalShell({
               >
                 {/*
                   Layout contract:
-                  Tools owns the ENTIRE left rail and does NOT scroll. The tool
-                  dock takes the flexible space (min-h-0 flex-1) and the compact
-                  calendar is a fixed block pinned at the bottom (shrink-0), so
-                  it's always visible without scrolling. Fewer groups (messaging
-                  tiles removed) keep everything within the rail height.
+                  Normal top-to-bottom flow — the tool groups and the compact
+                  calendar sit sequentially with consistent gaps. The calendar
+                  is NOT pinned to the bottom (no margin-auto / flex-1 spacer /
+                  absolute bottom), so there is no dead gap above it. At normal
+                  desktop heights everything fits; `overflow-y-auto` on this
+                  single body is a fallback that only engages on genuinely short
+                  viewports.
                 */}
-                <div className={`flex min-h-0 flex-1 flex-col ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
-                <div className="min-h-0 flex-1 overflow-hidden">
+                <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
+                <div>
                 {/* TEAM PORTAL LEFT TOOLS RAIL (Phase 1.6)
                     Shared general tools rail for PCS and ACS. The rail
                     is identical in both portals; only the work-context
@@ -3534,12 +3536,13 @@ export function TeamPortalShell({
                 })()}
                 </div>
 
-                {/* Compact Global Calendar — pinned at the bottom of the rail
-                    (shrink-0) so it's always visible without scrolling.
-                    Clicking a day sets the selected date + opens Quick
-                    Schedule. Hidden in the narrow icon rail (too small). */}
+                {/* Compact Global Calendar — sits directly under the tool
+                    groups in normal flow with a slightly larger (but fixed)
+                    separation from System. NOT pinned to the bottom, so there
+                    is no dead gap above it. Clicking a day sets the selected
+                    date + opens Quick Schedule. Hidden in the narrow icon rail. */}
                 {!leftNarrow && (
-                  <div className="shrink-0">
+                  <div className="mt-2">
                     <LeftRailCompactCalendar
                       selectedDate={selectedDate}
                       facility={facility}
@@ -4253,12 +4256,16 @@ export function TeamPortalShell({
             />
           </div>
         )}
-        <div className="absolute bottom-5 left-1/2 z-50 -translate-x-1/2 w-full max-w-[95vw] overflow-x-auto">
+        {/* Dock wrapper is CENTERED + fit-content (NOT full-width) so the
+            dock's hover hit area matches the pill footprint. A previous
+            `w-full max-w-[95vw]` wrapper made the hover target span 95vw of the
+            bottom edge, waking the dock from anywhere along the bottom. */}
+        <div className="pointer-events-none absolute bottom-5 left-1/2 z-50 w-fit max-w-[95vw] -translate-x-1/2 overflow-x-auto">
           <GlobalDock
             role={workspaceRole ?? role}
             isAdmin={isAdmin}
             position="absolute"
-            className="!bottom-0 !left-1/2 !-translate-x-1/2 !z-auto relative"
+            className="pointer-events-auto relative !bottom-0 !left-auto !z-auto w-fit !translate-x-0"
             activeState={{
               activeAppId: dockActiveApp ?? (novaQuickPanelOpen ? "nova" : null),
               openAppIds: [
