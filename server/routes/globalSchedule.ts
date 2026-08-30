@@ -122,6 +122,46 @@ function sessionUserIdFromGlobalSchedule(req: Request): string | null {
   return sess?.userId ?? null;
 }
 
+// Derive an appointment end from the service's configured resource duration so
+// the capacity engine sees a real occupancy interval. BrainWave/VitalWave use
+// their duration; ultrasound uses studyCount × minutesPerStudy. Returns null
+// when the service maps to no resource pool (leaves endsAt unset — legacy).
+async function deriveEndsAt(args: {
+  serviceType: string;
+  startsAt: Date;
+  facilityName: string | null;
+  ultrasoundStudyCount: number | null;
+}): Promise<Date | null> {
+  const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
+  const cat = getAncillaryCategory(args.serviceType);
+  if (cat === "other") return null;
+  const { createFacilityResolver } = await import("../services/facilityResolver");
+  const { getEffectiveCapacityConfig } = await import(
+    "../repositories/schedulingCapacity.repo"
+  );
+  const { serviceDurationMinutes } = await import(
+    "@shared/scheduling/availabilityEngine"
+  );
+  let clinicId: number | null = null;
+  if (args.facilityName) {
+    try {
+      const { resolve } = await createFacilityResolver();
+      clinicId = resolve(args.facilityName)?.clinicId ?? null;
+    } catch {
+      /* defaults apply */
+    }
+  }
+  const capacity = await getEffectiveCapacityConfig(clinicId);
+  const minutes = serviceDurationMinutes(
+    {
+      resourceType: cat,
+      studyCount: args.ultrasoundStudyCount ?? 1,
+    },
+    capacity,
+  );
+  return new Date(args.startsAt.getTime() + minutes * 60_000);
+}
+
 export function registerGlobalScheduleRoutes(app: Express) {
   // GET /api/global-schedule-events
   // Filters: facilityId, eventType, status, assignedUserId, assignedRole,
@@ -373,9 +413,27 @@ export function registerGlobalScheduleRoutes(app: Express) {
       if (isNaN(startsAt.getTime())) {
         return res.status(400).json({ error: "startsAt is not a valid datetime" });
       }
-      const endsAt = data.endsAt ? new Date(data.endsAt) : null;
+      let endsAt = data.endsAt ? new Date(data.endsAt) : null;
       if (endsAt && isNaN(endsAt.getTime())) {
         return res.status(400).json({ error: "endsAt is not a valid datetime" });
+      }
+      // Capacity engine needs real occupancy intervals. When the client does
+      // not send endsAt, derive it from the service's configured duration
+      // (ultrasound = studyCount × minutesPerStudy) so the appointment blocks
+      // its machine for the correct span. Never overrides a client-sent end.
+      if (!endsAt) {
+        try {
+          endsAt = await deriveEndsAt({
+            serviceType: data.serviceType,
+            startsAt,
+            facilityName: data.facilityId ?? null,
+            ultrasoundStudyCount:
+              (data.metadata as { ultrasoundStudyCount?: number } | undefined)
+                ?.ultrasoundStudyCount ?? null,
+          });
+        } catch {
+          /* fall through — endsAt stays null (legacy behavior) */
+        }
       }
 
       // Resolve patient context — must be able to identify the case
