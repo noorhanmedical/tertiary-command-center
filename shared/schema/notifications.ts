@@ -71,7 +71,13 @@ export const notifications = pgTable("notifications", {
   index("idx_notifications_recipient_unread").on(table.recipientUserId, table.readAt),
   index("idx_notifications_type").on(table.type),
   index("idx_notifications_created").on(table.createdAt),
-  uniqueIndex("uq_notifications_dedupe").on(table.recipientUserId, table.dedupeKey),
+  // PARTIAL unique — at most one live row per (recipient, dedupeKey) only when
+  // dedupeKey IS NOT NULL (NULL never dedupes). MUST stay partial so it matches
+  // both migration 0073 and the repo's onConflictDoUpdate targetWhere; a full
+  // index would not resolve that partial-index upsert on a fresh push deploy.
+  uniqueIndex("uq_notifications_dedupe")
+    .on(table.recipientUserId, table.dedupeKey)
+    .where(sql`dedupe_key IS NOT NULL`),
 ]);
 
 export const insertNotificationSchema = createInsertSchema(notifications)
