@@ -1366,10 +1366,11 @@ export function TeamPortalShell({
     updateWidget: updatePlaygroundWidget,
     removeWidget: removePlaygroundWidget,
   } = useWorkspaceWidgets(currentUser?.username ?? "you", currentUserId ?? null);
-  // ── Task #740: iMessage-style Messaging (frontend mock only) ─────
-  // A single source of truth for the inbox panel + floating window. No
-  // backend — the real Twilio/direct/team messaging still lives in the
-  // Communication Tray under the Tools tab and is untouched.
+  // ── Task #740: iMessage-style Messaging (REAL data since Phase 1) ─────
+  // A single source of truth for the inbox panel + floating window, backed by
+  // the canonical /api/messaging/* model via useTeamMessages below (the
+  // original frontend-only mock state was replaced). The Communication Tray
+  // under the Tools tab uses the SAME real messaging backend.
   // Which top-level tab the left panel shows: the Messaging inbox or the
   // Tools dock (calendar + tray + tool launchers). K7 — seeded from the
   // persisted defaultLeftTab pref (default "tools") once prefs hydrate;
