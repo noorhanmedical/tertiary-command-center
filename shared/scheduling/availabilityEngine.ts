@@ -55,6 +55,11 @@ export type ServiceRequest = {
 
 export type CapacityByResource = Record<ResourceType, ResourceCapacityConfig>;
 
+// Why a slot is not RECOMMENDED. All are SOFT — an authorized user may
+// override. (Hard blocks — bad identity/service/time/auth — are enforced at
+// the write layer, not here.)
+export type SoftConstraint = "full" | "off_day" | "outage";
+
 export type SlotAvailability = {
   /** "HH:MM" 24h. */
   time: string;
@@ -63,17 +68,28 @@ export type SlotAvailability = {
   available: number;
   /** Total machines in the pool for the requested service. */
   total: number;
-  /** True when the block would fit (available >= 1 and within the day). */
+  /** True when the block fits capacity AND falls on an operating day. */
   fits: boolean;
+  /**
+   * Capacity-only fit (ignores operating day). Distinguishes "the machine is
+   * free but this isn't a normal service day" (off_day) from "full".
+   */
+  capacityFits: boolean;
+  /** The soft constraint blocking a recommendation, if any. */
+  constraint?: SoftConstraint;
   /** Present when it does not fit — the human reason. */
   reason?: string;
 };
 
 export type Conflict = {
   resourceType: ResourceType;
+  /** The soft constraint kind (full / off_day / outage). */
+  constraint: SoftConstraint;
   message: string;
-  /** Earliest start (minutes) the requested block WOULD fit, if any. */
+  /** Earliest capacity opening (minutes) the same day, if any. */
   nextAvailableMinutes: number | null;
+  /** Next date the resource is normally offered (YYYY-MM-DD), if relevant. */
+  nextEligibleDay?: string | null;
 };
 
 export type SuggestionStep = {
@@ -106,6 +122,66 @@ export function minutesToHHMM(m: number): string {
 export function hhmmToMinutes(t: string): number {
   const [h, m] = t.split(":").map((x) => parseInt(x, 10));
   return (h || 0) * 60 + (m || 0);
+}
+
+// ─── Operating-day helpers ──────────────────────────────────────────────────
+
+/** Day-of-week (0=Sun … 6=Sat) for a YYYY-MM-DD in local time. */
+export function weekdayOf(isoDate: string): number {
+  const d = new Date(`${isoDate}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? -1 : d.getDay();
+}
+
+/** Add n days to a YYYY-MM-DD, returning YYYY-MM-DD. */
+export function addDaysIso(isoDate: string, n: number): string {
+  const d = new Date(`${isoDate}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Is the resource NORMALLY offered on this date's weekday? */
+export function isOperatingDay(
+  resourceType: ResourceType,
+  isoDate: string,
+  capacity: CapacityByResource,
+): boolean {
+  const days = capacity[resourceType].operatingDays ?? [];
+  return days.includes(weekdayOf(isoDate));
+}
+
+/**
+ * The next date (YYYY-MM-DD, searching FORWARD from `fromIso` inclusive) that
+ * is an operating day for ALL the given resources — i.e. the next day the whole
+ * visit could normally happen. Returns null if none within `horizonDays`.
+ * "Next eligible operating day" — never blindly tomorrow.
+ */
+export function nextEligibleOperatingDay(
+  resourceTypes: ResourceType[],
+  fromIso: string,
+  capacity: CapacityByResource,
+  opts: { inclusive?: boolean; horizonDays?: number } = {},
+): string | null {
+  const horizon = opts.horizonDays ?? 60;
+  const start = opts.inclusive ? 0 : 1;
+  for (let i = start; i <= horizon; i++) {
+    const iso = addDaysIso(fromIso, i);
+    if (resourceTypes.every((rt) => isOperatingDay(rt, iso, capacity))) return iso;
+  }
+  return null;
+}
+
+/** Per-resource next eligible operating day (used when services split). */
+export function nextEligibleDayPerResource(
+  resourceTypes: ResourceType[],
+  fromIso: string,
+  capacity: CapacityByResource,
+  opts: { inclusive?: boolean; horizonDays?: number } = {},
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const rt of resourceTypes) {
+    out[rt] = nextEligibleOperatingDay([rt], fromIso, capacity, opts);
+  }
+  return out;
 }
 
 /**
@@ -198,6 +274,8 @@ export type ComputeSlotsInput = {
   capacity: CapacityByResource;
   existing: ExistingOccupancy[];
   candidatePatientKey: string;
+  /** YYYY-MM-DD of the slots. When set, off-day classification applies. */
+  isoDate?: string;
   dayStartMinutes?: number;
   dayEndMinutes?: number;
   stepMinutes?: number;
@@ -215,12 +293,16 @@ export function computeSlots(input: ComputeSlotsInput): SlotAvailability[] {
     capacity,
     existing,
     candidatePatientKey,
+    isoDate,
     dayStartMinutes = SCHEDULING_DAY_START_MINUTES,
     dayEndMinutes = SCHEDULING_DAY_END_MINUTES,
     stepMinutes = SCHEDULING_SLOT_STEP_MINUTES,
   } = input;
   const duration = serviceDurationMinutes(service, capacity);
   const total = capacity[service.resourceType].machineCount;
+  // Off-day is a SOFT constraint evaluated once per day (not per slot).
+  const onOperatingDay =
+    isoDate == null ? true : isOperatingDay(service.resourceType, isoDate, capacity);
   const out: SlotAvailability[] = [];
   for (let t = dayStartMinutes; t + duration <= dayEndMinutes; t += stepMinutes) {
     const free = machinesFreeAt(
@@ -231,23 +313,45 @@ export function computeSlots(input: ComputeSlotsInput): SlotAvailability[] {
       existing,
       candidatePatientKey,
     );
-    const fits = free >= 1 && total >= 1;
+    const capacityFits = free >= 1 && total >= 1;
+    // "outage" = configured machines exist but temporary override zeroed them
+    // for the day; "full" = machines exist but all occupied at this time.
+    let constraint: SoftConstraint | undefined;
+    if (total < 1) constraint = "outage";
+    else if (!capacityFits) constraint = "full";
+    else if (!onOperatingDay) constraint = "off_day";
+    const fits = capacityFits && onOperatingDay;
     out.push({
       time: minutesToHHMM(t),
       startMinutes: t,
       available: Math.max(0, free),
       total,
       fits,
-      reason: total < 1 ? "No machines configured" : !fits ? "FULL" : undefined,
+      capacityFits,
+      constraint,
+      reason:
+        constraint === "outage"
+          ? "Equipment unavailable"
+          : constraint === "full"
+            ? "FULL"
+            : constraint === "off_day"
+              ? "Not normally scheduled this day"
+              : undefined,
     });
   }
   return out;
 }
 
-/** The earliest start (minutes) at which the service block fits, or null. */
-export function earliestFit(input: ComputeSlotsInput): number | null {
+/**
+ * The earliest start (minutes) at which the service block fits, or null.
+ * By default requires a full recommendation (capacity + operating day); pass
+ * `capacityOnly` to find the earliest capacity opening regardless of day.
+ */
+export function earliestFit(
+  input: ComputeSlotsInput & { capacityOnly?: boolean },
+): number | null {
   const slots = computeSlots(input);
-  const hit = slots.find((s) => s.fits);
+  const hit = slots.find((s) => (input.capacityOnly ? s.capacityFits : s.fits));
   return hit ? hit.startMinutes : null;
 }
 
@@ -359,6 +463,207 @@ function buildSequence(
   };
 }
 
+// ─── Multi-service VISIT planning (one-visit vs split-visit) ────────────────
+
+export type VisitPlanStep = {
+  resourceType: ResourceType;
+  studyCount?: number;
+  isoDate: string;
+  startMinutes: number;
+  endMinutes: number;
+  time: string;
+  serviceLabel: string;
+  /** Off the resource's normal operating day (would need an override). */
+  offDay: boolean;
+};
+
+export type VisitPlan = {
+  kind: "one_visit" | "split_visit";
+  steps: VisitPlanStep[];
+  /** Distinct dates the plan spans. */
+  dates: string[];
+  /** Overall earliest start of the plan. */
+  isoDate: string;
+  startMinutes: number;
+  /** True when any step lands on an off-day (needs an override to keep as-is). */
+  requiresOverride: boolean;
+  reason: string;
+  recommended: boolean;
+};
+
+export type PlanVisitInput = {
+  services: ServiceRequest[];
+  capacity: CapacityByResource;
+  /** Existing occupancy keyed by date (YYYY-MM-DD → blocks that day). */
+  existingByDate: Record<string, ExistingOccupancy[]>;
+  candidatePatientKey: string;
+  /** The date the user is currently looking at. */
+  isoDate: string;
+  dayStartMinutes?: number;
+  dayEndMinutes?: number;
+  stepMinutes?: number;
+  horizonDays?: number;
+};
+
+/**
+ * Plan a multi-service visit. Prefers completing ALL selected services in ONE
+ * visit on a single operating day; when that isn't possible on the target day
+ * (or an operating day at all within the horizon), returns a split-visit plan
+ * grouping services onto their respective next eligible operating days.
+ *
+ * Deterministic. Placement within a day reuses the same sequential logic as
+ * suggestSequences (a patient occupies one machine at a time).
+ */
+export function planVisit(input: PlanVisitInput): {
+  oneVisit: VisitPlan | null;
+  splitVisit: VisitPlan | null;
+} {
+  const {
+    services,
+    capacity,
+    existingByDate,
+    candidatePatientKey,
+    isoDate,
+    horizonDays = 60,
+  } = input;
+  const resourceTypes = Array.from(new Set(services.map((s) => s.resourceType)));
+
+  // ── One-visit: the earliest single operating day (>= target) where every
+  // selected service is offered AND the whole sequence fits. ──
+  let oneVisit: VisitPlan | null = null;
+  for (let i = 0; i <= horizonDays; i++) {
+    const day = addDaysIso(isoDate, i);
+    if (!resourceTypes.every((rt) => isOperatingDay(rt, day, capacity))) continue;
+    const seq = placeSequentialOnDay(services, day, existingByDate[day] ?? [], input);
+    if (seq) {
+      oneVisit = {
+        kind: "one_visit",
+        steps: seq,
+        dates: [day],
+        isoDate: day,
+        startMinutes: Math.min(...seq.map((s) => s.startMinutes)),
+        requiresOverride: false,
+        reason:
+          i === 0
+            ? `All ${services.length} services fit in one visit on ${day}.`
+            : `Earliest one-visit day where every selected service is offered: ${day}.`,
+        recommended: false,
+      };
+      break;
+    }
+  }
+
+  // ── Split-visit: each service on its own next eligible operating day. Only
+  // meaningful when services have DIFFERENT operating-day sets (else one-visit
+  // already covers it). ──
+  let splitVisit: VisitPlan | null = null;
+  const perResourceDay = nextEligibleDayPerResource(resourceTypes, isoDate, capacity, {
+    inclusive: true,
+    horizonDays,
+  });
+  const distinctDays = new Set(Object.values(perResourceDay).filter(Boolean) as string[]);
+  if (distinctDays.size > 1) {
+    const steps: VisitPlanStep[] = [];
+    // Group services by their resource's eligible day, placing each group.
+    const byDay: Record<string, ServiceRequest[]> = {};
+    for (const svc of services) {
+      const day = perResourceDay[svc.resourceType];
+      if (!day) continue;
+      (byDay[day] ??= []).push(svc);
+    }
+    let ok = true;
+    for (const [day, group] of Object.entries(byDay)) {
+      const seq = placeSequentialOnDay(group, day, existingByDate[day] ?? [], input);
+      if (!seq) {
+        ok = false;
+        break;
+      }
+      steps.push(...seq);
+    }
+    if (ok && steps.length > 0) {
+      const dates = Array.from(new Set(steps.map((s) => s.isoDate))).sort();
+      steps.sort((a, b) =>
+        a.isoDate === b.isoDate ? a.startMinutes - b.startMinutes : a.isoDate < b.isoDate ? -1 : 1,
+      );
+      splitVisit = {
+        kind: "split_visit",
+        steps,
+        dates,
+        isoDate: dates[0],
+        startMinutes: steps[0].startMinutes,
+        requiresOverride: false,
+        reason: `Services split across their normal days: ${dates.join(", ")}.`,
+        recommended: false,
+      };
+    }
+  }
+
+  // Prefer a one-visit completion when available (spec §25).
+  if (oneVisit) oneVisit.recommended = true;
+  else if (splitVisit) splitVisit.recommended = true;
+  return { oneVisit, splitVisit };
+}
+
+/**
+ * Place a group of services sequentially on ONE day, returning ordered visit
+ * steps or null if any doesn't fit that day. Off-day steps are allowed here
+ * (flagged offDay) so callers can offer "override to keep on this day"; the
+ * planVisit one-visit path only calls this on operating days.
+ */
+export function placeSequentialOnDay(
+  services: ServiceRequest[],
+  isoDate: string,
+  existing: ExistingOccupancy[],
+  cfg: {
+    capacity: CapacityByResource;
+    candidatePatientKey: string;
+    dayStartMinutes?: number;
+    dayEndMinutes?: number;
+    stepMinutes?: number;
+  },
+): VisitPlanStep[] | null {
+  const {
+    capacity,
+    candidatePatientKey,
+    dayStartMinutes = SCHEDULING_DAY_START_MINUTES,
+    dayEndMinutes = SCHEDULING_DAY_END_MINUTES,
+    stepMinutes = SCHEDULING_SLOT_STEP_MINUTES,
+  } = cfg;
+  const working = existing.slice();
+  const steps: VisitPlanStep[] = [];
+  let cursor = dayStartMinutes;
+  for (const svc of services) {
+    const duration = serviceDurationMinutes(svc, capacity);
+    let placed: number | null = null;
+    for (let t = Math.max(cursor, dayStartMinutes); t + duration <= dayEndMinutes; t += stepMinutes) {
+      if (machinesFreeAt(svc.resourceType, t, duration, capacity, working, candidatePatientKey) >= 1) {
+        placed = t;
+        break;
+      }
+    }
+    if (placed == null) return null;
+    steps.push({
+      resourceType: svc.resourceType,
+      studyCount: svc.studyCount,
+      isoDate,
+      startMinutes: placed,
+      endMinutes: placed + duration,
+      time: minutesToHHMM(placed),
+      serviceLabel: labelForService(svc, capacity),
+      offDay: !isOperatingDay(svc.resourceType, isoDate, capacity),
+    });
+    working.push({
+      resourceType: svc.resourceType,
+      startMinutes: placed,
+      endMinutes: placed + duration,
+      turnoverMinutes: capacity[svc.resourceType].turnoverMinutes,
+      patientKey: candidatePatientKey,
+    });
+    cursor = placed + duration;
+  }
+  return steps;
+}
+
 function labelForService(svc: ServiceRequest, capacity: CapacityByResource): string {
   if (svc.resourceType === "ultrasound") {
     const count = Math.max(1, svc.studyCount ?? 1);
@@ -393,7 +698,10 @@ export function conflictForRequest(
   capacity: CapacityByResource,
   existing: ExistingOccupancy[],
   candidatePatientKey: string,
+  isoDate?: string,
 ): Conflict | null {
+  const label = RESOURCE_LABELS[service.resourceType];
+  const total = capacity[service.resourceType].machineCount;
   const duration = serviceDurationMinutes(service, capacity);
   const free = machinesFreeAt(
     service.resourceType,
@@ -403,16 +711,46 @@ export function conflictForRequest(
     existing,
     candidatePatientKey,
   );
-  if (free >= 1) return null;
-  const next = earliestFit({ service, capacity, existing, candidatePatientKey });
-  const label = RESOURCE_LABELS[service.resourceType];
+  const onOperatingDay =
+    isoDate == null ? true : isOperatingDay(service.resourceType, isoDate, capacity);
+  const capacityOk = free >= 1 && total >= 1;
+
+  // No conflict only when capacity is available AND it's a normal service day.
+  if (capacityOk && onOperatingDay) return null;
+
+  const nextEligibleDay =
+    isoDate != null && !onOperatingDay
+      ? nextEligibleOperatingDay([service.resourceType], isoDate, capacity, { inclusive: false })
+      : null;
+
+  if (total < 1) {
+    return {
+      resourceType: service.resourceType,
+      constraint: "outage",
+      message: `${label} is unavailable (equipment outage).`,
+      nextAvailableMinutes: null,
+      nextEligibleDay,
+    };
+  }
+  if (!onOperatingDay) {
+    return {
+      resourceType: service.resourceType,
+      constraint: "off_day",
+      message: `${label} is not normally scheduled on this day.`,
+      // On an off-day the same-day capacity opening is not a recommendation;
+      // point at the next normal day instead.
+      nextAvailableMinutes: null,
+      nextEligibleDay,
+    };
+  }
+  // Capacity full on a normal day → earliest same-day capacity opening.
+  const next = earliestFit({ service, capacity, existing, candidatePatientKey, isoDate, capacityOnly: true });
   return {
     resourceType: service.resourceType,
-    message:
-      capacity[service.resourceType].machineCount < 1
-        ? `${label} has no machines available.`
-        : `${label} capacity is full at ${to12h(minutesToHHMM(requestedStartMinutes))}.`,
+    constraint: "full",
+    message: `${label} capacity is full at ${to12h(minutesToHHMM(requestedStartMinutes))}.`,
     nextAvailableMinutes: next,
+    nextEligibleDay: null,
   };
 }
 

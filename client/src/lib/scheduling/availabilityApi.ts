@@ -7,19 +7,55 @@ export type ResourceType = "brainwave" | "vitalwave" | "ultrasound";
 
 export type ServiceRequest = { resourceType: ResourceType; studyCount?: number };
 
+export type SoftConstraint = "full" | "off_day" | "outage";
+
 export type SlotAvailability = {
   time: string;
   startMinutes: number;
   available: number;
   total: number;
   fits: boolean;
+  capacityFits: boolean;
+  constraint?: SoftConstraint;
   reason?: string;
 };
 
 export type Conflict = {
   resourceType: ResourceType;
+  constraint: SoftConstraint;
   message: string;
   nextAvailableMinutes: number | null;
+  nextEligibleDay?: string | null;
+};
+
+export type VisitPlanStep = {
+  resourceType: ResourceType;
+  studyCount?: number;
+  isoDate: string;
+  startMinutes: number;
+  endMinutes: number;
+  time: string;
+  serviceLabel: string;
+  offDay: boolean;
+};
+
+export type VisitPlan = {
+  kind: "one_visit" | "split_visit";
+  steps: VisitPlanStep[];
+  dates: string[];
+  isoDate: string;
+  startMinutes: number;
+  requiresOverride: boolean;
+  reason: string;
+  recommended: boolean;
+};
+
+export type OperatingDayInfo = {
+  resourceType: ResourceType;
+  label: string;
+  days: number[];
+  isOperatingToday: boolean;
+  nextEligibleDay: string | null;
 };
 
 export type SuggestionStep = {
@@ -61,6 +97,7 @@ export type AvailabilityResult = {
       durationMinutes: number;
       minutesPerStudy: number | null;
       turnoverMinutes: number;
+      operatingDays: number[];
     }
   >;
   durations: Partial<Record<ResourceType, number>>;
@@ -69,6 +106,8 @@ export type AvailabilityResult = {
   suggestions: Suggestion[];
   agenda: AgendaItem[];
   equipment: EquipmentItem[];
+  operatingDays: OperatingDayInfo[];
+  visit: { oneVisit: VisitPlan | null; splitVisit: VisitPlan | null };
 };
 
 export async function fetchAvailability(body: {

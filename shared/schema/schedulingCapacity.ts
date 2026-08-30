@@ -72,6 +72,14 @@ export const facilityResourceCapacity = pgTable(
      * used for ultrasound; defaults to 0 for machines without turnover.
      */
     turnoverMinutes: integer("turnover_minutes").notNull().default(0),
+    /**
+     * Weekdays this resource is NORMALLY offered at the facility, as an array
+     * of day numbers (0=Sun … 6=Sat). Off-days are a SOFT constraint: the
+     * scheduler warns and offers the next eligible operating day, but an
+     * authorized user may override. Null → fall back to the code default
+     * (Mon–Fri). Empty array → never normally offered (still overrideable).
+     */
+    operatingDays: jsonb("operating_days"),
     metadata: jsonb("metadata").default({}),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -138,6 +146,10 @@ export const insertFacilityResourceCapacitySchema = createInsertSchema(
       .nullable()
       .optional(),
     turnoverMinutes: z.number().int().min(0, "Turnover cannot be negative"),
+    operatingDays: z
+      .array(z.number().int().min(0).max(6))
+      .nullable()
+      .optional(),
   });
 
 export const insertTemporaryCapacityOverrideSchema = createInsertSchema(

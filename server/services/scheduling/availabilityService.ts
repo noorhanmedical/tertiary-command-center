@@ -21,12 +21,16 @@ import {
   serviceDurationMinutes,
   hhmmToMinutes,
   minutesToHHMM,
+  isOperatingDay,
+  nextEligibleOperatingDay,
+  planVisit,
   type ExistingOccupancy,
   type ServiceRequest,
   type CapacityByResource,
   type SlotAvailability,
   type Suggestion,
   type Conflict,
+  type VisitPlan,
 } from "@shared/scheduling/availabilityEngine";
 
 const ANCILLARY_EVENT_TYPES = new Set([
@@ -178,6 +182,22 @@ export type AvailabilityResult = {
     total: number;
     label: string;
   }>;
+  /** Per-resource operating-day info for the target date. */
+  operatingDays: Array<{
+    resourceType: ResourceType;
+    label: string;
+    /** Configured weekday numbers this resource is normally offered. */
+    days: number[];
+    /** Is the TARGET date an operating day for this resource? */
+    isOperatingToday: boolean;
+    /** Next date (YYYY-MM-DD) this resource is normally offered, if not today. */
+    nextEligibleDay: string | null;
+  }>;
+  /** Multi-service visit plans (prefer one visit; split when days differ). */
+  visit: {
+    oneVisit: VisitPlan | null;
+    splitVisit: VisitPlan | null;
+  };
 };
 
 export async function computeAvailability(params: {
@@ -202,7 +222,7 @@ export async function computeAvailability(params: {
   for (const s of services) durations[s.resourceType] = serviceDurationMinutes(s, capacity);
 
   const slots = primary
-    ? computeSlots({ service: primary, capacity, existing, candidatePatientKey })
+    ? computeSlots({ service: primary, capacity, existing, candidatePatientKey, isoDate: params.isoDate })
     : [];
 
   let conflict: Conflict | null = null;
@@ -213,6 +233,7 @@ export async function computeAvailability(params: {
       capacity,
       existing,
       candidatePatientKey,
+      params.isoDate,
     );
   }
 
@@ -226,6 +247,39 @@ export async function computeAvailability(params: {
           preferredStartMinutes: params.preferredTime ? hhmmToMinutes(params.preferredTime) : null,
         })
       : [];
+
+  // Per-resource operating-day info for the target date.
+  const operatingDays = (["brainwave", "vitalwave", "ultrasound"] as ResourceType[]).map((rt) => ({
+    resourceType: rt,
+    label: rt === "brainwave" ? "BrainWave" : rt === "vitalwave" ? "VitalWave" : "Ultrasound",
+    days: capacity[rt].operatingDays,
+    isOperatingToday: isOperatingDay(rt, params.isoDate, capacity),
+    nextEligibleDay: isOperatingDay(rt, params.isoDate, capacity)
+      ? null
+      : nextEligibleOperatingDay([rt], params.isoDate, capacity, { inclusive: false }),
+  }));
+
+  // Multi-service visit planning (one-visit vs split-visit). Loads occupancy
+  // for candidate operating days so cross-day placement is capacity-accurate.
+  let visit: { oneVisit: VisitPlan | null; splitVisit: VisitPlan | null } = {
+    oneVisit: null,
+    splitVisit: null,
+  };
+  if (services.length > 0) {
+    const existingByDate = await loadOccupancyForCandidateDays({
+      facilityName,
+      capacity,
+      services,
+      isoDate: params.isoDate,
+    });
+    visit = planVisit({
+      services,
+      capacity,
+      existingByDate,
+      candidatePatientKey,
+      isoDate: params.isoDate,
+    });
+  }
 
   const agenda = existing
     .slice()
@@ -257,5 +311,43 @@ export async function computeAvailability(params: {
     suggestions,
     agenda,
     equipment,
+    operatingDays,
+    visit,
   };
+}
+
+/**
+ * Load existing occupancy for the candidate days the visit planner may place
+ * on: the target date plus each resource's next few eligible operating days.
+ * Keeps the planner's cross-day capacity checks accurate without scanning the
+ * whole calendar.
+ */
+async function loadOccupancyForCandidateDays(params: {
+  facilityName: string | null;
+  capacity: CapacityByResource;
+  services: ServiceRequest[];
+  isoDate: string;
+}): Promise<Record<string, ExistingOccupancy[]>> {
+  const resourceTypes = Array.from(new Set(params.services.map((s) => s.resourceType)));
+  const candidateDates = new Set<string>([params.isoDate]);
+  // One-visit candidate: earliest day all services share.
+  const allDay = nextEligibleOperatingDay(resourceTypes, params.isoDate, params.capacity, {
+    inclusive: true,
+  });
+  if (allDay) candidateDates.add(allDay);
+  // Split-visit candidates: each resource's own next eligible day.
+  for (const rt of resourceTypes) {
+    const d = nextEligibleOperatingDay([rt], params.isoDate, params.capacity, { inclusive: true });
+    if (d) candidateDates.add(d);
+  }
+  const out: Record<string, ExistingOccupancy[]> = {};
+  for (const iso of candidateDates) {
+    // eslint-disable-next-line no-await-in-loop
+    out[iso] = await loadExistingOccupancy({
+      facilityName: params.facilityName,
+      isoDate: iso,
+      capacity: params.capacity,
+    });
+  }
+  return out;
 }

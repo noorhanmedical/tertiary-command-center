@@ -52,12 +52,20 @@ export async function getEffectiveCapacityConfig(
   for (const r of rows) {
     if (!RESOURCE_TYPES.includes(r.resourceType as ResourceType)) continue;
     const rt = r.resourceType as ResourceType;
+    const storedDays = Array.isArray(r.operatingDays)
+      ? (r.operatingDays as unknown[]).filter(
+          (d): d is number => typeof d === "number" && d >= 0 && d <= 6,
+        )
+      : null;
     out[rt] = {
       resourceType: rt,
       machineCount: r.machineCount,
       durationMinutes: r.durationMinutes,
       minutesPerStudy: r.minutesPerStudy ?? DEFAULT_RESOURCE_CAPACITY[rt].minutesPerStudy,
       turnoverMinutes: r.turnoverMinutes,
+      // Null stored days → fall back to the code default; an explicit empty
+      // array means "never normally offered" and is preserved.
+      operatingDays: storedDays ?? DEFAULT_RESOURCE_CAPACITY[rt].operatingDays,
     };
   }
   return out;
@@ -86,6 +94,11 @@ export async function upsertFacilityCapacity(
         durationMinutes: input.durationMinutes,
         minutesPerStudy: input.minutesPerStudy ?? null,
         turnoverMinutes: input.turnoverMinutes,
+        // Only overwrite operating days when the caller supplied them, so a
+        // capacity-only save (e.g. machine count) never wipes the schedule.
+        ...(input.operatingDays !== undefined
+          ? { operatingDays: input.operatingDays ?? null }
+          : {}),
         metadata: input.metadata ?? {},
         updatedAt: new Date(),
       })

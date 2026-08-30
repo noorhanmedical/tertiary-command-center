@@ -24,7 +24,18 @@ export type ResourceCapacityConfig = {
   minutesPerStudy: number | null;
   /** Rooming buffer between DIFFERENT patients on the same machine. */
   turnoverMinutes: number;
+  /**
+   * Weekdays this resource is NORMALLY offered (0=Sun … 6=Sat). A SOFT
+   * constraint: off-days warn + suggest the next eligible operating day, but
+   * an authorized user may override.
+   */
+  operatingDays: number[];
 };
+
+/** Mon–Fri. */
+export const WEEKDAYS_MON_FRI = [1, 2, 3, 4, 5];
+/** The system default operating days when a facility hasn't configured any. */
+export const DEFAULT_OPERATING_DAYS = WEEKDAYS_MON_FRI;
 
 export const DEFAULT_RESOURCE_CAPACITY: Record<
   ResourceType,
@@ -36,6 +47,7 @@ export const DEFAULT_RESOURCE_CAPACITY: Record<
     durationMinutes: 45,
     minutesPerStudy: null,
     turnoverMinutes: 0,
+    operatingDays: [1, 2, 3, 4, 5],
   },
   vitalwave: {
     resourceType: "vitalwave",
@@ -43,6 +55,7 @@ export const DEFAULT_RESOURCE_CAPACITY: Record<
     durationMinutes: 30,
     minutesPerStudy: null,
     turnoverMinutes: 0,
+    operatingDays: [1, 2, 3, 4, 5],
   },
   ultrasound: {
     resourceType: "ultrasound",
@@ -50,6 +63,8 @@ export const DEFAULT_RESOURCE_CAPACITY: Record<
     durationMinutes: 15,
     minutesPerStudy: 15,
     turnoverMinutes: 5,
+    // Ultrasound is a specialty day at Taylor — Tue/Thu by default.
+    operatingDays: [2, 4],
   },
 };
 
