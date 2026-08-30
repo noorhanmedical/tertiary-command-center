@@ -1,33 +1,30 @@
-// Schedule workspace tab — renders the existing scheduling/calendar surface.
+// Schedule workspace tab — renders the ONE unified scheduler.
+//
+// Both the "schedule" and "calendar" workspace types render this. The entry
+// CONTEXT (patient / facility / service preselected or not) flows in via the
+// workspace descriptor; the UI is always the same UnifiedScheduler.
 
 import type { WorkspaceRenderProps } from "../types";
-import { SchedulingWorkspace } from "@/components/portal/SchedulingWorkspace";
-import type { CallCaseContext } from "@/components/portal/caseWorkspace";
+import { UnifiedScheduler } from "@/components/portal/scheduler/UnifiedScheduler";
 
 export function ScheduleWorkspaceTab({ workspace }: WorkspaceRenderProps) {
-  // Build a minimal context for the scheduling workspace.
-  const ctx: CallCaseContext = {
-    patientScreeningId: workspace.patientScreeningId ?? null,
-    executionCaseId: workspace.executionCaseId ?? null,
-    patientName: workspace.title ?? "Schedule",
-    patientDob: null,
-    facilityId: (workspace.facilityId as string) ?? null,
-    callReason: "",
-    targetServices: workspace.serviceKey ? [workspace.serviceKey] : [],
-    ancillaryCaseId: workspace.ancillaryCaseId ?? null,
-    serviceType: workspace.serviceKey ?? null,
-    sourcePortal: "PCS",
-    engagementStatus: null,
-    lifecycleStatus: null,
-  };
+  const hasPatientContext =
+    workspace.patientScreeningId != null || workspace.executionCaseId != null;
 
   return (
-    <div className="h-full overflow-auto" data-testid={`workspace-schedule-${workspace.id}`}>
-      <SchedulingWorkspace
-        ctx={ctx}
-        facility={(workspace.facilityId as string) ?? null}
-        selectedDate={new Date().toISOString().slice(0, 10)}
-        onClose={() => {}}
+    <div className="h-full min-h-0" data-testid={`workspace-schedule-${workspace.id}`}>
+      <UnifiedScheduler
+        context={{
+          patientScreeningId: workspace.patientScreeningId ?? null,
+          executionCaseId: workspace.executionCaseId ?? null,
+          // Only treat the title as a patient name when there is real patient
+          // context; a generic "Schedule"/"Calendar" tab must start empty.
+          patientName: hasPatientContext ? (workspace.title ?? null) : null,
+          patientDob: (workspace.patientDob as string | undefined) ?? null,
+          facility: (workspace.facilityId as string) ?? null,
+          serviceType: workspace.serviceKey ?? null,
+          initialDate: (workspace.initialDate as string | undefined) ?? null,
+        }}
       />
     </div>
   );
