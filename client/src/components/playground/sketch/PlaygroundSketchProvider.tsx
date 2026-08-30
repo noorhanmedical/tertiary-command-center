@@ -1,17 +1,10 @@
-// PlaygroundSketchProvider — signals the SketchUI visual environment.
+// PlaygroundSketchProvider — visual-environment signal.
 //
-// Anything rendered inside the Playground canvas lives under this provider.
-// Shared Plexus components can read `useSketchEnv()` to switch to their
-// playground-sketch variant WITHOUT duplicating application logic:
-//
-//   const { isSketch } = useSketchEnv();
-//   return isSketch ? <SketchButton .../> : <PlexusButton .../>;
-//
-// Detection is context-based on purpose — never sniff CSS selectors or the
-// DOM to decide visual language.
-//
-// The provider also injects the sketch CSS custom properties onto its root
-// wrapper so non-canvas primitives can reference the pencil palette.
+// The SketchUI ("digital notebook") visual language has been REMOVED
+// platform-wide. This provider is kept for API compatibility (it still injects
+// the palette CSS custom properties and satisfies useSketchEnv() consumers),
+// but `isSketch` is now ALWAYS false — every shared component renders its
+// normal, clean variant. The `enabled` prop is accepted but ignored.
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { SKETCH_CSS_VARS } from "./sketchTokens";
@@ -22,40 +15,43 @@ export type PlaygroundEnvironment = "playground" | "shell";
 export interface SketchEnvValue {
   environment: PlaygroundEnvironment;
   visualLanguage: VisualLanguage;
-  /** Convenience: true when the SketchUI language is active. */
+  /** Convenience: true when the SketchUI language is active. Always false now. */
   isSketch: boolean;
 }
 
 const SketchEnvContext = createContext<SketchEnvValue | null>(null);
 
+/**
+ * Deprecated no-op kept for API compatibility. SketchUI is removed globally, so
+ * there is nothing to disable. Renders its children unchanged.
+ */
+export function SketchDisabledForPreview({ children }: { children: ReactNode }) {
+  return <>{children}</>;
+}
+
 interface PlaygroundSketchProviderProps {
   children: ReactNode;
-  /** Escape hatch to disable sketch language (defaults to on inside Playground). */
+  /** Accepted for API compatibility; ignored (SketchUI is removed). */
   enabled?: boolean;
   className?: string;
 }
 
 export function PlaygroundSketchProvider({
   children,
-  enabled = true,
   className,
 }: PlaygroundSketchProviderProps) {
   const value = useMemo<SketchEnvValue>(
     () => ({
       environment: "playground",
-      visualLanguage: enabled ? "sketch" : "glass",
-      isSketch: enabled,
+      visualLanguage: "glass",
+      isSketch: false,
     }),
-    [enabled],
+    [],
   );
 
   return (
     <SketchEnvContext.Provider value={value}>
-      <div
-        data-playground-sketch={enabled ? "true" : "false"}
-        className={className}
-        style={SKETCH_CSS_VARS as React.CSSProperties}
-      >
+      <div className={className} style={SKETCH_CSS_VARS as React.CSSProperties}>
         {children}
       </div>
     </SketchEnvContext.Provider>
@@ -63,9 +59,8 @@ export function PlaygroundSketchProvider({
 }
 
 /**
- * Read the current visual environment. Returns a shell/glass default when
- * called outside a PlaygroundSketchProvider so shared components render their
- * normal variant on the platform chrome.
+ * Read the current visual environment. Always reports the clean (non-sketch)
+ * language now.
  */
 export function useSketchEnv(): SketchEnvValue {
   const ctx = useContext(SketchEnvContext);

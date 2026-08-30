@@ -51,6 +51,9 @@ import ClinicalIntelligencePage from "@/pages/clinical-intelligence";
 // Temporary design-prototype route — mock data only, not production.
 import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
+// Preview-only route — real Team Portal with iOS-frosted rails scoped under
+// .rail-glass-preview. Live portals unchanged. Not production.
+import TeamPortalGlassPreviewPage from "@/pages/team-portal-glass-preview";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
 import EngagementCenterPage from "@/pages/engagement-center";
@@ -114,6 +117,8 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                     <HomePreview />
                   </SidebarProvider>
                 </Route>
+                {/* iOS-frosted rails preview on the real Team Portal (not production). */}
+                <Route path="/team-portal-glass-preview" component={TeamPortalGlassPreviewPage} />
                 <Route path="/mission-control">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <MissionControlPage />

@@ -11,8 +11,6 @@ import { X, Pin, PinOff, XCircle, Copy } from "lucide-react";
 import { usePlayground } from "./PlaygroundWorkspaceProvider";
 import { getWorkspaceDefinition } from "./registry";
 import { DirtyCloseDialog, type DirtyCloseAction } from "./DirtyCloseDialog";
-import { useSketchCanvas } from "./sketch/useSketchCanvas";
-import { sketchOptions, stableSeed, SKETCH_COLORS } from "./sketch/sketchTokens";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -22,58 +20,8 @@ import {
 } from "@/components/ui/context-menu";
 import type { PlaygroundWorkspace } from "./types";
 
-// Rough colored-pencil underline for the active tab (§13). Cheap, stable seed.
-function TabUnderline({ seedId }: { seedId: string }) {
-  const seed = stableSeed(`tab-underline:${seedId}`);
-  const { containerRef, canvasRef } = useSketchCanvas({
-    seed,
-    draw: (rc, _ctx, size, s) => {
-      const y = size.height - 2;
-      rc.line(3, y, size.width - 3, y, {
-        ...sketchOptions("structural", "blue", { strokeWidth: 2 }),
-        seed: s,
-      });
-    },
-  });
-  return (
-    <span ref={containerRef} className="pointer-events-none absolute inset-x-0 bottom-0 h-1.5">
-      <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0" />
-    </span>
-  );
-}
-
-// Rough graphite outline for an individual paper tab (§4). Stable seed.
-function TabOutline({ seedId, active }: { seedId: string; active: boolean }) {
-  const seed = stableSeed(`tab-outline:${seedId}`);
-  const { containerRef, canvasRef } = useSketchCanvas({
-    seed,
-    deps: [active],
-    draw: (rc, _ctx, size, s) => {
-      const w = size.width, h = size.height, inset = 1.5, r = 6;
-      const x0 = inset, y0 = inset, x1 = w - inset, y1 = h - inset;
-      const rr = Math.min(r, (x1 - x0) / 2, (y1 - y0) / 2);
-      const d = [
-        `M ${x0 + rr} ${y0}`, `L ${x1 - rr} ${y0}`, `Q ${x1} ${y0} ${x1} ${y0 + rr}`,
-        `L ${x1} ${y1 - rr}`, `Q ${x1} ${y1} ${x1 - rr} ${y1}`, `L ${x0 + rr} ${y1}`,
-        `Q ${x0} ${y1} ${x0} ${y1 - rr}`, `L ${x0} ${y0 + rr}`, `Q ${x0} ${y0} ${x0 + rr} ${y0}`, "Z",
-      ].join(" ");
-      rc.path(d, {
-        ...sketchOptions("structural", active ? "graphite" : "graphiteLight", {
-          strokeWidth: active ? 1.7 : 1.2,
-        }),
-        seed: s,
-      });
-    },
-  });
-  return (
-    <span ref={containerRef} className="pointer-events-none absolute inset-0">
-      <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0" />
-    </span>
-  );
-}
-
 // The canonical Playground tab. EVERY workspace tab — Home included — renders
-// through this one component so the tab strip has a single SketchUI language.
+// through this one component so the tab strip has a single visual language.
 function SketchTab({
   workspace,
   isActive,
@@ -101,25 +49,23 @@ function SketchTab({
           aria-selected={isActive}
           onClick={() => focusWorkspace(workspace.id)}
           className={[
-            "group relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs cursor-pointer transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--sketch-blue)]",
+            "group relative flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs cursor-pointer transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
             isActive
-              ? "text-slate-900 font-semibold"
-              : "text-slate-500 hover:text-slate-700",
+              ? "border-slate-300 bg-white text-slate-900 font-semibold shadow-sm"
+              : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100/70",
           ].join(" ")}
-          style={{ backgroundColor: isActive ? SKETCH_COLORS.paper : "transparent" }}
           data-testid={`playground-tab-${workspace.id}`}
           title={workspace.subtitle ? `${workspace.title} — ${workspace.subtitle}` : workspace.title}
         >
-          {/* Individual rough paper outline (§4) + active colored-pencil underline (§13). */}
-          <TabOutline seedId={workspace.id} active={isActive} />
-          {isActive && <TabUnderline seedId={workspace.id} />}
+          {/* Active tab underline — plain CSS accent bar. */}
+          {isActive && (
+            <span className="pointer-events-none absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" />
+          )}
           {Icon && <Icon className="relative h-3.5 w-3.5 shrink-0" />}
           <span className="relative max-w-[140px] truncate">{workspace.title}</span>
           {workspace.dirty && (
-            // Pencil dirty mark, not a corporate red badge (§48).
             <span
-              className="h-1.5 w-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: SKETCH_COLORS.gold }}
+              className="h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500"
               title="Unsaved changes"
               data-testid={`playground-tab-dirty-${workspace.id}`}
             />
@@ -131,7 +77,7 @@ function SketchTab({
             <button
               type="button"
               onClick={handleClose}
-              className="relative z-10 ml-0.5 h-4 w-4 rounded flex items-center justify-center text-slate-400 opacity-0 group-hover:opacity-100 hover:text-slate-700 hover:bg-slate-900/[0.06] transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--sketch-blue)]"
+              className="relative z-10 ml-0.5 h-4 w-4 rounded flex items-center justify-center text-slate-400 opacity-0 group-hover:opacity-100 hover:text-slate-700 hover:bg-slate-900/[0.06] transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               aria-label={`Close ${workspace.title}`}
               data-testid={`playground-tab-close-${workspace.id}`}
             >
@@ -141,8 +87,7 @@ function SketchTab({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent
-        className="w-48 border text-slate-800"
-        style={{ backgroundColor: SKETCH_COLORS.paper, borderColor: "rgba(31,41,55,0.5)", borderRadius: "10px 12px 9px 11px" }}
+        className="w-48 rounded-md border border-slate-200 bg-white text-slate-800"
         data-testid={`playground-tab-menu-${workspace.id}`}
       >
         <ContextMenuItem

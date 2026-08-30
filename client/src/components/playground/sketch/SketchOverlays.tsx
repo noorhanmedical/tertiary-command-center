@@ -14,18 +14,12 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { Check, Circle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SKETCH_COLORS } from "./sketchTokens";
 
-// Shared paper-surface look for floating content. A slightly irregular corner
-// radius + graphite border + soft (non-glossy) shadow reads as hand-cut paper.
+// Shared clean floating-surface look (SketchUI removed): white surface, subtle
+// slate border, standard rounded corners, soft shadow.
 const SKETCH_SURFACE_CLS =
-  "border text-slate-800 shadow-[0_10px_30px_rgba(31,41,55,0.14)]";
-const SKETCH_SURFACE_STYLE: React.CSSProperties = {
-  backgroundColor: SKETCH_COLORS.paper,
-  borderColor: "rgba(31,41,55,0.55)", // cool blue-graphite
-  // Irregular radius corners → hand-drawn paper feel, stable across renders.
-  borderRadius: "10px 12px 9px 11px",
-};
+  "rounded-md border border-slate-200 bg-white text-slate-800 shadow-lg";
+const SKETCH_SURFACE_STYLE: React.CSSProperties = {};
 
 const OVERLAY_ANIM =
   "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95";
@@ -72,13 +66,13 @@ export const SketchDialogContent = React.forwardRef<
         OVERLAY_ANIM,
         className,
       )}
-      style={{ ...SKETCH_SURFACE_STYLE, borderRadius: "12px 14px 11px 13px", ...style }}
+      style={{ ...SKETCH_SURFACE_STYLE, ...style }}
       {...props}
     >
       {children}
       {!hideClose && (
         <DialogPrimitive.Close
-          className="absolute right-4 top-4 rounded-sm text-slate-500 opacity-70 outline-none transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-[color:var(--sketch-blue)]"
+          className="absolute right-4 top-4 rounded-sm text-slate-500 opacity-70 outline-none transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-primary"
           aria-label="Close"
         >
           <X className="h-4 w-4" />
@@ -151,7 +145,7 @@ export const SketchMenuItem = React.forwardRef<
     className={cn(
       "relative flex cursor-pointer select-none items-center gap-2 rounded-md px-2 py-1.5 text-[13px] outline-none transition-colors",
       "focus:bg-slate-900/[0.06] data-[disabled]:pointer-events-none data-[disabled]:opacity-45",
-      variant === "danger" ? "text-[color:var(--sketch-red)]" : "text-slate-800",
+      variant === "danger" ? "text-destructive" : "text-slate-800",
       variant === "active" && "font-semibold",
       className,
     )}
@@ -202,16 +196,11 @@ export const SketchTooltipContent = React.forwardRef<
     ref={ref}
     sideOffset={sideOffset}
     className={cn(
-      "z-50 overflow-hidden px-2.5 py-1 text-[11px] text-slate-800 shadow-[0_6px_18px_rgba(31,41,55,0.16)]",
+      "z-50 overflow-hidden rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-800 shadow-md",
       "animate-in fade-in-0 zoom-in-95",
       className,
     )}
-    style={{
-      backgroundColor: SKETCH_COLORS.paper,
-      border: "1px solid rgba(31,41,55,0.55)",
-      borderRadius: "7px 9px 6px 8px",
-      ...style,
-    }}
+    style={style}
     {...props}
   />
 ));
@@ -228,12 +217,11 @@ export const SketchCheckbox = React.forwardRef<
     ref={ref}
     type="checkbox"
     className={cn(
-      "h-4 w-4 cursor-pointer appearance-none rounded-[4px] border align-middle outline-none transition-colors",
-      "checked:bg-[color:var(--sketch-blue)] checked:border-[color:var(--sketch-blue)]",
-      "focus-visible:ring-2 focus-visible:ring-[color:var(--sketch-blue)]",
+      "h-4 w-4 cursor-pointer appearance-none rounded-[4px] border border-slate-300 bg-white align-middle outline-none transition-colors",
+      "checked:bg-primary checked:border-primary",
+      "focus-visible:ring-2 focus-visible:ring-primary",
       className,
     )}
-    style={{ borderColor: "rgba(31,41,55,0.55)", backgroundColor: SKETCH_COLORS.paper }}
     {...props}
   />
 ));
@@ -247,12 +235,11 @@ export const SketchRadio = React.forwardRef<
     ref={ref}
     type="radio"
     className={cn(
-      "h-4 w-4 cursor-pointer appearance-none rounded-full border align-middle outline-none transition-colors",
-      "checked:bg-[color:var(--sketch-blue)] checked:border-[color:var(--sketch-blue)]",
-      "focus-visible:ring-2 focus-visible:ring-[color:var(--sketch-blue)]",
+      "h-4 w-4 cursor-pointer appearance-none rounded-full border border-slate-300 bg-white align-middle outline-none transition-colors",
+      "checked:bg-primary checked:border-primary",
+      "focus-visible:ring-2 focus-visible:ring-primary",
       className,
     )}
-    style={{ borderColor: "rgba(31,41,55,0.55)", backgroundColor: SKETCH_COLORS.paper }}
     {...props}
   />
 ));
