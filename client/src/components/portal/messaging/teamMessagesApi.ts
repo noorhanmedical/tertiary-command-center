@@ -192,5 +192,11 @@ export function useTeamMessages(
     [sendMutation],
   );
 
-  return { conversations, totalUnread, markRead, sendMessage } as const;
+  // Phase 6 acceptance (§13) — expose in-flight state so the composer can
+  // disable the send affordance mid-send. This is the smallest safe mitigation
+  // for the dominant duplicate-send vector (fast double-click firing two
+  // POSTs). A full clientMessageId idempotency key is a documented seam (see
+  // tests/acceptance / release report) — not added here to avoid a messaging
+  // rewrite.
+  return { conversations, totalUnread, markRead, sendMessage, sendPending: sendMutation.isPending } as const;
 }

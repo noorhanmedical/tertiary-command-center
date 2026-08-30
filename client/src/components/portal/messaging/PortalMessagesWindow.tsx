@@ -1,7 +1,11 @@
 // Floating Mac/iMessage-style Messages window for the Team Portal (Task #740).
 //
-// FRONTEND MOCK ONLY. Floats over the Playground (no dimming backdrop — the
-// workspace stays visible behind it). Left sidebar = conversation list, right
+// PRESENTATION component. Backed by REAL messaging data since Phase 1: the
+// Team Portal shell feeds it conversations from useTeamMessages (canonical
+// /api/messaging/*), and onSend posts to the real backend. (The original
+// mockPortalMessages local state was replaced; this is not a mock.) Floats over
+// the Playground (no dimming backdrop — the workspace stays visible behind it).
+// Left sidebar = conversation list, right
 // = the active thread with a header (name + type + patient/facility chip),
 // bubbles (outgoing purple/white, incoming light-gray), and an input bar with
 // a plus + send. Team threads label the sender above each incoming bubble;
@@ -29,6 +33,7 @@ export function PortalMessagesWindow({
   onSelectConversation,
   onSend,
   onClose,
+  sendPending = false,
 }: {
   open: boolean;
   conversations: Conversation[];
@@ -36,6 +41,9 @@ export function PortalMessagesWindow({
   onSelectConversation: (id: string) => void;
   onSend: (id: string, body: string) => void;
   onClose: () => void;
+  /** True while a send is in flight — disables the send affordance so a fast
+   *  double-click can't fire a duplicate message (§13 acceptance). */
+  sendPending?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
@@ -61,7 +69,9 @@ export function PortalMessagesWindow({
   if (!open) return null;
 
   const submit = () => {
-    if (!active || !draft.trim()) return;
+    // §13 — ignore submits while a send is in flight so a fast double-click
+    // (or Enter-mash) cannot POST the same message twice.
+    if (!active || !draft.trim() || sendPending) return;
     onSend(active.id, draft.trim());
     setDraft("");
   };
@@ -250,7 +260,7 @@ export function PortalMessagesWindow({
               <button
                 type="button"
                 onClick={submit}
-                disabled={!active || !draft.trim()}
+                disabled={!active || !draft.trim() || sendPending}
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-600 text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
                 data-testid="messages-window-send"
               >

@@ -1388,6 +1388,7 @@ export function TeamPortalShell({
     totalUnread: messagingUnread,
     markRead: markMessagingRead,
     sendMessage: sendMessagingMessage,
+    sendPending: messagingSendPending,
   } = useTeamMessages(currentUserId ?? null, activeConversationId);
   const openMessagesConversation = useCallback(
     (id: string) => {
@@ -4596,6 +4597,7 @@ export function TeamPortalShell({
         activeConversationId={activeConversationId}
         onSelectConversation={openMessagesConversation}
         onSend={sendMessagingMessage}
+        sendPending={messagingSendPending}
         onClose={() => setMessagesWindowOpen(false)}
       />
 
