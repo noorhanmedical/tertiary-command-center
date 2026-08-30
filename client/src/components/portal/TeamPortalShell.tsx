@@ -3482,8 +3482,11 @@ export function TeamPortalShell({
                           // Phase 5E — opens the real calls repository / history
                           // (closed + completed cases with recall), NOT an empty
                           // single-call console. Per-patient call consoles open
-                          // separately from a specific call-list row.
-                          onClick: () => dispatchOpenWorkspace({ type: "calls_repository", title: "Calls" }),
+                          // separately from a specific call-list row. Pass the
+                          // SELECTED portal facility so the repository is scoped
+                          // to the same clinic as the rest of the portal (not the
+                          // first facility in the list).
+                          onClick: () => dispatchOpenWorkspace({ type: "calls_repository", title: "Calls", facilityId: facility || null }),
                           active: activeKind === "calls",
                           testId: "left-rail-tool-calls",
                         },

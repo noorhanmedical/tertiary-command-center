@@ -1,23 +1,16 @@
-// Playground Home — clean empty state.
+// Playground Home — empty state.
 //
-// The previous hand-drawn "bicycle day" Rough.js scene has been removed with
-// the rest of the SketchUI look. This renders a simple, quiet empty state shown
-// when no workspace is active.
-
-import { LayoutGrid } from "lucide-react";
+// The previous hand-drawn "bicycle day" Rough.js scene was removed with the
+// SketchUI look. The empty playground now renders nothing (a clean canvas)
+// when no workspace is active. Kept as a component (with its test id) so the
+// canvas has a stable, no-op placeholder the engine can render.
 
 export function PlaygroundHomeArtwork() {
   return (
     <div
-      className="pointer-events-none absolute inset-0 flex items-center justify-center pb-20"
+      className="pointer-events-none absolute inset-0"
       data-testid="playground-home-artwork"
       aria-hidden="true"
-    >
-      <div className="flex flex-col items-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <LayoutGrid className="h-6 w-6 text-slate-400" />
-        </div>
-      </div>
-    </div>
+    />
   );
 }

@@ -156,11 +156,23 @@ export default function InvoiceDeskPanel() {
             <Landmark className="h-4 w-4" />
           </div>
           <div>
-            <div className="text-[15px] font-semibold text-slate-900" data-testid="text-invoice-desk-title">
-              Invoice Desk
+            <div className="flex items-center gap-2">
+              <span className="text-[15px] font-semibold text-slate-900" data-testid="text-invoice-desk-title">
+                Invoice Desk
+              </span>
+              {/* Honest signal: this runs on a demo store, not the live billing
+                  module. Shown INSIDE the workspace (not on the rail tile). */}
+              <span
+                className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700"
+                data-testid="invoice-desk-demo-badge"
+                title="Runs on a demo store — not connected to live billing yet."
+              >
+                Demo · Not live
+              </span>
             </div>
             <div className="text-xs text-slate-500">
-              Create and send patient invoices. Full billing controls live in Plexus Bank.
+              Demo data — not connected to live billing. Real billing controls
+              live in Plexus Bank.
             </div>
           </div>
         </div>
