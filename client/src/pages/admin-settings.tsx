@@ -21,9 +21,11 @@ import {
   ScrollText,
   Sparkles,
   Building2,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 import { OrganizationSettingsSection } from "@/components/settings/OrganizationSettingsSection";
+import { SchedulingCapacitySection } from "@/components/settings/SchedulingCapacitySection";
 import { TeamOperationsSettings } from "@/components/settings/TeamOperationsSettings";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -353,6 +355,13 @@ export default function AdminSettingsPage() {
                     Icon={Building2}
                   >
                     <OrganizationSettingsSection />
+                  </Group>
+                  <Group
+                    title="Scheduling / Equipment Capacity"
+                    desc="Per-facility machine counts, service durations, ultrasound turnover, and temporary outage overrides that drive the capacity-aware scheduler."
+                    Icon={CalendarClock}
+                  >
+                    <SchedulingCapacitySection />
                   </Group>
                   <EmbeddedGroup>
                     <StovetopHeatSettingsPage embedded />

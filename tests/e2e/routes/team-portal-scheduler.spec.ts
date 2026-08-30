@@ -69,13 +69,16 @@ test.describe("Unified full Scheduler", () => {
     await expect(page.getByTestId("scheduler-ultrasound-option-Bilateral Carotid Duplex")).toBeVisible();
   });
 
-  test("time slots render as visible buttons", async ({ page }) => {
+  test("time slots render as visible buttons once a service is chosen", async ({ page }) => {
     await openPortalAsAdmin(page);
     await pinLeft(page);
     await page.getByTestId("left-rail-tool-calendar").click();
     await expect(page.getByTestId("scheduler-time-slots")).toBeVisible();
-    await expect(page.getByTestId("scheduler-slot-08:00")).toBeVisible();
-    await expect(page.getByTestId("scheduler-slot-16:30")).toBeVisible();
+    // Capacity-aware slots appear after a service (resource pool) is selected.
+    await page.getByTestId("scheduler-service-brainwave").click();
+    await expect(page.getByTestId("scheduler-slot-08:00")).toBeVisible({ timeout: 8000 });
+    // Each slot shows remaining machines ("N of M") for the selected service.
+    await expect(page.getByTestId("scheduler-slot-cap-08:00")).toBeVisible();
   });
 });
 

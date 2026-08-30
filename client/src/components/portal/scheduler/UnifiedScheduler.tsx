@@ -37,13 +37,14 @@ import {
   buildCommandCalendarCells,
   type CommandCalendarSummaryRow,
 } from "@/lib/calendar/commandCalendarViewModel";
-
-// 08:00–16:30 in 30-min steps (the platform's fixed clinic interval).
-const TIME_SLOTS: string[] = (() => {
-  const out: string[] = [];
-  for (let h = 8; h <= 16; h++) for (const m of [0, 30]) out.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
-  return out;
-})();
+import {
+  fetchAvailability,
+  pretty12h,
+  type AvailabilityResult,
+  type ResourceType as CapResourceType,
+  type ServiceRequest as CapServiceRequest,
+} from "@/lib/scheduling/availabilityApi";
+import { getAncillaryCategory } from "@shared/ancillaryCategory";
 
 function todayIso(): string {
   const d = new Date();
@@ -86,6 +87,17 @@ type SelectedPatient = {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+const RESOURCE_LABELS: Record<string, string> = {
+  brainwave: "BrainWave",
+  vitalwave: "VitalWave",
+  ultrasound: "Ultrasound",
+};
+const RESOURCE_DOT: Record<string, string> = {
+  brainwave: "bg-violet-500",
+  vitalwave: "bg-red-500",
+  ultrasound: "bg-emerald-500",
+};
+
 export function UnifiedScheduler({
   context,
 }: {
@@ -115,6 +127,9 @@ export function UnifiedScheduler({
   const [serviceCode, setServiceCode] = useState<string>(context.serviceType ?? "");
   const [ultrasoundOpen, setUltrasoundOpen] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
+  // Ultrasound bundles multiple studies into one patient block; the count
+  // drives the block duration (count × minutes-per-study).
+  const [ultrasoundStudyCount, setUltrasoundStudyCount] = useState(1);
   // Quick Schedule popover (double-click a date). Anchored near the cell; it
   // reuses the SAME scheduler fields in compact form and completes inline.
   const [quickDate, setQuickDate] = useState<string | null>(null);
@@ -138,6 +153,56 @@ export function UnifiedScheduler({
     [services, serviceCode],
   );
   const selectedIsUltrasound = !!selectedService && ultrasound.some((u) => u.internalCode === selectedService.internalCode);
+
+  // Map the selected service to its capacity resource pool (BrainWave /
+  // VitalWave / Ultrasound). This is what the availability engine reasons over.
+  const selectedResource: CapResourceType | null = useMemo(() => {
+    if (!selectedService) return null;
+    const cat = getAncillaryCategory(selectedService.internalCode);
+    return cat === "other" ? null : (cat as CapResourceType);
+  }, [selectedService]);
+
+  const serviceRequest: CapServiceRequest | null = useMemo(() => {
+    if (!selectedResource) return null;
+    return selectedResource === "ultrasound"
+      ? { resourceType: "ultrasound", studyCount: Math.max(1, ultrasoundStudyCount) }
+      : { resourceType: selectedResource };
+  }, [selectedResource, ultrasoundStudyCount]);
+
+  const patientKey =
+    patient.patientScreeningId != null
+      ? `ps:${patient.patientScreeningId}`
+      : patient.executionCaseId != null
+        ? `ec:${patient.executionCaseId}`
+        : null;
+
+  // ── Capacity-aware availability (the ONE engine, shared with Quick) ──
+  const { data: availability } = useQuery<AvailabilityResult>({
+    queryKey: [
+      "scheduler-availability",
+      facility,
+      selectedDate,
+      serviceRequest?.resourceType ?? "",
+      serviceRequest?.studyCount ?? 1,
+      patientKey ?? "",
+    ],
+    queryFn: () =>
+      fetchAvailability({
+        facility,
+        date: selectedDate,
+        services: serviceRequest ? [serviceRequest] : [],
+        patientKey,
+      }),
+    enabled: !!facility && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate),
+    staleTime: 15_000,
+  });
+
+  const slots = availability?.slots ?? [];
+  const suggestions = availability?.suggestions ?? [];
+  const agenda = availability?.agenda ?? [];
+  const equipment = availability?.equipment ?? [];
+  // The chosen slot's remaining machines (for the conflict indicator).
+  const selectedSlot = slots.find((s) => s.time === time) ?? null;
 
   // ── Canonical calendar markers (dots) ──
   const { data: summary = [] } = useQuery<CommandCalendarSummaryRow[]>({
@@ -182,7 +247,15 @@ export function UnifiedScheduler({
         serviceType: serviceCode, // canonical internalCode
         startsAt: startsAtIso,
         facilityId: facility,
-        metadata: { source: "unified_scheduler" },
+        metadata: {
+          source: "unified_scheduler",
+          // Ultrasound bundles → the server derives the block duration
+          // (count × minutes-per-study) so the appointment occupies its
+          // machine for the correct span.
+          ...(selectedResource === "ultrasound"
+            ? { ultrasoundStudyCount: Math.max(1, ultrasoundStudyCount) }
+            : {}),
+        },
       });
     },
     onSuccess: (result) => {
@@ -319,28 +392,177 @@ export function UnifiedScheduler({
               )}
             </div>
           )}
+          {/* Ultrasound bundles multiple studies into ONE patient block. The
+              count sets the block length (count × minutes-per-study). */}
+          {selectedIsUltrasound && (
+            <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5" data-testid="scheduler-ultrasound-count">
+              <span className="text-[12px] font-medium text-emerald-800">Studies</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setUltrasoundStudyCount((n) => Math.max(1, n - 1))} className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100" data-testid="scheduler-ultrasound-count-dec" aria-label="Fewer studies">–</button>
+                <span className="w-5 text-center text-sm font-semibold tabular-nums text-emerald-900" data-testid="scheduler-ultrasound-count-value">{ultrasoundStudyCount}</span>
+                <button type="button" onClick={() => setUltrasoundStudyCount((n) => Math.min(12, n + 1))} className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100" data-testid="scheduler-ultrasound-count-inc" aria-label="More studies">+</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 
-  // ── Time slots (shared) ──
+  // ── Capacity-aware time slots (shared by full + compact) ──
+  // Renders the server-computed availability: each slot shows how many
+  // machines of the selected service are free ("2 available" / "FULL"). When no
+  // service is chosen yet we fall back to plain time buttons so the grid still
+  // shows the operating window.
   const timeSlots = (
     <div data-testid="scheduler-time-slots">
-      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Available Times</div>
-      <div className="grid grid-cols-4 gap-1.5">
-        {TIME_SLOTS.map((slot) => (
-          <button
-            key={slot}
-            type="button"
-            onClick={() => setTime(slot)}
-            className={`rounded-lg border px-1 py-1.5 text-[12px] font-medium tabular-nums transition-colors ${time === slot ? "border-transparent bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
-            data-testid={`scheduler-slot-${slot}`}
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Available Times</span>
+        {serviceRequest && availability?.durations?.[serviceRequest.resourceType] ? (
+          <span className="text-[10px] font-medium text-slate-400" data-testid="scheduler-block-duration">
+            {availability.durations[serviceRequest.resourceType]} min block
+          </span>
+        ) : null}
+      </div>
+      {!serviceRequest ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Choose an appointment type to see machine availability.</p>
+      ) : slots.length === 0 ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Loading availability…</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-1.5">
+          {slots.map((slot) => {
+            const isSel = time === slot.time;
+            const full = !slot.fits;
+            return (
+              <button
+                key={slot.time}
+                type="button"
+                disabled={full}
+                onClick={() => setTime(slot.time)}
+                className={`flex flex-col items-center rounded-lg border px-1 py-1.5 text-[12px] font-medium tabular-nums transition-colors ${
+                  isSel
+                    ? "border-transparent bg-slate-900 text-white"
+                    : full
+                      ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                data-testid={`scheduler-slot-${slot.time}`}
+              >
+                <span className="leading-none">{pretty12h(slot.time)}</span>
+                <span className={`mt-0.5 text-[9px] font-normal leading-none ${isSel ? "text-slate-300" : full ? "text-slate-300" : "text-slate-400"}`} data-testid={`scheduler-slot-cap-${slot.time}`}>
+                  {full ? "FULL" : `${slot.available} of ${slot.total}`}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Conflict indicator for the chosen slot ──
+  const conflictBanner =
+    serviceRequest && time && selectedSlot && !selectedSlot.fits ? (
+      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700" data-testid="scheduler-conflict">
+        <span className="font-semibold">Conflict.</span>{" "}
+        {(RESOURCE_LABELS[serviceRequest.resourceType] ?? "This service")} is full at {pretty12h(time)}.
+        {suggestions[0] ? (
+          <>
+            {" "}Next available{" "}
+            <button type="button" className="font-semibold underline" onClick={() => setTime(suggestions[0].steps[0].time)} data-testid="scheduler-conflict-next">
+              {pretty12h(suggestions[0].steps[0].time)}
+            </button>.
+          </>
+        ) : null}
+      </div>
+    ) : null;
+
+  // ── Smart suggestions (deterministic, explained) ──
+  const suggestionsBlock =
+    serviceRequest && suggestions.length > 0 ? (
+      <div data-testid="scheduler-suggestions">
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Suggested</div>
+        <div className="flex flex-col gap-1.5">
+          {suggestions.map((sug, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setTime(sug.steps[0].time)}
+              className={`rounded-lg border px-3 py-2 text-left transition-colors ${sug.recommended ? "border-emerald-300 bg-emerald-50 hover:bg-emerald-100" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+              data-testid={`scheduler-suggestion-${i}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-slate-900">
+                  {sug.steps.map((s) => `${pretty12h(s.time)} ${s.serviceLabel}`).join("  →  ")}
+                </span>
+                {sug.recommended ? <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">Best fit</span> : null}
+              </div>
+              <div className="mt-0.5 text-[11px] text-slate-500">{sug.reason}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    ) : null;
+
+  // ── Equipment Today strip (operational, read-only) ──
+  const equipmentStrip =
+    equipment.length > 0 ? (
+      <div className="flex flex-wrap items-center gap-2" data-testid="scheduler-equipment">
+        {equipment.map((e) => (
+          <span
+            key={e.resourceType}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600"
+            data-testid={`scheduler-equipment-${e.resourceType}`}
           >
-            {prettyTime(slot)}
-          </button>
+            <span className={`h-2 w-2 rounded-full ${RESOURCE_DOT[e.resourceType]}`} />
+            {e.label} · {e.total} {e.total === 1 ? "machine" : "machines"}
+          </span>
         ))}
       </div>
+    ) : null;
+
+  // ── Estimated resource time for the current selection ──
+  // Surfaces the block math so the scheduler understands WHY a slot is that
+  // long (esp. ultrasound: studies × minutes + turnover between patients).
+  const multiServiceSummary =
+    serviceRequest && availability?.durations?.[serviceRequest.resourceType] ? (
+      <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600" data-testid="scheduler-estimate">
+        <span className="font-semibold text-slate-700">Estimated resource time:</span>{" "}
+        {selectedResource === "ultrasound" ? (
+          <>
+            {ultrasoundStudyCount} × {availability.capacity.ultrasound.minutesPerStudy ?? 15} min ={" "}
+            {availability.durations.ultrasound} min
+            {availability.capacity.ultrasound.turnoverMinutes > 0
+              ? ` · ${availability.capacity.ultrasound.turnoverMinutes} min turnover between patients`
+              : ""}
+          </>
+        ) : (
+          <>{RESOURCE_LABELS[serviceRequest.resourceType]} {availability.durations[serviceRequest.resourceType]} min</>
+        )}
+      </div>
+    ) : null;
+
+  // ── Selected-day agenda: who is scheduled, what service, time block ──
+  const dayAgenda = (
+    <div data-testid="scheduler-day-agenda">
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Today's Schedule</span>
+        {facility ? <span className="truncate text-[11px] text-slate-400">{facility}</span> : null}
+      </div>
+      {agenda.length === 0 ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">No appointments scheduled.</p>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {agenda.map((a, i) => (
+            <div key={a.appointmentId ?? i} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-3 py-1.5" data-testid={`scheduler-agenda-item-${i}`}>
+              <span className={`h-2 w-2 shrink-0 rounded-full ${RESOURCE_DOT[a.resourceType] ?? "bg-slate-300"}`} />
+              <span className="w-24 shrink-0 text-[12px] font-semibold tabular-nums text-slate-700">{pretty12h(a.time)}–{pretty12h(a.endTime)}</span>
+              <span className="min-w-0 flex-1 truncate text-[12px] text-slate-800">{a.patient}</span>
+              <span className="shrink-0 text-[11px] text-slate-500">{RESOURCE_LABELS[a.resourceType] ?? a.service}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -433,11 +655,14 @@ export function UnifiedScheduler({
   // the panel only if truly needed).
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent" data-testid="unified-scheduler">
-      {/* Header */}
+      {/* Header — strong hierarchy: SCHEDULE (or patient) over the month. */}
       <div className="flex items-center justify-between gap-3 px-5 pb-2 pt-4">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="h-5 w-5 text-slate-500" />
-          <span className="text-lg font-bold text-slate-900" data-testid="scheduler-title">{title}</span>
+        <div className="flex items-center gap-2.5">
+          <CalendarDays className="h-5 w-5 text-slate-400" />
+          <div className="flex flex-col leading-tight">
+            <span className="text-lg font-bold uppercase tracking-tight text-slate-900" data-testid="scheduler-title">{title}</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{monthLabel}</span>
+          </div>
         </div>
       </div>
 
@@ -519,6 +744,7 @@ export function UnifiedScheduler({
                   {patientBlock}
                   {serviceSelector}
                   {timeSlots}
+                  {conflictBanner}
                   <button
                     type="button"
                     disabled={!canSubmit || scheduleMutation.isPending}
@@ -529,6 +755,17 @@ export function UnifiedScheduler({
                     {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />}
                     Schedule
                   </button>
+                  {/* Expand → the full Scheduler carries the same context
+                      (the popover already shares this component's state), so we
+                      just close the popover to reveal the full panel. */}
+                  <button
+                    type="button"
+                    onClick={() => setQuickDate(null)}
+                    className="text-center text-[11px] font-medium text-slate-500 underline hover:text-slate-700"
+                    data-testid="scheduler-quick-expand"
+                  >
+                    Expand to full Scheduler
+                  </button>
                 </div>
               </div>
             </>
@@ -537,13 +774,22 @@ export function UnifiedScheduler({
 
         {/* Scheduling panel — internal overflow fallback only. */}
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4" data-testid="scheduler-panel">
-          {patientBlock}
-          {serviceSelector}
+          {/* Strong day header — "FRIDAY, AUGUST 28" over the facility. */}
           <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Date</div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700" data-testid="scheduler-selected-date">{prettyDateLong(selectedDate)}</div>
+            <div className="text-base font-bold uppercase tracking-tight text-slate-900" data-testid="scheduler-selected-date">{prettyDateLong(selectedDate)}</div>
           </div>
+          {equipmentStrip}
+          {dayAgenda}
+          <div className="h-px bg-slate-100" />
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-600" data-testid="scheduler-schedule-heading">
+            {hasPatient && patient.name ? `Schedule ${patient.name}` : "Schedule Patient"}
+          </div>
+          {patientBlock}
+          {multiServiceSummary}
+          {serviceSelector}
           {timeSlots}
+          {conflictBanner}
+          {suggestionsBlock}
           <div className="mt-auto pt-1">{scheduleButton}</div>
         </div>
       </div>
