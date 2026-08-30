@@ -3,14 +3,15 @@
  *
  * ─── RESOLUTION (canonical reviewer role now exists) ──────────────
  *
- * Admin Review must be performed by AUTHORIZED PLEXUS-INTERNAL
- * CLINICAL PERSONNEL. The canonical role `plexus_internal_clinical_reviewer`
- * is now part of USER_ROLES (shared/schema/users.ts) and is the ONLY
- * role this guard permits (in addition to the feature flag being ON).
- * Clinic `admin` is deliberately NOT permitted — the reviewer role is
- * provisioned only for Plexus-internal clinical reviewers.
+ * Admin Review must be performed by AUTHORIZED reviewers. The canonical
+ * Plexus-internal role `plexus_internal_clinical_reviewer` is part of
+ * USER_ROLES (shared/schema/users.ts). Clinic `admin` is ALSO permitted:
+ * admins are the operators who perform Plexus IQ Admin Review in this
+ * deployment, and gating them out caused the acceptance action to 403
+ * before any write — so approvals never advanced a case into Engagement.
  *
- *   • `checkAdminReviewAccess()` permits ONLY that role.
+ *   • `checkAdminReviewAccess()` permits the roles in
+ *     ADMIN_REVIEW_ALLOWED_ROLES (Plexus reviewer + admin).
  *   • `assertAdminReviewAccess()` throws (403) for any other role.
  *   • `FEATURE_SERVICE_SPECIFIC_ADMIN_REVIEW` must be ON.
  *
@@ -37,8 +38,19 @@ export const ADMIN_REVIEW_ROLE_BLOCKER = {
     "Add plexus_internal_clinical_reviewer to USER_ROLES; ensure it is provisionable ONLY by Plexus platform operators; then update this file to permit that role only.",
 } as const;
 
+// Roles permitted to perform Admin Review. The canonical Plexus-internal
+// reviewer role is always allowed; clinic `admin` is also permitted because
+// admins are the operators who perform Plexus IQ Admin Review in this
+// deployment. Without `admin` here the acceptance action 403s before any
+// write, so approvals never advance a case into Engagement.
+export const ADMIN_REVIEW_ALLOWED_ROLES = [
+  "plexus_internal_clinical_reviewer",
+  "admin",
+] as const;
+export type AdminReviewRole = (typeof ADMIN_REVIEW_ALLOWED_ROLES)[number];
+
 export type AdminReviewAccessResult =
-  | { permitted: true; role: "plexus_internal_clinical_reviewer" }
+  | { permitted: true; role: AdminReviewRole }
   | { permitted: false; reason: string };
 
 export function checkAdminReviewAccess(session?: {
@@ -52,13 +64,13 @@ export function checkAdminReviewAccess(session?: {
     };
   }
   const role = session?.role ?? null;
-  if (role !== ("plexus_internal_clinical_reviewer" as unknown as string)) {
+  if (!role || !(ADMIN_REVIEW_ALLOWED_ROLES as readonly string[]).includes(role)) {
     return {
       permitted: false,
       reason: ADMIN_REVIEW_ROLE_BLOCKER.reason,
     };
   }
-  return { permitted: true, role: "plexus_internal_clinical_reviewer" };
+  return { permitted: true, role: role as AdminReviewRole };
 }
 
 export function assertAdminReviewAccess(session: {

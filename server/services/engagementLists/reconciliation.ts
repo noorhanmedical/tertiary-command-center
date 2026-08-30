@@ -285,31 +285,56 @@ export async function reconcileEngagementEligibility(
     const distinctLists = new Set<number>();
     for (const m of allForCase) distinctLists.add(m.engagementListId);
     if (distinctLists.size === 0) {
-      // No list to attach to. Record durable retry + emit deferred
-      // event. DO NOT claim active visibility.
+      // No prior list to attach to. Admin Review approval IS the
+      // "send to engagement" event for a case that never went through a
+      // batch send, so ensure a canonical clinic-level admin_review list
+      // and attach the membership to it. Deferring here was the bug: an
+      // approved case with no source list never became visible in the
+      // membership-required Engagement views. The list is idempotent
+      // (one per clinic, keyed by source), so repeat approvals reuse it.
       try {
-        await recordEngagementReconciliationFailure({
+        const { upsertEngagementList } = await import(
+          "../../repositories/engagementLists.repo"
+        );
+        const { list } = await upsertEngagementList({
           clinicId: input.clinicId,
-          patientScreeningId: input.patientScreeningId,
-          ancillaryCaseId: input.ancillaryCaseId,
-          serviceType: input.serviceType,
-          requestedAction: "activate",
-          previousAdminReviewStatus: input.previousAdminReviewStatus,
-          newAdminReviewStatus: input.newAdminReviewStatus,
-          sourceSystem: input.source,
-          errorCode: "NO_LIST_ASSIGNMENT",
+          sourceType: "admin_review",
+          sourceId: String(input.clinicId),
+          sendIdempotencyKey: "",
+          label: "Admin Review — Approved",
+          createdByUserId: input.changedByUserId ?? null,
+          metadata: { origin: "admin_review_first_approved" },
         });
-      } catch { /* migration/flag guards */ }
-      await appendEngagementJourneyEvent({
-        eventType: ENGAGEMENT_JOURNEY_EVENT_TYPES.reconciliationFailed,
-        input,
-        metadata: {
-          deferred: true,
-          reason_code: "NO_LIST_ASSIGNMENT",
-        },
-        summary: `Engagement activation deferred (no list assignment)`,
-      });
-      return { status: "deferred_no_list", ancillaryCaseId: input.ancillaryCaseId };
+        distinctLists.add(list.id);
+      } catch (e) {
+        // Could not ensure a list (e.g. migration/flag guard). Fall back
+        // to the honest deferred state + durable retry rather than
+        // claiming visibility we didn't create.
+        try {
+          await recordEngagementReconciliationFailure({
+            clinicId: input.clinicId,
+            patientScreeningId: input.patientScreeningId,
+            ancillaryCaseId: input.ancillaryCaseId,
+            serviceType: input.serviceType,
+            requestedAction: "activate",
+            previousAdminReviewStatus: input.previousAdminReviewStatus,
+            newAdminReviewStatus: input.newAdminReviewStatus,
+            sourceSystem: input.source,
+            errorCode: "NO_LIST_ASSIGNMENT",
+          });
+        } catch { /* migration/flag guards */ }
+        await appendEngagementJourneyEvent({
+          eventType: ENGAGEMENT_JOURNEY_EVENT_TYPES.reconciliationFailed,
+          input,
+          metadata: {
+            deferred: true,
+            reason_code: "NO_LIST_ASSIGNMENT",
+            ensure_list_error: (e as { code?: string })?.code ?? "unknown",
+          },
+          summary: `Engagement activation deferred (no list assignment)`,
+        });
+        return { status: "deferred_no_list", ancillaryCaseId: input.ancillaryCaseId };
+      }
     }
 
     // Create one active membership per prior list.

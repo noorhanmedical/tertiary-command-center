@@ -718,13 +718,100 @@ export function registerPatientRoutes(
           const { recordAncillaryCaseAdminReview } = await import(
             "../services/adminReview/recordAdminReview"
           );
-          const activeCases = (await acRepo.listAncillaryCasesForScreening(id)).filter(
-            (c) => c.lifecycleStatus === "new" || c.lifecycleStatus === "active" || c.lifecycleStatus === "on_hold",
+          const isActiveCase = (c: { lifecycleStatus?: string | null }) =>
+            c.lifecycleStatus === "new" ||
+            c.lifecycleStatus === "active" ||
+            c.lifecycleStatus === "on_hold";
+          let activeCases = (await acRepo.listAncillaryCasesForScreening(id)).filter(
+            isActiveCase,
           );
+
+          // Self-heal the chicken-and-egg deadlock. A screening that was
+          // never committed (e.g. a fresh Draft patient at a facility whose
+          // patients were never backfilled) has NO ancillary cases yet — and
+          // the ONLY thing that creates them is the commit pipeline
+          // (identity resolve → execution case → ancillary cases). Previously
+          // this returned 409 and dead-ended, so approval could never advance
+          // such a patient into Engagement. Instead, resolve Plexus identity
+          // and commit the patient here, then re-read. Ancillary-case
+          // creation requires the global identity links, so resolve those
+          // first (mirrors the scheduling orchestrators' pattern).
           if (activeCases.length === 0) {
-            // NO_ACTIVE_ANCILLARY_CASES: do NOT directly write the
-            // screening column as canonical truth. It is a projection
-            // by rule when the flag is ON.
+            // Ancillary-case creation requires the screening's clinic tenancy.
+            // Some facilities' screenings were never backfilled with a
+            // clinic_id (e.g. Life Medical Center rows carry facility name but
+            // clinic_id IS NULL), which makes identity resolution skip
+            // ("no_clinic") and blocks ancillary-case creation. Resolve the
+            // clinic from the facility NAME and persist it first so the whole
+            // commit → identity → ancillary-case chain can run.
+            let clinicIdForIdentity = patient.clinicId ?? null;
+            if (clinicIdForIdentity == null && patient.facility) {
+              try {
+                const { createFacilityResolver } = await import(
+                  "../services/facilityResolver"
+                );
+                const { resolve } = await createFacilityResolver();
+                clinicIdForIdentity = resolve(patient.facility)?.clinicId ?? null;
+                if (clinicIdForIdentity != null) {
+                  await storage.updatePatientScreening(id, {
+                    clinicId: clinicIdForIdentity,
+                  });
+                }
+              } catch (resolveErr) {
+                console.error(
+                  "[admin-approval] clinic resolve from facility failed:",
+                  resolveErr instanceof Error ? resolveErr.message : resolveErr,
+                );
+              }
+            }
+            try {
+              const { reconcilePlexusIdentityForScreening } = await import(
+                "../services/plexusIdentity/reconciliation"
+              );
+              await reconcilePlexusIdentityForScreening(id, clinicIdForIdentity);
+            } catch (identErr) {
+              console.error(
+                "[admin-approval] identity reconcile before commit failed:",
+                identErr instanceof Error ? identErr.message : identErr,
+              );
+            }
+            try {
+              // Create/update the execution case AND sync ancillary cases from
+              // the screening's qualifying tests. We call this directly (rather
+              // than commitPatient) because commitPatient no-ops once the
+              // patient is already committed and would skip the ancillary
+              // sync — but a screening can be committed yet still lack
+              // ancillary cases (identity was only just resolved above). This
+              // path is idempotent and re-reads the now-linked screening.
+              const freshForCommit = await storage.getPatientScreening(id);
+              if (freshForCommit) {
+                const { createOrUpdateExecutionCaseFromScreening } = await import(
+                  "../repositories/executionCase.repo"
+                );
+                await createOrUpdateExecutionCaseFromScreening(
+                  freshForCommit as never,
+                  userId,
+                );
+              }
+              // Also ensure the legacy commit runs for a genuinely Draft
+              // patient so scheduler routing / spine fire as before.
+              await commitPatient(id, userId, { auto: true });
+            } catch (commitErr) {
+              console.error(
+                "[admin-approval] commit before review failed:",
+                commitErr instanceof Error ? commitErr.message : commitErr,
+              );
+            }
+            activeCases = (await acRepo.listAncillaryCasesForScreening(id)).filter(
+              isActiveCase,
+            );
+          }
+
+          if (activeCases.length === 0) {
+            // Still nothing after attempting identity + commit. This is a
+            // genuine "no reviewable services" state (e.g. no qualifying
+            // tests, or identity could not be resolved). Surface it honestly
+            // rather than writing the screening column as fake canonical truth.
             return res.status(409).json({
               error: "No active ancillary cases for this screening — review is service-specific",
               code: "NO_ACTIVE_ANCILLARY_CASES",
