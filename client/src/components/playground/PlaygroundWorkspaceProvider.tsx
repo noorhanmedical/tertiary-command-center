@@ -109,6 +109,13 @@ export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode 
                 executionCaseId: request.executionCaseId ?? w.executionCaseId,
                 ancillaryCaseId: request.ancillaryCaseId ?? w.ancillaryCaseId,
                 serviceEpisodeId: request.serviceEpisodeId ?? w.serviceEpisodeId,
+                // Scheduler context: re-launching for a (new) patient/date must
+                // update the singleton workspace so it reflects the new context.
+                patientScreeningId: request.patientScreeningId ?? w.patientScreeningId,
+                facilityId: request.facilityId ?? w.facilityId,
+                patientDob: request.patientDob ?? w.patientDob,
+                initialDate: request.initialDate ?? w.initialDate,
+                title: request.title ?? w.title,
                 focusToken: nextToken,
               }
             : w,

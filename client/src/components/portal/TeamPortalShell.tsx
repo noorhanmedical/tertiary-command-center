@@ -2053,18 +2053,27 @@ export function TeamPortalShell({
     setScheduleDialogPatient(p);
   }
 
+  // Scheduling consolidation: every "schedule this patient" action (right-rail
+  // call list, clinic schedule, EHR/chart) opens the ONE full Scheduler
+  // workspace with the patient + facility + service preselected — NOT a
+  // separate SchedulePatientDialog. The UI is identical to the generic entry;
+  // only the preselected context differs.
   function openSchedulePatientDialog(
     input: SchedulePatientDialogPatient,
     opts?: { date?: string | null; time?: string | null },
   ) {
     if (input.patientScreeningId != null) setSelectedPatientId(input.patientScreeningId);
-    setSchedulePatientDialogDefaultDate(opts?.date ?? null);
-    setSchedulePatientDialogDefaultTime(opts?.time ?? null);
-    setSchedulePatientDialog(input);
-    // Persist the patient as the active scheduling context so the
-    // left-rail PatientMiniCalendar switches its header to
-    // "Scheduling: <name>" and the date picker is patient-scoped.
     setSelectedPatientForScheduling(input);
+    dispatchOpenWorkspace({
+      type: "calendar",
+      title: input.patientName ?? "Schedule",
+      patientScreeningId: input.patientScreeningId ?? null,
+      executionCaseId: input.executionCaseId ?? null,
+      patientDob: input.patientDob ?? null,
+      serviceKey: input.serviceType ?? null,
+      facilityId: input.facilityId ?? facility ?? null,
+      initialDate: opts?.date ?? null,
+    });
   }
 
   function openSchedulePatientPlayground(payload: {
@@ -2461,18 +2470,18 @@ export function TeamPortalShell({
     };
   }
 
-  // Calendar tool action honours the Settings preference. Default (task
-  // #698) is the Quick Schedule pop-up; "playground" is the opt-out that
-  // opens the full calendar view instead.
+  // Left-rail Calendar tile → opens the ONE full Scheduler workspace in the
+  // Playground (scheduling consolidation). The tile says "Calendar", so it
+  // opens the calendar/scheduler workspace — NOT the Quick Schedule pop-up.
+  // Quick Schedule is reached by DOUBLE-CLICKING a date. Uses the selected
+  // portal facility; no patient preselected (generic entry).
   function handleCalendarTool() {
-    if (workspacePrefs.calendarBehavior === "playground") {
-      // Opt-out: open the calendar in the Playground, preserving the active
-      // patient/case context (we never clear selectedPatientId here).
-      setCenterMode("calendar");
-      setCenterTitle(`Calendar — ${globalCalendarDate}`);
-      return;
-    }
-    setCalendarQuickScheduleDate(globalCalendarDate);
+    dispatchOpenWorkspace({
+      type: "calendar",
+      title: "Schedule",
+      facilityId: facility || null,
+      initialDate: globalCalendarDate,
+    });
   }
 
   // Task #698 — clicking a day on any portal calendar opens the Quick
@@ -3458,12 +3467,10 @@ export function TeamPortalShell({
                           label: "Calendar",
                           icon: CalendarDays,
                           onClick: handleCalendarTool,
-                          // Active when the calendar view is open in the
-                          // Playground OR the quick-schedule pop-up it
-                          // launches is showing, so the tool reads as
-                          // engaged either way.
-                          active:
-                            centerMode === "calendar" || !!calendarQuickScheduleDate,
+                          // Active while the Quick Schedule pop-up is showing
+                          // (the full Scheduler is a Playground workspace tab,
+                          // which surfaces its own active state in the tab bar).
+                          active: !!calendarQuickScheduleDate,
                           testId: "left-rail-tool-calendar",
                         },
                         {
@@ -3550,12 +3557,25 @@ export function TeamPortalShell({
                       selectedDate={selectedDate}
                       facility={facility}
                       onSelectDate={(iso) => {
+                        // Mini calendar is for date awareness + navigation. A
+                        // date click selects it and opens the ONE full Scheduler
+                        // on that date (not a separate quick form).
                         setSelectedDate(iso);
-                        openQuickScheduleForDate(iso);
+                        setGlobalCalendarDate(iso);
+                        dispatchOpenWorkspace({
+                          type: "calendar",
+                          title: "Schedule",
+                          facilityId: facility || null,
+                          initialDate: iso,
+                        });
                       }}
                       onExpandToCanvas={() => {
-                        setCenterMode("calendar");
-                        setCenterTitle(`Calendar — ${globalCalendarDate}`);
+                        dispatchOpenWorkspace({
+                          type: "calendar",
+                          title: "Schedule",
+                          facilityId: facility || null,
+                          initialDate: globalCalendarDate,
+                        });
                       }}
                     />
                   </div>

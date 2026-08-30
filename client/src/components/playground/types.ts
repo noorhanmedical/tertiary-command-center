@@ -76,6 +76,10 @@ export type PlaygroundWorkspace = {
    */
   focusToken?: number;
   facilityId?: number | string | null;
+  /** Optional patient DOB carried into the scheduler for a walk-in / summary. */
+  patientDob?: string | null;
+  /** Optional initial date (YYYY-MM-DD) the scheduler should open on. */
+  initialDate?: string | null;
 
   /** Where this workspace was launched from. */
   source?: { kind: string; id?: string | number; label?: string };
@@ -136,6 +140,10 @@ export type OpenInPlaygroundRequest = {
   focusSection?: string | null;
   focusObjectId?: number | string | null;
   facilityId?: number | string | null;
+  /** Optional patient DOB carried into the scheduler. */
+  patientDob?: string | null;
+  /** Optional initial date (YYYY-MM-DD) the scheduler should open on. */
+  initialDate?: string | null;
   source?: { kind: string; id?: string | number; label?: string };
   /** If true, always create a new tab even if a matching one exists. */
   forceNew?: boolean;
