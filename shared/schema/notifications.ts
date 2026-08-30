@@ -29,6 +29,10 @@ export const NOTIFICATION_TYPES = [
   "redistribution_failed",
   "user_deactivated_work_released",
   "system_alert",
+  // Equipment/resource capacity reduced (machine outage) such that existing
+  // appointments now exceed available machines. HIGH severity — the covering
+  // PCS/ACS + managers need to review affected patients.
+  "equipment_outage",
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
@@ -104,6 +108,7 @@ const HIGH_TYPES = new Set<NotificationType>([
   "task_overdue",
   "manager_escalation",
   "user_deactivated_work_released",
+  "equipment_outage",
 ]);
 const LOW_TYPES = new Set<NotificationType>([
   "team_message",
