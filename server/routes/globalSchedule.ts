@@ -485,7 +485,22 @@ export function registerGlobalScheduleRoutes(app: Express) {
       // orchestrator. Deferred (walk-in / no identity) returns 202 with
       // the provisional stub preserved. Missing migration → 503.
       if (featureFlags.canonicalAppointment) {
-        const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        // Resolve the clinic tenancy for the canonical write. Non-admin
+        // sessions carry req.clinicId. An admin session is org-wide
+        // (req.clinicId === null), so we resolve the clinic from the SELECTED
+        // facility name in the request (the Team Portal's one selected clinic).
+        // Without this, admin scheduling silently defers ("no_clinic") and the
+        // appointment never persists.
+        let reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        if (reqClinicId == null && facilityId) {
+          try {
+            const { createFacilityResolver } = await import("../services/facilityResolver");
+            const { resolve } = await createFacilityResolver();
+            reqClinicId = resolve(facilityId)?.clinicId ?? null;
+          } catch {
+            /* fall through — deferred path still applies if unresolved */
+          }
+        }
         try {
           const canonical = await scheduleCanonicalAncillaryAppointment({
             clinicId: reqClinicId,

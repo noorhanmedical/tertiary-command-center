@@ -17,6 +17,7 @@ import {
   upsertFacilityService,
   getActiveServicesForFacility,
 } from "../repositories/ancillaryServiceRegistry.repo";
+import { createFacilityResolver } from "../services/facilityResolver";
 
 const updateServiceSchema = z.object({
   displayName: z.string().min(1).max(200).optional(),
@@ -67,6 +68,32 @@ export function registerAncillaryServiceRegistryRoutes(app: Express) {
     } catch (error: any) {
       console.error("[service-registry] list error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to list services" });
+    }
+  });
+
+  // ─── GET active services by facility NAME ────────────────────────────────
+  // Registered BEFORE the "/:id" route so "by-facility-name" is not parsed as
+  // an id. The Team Portal scheduler knows the selected facility as a canonical
+  // NAME (clinics.name), not a numeric clinic id; this resolves name → clinic
+  // via the canonical facility resolver and returns that facility's active
+  // configured services. Falls back to all globally-active services when the
+  // name doesn't map to a clinics row (legacy facility strings) or is absent.
+  app.get("/api/service-registry/by-facility-name", async (req: Request, res: Response) => {
+    try {
+      const name = String(req.query.name ?? "").trim();
+      if (name) {
+        const { resolve } = await createFacilityResolver();
+        const match = resolve(name);
+        if (match?.clinicId != null) {
+          const services = await getActiveServicesForFacility(match.clinicId);
+          return res.json(services);
+        }
+      }
+      const services = await listServices({ activeOnly: true });
+      return res.json(services);
+    } catch (error: any) {
+      console.error("[service-registry] by-facility-name error:", error?.message ?? error);
+      res.status(500).json({ error: "Failed to get facility services" });
     }
   });
 
