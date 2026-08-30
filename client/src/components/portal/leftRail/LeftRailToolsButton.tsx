@@ -59,8 +59,9 @@ export function LeftRailToolsButton({
       onDragStart={onDragStart}
       data-testid={testId}
       className={cn(
-        // Square tile: aspect-ratio keeps it cube-like; the grid sizes width.
-        "group relative flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-xl border p-1 text-center",
+        // Compact square-ish tile. A capped height (not a strict square) keeps
+        // the whole dock + calendar within the rail without scrolling.
+        "group relative flex aspect-square max-h-[64px] w-full flex-col items-center justify-center gap-0.5 rounded-xl border p-1 text-center",
         "outline-none transition-all duration-150",
         "focus-visible:ring-2 focus-visible:ring-[color:var(--sketch-blue)] focus-visible:ring-offset-1",
         draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
@@ -71,11 +72,11 @@ export function LeftRailToolsButton({
       style={{ boxShadow: active ? undefined : "0 1px 2px rgba(58,96,150,0.08)" }}
     >
       <span className="inline-flex" style={{ color: active ? accent : "#64748b" }}>
-        <Icon className={compact ? "h-5 w-5" : "h-[1.35rem] w-[1.35rem]"} />
+        <Icon className={compact ? "h-5 w-5" : "h-[1.2rem] w-[1.2rem]"} />
       </span>
       {!compact && (
         <span
-          className="w-full truncate text-[9.5px] font-semibold leading-tight"
+          className="w-full truncate text-[9px] font-semibold leading-tight"
           style={{ color: active ? accent : "#475569" }}
         >
           {label}

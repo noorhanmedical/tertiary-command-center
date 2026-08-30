@@ -86,22 +86,19 @@ export function ToolDock({
   }
 
   return (
-    <div data-testid="tool-dock" className="space-y-3">
+    <div data-testid="tool-dock" className="space-y-2">
       {groups.map((group) => (
         <div key={group.id} data-testid={`tool-dock-group-${group.id}`}>
           <div className="mb-1 px-1 text-[9px] font-semibold uppercase tracking-wide text-slate-500">
             {group.label}
           </div>
-          <div className="grid grid-cols-3 gap-2" data-testid={`tool-dock-grid-${group.id}`}>
+          <div className="grid grid-cols-3 gap-1.5" data-testid={`tool-dock-grid-${group.id}`}>
             {group.tools.map((tool) => (
               <DockTile key={tool.id} tool={tool} tint={group.tint} compact={false} />
             ))}
           </div>
         </div>
       ))}
-      <p className="px-1 text-[9px] leading-tight text-slate-500">
-        Tip: drag Email or Sticky Notes onto the Playground to open a floating widget.
-      </p>
     </div>
   );
 }

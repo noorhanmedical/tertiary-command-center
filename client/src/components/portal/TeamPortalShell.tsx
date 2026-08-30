@@ -3360,15 +3360,15 @@ export function TeamPortalShell({
                 data-testid="left-rail-tools-rail"
               >
                 {/*
-                  Layout contract (Stage 1 rail refinement):
-                  Tools now owns the ENTIRE left rail. The lower
-                  CommunicationTray was removed — messaging lives in the
-                  Messaging tab, not duplicated under Tools. This single
-                  scroll child fills the rail: the tool grid scrolls
-                  internally when tall, and the compact calendar is
-                  anchored beneath it (both share this scroll area).
+                  Layout contract:
+                  Tools owns the ENTIRE left rail and does NOT scroll. The tool
+                  dock takes the flexible space (min-h-0 flex-1) and the compact
+                  calendar is a fixed block pinned at the bottom (shrink-0), so
+                  it's always visible without scrolling. Fewer groups (messaging
+                  tiles removed) keep everything within the rail height.
                 */}
-                <div className={`min-h-0 flex-1 overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
+                <div className={`flex min-h-0 flex-1 flex-col ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
+                <div className="min-h-0 flex-1 overflow-hidden">
                 {/* TEAM PORTAL LEFT TOOLS RAIL (Phase 1.6)
                     Shared general tools rail for PCS and ACS. The rail
                     is identical in both portals; only the work-context
@@ -3378,63 +3378,23 @@ export function TeamPortalShell({
                     metrics dashboards, no outreach call-list queue
                     (that belongs to the right rail). */}
                 {(() => {
-                  // Premium launcher dock (Task #655). Tools are organized
-                  // into labeled, color-tinted frosted-glass GROUPS:
-                  //   - Messaging: Direct + Team drive the tray tabs below;
-                  //     Email opens the real composer in the Playground and
-                  //     is draggable to spawn a floating widget.
-                  //   - Notes & Docs: Sticky Notes (persisted, draggable),
-                  //     Quick Note, Documents, Scripts, Proof/PDFs.
-                  //   - Work: Calendar (honours Settings pref), Tasks,
-                  //     Calls, Contacts, Patient Search.
+                  // Premium launcher dock. Messaging tiles (Messages / Direct /
+                  // Team Chat) were removed — messaging is its own top-level
+                  // tab now, so duplicating it here was redundant. Email stays
+                  // (a real composer workspace) and moves under Notes & Docs.
+                  // Two tight groups + System keep the whole dock + the compact
+                  // calendar visible WITHOUT scrolling:
+                  //   - Notes & Docs: Email, Sticky Notes, Quick Note,
+                  //     Documents, Scripts, Marketing.
+                  //   - Work: Calendar, Tasks, Calls, Contacts, Patient Search,
+                  //     Invoice Desk.
                   //   - System: Settings.
                   const dockGroups: DockGroup[] = [
                     {
-                      id: "messaging",
-                      label: "Messaging",
-                      tint: "sky",
+                      id: "notesDocs",
+                      label: "Notes & Docs",
+                      tint: "amber",
                       tools: [
-                        {
-                          id: "messages",
-                          label: "Messages",
-                          icon: MessageCircle,
-                          onClick: () => {
-                            setMessagesWindowOpen(true);
-                            if (activeConversationId) markMessagingRead(activeConversationId);
-                          },
-                          active: messagesWindowOpen,
-                          badge: messagingUnread > 0 ? messagingUnread : undefined,
-                          testId: "left-rail-tool-messages",
-                        },
-                        // Patients dock tool removed — no live patient-SMS
-                        // path on this platform.
-                        {
-                          id: "direct",
-                          label: "Direct",
-                          icon: MessageSquare,
-                          onClick: () => {
-                            setTrayTab("direct");
-                            if (leftNarrow) setCenterMode("chat");
-                            else setLeftRailPeek(true);
-                            setChatFocusNonce((n) => n + 1);
-                          },
-                          active: trayTab === "direct",
-                          badge: directUnread > 0 ? directUnread : undefined,
-                          testId: "left-rail-tool-direct",
-                        },
-                        {
-                          id: "teamChat",
-                          label: "Team Chat",
-                          icon: Users,
-                          onClick: () => {
-                            setTrayTab("team");
-                            if (leftNarrow) setCenterMode("chat");
-                            else setLeftRailPeek(true);
-                            setChatFocusNonce((n) => n + 1);
-                          },
-                          active: trayTab === "team",
-                          testId: "left-rail-tool-team-chat",
-                        },
                         {
                           id: "email",
                           label: "Email",
@@ -3444,13 +3404,6 @@ export function TeamPortalShell({
                           draggableWidget: "email",
                           testId: "left-rail-tool-email",
                         },
-                      ],
-                    },
-                    {
-                      id: "notesDocs",
-                      label: "Notes & Docs",
-                      tint: "amber",
-                      tools: [
                         {
                           id: "sticky",
                           label: "Sticky Notes",
@@ -3481,16 +3434,9 @@ export function TeamPortalShell({
                           icon: BookOpen,
                           onClick: () => dispatchOpenWorkspace({ type: "scripts", title: "Scripts" }),
                           active: activeKind === "resources",
-                          // Stage 1: the "preview" pill was removed from the
-                          // rail tile (kept the rail clean). The honest
-                          // preview/not-live state is shown INSIDE the Scripts
-                          // workspace after opening, not on the tool grid.
                           testId: "left-rail-tool-resources",
                         },
                         {
-                          // K/Phase 0.5 — honest rename. This tool is the
-                          // marketing-materials sender (/api/outreach/materials),
-                          // NOT a "proof PDFs" store. Labeled for what it is.
                           id: "marketing",
                           label: "Marketing",
                           icon: Megaphone,
@@ -3586,24 +3532,27 @@ export function TeamPortalShell({
                   ];
                   return <ToolDock groups={dockGroups} compact={leftNarrow} />;
                 })()}
+                </div>
 
-                {/* Compact Global Calendar (task #698) — clicking a day
-                    updates the selected date AND opens the Quick Schedule
-                    pop-up pre-filled with that date. Hidden in the narrow
-                    icon rail (too small). */}
+                {/* Compact Global Calendar — pinned at the bottom of the rail
+                    (shrink-0) so it's always visible without scrolling.
+                    Clicking a day sets the selected date + opens Quick
+                    Schedule. Hidden in the narrow icon rail (too small). */}
                 {!leftNarrow && (
-                  <LeftRailCompactCalendar
-                    selectedDate={selectedDate}
-                    facility={facility}
-                    onSelectDate={(iso) => {
-                      setSelectedDate(iso);
-                      openQuickScheduleForDate(iso);
-                    }}
-                    onExpandToCanvas={() => {
-                      setCenterMode("calendar");
-                      setCenterTitle(`Calendar — ${globalCalendarDate}`);
-                    }}
-                  />
+                  <div className="shrink-0">
+                    <LeftRailCompactCalendar
+                      selectedDate={selectedDate}
+                      facility={facility}
+                      onSelectDate={(iso) => {
+                        setSelectedDate(iso);
+                        openQuickScheduleForDate(iso);
+                      }}
+                      onExpandToCanvas={() => {
+                        setCenterMode("calendar");
+                        setCenterTitle(`Calendar — ${globalCalendarDate}`);
+                      }}
+                    />
+                  </div>
                 )}
                 </div>
                 {/* Stage 1: the lower CommunicationTray was removed from the
