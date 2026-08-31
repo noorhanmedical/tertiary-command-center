@@ -251,7 +251,7 @@ test.describe("Quick == Full consistency", () => {
 });
 
 test.describe("Scheduler UI surfaces capacity", () => {
-  test("time slots show remaining machines and equipment strip renders", async ({ page }) => {
+  test("time grid renders without machine-count clutter; equipment behind a disclosure", async ({ page }) => {
     const { loginAs } = await import("../fixtures/auth");
     await loginAs(page, "admin");
     await page.goto("/patient-care-specialist-portal");
@@ -264,11 +264,16 @@ test.describe("Scheduler UI surfaces capacity", () => {
     if (await pin.isVisible().catch(() => false)) await pin.click().catch(() => {});
     await page.getByTestId("left-rail-tool-calendar").click();
     await expect(page.getByTestId("unified-scheduler")).toBeVisible();
-    // Equipment strip is visible (machine totals for the day).
-    await expect(page.getByTestId("scheduler-equipment-brainwave")).toBeVisible();
-    // Choose BrainWave → capacity labels appear on slots.
+    // Machine inventory is NOT shown by default (removed from the main UI).
+    await expect(page.getByTestId("scheduler-equipment")).toHaveCount(0);
+    // Choose BrainWave from the dropdown → a 15-min time grid appears, with no
+    // per-slot machine counts.
+    await page.getByTestId("scheduler-service-dropdown").click();
     await page.getByTestId("scheduler-service-brainwave").click();
-    await expect(page.getByTestId("scheduler-slot-cap-08:00")).toBeVisible({ timeout: 8000 });
-    await expect(page.getByTestId("scheduler-slot-cap-08:00")).toContainText("of");
+    await expect(page.getByTestId("scheduler-slot-08:00")).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId("scheduler-slot-08:15")).toBeVisible();
+    // The equipment inventory is available on demand via the compact toggle.
+    await page.getByTestId("scheduler-equipment-toggle").click();
+    await expect(page.getByTestId("scheduler-equipment-brainwave")).toBeVisible();
   });
 });

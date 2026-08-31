@@ -135,6 +135,32 @@ const OVERRIDE_CATEGORIES = [
   "other",
 ];
 
+// A right-panel section: strong header + content, separated by a subtle rule.
+// No nested cards — keeps the panel airy and preserves vertical room.
+function Section({
+  title,
+  right,
+  first,
+  children,
+  testId,
+}: {
+  title: string;
+  right?: React.ReactNode;
+  first?: boolean;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <div className={first ? "" : "border-t border-slate-100 pt-2.5"} data-testid={testId}>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">{title}</span>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -156,6 +182,14 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   // Multi-select: internalCode -> SelectedService.
   const [selected, setSelected] = useState<Map<string, SelectedService>>(new Map());
   const [ultrasoundOpen, setUltrasoundOpen] = useState(false);
+  // Appointment-types dropdown open state (the compact multi-select control).
+  const [serviceMenuOpen, setServiceMenuOpen] = useState(false);
+  // Recommended section: reveal the secondary plan options.
+  const [showOtherOptions, setShowOtherOptions] = useState(false);
+  // Compact equipment disclosure (secondary; not shown by default).
+  const [equipmentOpen, setEquipmentOpen] = useState(false);
+  // Today's Schedule collapse (keeps Available Times above the fold).
+  const [agendaExpanded, setAgendaExpanded] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
   const [quickDate, setQuickDate] = useState<string | null>(null);
   // Per-service planned times (from a chosen visit plan). Keyed by internalCode.
@@ -517,109 +551,117 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   })();
   const plexusCount = qualification?.services.filter((s) => s.resourceType !== "other").length ?? 0;
 
-  // ── Service selector (hierarchical multi-select) ──
+  // ── Appointment types: compact multi-select DROPDOWN ──
+  // Closed = a single control row summarizing the selection. Opening reveals
+  // BrainWave / VitalWave checkboxes + a nested Ultrasound sub-list. The
+  // closed control keeps Available Times above the fold.
+  const serviceSummary = (() => {
+    const parts: string[] = [];
+    if (brainwave && selected.has(brainwave.internalCode)) parts.push("BrainWave");
+    if (vitalwave && selected.has(vitalwave.internalCode)) parts.push("VitalWave");
+    if (ultrasoundSelected.length > 0) parts.push(`Ultrasound (${ultrasoundSelected.length})`);
+    return parts.length > 0 ? parts.join(", ") : "Select appointment types";
+  })();
   const serviceSelector = (
     <div data-testid="scheduler-service-selector">
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Appointment Types</span>
-        {selectedList.some((s) => s.plexusSourced) ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500" data-testid="scheduler-plexus-hint"><Sparkles className="h-3 w-3" /> Selected from Plexus IQ</span>
-        ) : null}
-      </div>
       {servicesLoading ? (
         <div className="flex items-center gap-2 py-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading services…</div>
       ) : (
-        <div className="flex flex-col gap-1.5">
-          <div className="grid grid-cols-2 gap-1.5">
-            {brainwave && (
-              <button type="button" onClick={() => toggleService(brainwave, "brainwave")}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${selected.has(brainwave.internalCode) ? "border-violet-400 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
-                data-testid="scheduler-service-brainwave" aria-pressed={selected.has(brainwave.internalCode)}>
-                <span className={`flex h-4 w-4 items-center justify-center rounded border ${selected.has(brainwave.internalCode) ? "border-violet-500 bg-violet-500 text-white" : "border-slate-300"}`}>{selected.has(brainwave.internalCode) ? <Check className="h-3 w-3" /> : null}</span>
-                <span className="inline-block h-2 w-2 rounded-full bg-violet-500" /> BrainWave
-              </button>
-            )}
-            {vitalwave && (
-              <button type="button" onClick={() => toggleService(vitalwave, "vitalwave")}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${selected.has(vitalwave.internalCode) ? "border-red-400 bg-red-50 text-red-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
-                data-testid="scheduler-service-vitalwave" aria-pressed={selected.has(vitalwave.internalCode)}>
-                <span className={`flex h-4 w-4 items-center justify-center rounded border ${selected.has(vitalwave.internalCode) ? "border-red-500 bg-red-500 text-white" : "border-slate-300"}`}>{selected.has(vitalwave.internalCode) ? <Check className="h-3 w-3" /> : null}</span>
-                <span className="inline-block h-2 w-2 rounded-full bg-red-500" /> VitalWave
-              </button>
-            )}
-          </div>
-          {ultrasound.length > 0 && (
-            <div className="rounded-lg border border-slate-200 bg-white">
-              <button type="button" onClick={() => setUltrasoundOpen((v) => !v)}
-                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors ${ultrasoundSelected.length > 0 ? "text-emerald-700" : "text-slate-700"} hover:bg-slate-50`}
-                data-testid="scheduler-service-ultrasound" aria-expanded={ultrasoundOpen}>
-                <span className="flex items-center gap-1.5 truncate">
-                  <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-                  Ultrasound{ultrasoundSelected.length > 0 ? ` · ${ultrasoundSelected.length} selected` : ""}
-                </span>
-                <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${ultrasoundOpen ? "rotate-180" : ""}`} />
-              </button>
-              {ultrasoundOpen && (
-                <div className="max-h-56 overflow-y-auto border-t border-slate-100 py-1" data-testid="scheduler-ultrasound-menu">
-                  {ultrasound.map((u) => {
-                    const on = selected.has(u.internalCode);
-                    return (
-                      <button key={u.internalCode} type="button" onClick={() => toggleService(u, "ultrasound")}
-                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-emerald-50 ${on ? "text-emerald-700" : "text-slate-700"}`}
-                        data-testid={`scheduler-ultrasound-option-${u.internalCode}`} aria-pressed={on}>
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"}`}>{on ? <Check className="h-3 w-3" /> : null}</span>
-                          <span className="min-w-0"><span className="block truncate">{u.displayName}</span>{u.cptCode ? <span className="block text-[10px] text-slate-400">CPT {u.cptCode}</span> : null}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
+        <>
+          <button
+            type="button"
+            onClick={() => setServiceMenuOpen((v) => !v)}
+            className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${selectedList.length > 0 ? "border-slate-300 bg-white text-slate-800" : "border-slate-200 bg-white text-slate-400"} hover:bg-slate-50`}
+            data-testid="scheduler-service-dropdown"
+            aria-expanded={serviceMenuOpen}
+          >
+            <span className="truncate font-medium">{serviceSummary}</span>
+            <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${serviceMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+          {selectedList.some((s) => s.plexusSourced) ? (
+            <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500" data-testid="scheduler-plexus-hint"><Sparkles className="h-3 w-3" /> Selected from Plexus IQ</div>
+          ) : null}
+          {serviceMenuOpen && (
+            <div className="mt-1 rounded-lg border border-slate-200 bg-white py-1 shadow-sm" data-testid="scheduler-service-menu">
+              {brainwave && (
+                <button type="button" onClick={() => toggleService(brainwave, "brainwave")}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-slate-50 ${selected.has(brainwave.internalCode) ? "text-violet-700" : "text-slate-700"}`}
+                  data-testid="scheduler-service-brainwave" aria-pressed={selected.has(brainwave.internalCode)}>
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selected.has(brainwave.internalCode) ? "border-violet-500 bg-violet-500 text-white" : "border-slate-300"}`}>{selected.has(brainwave.internalCode) ? <Check className="h-3 w-3" /> : null}</span>
+                  <span className="inline-block h-2 w-2 rounded-full bg-violet-500" /> BrainWave
+                </button>
+              )}
+              {vitalwave && (
+                <button type="button" onClick={() => toggleService(vitalwave, "vitalwave")}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-slate-50 ${selected.has(vitalwave.internalCode) ? "text-red-700" : "text-slate-700"}`}
+                  data-testid="scheduler-service-vitalwave" aria-pressed={selected.has(vitalwave.internalCode)}>
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selected.has(vitalwave.internalCode) ? "border-red-500 bg-red-500 text-white" : "border-slate-300"}`}>{selected.has(vitalwave.internalCode) ? <Check className="h-3 w-3" /> : null}</span>
+                  <span className="inline-block h-2 w-2 rounded-full bg-red-500" /> VitalWave
+                </button>
+              )}
+              {ultrasound.length > 0 && (
+                <div className="border-t border-slate-100">
+                  <button type="button" onClick={() => setUltrasoundOpen((v) => !v)}
+                    className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm transition-colors hover:bg-slate-50 ${ultrasoundSelected.length > 0 ? "text-emerald-700" : "text-slate-700"}`}
+                    data-testid="scheduler-service-ultrasound" aria-expanded={ultrasoundOpen}>
+                    <span className="flex items-center gap-2 truncate">
+                      <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                      Ultrasound{ultrasoundSelected.length > 0 ? ` (${ultrasoundSelected.length})` : ""}
+                    </span>
+                    <ChevronRight className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${ultrasoundOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  {ultrasoundOpen && (
+                    <div className="max-h-52 overflow-y-auto border-t border-slate-100 bg-slate-50/50 py-1" data-testid="scheduler-ultrasound-menu">
+                      {ultrasound.map((u) => {
+                        const on = selected.has(u.internalCode);
+                        return (
+                          <button key={u.internalCode} type="button" onClick={() => toggleService(u, "ultrasound")}
+                            className={`flex w-full items-center gap-2 py-1.5 pl-6 pr-3 text-left text-sm transition-colors hover:bg-emerald-50 ${on ? "text-emerald-700" : "text-slate-700"}`}
+                            data-testid={`scheduler-ultrasound-option-${u.internalCode}`} aria-pressed={on}>
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"}`}>{on ? <Check className="h-3 w-3" /> : null}</span>
+                            <span className="min-w-0"><span className="block truncate">{u.displayName}</span>{u.cptCode ? <span className="block text-[10px] text-slate-400">CPT {u.cptCode}</span> : null}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );
 
-  // ── Capacity-aware time slots ──
-  const timeSlots = (
-    <div data-testid="scheduler-time-slots">
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Available Times</span>
-        {primary && availability?.durations?.[primary.resourceType] ? (
-          <span className="text-[10px] font-medium text-slate-400" data-testid="scheduler-block-duration">{availability.durations[primary.resourceType]} min block</span>
-        ) : null}
-      </div>
-      {!primary ? (
-        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Choose one or more appointment types to see availability.</p>
-      ) : slots.length === 0 ? (
-        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Loading availability…</p>
-      ) : (
-        <div className="grid grid-cols-3 gap-1.5">
-          {slots.map((slot) => {
-            const isSel = time === slot.time;
-            const offDay = slot.constraint === "off_day";
-            const full = slot.constraint === "full" || slot.constraint === "outage";
-            // Not disabled — a conflicted slot opens the override flow.
-            return (
-              <button key={slot.time} type="button" onClick={() => setTime(slot.time)}
-                className={`flex flex-col items-center rounded-lg border px-1 py-1.5 text-[12px] font-medium tabular-nums transition-colors ${
-                  isSel ? "border-transparent bg-slate-900 text-white"
-                    : full ? "border-red-100 bg-red-50/40 text-red-400 hover:bg-red-50"
-                      : offDay ? "border-amber-100 bg-amber-50/40 text-amber-500 hover:bg-amber-50"
-                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
-                data-testid={`scheduler-slot-${slot.time}`}>
-                <span className="leading-none">{pretty12h(slot.time)}</span>
-                <span className={`mt-0.5 text-[9px] font-normal leading-none ${isSel ? "text-slate-300" : ""}`} data-testid={`scheduler-slot-cap-${slot.time}`}>
-                  {full ? "FULL" : offDay ? "off-day" : `${slot.available} of ${slot.total}`}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+  // ── Time grid (compact, 15-min). No machine-count clutter — a conflicted
+  // slot is marked FULL and, when selected, routes through the override flow
+  // where the detailed reason is shown. ──
+  const timeGrid = !primary ? (
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Choose one or more appointment types to see availability.</p>
+  ) : slots.length === 0 ? (
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Loading availability…</p>
+  ) : (
+    <div className="grid grid-cols-4 gap-1.5" data-testid="scheduler-time-slots">
+      {slots.map((slot) => {
+        const isSel = time === slot.time;
+        const offDay = slot.constraint === "off_day";
+        const full = slot.constraint === "full" || slot.constraint === "outage";
+        // Not disabled — a conflicted slot opens the override flow.
+        return (
+          <button key={slot.time} type="button" onClick={() => setTime(slot.time)}
+            className={`relative rounded-lg border px-1 py-1.5 text-center text-[12px] font-medium tabular-nums transition-colors ${
+              isSel ? "border-transparent bg-slate-900 text-white"
+                : full ? "border-red-100 bg-red-50/50 text-red-400 hover:bg-red-100"
+                  : offDay ? "border-amber-100 bg-amber-50/50 text-amber-500 hover:bg-amber-100"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+            title={full ? "At capacity — selecting will prompt an override" : offDay ? "Not a normal service day — selecting will prompt an override" : undefined}
+            data-testid={`scheduler-slot-${slot.time}`}>
+            <span className="leading-none">{pretty12h(slot.time)}</span>
+            {full ? <span className="ml-1 text-[8px] font-semibold uppercase text-red-400" data-testid={`scheduler-slot-full-${slot.time}`}>full</span> : null}
+          </button>
+        );
+      })}
     </div>
   );
 
@@ -645,36 +687,6 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   ) : null;
 
-  // ── Visit plans (one-visit / split-visit) ──
-  const planBlock = (oneVisit || splitVisit) && selectedList.length > 0 ? (
-    <div data-testid="scheduler-plans">
-      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Suggested Visit</div>
-      <div className="flex flex-col gap-1.5">
-        {oneVisit ? (
-          <button type="button" onClick={() => applyPlan(oneVisit)}
-            className={`rounded-lg border px-3 py-2 text-left transition-colors ${oneVisit.recommended ? "border-emerald-300 bg-emerald-50 hover:bg-emerald-100" : "border-slate-200 bg-white hover:bg-slate-50"}`}
-            data-testid="scheduler-plan-one-visit">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-slate-900">One visit · {prettyDateLong(oneVisit.isoDate)}</span>
-              {oneVisit.recommended ? <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">Best fit</span> : null}
-            </div>
-            <div className="mt-0.5 text-[11px] text-slate-500">{oneVisit.steps.map((s) => `${pretty12h(s.time)} ${s.serviceLabel}`).join("  →  ")}</div>
-          </button>
-        ) : null}
-        {splitVisit ? (
-          <button type="button" onClick={() => applyPlan(splitVisit)}
-            className={`rounded-lg border px-3 py-2 text-left transition-colors ${splitVisit.recommended ? "border-emerald-300 bg-emerald-50 hover:bg-emerald-100" : "border-slate-200 bg-white hover:bg-slate-50"}`}
-            data-testid="scheduler-plan-split-visit">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-slate-900">Split visit · {splitVisit.dates.map(prettyDateLong).join(", ")}</span>
-            </div>
-            <div className="mt-0.5 text-[11px] text-slate-500">{splitVisit.reason}</div>
-          </button>
-        ) : null}
-      </div>
-    </div>
-  ) : null;
-
   // ── Conflict indicator ──
   const conflictBanner = primary && time && selectedSlot && !selectedSlot.fits && selectedSlot.constraint !== "off_day" ? (
     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700" data-testid="scheduler-conflict">
@@ -690,35 +702,82 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   ) : null;
 
-  const equipmentStrip = equipment.length > 0 ? (
-    <div className="flex flex-wrap items-center gap-2" data-testid="scheduler-equipment">
-      {equipment.map((e) => {
-        const op = operatingDays.find((o) => o.resourceType === e.resourceType);
-        return (
-          <span key={e.resourceType} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600" data-testid={`scheduler-equipment-${e.resourceType}`}>
-            <span className={`h-2 w-2 rounded-full ${RESOURCE_DOT[e.resourceType]}`} />
-            {e.label} · {e.total} {e.total === 1 ? "machine" : "machines"}
-            {op && !op.isOperatingToday ? <span className="text-amber-500">· off today</span> : null}
-          </span>
-        );
-      })}
+  // ── Compact equipment access (secondary) ──
+  // Machine inventory is NOT shown by default in the scheduler — it lives in
+  // Admin Settings → Scheduling Capacity and drives the engine. This is a quiet
+  // on-demand disclosure for PCS/ACS who need to sanity-check today's machines.
+  const anyOffToday = operatingDays.some((o) => !o.isOperatingToday);
+  const equipmentControl = equipment.length > 0 ? (
+    <div className="relative">
+      <button type="button" onClick={() => setEquipmentOpen((v) => !v)}
+        className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-400 hover:text-slate-600"
+        data-testid="scheduler-equipment-toggle">
+        Equipment{anyOffToday ? <span className="text-amber-500">·</span> : null}
+        <ChevronDown className={`h-3 w-3 transition-transform ${equipmentOpen ? "rotate-180" : ""}`} />
+      </button>
+      {equipmentOpen ? (
+        <div className="absolute right-0 z-30 mt-1 w-52 rounded-lg border border-slate-200 bg-white p-2 shadow-lg" data-testid="scheduler-equipment">
+          {equipment.map((e) => {
+            const op = operatingDays.find((o) => o.resourceType === e.resourceType);
+            return (
+              <div key={e.resourceType} className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-slate-600" data-testid={`scheduler-equipment-${e.resourceType}`}>
+                <span className={`h-2 w-2 rounded-full ${RESOURCE_DOT[e.resourceType]}`} />
+                {e.label} · {e.total} {e.total === 1 ? "machine" : "machines"}
+                {op && !op.isOperatingToday ? <span className="text-amber-500">· off today</span> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   ) : null;
 
-  // Estimated resource time for the selection.
-  const estimate = availability && serviceRequests.length > 0 ? (
-    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600" data-testid="scheduler-estimate">
-      <span className="font-semibold text-slate-700">Estimated resource time:</span>{" "}
-      {serviceRequests.map((s) => {
-        if (s.resourceType === "ultrasound") {
-          const per = availability.capacity.ultrasound.minutesPerStudy ?? 15;
-          return `${ultrasoundSelected.length} × ${per} min = ${availability.durations.ultrasound ?? per * ultrasoundSelected.length} min ultrasound`;
-        }
-        return `${RESOURCE_LABELS[s.resourceType]} ${availability.durations[s.resourceType] ?? ""} min`;
-      }).join(" · ")}
-      {ultrasoundSelected.length > 0 && availability.capacity.ultrasound.turnoverMinutes > 0 ? ` · ${availability.capacity.ultrasound.turnoverMinutes} min turnover between patients` : ""}
+  // ── Recommended (concise) ──
+  // The single best plan + a one-line reason, with a "Use Recommendation"
+  // action. Alternatives sit behind "View other options" so the recommendation
+  // never crowds out the time grid.
+  const plans = [oneVisit, splitVisit].filter((p): p is VisitPlan => !!p);
+  const topPlan = plans.find((p) => p.recommended) ?? plans[0] ?? null;
+  const otherPlans = plans.filter((p) => p !== topPlan);
+  function planLine(p: VisitPlan): string {
+    return p.steps.map((s) => `${pretty12h(s.time)} ${s.serviceLabel}`).join("  →  ");
+  }
+  const recommendedBlock = topPlan && selectedList.length > 0 ? (
+    <div className="flex flex-col gap-1.5">
+      <button type="button" onClick={() => applyPlan(topPlan)}
+        className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left transition-colors hover:bg-emerald-100"
+        data-testid={topPlan.kind === "one_visit" ? "scheduler-plan-one-visit" : "scheduler-plan-split-visit"}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-semibold text-slate-900">
+            {topPlan.kind === "split_visit" ? `Split · ${topPlan.dates.map(prettyDateLong).join(", ")}` : prettyDateLong(topPlan.isoDate)}
+          </span>
+          <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">Use</span>
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-slate-600">{planLine(topPlan)}</div>
+      </button>
+      {otherPlans.length > 0 ? (
+        <>
+          <button type="button" onClick={() => setShowOtherOptions((v) => !v)} className="self-start text-[10px] font-medium text-slate-500 underline hover:text-slate-700" data-testid="scheduler-other-options-toggle">
+            {showOtherOptions ? "Hide other options" : "View other options"}
+          </button>
+          {showOtherOptions ? (
+            <div className="flex flex-col gap-1.5" data-testid="scheduler-other-options">
+              {otherPlans.map((p, i) => (
+                <button key={i} type="button" onClick={() => applyPlan(p)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50"
+                  data-testid={p.kind === "one_visit" ? "scheduler-plan-one-visit" : "scheduler-plan-split-visit"}>
+                  <div className="text-sm font-semibold text-slate-900">{p.kind === "split_visit" ? `Split · ${p.dates.map(prettyDateLong).join(", ")}` : prettyDateLong(p.isoDate)}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-slate-500">{planLine(p)}</div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </div>
-  ) : null;
+  ) : (
+    <p className="text-[11px] italic text-slate-400" data-testid="scheduler-recommended-empty">Select appointment types to see a recommendation.</p>
+  );
 
   // ── Day agenda (grouped by patient) ──
   const groupedAgenda = useMemo(() => {
@@ -730,17 +789,16 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     }
     return groups;
   }, [agenda]);
-  const dayAgenda = (
+  // Today's Schedule body — constrained internal scroll so a busy day never
+  // pushes Available Times off-screen. Collapsed to a preview by default.
+  const AGENDA_PREVIEW = 3;
+  const agendaBody = (
     <div data-testid="scheduler-day-agenda">
-      <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Today's Schedule</span>
-        {facility ? <span className="truncate text-[11px] text-slate-400">{facility}</span> : null}
-      </div>
       {agenda.length === 0 ? (
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">No appointments scheduled.</p>
       ) : (
-        <div className="flex flex-col gap-1">
-          {groupedAgenda.map((g, i) => (
+        <div className={`flex flex-col gap-1 ${agendaExpanded ? "max-h-52 overflow-y-auto pr-1" : ""}`}>
+          {(agendaExpanded ? groupedAgenda : groupedAgenda.slice(0, AGENDA_PREVIEW)).map((g, i) => (
             <div key={i} className="rounded-lg border border-slate-100 bg-white px-3 py-1.5" data-testid={`scheduler-agenda-item-${i}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="min-w-0 truncate text-[12px] font-semibold text-slate-800">{g.patient}</span>
@@ -768,15 +826,19 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
               </div>
             </div>
           ))}
+          {groupedAgenda.length > AGENDA_PREVIEW ? (
+            <button type="button" onClick={() => setAgendaExpanded((v) => !v)} className="self-start pt-0.5 text-[10px] font-medium text-slate-500 underline hover:text-slate-700" data-testid="scheduler-agenda-toggle">
+              {agendaExpanded ? "Show less" : `View all ${groupedAgenda.length}`}
+            </button>
+          ) : null}
         </div>
       )}
     </div>
   );
 
-  // ── Patient block ──
+  // ── Patient block (compact — lives inside the PATIENT section) ──
   const patientBlock = (
     <div data-testid="scheduler-patient-block">
-      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Patient</div>
       {hasPatient ? (
         <div className="flex items-start justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -890,11 +952,8 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{monthLabel}</span>
           </div>
         </div>
-        {patient.patientScreeningId != null && qualification ? (
-          <div className="flex items-center gap-2">
-            {plexusCount > 0 ? <span className="text-[11px] text-slate-500" data-testid="scheduler-plexus-summary">Plexus IQ: {plexusCount} ancillar{plexusCount === 1 ? "y" : "ies"}</span> : null}
-            {reviewTag}
-          </div>
+        {patient.patientScreeningId != null && qualification && plexusCount > 0 ? (
+          <span className="text-[11px] text-slate-500" data-testid="scheduler-plexus-summary">Plexus IQ: {plexusCount} ancillar{plexusCount === 1 ? "y" : "ies"}</span>
         ) : null}
       </div>
 
@@ -943,13 +1002,30 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick Schedule</span>
                   <button type="button" onClick={() => setQuickDate(null)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" data-testid="scheduler-quick-close" aria-label="Close quick schedule"><X className="h-4 w-4" /></button>
                 </div>
-                <div className="flex flex-col gap-3">
+                {/* Quick Schedule shares the SAME appointment-types dropdown,
+                    recommendation, and capacity-aware time grid as the full
+                    Scheduler — just compact. */}
+                <div className="flex flex-col gap-2.5">
                   <div className="text-sm font-semibold text-slate-900">{prettyDateLong(quickDate)}</div>
                   {patientBlock}
-                  {serviceSelector}
-                  {timeSlots}
-                  {offDayBanner}
-                  {conflictBanner}
+                  <div>
+                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Appointment Types</div>
+                    {serviceSelector}
+                  </div>
+                  {topPlan && selectedList.length > 0 ? (
+                    <div>
+                      <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Recommended</div>
+                      {recommendedBlock}
+                    </div>
+                  ) : null}
+                  <div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">Available Times</span>
+                      {equipmentControl}
+                    </div>
+                    {timeGrid}
+                    {(offDayBanner || conflictBanner) ? <div className="mt-2 flex flex-col gap-2">{offDayBanner}{conflictBanner}</div> : null}
+                  </div>
                   <button type="button" disabled={!canSubmit || scheduleMutation.isPending} onClick={() => attemptSchedule(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-quick-submit">
                     {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />} Schedule
                   </button>
@@ -963,20 +1039,40 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
           {splitConfirmDialog}
         </div>
 
-        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4" data-testid="scheduler-panel">
-          <div><div className="text-base font-bold uppercase tracking-tight text-slate-900" data-testid="scheduler-selected-date">{prettyDateLong(selectedDate)}</div></div>
-          {equipmentStrip}
-          {dayAgenda}
-          <div className="h-px bg-slate-100" />
-          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-600" data-testid="scheduler-schedule-heading">{hasPatient && patient.name ? `Schedule ${patient.name}` : "Schedule Patient"}</div>
-          {patientBlock}
-          {serviceSelector}
-          {estimate}
-          {timeSlots}
-          {offDayBanner}
-          {conflictBanner}
-          {planBlock}
-          <div className="mt-auto pt-1">{scheduleButton}</div>
+        <div className="flex min-h-0 flex-col gap-2.5 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4" data-testid="scheduler-panel">
+          {/* Selected date / clinic */}
+          <div>
+            <div className="text-base font-bold uppercase tracking-tight text-slate-900" data-testid="scheduler-selected-date">{prettyDateLong(selectedDate)}</div>
+            {facility ? <div className="text-[11px] text-slate-500">{facility}</div> : null}
+          </div>
+
+          {/* PATIENT */}
+          <Section title="Patient" first right={reviewTag} testId="scheduler-section-patient">
+            {patientBlock}
+          </Section>
+
+          {/* APPOINTMENT TYPES */}
+          <Section title="Appointment Types" testId="scheduler-section-types">
+            {serviceSelector}
+          </Section>
+
+          {/* RECOMMENDED */}
+          <Section title="Recommended" testId="scheduler-section-recommended">
+            {recommendedBlock}
+          </Section>
+
+          {/* AVAILABLE TIMES — kept high so it's visible without scrolling. */}
+          <Section title="Available Times" testId="scheduler-section-times" right={equipmentControl}>
+            {timeGrid}
+            {(offDayBanner || conflictBanner) ? <div className="mt-2 flex flex-col gap-2">{offDayBanner}{conflictBanner}</div> : null}
+          </Section>
+
+          {scheduleButton}
+
+          {/* TODAY'S SCHEDULE — context, last, collapsible. */}
+          <Section title="Today's Schedule" testId="scheduler-section-agenda">
+            {agendaBody}
+          </Section>
         </div>
       </div>
     </div>

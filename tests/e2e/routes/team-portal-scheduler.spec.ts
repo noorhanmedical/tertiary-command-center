@@ -57,10 +57,12 @@ test.describe("Unified full Scheduler", () => {
     await openPortalAsAdmin(page);
     await pinLeft(page);
     await page.getByTestId("left-rail-tool-calendar").click();
-    // BrainWave + VitalWave are top-level.
+    // Appointment types is a compact dropdown; open it to reveal the options.
+    await page.getByTestId("scheduler-service-dropdown").click();
+    // BrainWave + VitalWave are top-level inside the menu.
     await expect(page.getByTestId("scheduler-service-brainwave")).toBeVisible();
     await expect(page.getByTestId("scheduler-service-vitalwave")).toBeVisible();
-    // Ultrasound opens a dropdown with the registry's ultrasound studies.
+    // Ultrasound opens a nested sub-dropdown with the registry's studies.
     await page.getByTestId("scheduler-service-ultrasound").click();
     await expect(page.getByTestId("scheduler-ultrasound-menu")).toBeVisible();
     const opts = page.locator('[data-testid^="scheduler-ultrasound-option-"]');
@@ -69,16 +71,19 @@ test.describe("Unified full Scheduler", () => {
     await expect(page.getByTestId("scheduler-ultrasound-option-Bilateral Carotid Duplex")).toBeVisible();
   });
 
-  test("time slots render as visible buttons once a service is chosen", async ({ page }) => {
+  test("time grid renders 15-min slots once a service is chosen", async ({ page }) => {
     await openPortalAsAdmin(page);
     await pinLeft(page);
     await page.getByTestId("left-rail-tool-calendar").click();
-    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible();
-    // Capacity-aware slots appear after a service (resource pool) is selected.
+    // Choose BrainWave from the dropdown → the capacity-aware grid appears.
+    await page.getByTestId("scheduler-service-dropdown").click();
     await page.getByTestId("scheduler-service-brainwave").click();
-    await expect(page.getByTestId("scheduler-slot-08:00")).toBeVisible({ timeout: 8000 });
-    // Each slot shows remaining machines ("N of M") for the selected service.
-    await expect(page.getByTestId("scheduler-slot-cap-08:00")).toBeVisible();
+    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible({ timeout: 8000 });
+    // 15-minute resolution (no machine-count text on the buttons).
+    await expect(page.getByTestId("scheduler-slot-08:00")).toBeVisible();
+    await expect(page.getByTestId("scheduler-slot-08:15")).toBeVisible();
+    await expect(page.getByTestId("scheduler-slot-08:30")).toBeVisible();
+    await expect(page.getByTestId("scheduler-slot-08:45")).toBeVisible();
   });
 });
 
@@ -96,8 +101,11 @@ test.describe("Quick Schedule popover", () => {
     // No extra scheduler tab was opened.
     const afterTabs = await page.locator('[data-testid="playground-tab-bar"] [role="tab"]').count();
     expect(afterTabs).toBe(beforeTabs);
-    // Popover carries the same fields.
-    await expect(page.getByTestId("scheduler-quick-popover").getByTestId("scheduler-service-brainwave")).toBeVisible();
+    // Popover carries the same appointment-types dropdown; opening it reveals
+    // the same BrainWave option as the full scheduler.
+    const pop = page.getByTestId("scheduler-quick-popover");
+    await pop.getByTestId("scheduler-service-dropdown").click();
+    await expect(pop.getByTestId("scheduler-service-brainwave")).toBeVisible();
   });
 });
 
@@ -138,7 +146,8 @@ test.describe("Generic scheduling write", () => {
     await result.click();
     await expect(page.getByTestId("scheduler-patient-name")).toBeVisible();
 
-    // Service (BrainWave) + a time slot.
+    // Service (BrainWave) from the dropdown + a time slot.
+    await page.getByTestId("scheduler-service-dropdown").click();
     await page.getByTestId("scheduler-service-brainwave").click();
     await page.getByTestId("scheduler-slot-09:00").click();
 

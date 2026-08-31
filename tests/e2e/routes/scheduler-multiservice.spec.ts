@@ -182,20 +182,28 @@ test.describe("Scheduler UI — preselection + admin review + multi-select (A, B
 
   test("C+J. multi-select recalculates + operating-day muting renders", async ({ page }) => {
     await openScheduler(page);
-    // Select BrainWave then add VitalWave — both check.
+    // Appointment types is a compact dropdown; open it, then multi-select.
+    await page.getByTestId("scheduler-service-dropdown").click();
     await page.getByTestId("scheduler-service-brainwave").click();
     await page.getByTestId("scheduler-service-vitalwave").click();
     await expect(page.getByTestId("scheduler-service-brainwave")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("scheduler-service-vitalwave")).toHaveAttribute("aria-pressed", "true");
-    // Expand Ultrasound + select a study → the equipment strip is present.
+    // Expand the nested Ultrasound sub-dropdown + select a study.
     await page.getByTestId("scheduler-service-ultrasound").click();
     const opt = page.locator('[data-testid^="scheduler-ultrasound-option-"]').first();
     await opt.click();
     await page.waitForTimeout(600);
-    await expect(page.getByTestId("scheduler-equipment-ultrasound")).toBeVisible();
+    // Close the dropdown; the time grid stays visible without machine counts.
+    await page.getByTestId("scheduler-service-dropdown").click();
+    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible();
     // With ultrasound selected, some month days are muted (off-day markers).
     const offDayMarks = page.locator('[data-testid^="scheduler-day-offday-"]');
     expect(await offDayMarks.count()).toBeGreaterThan(0);
+    // Machine inventory is NOT shown by default — the equipment detail is
+    // behind a compact disclosure.
+    await expect(page.getByTestId("scheduler-equipment")).toHaveCount(0);
+    await page.getByTestId("scheduler-equipment-toggle").click();
+    await expect(page.getByTestId("scheduler-equipment-ultrasound")).toBeVisible();
   });
 
   test("B. patient-context shows admin-review tag and stays scheduleable", async ({ page }) => {
