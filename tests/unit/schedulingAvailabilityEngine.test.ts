@@ -9,6 +9,10 @@ import {
   suggestSequences,
   conflictForRequest,
   findOverCapacityBlocks,
+  isOperatingDay,
+  nextEligibleOperatingDay,
+  weekdayOf,
+  planVisit,
   hhmmToMinutes,
   minutesToHHMM,
   type ExistingOccupancy,
@@ -226,5 +230,177 @@ describe("findOverCapacityBlocks (machine outage)", () => {
   it("flags nothing when demand fits the reduced capacity", () => {
     const existing = [block("brainwave", "09:00", "09:45", "A")];
     assert.equal(findOverCapacityBlocks("brainwave", 1, existing).length, 0);
+  });
+});
+
+// ─── Operating days ──────────────────────────────────────────────────────
+
+// 2027-03-15 Mon, -16 Tue, -17 Wed, -18 Thu, -19 Fri, -20 Sat, -21 Sun.
+describe("operating-day evaluation", () => {
+  it("weekdayOf returns the local day-of-week", () => {
+    assert.equal(weekdayOf("2027-03-15"), 1); // Monday
+    assert.equal(weekdayOf("2027-03-16"), 2); // Tuesday
+    assert.equal(weekdayOf("2027-03-18"), 4); // Thursday
+  });
+
+  it("isOperatingDay honors the resource's configured weekdays", () => {
+    // Ultrasound default = Tue/Thu.
+    assert.equal(isOperatingDay("ultrasound", "2027-03-16", CAP), true); // Tue
+    assert.equal(isOperatingDay("ultrasound", "2027-03-15", CAP), false); // Mon
+    assert.equal(isOperatingDay("ultrasound", "2027-03-18", CAP), true); // Thu
+    // BrainWave = Mon–Fri.
+    assert.equal(isOperatingDay("brainwave", "2027-03-15", CAP), true); // Mon
+    assert.equal(isOperatingDay("brainwave", "2027-03-21", CAP), false); // Sun
+  });
+
+  it("computeSlots classifies an off-day (capacity free but not a service day)", () => {
+    const slots = computeSlots({
+      service: { resourceType: "ultrasound", studyCount: 1 },
+      capacity: CAP,
+      existing: [],
+      candidatePatientKey: "C",
+      isoDate: "2027-03-15", // Monday — ultrasound off-day
+    });
+    const s = slots.find((x) => x.time === "09:00")!;
+    assert.equal(s.capacityFits, true, "machine is free");
+    assert.equal(s.fits, false, "but not a recommendation on an off-day");
+    assert.equal(s.constraint, "off_day");
+  });
+
+  it("computeSlots recommends on an operating day", () => {
+    const slots = computeSlots({
+      service: { resourceType: "ultrasound", studyCount: 1 },
+      capacity: CAP,
+      existing: [],
+      candidatePatientKey: "C",
+      isoDate: "2027-03-16", // Tuesday — ultrasound operating day
+    });
+    const s = slots.find((x) => x.time === "09:00")!;
+    assert.equal(s.fits, true);
+    assert.equal(s.constraint, undefined);
+  });
+});
+
+describe("nextEligibleOperatingDay", () => {
+  it("returns the NEXT eligible day, not blindly tomorrow", () => {
+    // From Monday, ultrasound's next normal day is Tuesday (not Wed).
+    assert.equal(
+      nextEligibleOperatingDay(["ultrasound"], "2027-03-15", CAP, { inclusive: false }),
+      "2027-03-16",
+    );
+    // From Tuesday (exclusive), the next ultrasound day is Thursday.
+    assert.equal(
+      nextEligibleOperatingDay(["ultrasound"], "2027-03-16", CAP, { inclusive: false }),
+      "2027-03-18",
+    );
+  });
+
+  it("respects the intersection of MULTIPLE resources' days", () => {
+    // BrainWave (Mon–Fri) + Ultrasound (Tue/Thu) → next shared day from Monday
+    // is Tuesday.
+    assert.equal(
+      nextEligibleOperatingDay(["brainwave", "ultrasound"], "2027-03-15", CAP, { inclusive: true }),
+      "2027-03-16",
+    );
+  });
+
+  it("inclusive=true returns the day itself when it already qualifies", () => {
+    assert.equal(
+      nextEligibleOperatingDay(["ultrasound"], "2027-03-16", CAP, { inclusive: true }),
+      "2027-03-16",
+    );
+  });
+});
+
+// ─── Visit planning: one-visit vs split-visit ────────────────────────────
+
+describe("planVisit — one-visit preference", () => {
+  it("places BrainWave + Ultrasound in ONE visit on the earliest shared day", () => {
+    const { oneVisit, splitVisit } = planVisit({
+      services: [{ resourceType: "brainwave" }, { resourceType: "ultrasound", studyCount: 2 }],
+      capacity: CAP,
+      existingByDate: {},
+      candidatePatientKey: "P",
+      isoDate: "2027-03-15", // Monday — ultrasound off; one-visit should move to Tue
+    });
+    assert.ok(oneVisit, "expected a one-visit plan");
+    assert.equal(oneVisit!.kind, "one_visit");
+    assert.equal(oneVisit!.isoDate, "2027-03-16"); // Tuesday (both offered)
+    assert.equal(oneVisit!.recommended, true);
+    // Two steps, sequential (patient in one machine at a time).
+    assert.equal(oneVisit!.steps.length, 2);
+    assert.ok(oneVisit!.steps[1].startMinutes >= oneVisit!.steps[0].endMinutes);
+    // A split alternative is also offered (BrainWave Mon, Ultrasound Tue).
+    assert.ok(splitVisit, "expected a split-visit alternative");
+    assert.ok(splitVisit!.dates.length >= 2);
+  });
+
+  it("single-resource visit stays one-visit with no split", () => {
+    const { oneVisit, splitVisit } = planVisit({
+      services: [{ resourceType: "brainwave" }],
+      capacity: CAP,
+      existingByDate: {},
+      candidatePatientKey: "P",
+      isoDate: "2027-03-15", // Monday — brainwave operates
+    });
+    assert.ok(oneVisit);
+    assert.equal(oneVisit!.isoDate, "2027-03-15");
+    assert.equal(splitVisit, null);
+  });
+
+  it("same operating days → one-visit only (no split needed)", () => {
+    // BrainWave + VitalWave both Mon–Fri.
+    const { oneVisit, splitVisit } = planVisit({
+      services: [{ resourceType: "brainwave" }, { resourceType: "vitalwave" }],
+      capacity: CAP,
+      existingByDate: {},
+      candidatePatientKey: "P",
+      isoDate: "2027-03-16",
+    });
+    assert.ok(oneVisit);
+    assert.equal(oneVisit!.dates.length, 1);
+    assert.equal(splitVisit, null);
+  });
+});
+
+describe("conflictForRequest — off-day vs full", () => {
+  it("names an off_day conflict + next eligible day", () => {
+    const c = conflictForRequest(
+      { resourceType: "ultrasound", studyCount: 1 },
+      hhmmToMinutes("09:00"),
+      CAP,
+      [],
+      "C",
+      "2027-03-15", // Monday off-day
+    );
+    assert.ok(c);
+    assert.equal(c!.constraint, "off_day");
+    assert.equal(c!.nextEligibleDay, "2027-03-16");
+    assert.equal(c!.nextAvailableMinutes, null);
+  });
+
+  it("names a full conflict on a normal day with same-day next opening", () => {
+    const existing = [
+      block("brainwave", "09:00", "09:45", "A"),
+      block("brainwave", "09:00", "09:45", "B"),
+    ];
+    const c = conflictForRequest(
+      { resourceType: "brainwave" },
+      hhmmToMinutes("09:00"),
+      CAP,
+      existing,
+      "C",
+      "2027-03-16", // Tuesday — brainwave normal day
+    );
+    assert.ok(c);
+    assert.equal(c!.constraint, "full");
+    assert.equal(c!.nextAvailableMinutes, hhmmToMinutes("08:00"));
+  });
+
+  it("no conflict on a normal day with capacity", () => {
+    assert.equal(
+      conflictForRequest({ resourceType: "brainwave" }, hhmmToMinutes("09:00"), CAP, [], "C", "2027-03-16"),
+      null,
+    );
   });
 });
