@@ -30,6 +30,16 @@ import {
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/** Operational override recorded on a scheduled event (agenda read model). */
+export type OccupancyOverride = {
+  constraint: SoftConstraint;
+  reason: string;
+  /** Who scheduled it despite the constraint (display name or id), if known. */
+  by?: string | null;
+  /** ISO timestamp of the override, if known. */
+  at?: string | null;
+};
+
 /** An existing booked block on a resource pool for the target day. */
 export type ExistingOccupancy = {
   resourceType: ResourceType;
@@ -44,6 +54,8 @@ export type ExistingOccupancy = {
   label?: string;
   serviceLabel?: string;
   appointmentId?: number | null;
+  /** Present when this appointment was created via an authorized override. */
+  override?: OccupancyOverride | null;
 };
 
 /** A request to schedule one service (or an ultrasound bundle) for a patient. */

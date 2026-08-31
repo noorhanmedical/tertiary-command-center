@@ -81,6 +81,12 @@ export type AgendaItem = {
   patient: string;
   service: string;
   resourceType: ResourceType;
+  override?: {
+    constraint: SoftConstraint;
+    reason: string;
+    by?: string | null;
+    at?: string | null;
+  } | null;
 };
 
 export type EquipmentItem = { resourceType: ResourceType; total: number; label: string };

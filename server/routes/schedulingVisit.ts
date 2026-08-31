@@ -19,25 +19,40 @@ const overrideSchema = z.object({
   capacityState: z.record(z.unknown()).nullable().optional(),
 });
 
-const visitBodySchema = z.object({
-  facility: z.string().nullable().optional(),
+const serviceSchema = z.object({
+  serviceType: z.string().min(1),
+  time: z.string().regex(/^\d{1,2}:\d{2}$/, "time must be HH:MM"),
+  studyCount: z.number().int().min(1).max(20).optional(),
+});
+
+const groupSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
-  patientScreeningId: z.number().int().nullable().optional(),
-  executionCaseId: z.number().int().nullable().optional(),
-  patientName: z.string().nullable().optional(),
-  patientDob: z.string().nullable().optional(),
-  services: z
-    .array(
-      z.object({
-        serviceType: z.string().min(1),
-        time: z.string().regex(/^\d{1,2}:\d{2}$/, "time must be HH:MM"),
-        studyCount: z.number().int().min(1).max(20).optional(),
-      }),
-    )
-    .min(1, "At least one service is required"),
-  // Per-service overrides keyed by serviceType.
+  services: z.array(serviceSchema).min(1, "Each group needs at least one service"),
   overrides: z.record(overrideSchema).optional(),
 });
+
+// Accepts EITHER the single-date shape { date, services, overrides } OR the
+// multi-date shape { groups: [{ date, services, overrides }] }. Both write one
+// visit sharing a visitGroupId.
+const visitBodySchema = z
+  .object({
+    facility: z.string().nullable().optional(),
+    patientScreeningId: z.number().int().nullable().optional(),
+    executionCaseId: z.number().int().nullable().optional(),
+    patientName: z.string().nullable().optional(),
+    patientDob: z.string().nullable().optional(),
+    visitGroupId: z.string().nullable().optional(),
+    // Single-date form:
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    services: z.array(serviceSchema).optional(),
+    overrides: z.record(overrideSchema).optional(),
+    // Multi-date form:
+    groups: z.array(groupSchema).optional(),
+  })
+  .refine(
+    (b) => (b.groups && b.groups.length > 0) || (b.date && b.services && b.services.length > 0),
+    { message: "Provide either { groups } or { date + services }" },
+  );
 
 export function registerSchedulingVisitRoutes(app: Express) {
   app.post("/api/scheduling/visit", async (req: Request, res: Response) => {
@@ -59,9 +74,15 @@ export function registerSchedulingVisitRoutes(app: Express) {
       });
     }
 
-    // Override authorization (soft-constraint bypass) is gated. If ANY service
+    // Normalize to the multi-date group model (single-date → one group).
+    const groups =
+      data.groups && data.groups.length > 0
+        ? data.groups
+        : [{ date: data.date!, services: data.services!, overrides: data.overrides }];
+
+    // Override authorization (soft-constraint bypass) is gated. If ANY group
     // carries an override, the caller must be admin or an authorized PCS/ACS.
-    const hasOverride = data.overrides && Object.keys(data.overrides).length > 0;
+    const hasOverride = groups.some((g) => g.overrides && Object.keys(g.overrides).length > 0);
     if (hasOverride && !(await canOverrideCapacity(req))) {
       return res.status(403).json({
         error: "Overriding a scheduling constraint requires admin or an authorized PCS/ACS role",
@@ -72,13 +93,12 @@ export function registerSchedulingVisitRoutes(app: Express) {
     try {
       const result = await scheduleVisit(req, {
         facility: data.facility ?? null,
-        date: data.date,
         patientScreeningId: data.patientScreeningId ?? null,
         executionCaseId: data.executionCaseId ?? null,
         patientName: data.patientName ?? null,
         patientDob: data.patientDob ?? null,
-        services: data.services,
-        overrides: data.overrides,
+        visitGroupId: data.visitGroupId ?? null,
+        groups,
       });
       // 200 all scheduled; 207-ish partial surfaced as 200 with overall flag so
       // the client can show a clear partial state; 502 when nothing persisted.

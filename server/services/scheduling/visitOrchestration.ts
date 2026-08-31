@@ -41,19 +41,31 @@ export type VisitOverride = {
   capacityState?: Record<string, unknown> | null;
 };
 
+/** One date's worth of service blocks within a (possibly multi-date) visit. */
+export type VisitGroupInput = {
+  date: string; // YYYY-MM-DD
+  services: VisitServiceInput[];
+  /** Per-service override keyed by serviceType, for THIS date's blocks. */
+  overrides?: Record<string, VisitOverride>;
+};
+
 export type VisitScheduleInput = {
   facility: string | null;
-  date: string; // YYYY-MM-DD
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
   patientName?: string | null;
   patientDob?: string | null;
-  services: VisitServiceInput[];
-  /** Per-service override keyed by serviceType, when scheduling despite a conflict. */
-  overrides?: Record<string, VisitOverride>;
+  /**
+   * Multi-date visit groups. A single-visit is just one group. Every event
+   * across every group shares one visitGroupId.
+   */
+  groups: VisitGroupInput[];
+  /** Reuse an existing visit group id (idempotent re-submits); else generated. */
+  visitGroupId?: string | null;
 };
 
 export type VisitServiceResult = {
+  date: string;
   serviceType: string;
   time: string;
   status: "scheduled" | "deferred" | "failed";
@@ -70,6 +82,8 @@ export type VisitScheduleResult = {
   overall: "all_scheduled" | "partial" | "failed";
   scheduledCount: number;
   totalCount: number;
+  /** Distinct dates the visit spans. */
+  dates: string[];
   services: VisitServiceResult[];
 };
 
@@ -80,9 +94,14 @@ function combineToIso(date: string, time: string): string | null {
 }
 
 /**
- * Schedule every selected service for the visit. `req` is used only for the
- * session actor/role (audit) and clinic scope; override authorization is
- * enforced by the CALLER (route) before invoking this.
+ * Schedule every selected service across one or more dates as ONE visit. Each
+ * service is its own canonical event; all share a single visitGroupId. `req`
+ * supplies the session actor/role (audit) and clinic scope; override
+ * authorization is enforced by the CALLER (route) before invoking this.
+ *
+ * Idempotent orchestration (not a single cross-service DB transaction, because
+ * each write has its own journey + execution-case side effects): every service
+ * gets an explicit per-service result so a service is never silently lost.
  */
 export async function scheduleVisit(
   req: Request,
@@ -92,6 +111,20 @@ export async function scheduleVisit(
     (req as Request & { session?: { userId?: string } }).session?.userId ?? null;
   const actorRole =
     (req as Request & { session?: { role?: string } }).session?.role ?? null;
+  // Resolve the actor's display name once so overrides read cleanly in the
+  // agenda ("By: Calista") instead of a raw user id.
+  let actorName: string | null = null;
+  if (actorUserId) {
+    try {
+      const { storage } = await import("../../storage");
+      const u = await storage.getUser(actorUserId);
+      actorName = (u as { name?: string; username?: string } | undefined)?.name
+        ?? (u as { username?: string } | undefined)?.username
+        ?? null;
+    } catch {
+      /* name is best-effort */
+    }
+  }
   let reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
   if (reqClinicId == null && input.facility) {
     try {
@@ -102,14 +135,17 @@ export async function scheduleVisit(
     }
   }
 
-  const visitGroupId = randomUUID();
-  const isMultiService = input.services.length > 1;
+  const visitGroupId = input.visitGroupId ?? randomUUID();
+  const totalServices = input.groups.reduce((n, g) => n + g.services.length, 0);
   const results: VisitServiceResult[] = [];
 
-  for (const svc of input.services) {
-    const startsAt = combineToIso(input.date, svc.time);
+  for (const group of input.groups) {
+   for (const svc of group.services) {
+    const override = group.overrides?.[svc.serviceType] ?? null;
+    const startsAt = combineToIso(group.date, svc.time);
     if (!startsAt) {
       results.push({
+        date: group.date,
         serviceType: svc.serviceType,
         time: svc.time,
         status: "failed",
@@ -119,24 +155,25 @@ export async function scheduleVisit(
       });
       continue;
     }
-    const override = input.overrides?.[svc.serviceType] ?? null;
     const metadata: Record<string, unknown> = {
       source: "unified_scheduler_visit",
       visitGroupId,
-      visitServiceCount: input.services.length,
-      isMultiServiceVisit: isMultiService,
+      visitServiceCount: totalServices,
+      isMultiServiceVisit: totalServices > 1,
+      isMultiDateVisit: input.groups.length > 1,
+      visitDate: group.date,
     };
-    if (svc.studyCount && svc.studyCount > 1) metadata.ultrasoundStudyCount = svc.studyCount;
-    else if (svc.studyCount) metadata.ultrasoundStudyCount = svc.studyCount;
+    if (svc.studyCount) metadata.ultrasoundStudyCount = svc.studyCount;
     if (override) {
       // Operational override metadata rides on the event so reads (day agenda)
-      // can show a subtle "capacity override" indicator.
+      // can show a subtle "capacity override" indicator + who/why/when.
       metadata.override = {
         constraint: override.constraint,
         reason: override.reason,
         category: override.category ?? null,
         actorUserId,
         actorRole,
+        actorName,
         requestedTime: svc.time,
         capacityState: override.capacityState ?? null,
         at: new Date().toISOString(),
@@ -151,7 +188,7 @@ export async function scheduleVisit(
       serviceType: svc.serviceType,
       startsAt,
       endsAt: null,
-      facilityId: input.facility,
+      facilityId: input.facility ?? undefined,
       metadata,
     };
 
@@ -173,6 +210,7 @@ export async function scheduleVisit(
             ? "deferred"
             : "failed";
       outcome = {
+        date: group.date,
         serviceType: svc.serviceType,
         time: svc.time,
         status,
@@ -186,6 +224,7 @@ export async function scheduleVisit(
       };
     } catch (e) {
       outcome = {
+        date: group.date,
         serviceType: svc.serviceType,
         time: svc.time,
         status: "failed",
@@ -207,17 +246,19 @@ export async function scheduleVisit(
         executionCaseId: input.executionCaseId ?? null,
         serviceType: svc.serviceType,
         requestedTime: svc.time,
-        date: input.date,
+        date: group.date,
         constraint: override.constraint,
         reason: override.reason,
         category: override.category ?? null,
         actorUserId,
         actorRole,
+        actorName,
         capacityState: override.capacityState ?? null,
       });
     }
 
     results.push(outcome);
+   }
   }
 
   const scheduledCount = results.filter((r) => r.status === "scheduled").length;
@@ -233,6 +274,7 @@ export async function scheduleVisit(
     overall,
     scheduledCount,
     totalCount: results.length,
+    dates: Array.from(new Set(results.map((r) => r.date))).sort(),
     services: results,
   };
 }

@@ -25,6 +25,7 @@ import {
   nextEligibleOperatingDay,
   planVisit,
   type ExistingOccupancy,
+  type OccupancyOverride,
   type ServiceRequest,
   type CapacityByResource,
   type SlotAvailability,
@@ -128,6 +129,20 @@ export async function loadExistingOccupancy(params: {
           params.capacity,
         );
     }
+    // Surface an operational override (persisted on metadata.override) so the
+    // day agenda can explain why an appointment exists beyond normal capacity.
+    const rawOverride = (r.metadata as { override?: Record<string, unknown> } | null)?.override;
+    const oc = rawOverride?.constraint;
+    const override: OccupancyOverride | null =
+      rawOverride && typeof rawOverride === "object" && (oc === "full" || oc === "off_day" || oc === "outage")
+        ? {
+            constraint: oc as "full" | "off_day" | "outage",
+            reason: String(rawOverride.reason ?? ""),
+            by: (rawOverride.actorName as string | undefined) ?? (rawOverride.actorUserId as string | undefined) ?? null,
+            at: (rawOverride.at as string | undefined) ?? null,
+          }
+        : null;
+
     out.push({
       resourceType,
       startMinutes,
@@ -137,6 +152,7 @@ export async function loadExistingOccupancy(params: {
       label: r.patientName ?? "Patient",
       serviceLabel: r.serviceType ?? resourceType,
       appointmentId: r.id ?? null,
+      override,
     });
   }
   return out;
@@ -175,6 +191,13 @@ export type AvailabilityResult = {
     patient: string;
     service: string;
     resourceType: ResourceType;
+    /** Present when this appointment was created via an authorized override. */
+    override?: {
+      constraint: "full" | "off_day" | "outage";
+      reason: string;
+      by?: string | null;
+      at?: string | null;
+    } | null;
   }>;
   /** Equipment summary for the day (used vs total). */
   equipment: Array<{
@@ -291,6 +314,7 @@ export async function computeAvailability(params: {
       patient: e.label ?? "Patient",
       service: e.serviceLabel ?? e.resourceType,
       resourceType: e.resourceType,
+      override: e.override ?? null,
     }));
 
   const equipment = (["brainwave", "vitalwave", "ultrasound"] as ResourceType[]).map((rt) => ({
