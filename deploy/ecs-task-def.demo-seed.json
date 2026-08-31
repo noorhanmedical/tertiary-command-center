@@ -1,0 +1,40 @@
+{
+  "_comment": "Dedicated one-shot ECS task definition for seeding the investor demo. Register this once, then the operator runs a short `aws ecs run-task` (see DEMO_INVESTOR.md). It mirrors the `command-center` task def (same image + secrets + roles) but overrides the container command to run the seed instead of the web server. Replace every <PLACEHOLDER>. Fill them from your existing `command-center` task def: `aws ecs describe-task-definition --task-definition command-center`.",
+  "family": "plexus-demo-seed",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "<EXECUTION_ROLE_ARN — copy from command-center task def>",
+  "taskRoleArn": "<TASK_ROLE_ARN — copy from command-center task def>",
+  "containerDefinitions": [
+    {
+      "name": "demo-seed",
+      "image": "<ECR_IMAGE_URI — same image the service runs, e.g. <acct>.dkr.ecr.us-east-1.amazonaws.com/plexus/command-center:latest>",
+      "essential": true,
+      "command": [
+        "sh",
+        "-c",
+        "E2E_SEED_APPLY=YES npx tsx script/seedInvestorDemo.ts"
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "development" },
+        { "name": "DEMO_PASSWORD", "value": "CHANGE_ME_STRONG_DEMO_PASSWORD" }
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "<DATABASE_URL_SECRET_ARN — copy from command-center task def secrets[]>"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "<CLOUDWATCH_LOG_GROUP — e.g. /ecs/plexus-demo-seed (create it, or reuse the service's group)>",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "demo-seed"
+        }
+      }
+    }
+  ]
+}

@@ -38,6 +38,10 @@ COPY --from=builder /app/migrations ./migrations
 # Copy backfill scripts
 COPY --from=builder /app/scripts ./scripts
 
+# Copy seed/operational scripts (singular `script/` — includes the
+# investor-demo seed run as a one-shot ECS task; see DEMO_INVESTOR.md).
+COPY --from=builder /app/script ./script
+
 # The app listens on port 5000
 EXPOSE 5000
 
