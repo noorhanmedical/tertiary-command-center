@@ -16,6 +16,11 @@ import { storage } from "../storage";
 import { withAdvisoryLock } from "../lib/advisoryLock";
 import { releaseAndRedistribute } from "./callListEngine";
 import { openai, withRetry } from "./aiClient";
+import {
+  classifyLogSafeError,
+  errorPhiSafe,
+  warnPhiSafe,
+} from "../lib/phiSafeLogger";
 
 const TICK_MS = Number(process.env.ABSENCE_TICK_MS ?? 10 * 60 * 1000);
 const STALE_CALL_WINDOW_MIN = Number(process.env.ABSENCE_STALE_CALL_WINDOW_MIN ?? 90);
@@ -39,9 +44,23 @@ export function startAbsenceWatcher() {
   started = true;
   // Stagger first tick a bit so app start isn't slowed.
   kickoffTimer = setTimeout(() => {
-    runOnce().catch((err) => console.error("[absenceWatcher] first tick:", err));
+    runOnce().catch((error: unknown) => {
+      errorPhiSafe({
+        source: "application_lifecycle",
+        operation: "background_services",
+        outcome: "failed",
+        category: classifyLogSafeError(error),
+      });
+    });
     tickInterval = setInterval(() => {
-      runOnce().catch((err) => console.error("[absenceWatcher] tick:", err));
+      runOnce().catch((error: unknown) => {
+        errorPhiSafe({
+          source: "application_lifecycle",
+          operation: "background_services",
+          outcome: "failed",
+          category: classifyLogSafeError(error),
+        });
+      });
     }, TICK_MS);
   }, 30_000);
 }
@@ -130,8 +149,13 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
             try {
               await releaseAndRedistribute(storage, sc.id, today, "absence_auto_execute");
               await storage.updateTask(existingAlert.id, { status: "resolved" });
-            } catch (err) {
-              console.error("[absenceWatcher] auto-execute failed:", err);
+            } catch (error: unknown) {
+              errorPhiSafe({
+                source: "application_lifecycle",
+                operation: "background_services",
+                outcome: "failed",
+                category: classifyLogSafeError(error),
+              });
             }
           }
         }
@@ -159,13 +183,18 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
             ],
             response_format: { type: "json_object" },
             max_tokens: 200,
-          }), 2, "absenceWatcher.ai");
+          }), 2, "openai_request");
           const raw = resp.choices?.[0]?.message?.content ?? "";
           const parsed = JSON.parse(raw);
           if (typeof parsed.summary === "string") aiSummary = parsed.summary;
           if (Array.isArray(parsed.actions)) aiPlan = { actions: parsed.actions };
-        } catch (err) {
-          console.warn("[absenceWatcher] AI proposal failed (using fallback):", (err as Error)?.message);
+        } catch (error: unknown) {
+          warnPhiSafe({
+            source: "ai_operation",
+            operation: "openai_request",
+            outcome: "failed",
+            category: classifyLogSafeError(error),
+          });
         }
       }
 

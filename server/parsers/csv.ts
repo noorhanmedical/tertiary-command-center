@@ -1,5 +1,7 @@
 import { parse } from "csv-parse/sync";
 import { openai, withRetry } from "../services/aiClient";
+import { getRequestId } from "../middleware/requestObservability";
+import { errorPhiSafe } from "../lib/phiSafeLogger";
 
 export function csvToText(buffer: Buffer): string {
   try {
@@ -124,14 +126,20 @@ Skip rows that are headers, empty, or don't contain valid patient data (no date 
         max_completion_tokens: 16000,
       }),
     3,
-    "parseHistoryImport"
+    "reference_import"
   );
 
   try {
     const parsed = JSON.parse(response.choices[0]?.message?.content || '{"records":[]}');
     return parsed.records || [];
   } catch {
-    console.error("Failed to parse history import response");
+    errorPhiSafe({
+      source: "ai_operation",
+      operation: "reference_import",
+      outcome: "failed",
+      category: "parse_failure",
+      requestId: getRequestId(),
+    });
     return [];
   }
 }

@@ -44,6 +44,11 @@
 
 import type { PatientScreening } from "@shared/schema";
 import { storage } from "../../storage";
+import { getRequestId } from "../../middleware/requestObservability";
+import {
+  classifyLogSafeProviderError,
+  warnPhiSafe,
+} from "../../lib/phiSafeLogger";
 import { invalidatePatientDatabase } from "../../routes/patientDatabase";
 import {
   buildAdminReviewEvidence,
@@ -430,11 +435,14 @@ export async function addAdminReviewAncillary(
           narrativeGenerated = true;
         }
       }
-    } catch (err: any) {
-      console.warn(
-        "[admin-review/add-ancillary] narrative generation failed; keeping deterministic entry:",
-        err?.message ?? err,
-      );
+    } catch (error: unknown) {
+      warnPhiSafe({
+        source: "ai_operation",
+        operation: "admin_review",
+        outcome: "partial",
+        category: classifyLogSafeProviderError(error),
+        requestId: getRequestId(),
+      });
     }
   }
 

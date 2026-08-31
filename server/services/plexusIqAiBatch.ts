@@ -39,9 +39,17 @@ export type MicroBatchSuccess = {
   }>;
 };
 
+export type MicroBatchFailureReason =
+  | "response_truncated"
+  | "invalid_response"
+  | "response_count_mismatch"
+  | "response_index_mismatch"
+  | "request_timeout"
+  | "provider_failure";
+
 export type MicroBatchFailure = {
   ok: false;
-  reason: string;
+  reason: MicroBatchFailureReason;
 };
 
 export type MicroBatchResult = MicroBatchSuccess | MicroBatchFailure;
@@ -136,26 +144,20 @@ export async function screenPatientsWithAIBatch(
     const content = response.choices[0]?.message?.content || "{}";
     const finishReason = response.choices[0]?.finish_reason;
     if (finishReason === "length") {
-      return { ok: false, reason: "AI response truncated (finish_reason=length)" };
+      return { ok: false, reason: "response_truncated" };
     }
 
     let parsed: any;
     try {
       parsed = JSON.parse(content);
-    } catch (err) {
-      return {
-        ok: false,
-        reason: `Invalid JSON from micro-batch: ${err instanceof Error ? err.message : String(err)}`,
-      };
+    } catch {
+      return { ok: false, reason: "invalid_response" };
     }
     if (!parsed || !Array.isArray(parsed.patients)) {
-      return { ok: false, reason: "Response missing patients array" };
+      return { ok: false, reason: "invalid_response" };
     }
     if (parsed.patients.length !== patients.length) {
-      return {
-        ok: false,
-        reason: `Response had ${parsed.patients.length} patients, expected ${patients.length}`,
-      };
+      return { ok: false, reason: "response_count_mismatch" };
     }
 
     const results: MicroBatchSuccess["results"] = [];
@@ -163,16 +165,10 @@ export async function screenPatientsWithAIBatch(
     for (const entry of parsed.patients as any[]) {
       const idx = Number(entry?.patientIndex);
       if (!Number.isFinite(idx) || !requestedIndices.has(idx)) {
-        return {
-          ok: false,
-          reason: `Response contained unknown patientIndex ${entry?.patientIndex}`,
-        };
+        return { ok: false, reason: "response_index_mismatch" };
       }
       if (seenIndices.has(idx)) {
-        return {
-          ok: false,
-          reason: `Response contained duplicate patientIndex ${idx}`,
-        };
+        return { ok: false, reason: "response_index_mismatch" };
       }
       seenIndices.add(idx);
       const qualifyingTests = Array.isArray(entry.qualifyingTests) ? entry.qualifyingTests : [];
@@ -191,13 +187,10 @@ export async function screenPatientsWithAIBatch(
     }
 
     return { ok: true, results };
-  } catch (err) {
-    if (controller.signal.aborted) {
-      return { ok: false, reason: `Micro-batch AI call timed out after ${options.timeoutMs}ms` };
-    }
+  } catch {
     return {
       ok: false,
-      reason: `Micro-batch AI call failed: ${err instanceof Error ? err.message : String(err)}`,
+      reason: controller.signal.aborted ? "request_timeout" : "provider_failure",
     };
   } finally {
     clearTimeout(timeout);

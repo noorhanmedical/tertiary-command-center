@@ -18,6 +18,8 @@ import {
   type UltrasoundScreeningData,
 } from "../../shared/plexus";
 import { openai, withRetry } from "./aiClient";
+import { getRequestId } from "../middleware/requestObservability";
+import { classifyLogSafeError, warnPhiSafe } from "../lib/phiSafeLogger";
 
 type PatientInput = {
   id: number;
@@ -84,11 +86,17 @@ async function generateJustification(
           max_completion_tokens: 1200,
         }),
       3,
-      "noteGen_justification"
+      "generate_note"
     );
     return response.choices[0]?.message?.content?.trim() || undefined;
-  } catch (e: any) {
-    console.warn("[noteGenerationServer] Justification fetch failed:", e.message);
+  } catch (error: unknown) {
+    warnPhiSafe({
+      source: "ai_operation",
+      operation: "generate_note",
+      outcome: "failed",
+      category: classifyLogSafeError(error),
+      requestId: getRequestId(),
+    });
     return undefined;
   }
 }

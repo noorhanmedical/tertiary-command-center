@@ -10,6 +10,7 @@
 // independently testable and the same payload can be dry-run first.
 
 import type { Express, Request, Response } from "express";
+import { sendPublicOperationalResponse } from "../middleware/requestObservability";
 import {
   syncEmrEncounterSchedule,
   isEmrScheduleSyncEnabled,
@@ -19,9 +20,7 @@ import {
 export function registerEmrScheduleSyncRoutes(app: Express) {
   app.post("/api/admin/emr-schedule-sync", async (req: Request, res: Response) => {
     if (!isEmrScheduleSyncEnabled()) {
-      return res.status(503).json({
-        error: "EMR schedule sync is disabled. Set USE_EMR_SCHEDULE_SYNC=1 to enable.",
-      });
+      return sendPublicOperationalResponse(res, "EMR_SCHEDULE_SYNC_DISABLED");
     }
 
     const encounters = (req.body?.encounters ?? null) as ParsedEncounter[] | null;

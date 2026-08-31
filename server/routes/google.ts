@@ -1,5 +1,13 @@
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import multer from "multer";
+import {
+  getRequestId,
+  sendPublicOperationalResponse,
+} from "../middleware/requestObservability";
+import {
+  classifyLogSafeProviderError,
+  errorPhiSafe,
+} from "../lib/phiSafeLogger";
 import { storage } from "../storage";
 import { VALID_FACILITIES, resolveGeneratedNoteFolderId } from "./helpers";
 import {
@@ -59,21 +67,19 @@ async function isDescendantOfRoot(
   return false;
 }
 
-async function requireDriveConnected(res: any): Promise<boolean> {
+async function requireDriveConnected(res: Response): Promise<boolean> {
   const { isGoogleDriveConnected } = await import("../integrations/googleDrive");
   const connected = await isGoogleDriveConnected();
   if (!connected) {
-    res.status(503).json({ error: "Google Drive is not connected", connected: false });
+    sendPublicOperationalResponse(res, "GOOGLE_DRIVE_NOT_CONNECTED");
     return false;
   }
   return true;
 }
 
-const S3_PROVIDER_UNAVAILABLE = { available: false, reason: "S3 provider active" } as const;
-
-function requireDriveProvider(res: any): boolean {
+function requireDriveProvider(res: Response): boolean {
   if (getStorageProvider() === "s3") {
-    res.status(503).json(S3_PROVIDER_UNAVAILABLE);
+    sendPublicOperationalResponse(res, "GOOGLE_DRIVE_PROVIDER_UNAVAILABLE");
     return false;
   }
   return true;
@@ -380,9 +386,15 @@ export function registerGoogleRoutes(app: Express) {
 
       const patientName = (response.choices[0]?.message?.content || "").trim().replace(/^["']|["']$/g, "") || "Unknown";
       res.json({ patientName });
-    } catch (error: any) {
-      console.error("OCR name extraction error:", error);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      errorPhiSafe({
+        source: "ai_operation",
+        operation: "document_extraction",
+        outcome: "failed",
+        category: classifyLogSafeProviderError(error),
+        requestId: getRequestId(),
+      });
+      res.status(500).json({ error: "OCR name extraction failed" });
     }
   });
 

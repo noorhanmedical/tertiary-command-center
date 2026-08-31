@@ -6,6 +6,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { isEnabled } from "../lib/featureFlags";
+import { sendPublicOperationalResponse } from "../middleware/requestObservability";
 import {
   listMyInbox,
   listMyConversation,
@@ -36,9 +37,7 @@ function requireAuthAndClinic(
 
 function featureGate(_req: Request, res: Response, next: NextFunction) {
   if (!isEnabled("internalDirectMessages")) {
-    return res
-      .status(501)
-      .json({ error: "internal direct messages feature disabled" });
+    return sendPublicOperationalResponse(res, "DIRECT_MESSAGES_DISABLED");
   }
   return next();
 }

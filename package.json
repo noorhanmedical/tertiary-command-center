@@ -22,6 +22,7 @@
     "seed:visit-flow": "tsx script/seedVisitPatientFlow.ts",
     "seed:outreach-flow": "tsx script/seedOutreachPatientFlow.ts",
     "seed:canonical-flows": "tsx script/seedCanonicalWorkflowScenarios.ts",
+    "seed:investor-demo": "tsx script/seedInvestorDemo.ts",
     "review:canonical-flow-state": "tsx script/reviewCanonicalFlowState.ts",
     "qa:canonical-visual-state": "tsx script/qaCanonicalVisualState.ts",
     "audit:canonical-integrity": "tsx script/auditCanonicalIntegrity.ts",

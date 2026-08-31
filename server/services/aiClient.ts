@@ -1,5 +1,11 @@
 import OpenAI_import from "openai";
 import { withOpenAIConcurrencyLimit } from "../middleware/rateLimiter";
+import { getRequestId } from "../middleware/requestObservability";
+import { normalizeAiOperation } from "../lib/aiObservability";
+import {
+  classifyLogSafeProviderError,
+  warnPhiSafe,
+} from "../lib/phiSafeLogger";
 
 const OpenAI = ((OpenAI_import as any).default ?? OpenAI_import) as typeof OpenAI_import;
 
@@ -18,37 +24,63 @@ function sleep(ms: number): Promise<void> {
 export async function withRetry<T>(
   fn: () => Promise<T>,
   retries = MAX_RETRIES,
-  label = "AI call"
+  operationLabel = "AI call",
 ): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const result = await withOpenAIConcurrencyLimit(() =>
+      return await withOpenAIConcurrencyLimit(() =>
         Promise.race([
           fn(),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`AI timeout after ${AI_TIMEOUT_MS}ms`)), AI_TIMEOUT_MS)
+            setTimeout(() => reject(new Error(`AI timeout after ${AI_TIMEOUT_MS}ms`)), AI_TIMEOUT_MS),
           ),
-        ])
+        ]),
       );
-      return result;
-    } catch (err: any) {
+    } catch (err: unknown) {
       lastErr = err;
-      const isTransient =
-        err?.status === 429 ||
-        err?.status === 500 ||
-        err?.status === 503 ||
-        err?.message?.includes("timeout") ||
-        err?.message?.includes("ECONNRESET") ||
-        err?.message?.includes("socket");
+      const retryable = isTransientAiError(err);
 
-      if (!isTransient || attempt === retries) {
+      if (!retryable || attempt === retries) {
         throw err;
       }
-      const delay = 1000 * Math.pow(2, attempt - 1);
-      console.warn(`[${label}] attempt ${attempt} failed (${err.message}), retrying in ${delay}ms...`);
-      await sleep(delay);
+
+      const delayMs = 1000 * Math.pow(2, attempt - 1);
+      warnPhiSafe({
+        source: "ai_retry",
+        operation: normalizeAiOperation(operationLabel),
+        outcome: "retrying",
+        category: classifyLogSafeProviderError(err),
+        requestId: getRequestId(),
+        providerStatus: providerStatus(err),
+        attempt,
+        delayMs,
+        retryable: true,
+      });
+      await sleep(delayMs);
     }
   }
   throw lastErr;
+}
+
+function isTransientAiError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { status?: unknown; message?: unknown };
+  const status = typeof candidate.status === "number" ? candidate.status : undefined;
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+
+  // Preserve the pre-observability retry policy; this change must not alter
+  // provider call counts or worst-case latency.
+  return status === 429 ||
+    status === 500 ||
+    status === 503 ||
+    message.includes("timeout") ||
+    message.includes("ECONNRESET") ||
+    message.includes("socket");
+}
+
+function providerStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" && status >= 100 && status <= 599 ? status : undefined;
 }

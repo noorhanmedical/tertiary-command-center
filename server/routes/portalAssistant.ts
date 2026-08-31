@@ -16,6 +16,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { isEnabled } from "../lib/featureFlags";
+import { sendPublicOperationalResponse } from "../middleware/requestObservability";
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) {
@@ -26,9 +27,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 function gate(_req: Request, res: Response, next: NextFunction) {
   if (!isEnabled("portalAssistant")) {
-    return res
-      .status(501)
-      .json({ error: "portal assistant feature disabled" });
+    return sendPublicOperationalResponse(res, "PORTAL_ASSISTANT_DISABLED");
   }
   return next();
 }
