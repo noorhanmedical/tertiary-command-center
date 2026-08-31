@@ -1799,14 +1799,20 @@ export function TeamPortalShell({
 
   // Key a patient's ancillary rows so the doc workflows can offer a compact
   // "which ancillary" selector when a patient has more than one active test.
-  const ancillaryPatientKey = (row: {
+  // NOTE: declared as a hoisted function (not a const arrow) because it is
+  // called inside the `groupedAncillarySchedule` useMemo that appears ABOVE
+  // this point in source. A const arrow would be in the temporal dead zone
+  // when that memo recomputes with non-empty rows, crashing the whole portal
+  // ("Cannot access 'ancillaryPatientKey' before initialization").
+  function ancillaryPatientKey(row: {
     patientScreeningId?: number | null;
     patientName?: string | null;
     facilityId?: string | null;
-  }): string =>
-    row.patientScreeningId != null
+  }): string {
+    return row.patientScreeningId != null
       ? `p:${row.patientScreeningId}`
       : `n:${(row.patientName ?? "").toLowerCase().trim()}|${row.facilityId ?? ""}`;
+  }
 
   const ancillariesByPatient = useMemo(() => {
     const map = new Map<string, AncillaryServiceContext[]>();
