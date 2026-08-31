@@ -363,6 +363,48 @@ describe("planVisit — one-visit preference", () => {
   });
 });
 
+describe("split-visit multi-date structure", () => {
+  it("split plan places each resource on its OWN operating day (distinct dates)", () => {
+    const { splitVisit } = planVisit({
+      services: [{ resourceType: "brainwave" }, { resourceType: "ultrasound", studyCount: 1 }],
+      capacity: CAP,
+      existingByDate: {},
+      candidatePatientKey: "P",
+      isoDate: "2027-03-15", // Monday
+    });
+    assert.ok(splitVisit, "expected a split plan");
+    // BrainWave step on a Mon–Fri day; ultrasound step on a Tue/Thu day.
+    const bw = splitVisit!.steps.find((s) => s.resourceType === "brainwave")!;
+    const us = splitVisit!.steps.find((s) => s.resourceType === "ultrasound")!;
+    assert.ok(bw && us);
+    // Each lands on an operating day for its own resource.
+    assert.equal(isOperatingDay("brainwave", bw.isoDate, CAP), true);
+    assert.equal(isOperatingDay("ultrasound", us.isoDate, CAP), true);
+    // The two services are on different dates (that's the point of a split).
+    assert.notEqual(bw.isoDate, us.isoDate);
+    // dates[] reflects the distinct dates, sorted.
+    assert.deepEqual(splitVisit!.dates, Array.from(new Set([bw.isoDate, us.isoDate])).sort());
+  });
+
+  it("grouping split steps by date yields one group per date", () => {
+    const { splitVisit } = planVisit({
+      services: [{ resourceType: "brainwave" }, { resourceType: "ultrasound", studyCount: 2 }],
+      capacity: CAP,
+      existingByDate: {},
+      candidatePatientKey: "P",
+      isoDate: "2027-03-15",
+    });
+    assert.ok(splitVisit);
+    // Mirror the client's group-by-date transform used for the write payload.
+    const byDate: Record<string, number> = {};
+    for (const s of splitVisit!.steps) byDate[s.isoDate] = (byDate[s.isoDate] ?? 0) + 1;
+    assert.equal(Object.keys(byDate).length, splitVisit!.dates.length);
+    // Every step is accounted for in exactly one date group.
+    const total = Object.values(byDate).reduce((a, b) => a + b, 0);
+    assert.equal(total, splitVisit!.steps.length);
+  });
+});
+
 describe("conflictForRequest — off-day vs full", () => {
   it("names an off_day conflict + next eligible day", () => {
     const c = conflictForRequest(

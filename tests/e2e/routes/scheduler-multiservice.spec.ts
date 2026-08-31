@@ -212,3 +212,120 @@ test.describe("Scheduler UI — preselection + admin review + multi-select (A, B
     await expect(page.getByTestId("scheduler-plexus-hint")).toBeVisible();
   });
 });
+
+// ─── Closeout: agenda override read model + true multi-date split write ─────
+
+const WED = "2027-03-17"; // ultrasound off-day (not Tue/Thu)
+const THU = "2027-03-18"; // ultrasound ON
+
+test.describe("Agenda override read model (A, B)", () => {
+  test("A. an overridden appointment surfaces the override in the day agenda", async ({ page }) => {
+    const req = await loginApi(page, "patientCareSpecialist");
+    const eventIds: Array<number | null> = [];
+    try {
+      // PCS overrides an ultrasound on Monday (off-day).
+      const w = await req.post("/api/scheduling/visit", {
+        data: {
+          facility: CLINIC, patientScreeningId: P1,
+          groups: [{ date: MON, services: [{ serviceType: US, time: "10:00" }],
+            overrides: { [US]: { constraint: "off_day", reason: "Patient requested same-day visit" } } }],
+        },
+      });
+      const wb = await w.json();
+      eventIds.push(wb.services?.[0]?.globalScheduleEventId ?? null);
+
+      // The availability agenda for that day exposes the override (read model).
+      const a = await availability(req, MON, [{ resourceType: "ultrasound", studyCount: 1 }]);
+      const item = a.agenda.find((x: { override?: unknown }) => x.override);
+      expect(item, "an overridden agenda item should be present").toBeTruthy();
+      expect(item.override.constraint).toBe("off_day");
+      expect(item.override.reason).toBe("Patient requested same-day visit");
+      expect(item.override.by).toBeTruthy();
+    } finally {
+      await cancelVisit(req, eventIds);
+    }
+  });
+
+  test("B. a normal appointment carries no override flag", async ({ page }) => {
+    const req = await loginApi(page, "admin");
+    const eventIds: Array<number | null> = [];
+    try {
+      const w = await req.post("/api/scheduling/visit", {
+        data: { facility: CLINIC, patientScreeningId: P1, groups: [{ date: TUE, services: [{ serviceType: "BrainWave", time: "11:00" }] }] },
+      });
+      const wb = await w.json();
+      eventIds.push(wb.services?.[0]?.globalScheduleEventId ?? null);
+      const a = await availability(req, TUE, [{ resourceType: "brainwave" }]);
+      const item = a.agenda.find((x: { service: string }) => x.service === "BrainWave");
+      expect(item).toBeTruthy();
+      expect(item.override ?? null).toBeNull();
+    } finally {
+      await cancelVisit(req, eventIds);
+    }
+  });
+});
+
+test.describe("True multi-date split-visit write (C-G)", () => {
+  test("C+D+G. split plan persists on two dates sharing one visitGroupId", async ({ page }) => {
+    const req = await loginApi(page, "admin");
+    const eventIds: Array<number | null> = [];
+    try {
+      const w = await req.post("/api/scheduling/visit", {
+        data: {
+          facility: CLINIC, patientScreeningId: P2,
+          groups: [
+            { date: TUE, services: [{ serviceType: "BrainWave", time: "09:00" }, { serviceType: "VitalWave", time: "09:45" }] },
+            { date: THU, services: [{ serviceType: US, time: "08:00" }, { serviceType: "Echocardiogram TTE", time: "08:15" }] },
+          ],
+        },
+      });
+      expect(w.ok()).toBeTruthy();
+      const body = await w.json();
+      for (const s of body.services) eventIds.push(s.globalScheduleEventId ?? null);
+
+      // C. all four persist; D. across exactly the two requested dates.
+      expect(body.overall).toBe("all_scheduled");
+      expect(body.scheduledCount).toBe(4);
+      expect(body.dates.sort()).toEqual([TUE, THU]);
+
+      // Per-date service grouping (G): 2 services each date.
+      const tueSvcs = body.services.filter((s: { date: string }) => s.date === TUE);
+      const thuSvcs = body.services.filter((s: { date: string }) => s.date === THU);
+      expect(tueSvcs.length).toBe(2);
+      expect(thuSvcs.length).toBe(2);
+
+      // E. all events share the SAME visitGroupId (verified via the read feed).
+      const listRes = await req.get(`/api/global-schedule-events?facilityId=${encodeURIComponent(CLINIC)}&startDate=${TUE}T00:00:00&endDate=${THU}T23:59:59`);
+      const events = (await listRes.json()) as Array<{ id: number; metadata?: { visitGroupId?: string } }>;
+      const mine = events.filter((e) => eventIds.includes(e.id));
+      const groupIds = new Set(mine.map((e) => e.metadata?.visitGroupId).filter(Boolean));
+      expect(groupIds.size).toBe(1);
+      expect(String(Array.from(groupIds)[0])).toBe(body.visitGroupId);
+
+      // F. Tuesday shows brainwave/vitalwave; Thursday shows the ultrasounds.
+      const tueAvail = await availability(req, TUE, [{ resourceType: "brainwave" }]);
+      expect(tueAvail.agenda.some((x: { service: string }) => x.service === "BrainWave")).toBeTruthy();
+      const thuAvail = await availability(req, THU, [{ resourceType: "ultrasound", studyCount: 1 }]);
+      expect(thuAvail.agenda.some((x: { service: string }) => x.service === US)).toBeTruthy();
+    } finally {
+      await cancelVisit(req, eventIds);
+    }
+  });
+
+  test("single-date { date, services } form still works (back-compat)", async ({ page }) => {
+    const req = await loginApi(page, "admin");
+    const eventIds: Array<number | null> = [];
+    try {
+      const w = await req.post("/api/scheduling/visit", {
+        data: { facility: CLINIC, patientScreeningId: P1, date: TUE, services: [{ serviceType: "VitalWave", time: "13:00" }] },
+      });
+      expect(w.ok()).toBeTruthy();
+      const body = await w.json();
+      expect(body.overall).toBe("all_scheduled");
+      expect(body.dates).toEqual([TUE]);
+      for (const s of body.services) eventIds.push(s.globalScheduleEventId ?? null);
+    } finally {
+      await cancelVisit(req, eventIds);
+    }
+  });
+});
