@@ -72,7 +72,7 @@ async function cleanup(req: APIRequestContext, ids: Array<number | null>) {
   }
 }
 
-function slotAt(avail: { slots: Array<{ time: string; available: number; total: number; fits: boolean }> }, time: string) {
+function slotAt(avail: { slots: Array<{ time: string; available: number; total: number; fits: boolean; capacityFits: boolean }> }, time: string) {
   return avail.slots.find((s) => s.time === time)!;
 }
 
@@ -155,9 +155,12 @@ test.describe("Capacity engine — ultrasound", () => {
       // Patient A: 4 studies from 08:00 → 09:00, +5 turnover → machine free 09:05.
       ids.push(await schedule(req, P1, "Abdominal Ultrasound", "08:00", { ultrasoundStudyCount: 4 }));
       const a = await availability(req, [{ resourceType: "ultrasound", studyCount: 1 }], "09:00");
+      // Assert on capacityFits — turnover is a CAPACITY rule, independent of the
+      // operating-day soft constraint (DAY may be an ultrasound off-day, which
+      // affects `fits` but not the machine-occupancy math being tested here).
       // 09:00 blocked (turnover until 09:05); 09:15 free (single machine, step 15).
-      expect(slotAt(a, "09:00").fits).toBe(false);
-      expect(slotAt(a, "09:15").fits).toBe(true);
+      expect(slotAt(a, "09:00").capacityFits).toBe(false);
+      expect(slotAt(a, "09:15").capacityFits).toBe(true);
     } finally {
       await cleanup(req, ids);
     }
@@ -254,7 +257,7 @@ test.describe("Scheduler UI surfaces capacity", () => {
     await page.goto("/patient-care-specialist-portal");
     await page.getByTestId("select-facility").selectOption(CLINIC);
     await page.waitForTimeout(600);
-    // Open the full scheduler via the left rail.
+    // Open the full scheduler via the left rail (reveal on hover, then pin).
     await page.mouse.move(4, 450);
     await page.waitForTimeout(300);
     const pin = page.getByTestId("button-pin-left-rail");
