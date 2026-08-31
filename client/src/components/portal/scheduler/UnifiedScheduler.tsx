@@ -95,6 +95,19 @@ type SelectedService = {
   plexusSourced: boolean;
 };
 
+// A concrete, confirmable visit plan: each selected service mapped to an exact
+// date + time. May span multiple dates (split visit).
+type PlannedVisit = {
+  dates: string[];
+  steps: Array<{
+    internalCode: string;
+    displayName: string;
+    resourceType: CapResourceType;
+    isoDate: string;
+    time: string;
+  }>;
+};
+
 type PatientQualification = {
   screeningId: number;
   patientName: string | null;
@@ -147,6 +160,10 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const [quickDate, setQuickDate] = useState<string | null>(null);
   // Per-service planned times (from a chosen visit plan). Keyed by internalCode.
   const [plannedTimes, setPlannedTimes] = useState<Record<string, string>>({});
+  // A multi-date plan awaiting confirmation before it is written. Set when a
+  // split-visit (or any multi-date) plan is accepted; confirming writes all
+  // dates as one visit group.
+  const [pendingPlan, setPendingPlan] = useState<PlannedVisit | null>(null);
   // Override dialog state.
   const [overrideCtx, setOverrideCtx] = useState<{
     constraint: SoftConstraint;
@@ -302,42 +319,64 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
 
   // ── Write via the multi-service visit endpoint ──
   const scheduleMutation = useMutation({
-    mutationFn: async (opts?: { override?: { constraint: SoftConstraint; reason: string; category: string | null } }) => {
-      if (!time) throw new Error("Pick a time");
+    mutationFn: async (opts?: {
+      override?: { constraint: SoftConstraint; reason: string; category: string | null };
+      plan?: PlannedVisit;
+    }) => {
       if (selectedList.length === 0) throw new Error("Choose at least one appointment type");
-      // One services[] entry per selected service (each ultrasound study is its
-      // own canonical service). Times come from a chosen plan, else the single
-      // selected time (server dedups per case+service).
-      const svcEntries = selectedList.map((s) => ({
-        serviceType: s.internalCode,
-        time: plannedTimes[s.internalCode] ?? time,
-      }));
-      // If the primary selection is in conflict and the caller authorized an
-      // override, attach it for every selected service on this (off-)day.
-      const overrides: Record<string, { constraint: SoftConstraint; reason: string; category?: string | null; capacityState?: Record<string, unknown> }> = {};
-      if (opts?.override) {
-        for (const s of selectedList) {
-          overrides[s.internalCode] = {
-            constraint: opts.override.constraint,
-            reason: opts.override.reason,
-            category: opts.override.category,
-            capacityState: { slots: slots.slice(0, 40), operatingDays },
-          };
+
+      // Build the visit body as one or more date groups sharing one visit.
+      let groups: Array<{
+        date: string;
+        services: Array<{ serviceType: string; time: string }>;
+        overrides?: Record<string, { constraint: SoftConstraint; reason: string; category?: string | null; capacityState?: Record<string, unknown> }>;
+      }>;
+
+      if (opts?.plan) {
+        // Multi-date (or one-visit) plan: group the plan's per-service blocks
+        // by date. Plans are placed on normal operating days, so no overrides.
+        const byDate: Record<string, Array<{ serviceType: string; time: string }>> = {};
+        for (const step of opts.plan.steps) {
+          (byDate[step.isoDate] ??= []).push({ serviceType: step.internalCode, time: step.time });
         }
+        groups = Object.entries(byDate).map(([date, services]) => ({ date, services }));
+      } else {
+        // Manual single-date write. Times come from a chosen plan's per-service
+        // times when present, else the single selected time.
+        if (!time) throw new Error("Pick a time");
+        const svcEntries = selectedList.map((s) => ({
+          serviceType: s.internalCode,
+          time: plannedTimes[s.internalCode] ?? time,
+        }));
+        const overrides: Record<string, { constraint: SoftConstraint; reason: string; category?: string | null; capacityState?: Record<string, unknown> }> = {};
+        if (opts?.override) {
+          for (const s of selectedList) {
+            overrides[s.internalCode] = {
+              constraint: opts.override.constraint,
+              reason: opts.override.reason,
+              category: opts.override.category,
+              capacityState: { slots: slots.slice(0, 40), operatingDays },
+            };
+          }
+        }
+        groups = [{
+          date: selectedDate,
+          services: svcEntries,
+          overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+        }];
       }
+
       const res = await fetch("/api/scheduling/visit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           facility,
-          date: selectedDate,
           patientScreeningId: patient.patientScreeningId ?? null,
           executionCaseId: patient.executionCaseId ?? null,
           patientName: patient.patientScreeningId == null ? patient.name : null,
           patientDob: patient.patientScreeningId == null ? patient.dob : null,
-          services: svcEntries,
-          overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+          groups,
         }),
       });
       const body = await res.json();
@@ -348,7 +387,8 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
         overall: "all_scheduled" | "partial" | "failed";
         scheduledCount: number;
         totalCount: number;
-        services: Array<{ serviceType: string; status: string; error?: string }>;
+        dates: string[];
+        services: Array<{ date: string; serviceType: string; status: string; error?: string }>;
       };
     },
     onSuccess: (result) => {
@@ -356,11 +396,13 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches/calendar-summary"] });
       queryClient.invalidateQueries({ queryKey: ["scheduler-availability"] });
       if (result.overall === "all_scheduled") {
-        toast({ title: "Scheduled", description: `${result.scheduledCount} service${result.scheduledCount === 1 ? "" : "s"} scheduled for ${patient.name ?? "patient"}.` });
+        const dateNote = result.dates && result.dates.length > 1 ? ` across ${result.dates.length} dates` : "";
+        toast({ title: "Scheduled", description: `${result.scheduledCount} service${result.scheduledCount === 1 ? "" : "s"} scheduled for ${patient.name ?? "patient"}${dateNote}.` });
         setTime("");
         setOverrideCtx(null);
         setOverrideReason("");
         setQuickDate(null);
+        setPendingPlan(null);
       } else if (result.overall === "partial") {
         const failed = result.services.filter((s) => s.status !== "scheduled").map((s) => s.serviceType);
         toast({ title: "Partially scheduled", description: `${result.scheduledCount} of ${result.totalCount} scheduled. Not scheduled: ${failed.join(", ")}.`, variant: "destructive" });
@@ -400,24 +442,41 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     scheduleMutation.mutate({ override: { constraint: overrideCtx.constraint, reason: overrideReason.trim(), category: overrideCategory || null } });
   }
 
-  function applyPlan(plan: VisitPlan) {
-    setSelectedDate(plan.isoDate);
-    const times: Record<string, string> = {};
-    // Map plan steps back to selected internalCodes by resource order.
-    const byResource: Record<string, string[]> = {};
-    for (const s of selectedList) (byResource[s.resourceType] ??= []).push(s.internalCode);
+  // Map a server VisitPlan's steps back to the SELECTED services, giving each
+  // an exact date + time. Ultrasound: one plan step covers all selected studies.
+  function buildPlannedVisit(plan: VisitPlan): PlannedVisit {
+    const byResource: Record<string, SelectedService[]> = {};
+    for (const s of selectedList) (byResource[s.resourceType] ??= []).push(s);
     const cursorByResource: Record<string, number> = {};
+    const steps: PlannedVisit["steps"] = [];
     for (const step of plan.steps) {
-      const codes = byResource[step.resourceType] ?? [];
-      const idx = cursorByResource[step.resourceType] ?? 0;
-      // Ultrasound: one plan step covers all studies → apply its time to each.
+      const svcs = byResource[step.resourceType] ?? [];
       if (step.resourceType === "ultrasound") {
-        for (const c of codes) times[c] = step.time;
-      } else if (codes[idx]) {
-        times[codes[idx]] = step.time;
-        cursorByResource[step.resourceType] = idx + 1;
+        for (const s of svcs) steps.push({ internalCode: s.internalCode, displayName: s.displayName, resourceType: s.resourceType, isoDate: step.isoDate, time: step.time });
+      } else {
+        const idx = cursorByResource[step.resourceType] ?? 0;
+        const s = svcs[idx];
+        if (s) {
+          steps.push({ internalCode: s.internalCode, displayName: s.displayName, resourceType: s.resourceType, isoDate: step.isoDate, time: step.time });
+          cursorByResource[step.resourceType] = idx + 1;
+        }
       }
     }
+    return { dates: Array.from(new Set(steps.map((s) => s.isoDate))).sort(), steps };
+  }
+
+  function applyPlan(plan: VisitPlan) {
+    const planned = buildPlannedVisit(plan);
+    if (planned.dates.length > 1) {
+      // Multi-date split visit → confirm the two dates before writing.
+      setPendingPlan(planned);
+      return;
+    }
+    // Single-date plan → apply times inline into the manual flow.
+    setPendingPlan(null);
+    setSelectedDate(plan.isoDate);
+    const times: Record<string, string> = {};
+    for (const s of planned.steps) times[s.internalCode] = s.time;
     setPlannedTimes(times);
     setTime(plan.steps[0]?.time ?? time);
   }
@@ -687,14 +746,23 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                 <span className="min-w-0 truncate text-[12px] font-semibold text-slate-800">{g.patient}</span>
                 <span className="shrink-0 text-[11px] tabular-nums text-slate-500">{pretty12h(g.startMin)}–{pretty12h(g.endMin)}</span>
               </div>
-              {/* TODO: surface an "override" indicator here once agenda items
-                  expose the event's override metadata. */}
               <div className="mt-0.5 flex flex-col gap-0.5">
                 {g.items.map((a, j) => (
                   <div key={j} className="flex items-center gap-1.5 text-[11px] text-slate-500">
                     <span className={`h-1.5 w-1.5 rounded-full ${RESOURCE_DOT[a.resourceType] ?? "bg-slate-300"}`} />
                     <span className="tabular-nums">{pretty12h(a.time)}–{pretty12h(a.endTime)}</span>
                     <span className="truncate">{RESOURCE_LABELS[a.resourceType] ?? a.service}</span>
+                    {a.override ? (
+                      // Operational indicator — an appointment scheduled past a
+                      // normal constraint. Hover shows why/who/when.
+                      <span
+                        className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0 text-[9px] font-semibold uppercase text-amber-700"
+                        data-testid={`scheduler-agenda-override-${i}-${j}`}
+                        title={`${a.override.constraint === "off_day" ? "Off-day" : a.override.constraint === "outage" ? "Equipment" : "Capacity"} override\nReason: ${a.override.reason || "—"}${a.override.by ? `\nBy: ${a.override.by}` : ""}${a.override.at ? `\n${new Date(a.override.at).toLocaleString()}` : ""}`}
+                      >
+                        <AlertTriangle className="h-2.5 w-2.5" /> Override
+                      </span>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -771,6 +839,41 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
           <button type="button" onClick={() => setOverrideCtx(null)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100" data-testid="scheduler-override-cancel">Cancel</button>
           <button type="button" disabled={!overrideReason.trim() || scheduleMutation.isPending} onClick={confirmOverride} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-override-confirm">
             {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Schedule Anyway
+          </button>
+        </div>
+      </div>
+    </>
+  ) : null;
+
+  // ── Multi-date split-visit confirmation ──
+  // Shown when a plan spanning >1 date is accepted; the user sees BOTH dates
+  // and their service blocks before anything is written.
+  const splitConfirmDialog = pendingPlan ? (
+    <>
+      <div className="absolute inset-0 z-40 rounded-2xl bg-slate-900/20" onClick={() => setPendingPlan(null)} aria-hidden />
+      <div className="absolute left-1/2 top-1/2 z-50 max-h-[92%] w-[380px] max-w-[94%] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl" data-testid="scheduler-split-confirm-dialog">
+        <div className="mb-2 flex items-center gap-1.5 text-sm font-bold uppercase tracking-tight text-slate-900"><CalendarDays className="h-4 w-4 text-slate-400" /> Schedule visit</div>
+        <p className="mb-3 text-[12px] text-slate-500">{patient.name ?? "Patient"} · this visit spans {pendingPlan.dates.length} dates.</p>
+        <div className="flex flex-col gap-3">
+          {pendingPlan.dates.map((d) => (
+            <div key={d} data-testid={`scheduler-split-date-${d}`}>
+              <div className="mb-1 text-[12px] font-bold text-slate-900">{prettyDateLong(d)}</div>
+              <div className="flex flex-col gap-0.5">
+                {pendingPlan.steps.filter((s) => s.isoDate === d).sort((a, b) => a.time.localeCompare(b.time)).map((s, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1 text-[12px] text-slate-700">
+                    <span className={`h-1.5 w-1.5 rounded-full ${RESOURCE_DOT[s.resourceType]}`} />
+                    <span className="w-14 shrink-0 tabular-nums font-semibold">{pretty12h(s.time)}</span>
+                    <span className="truncate">{s.displayName}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" onClick={() => setPendingPlan(null)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100" data-testid="scheduler-split-cancel">Cancel</button>
+          <button type="button" disabled={scheduleMutation.isPending} onClick={() => scheduleMutation.mutate({ plan: pendingPlan })} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-split-confirm">
+            {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />} Confirm Schedule
           </button>
         </div>
       </div>
@@ -857,6 +960,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
           )}
 
           {overrideDialog}
+          {splitConfirmDialog}
         </div>
 
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4" data-testid="scheduler-panel">
