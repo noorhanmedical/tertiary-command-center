@@ -53,24 +53,21 @@ test.describe("Unified full Scheduler", () => {
     expect(fits).toBe(true);
   });
 
-  test("Ultrasound is one tab listing all active configured studies", async ({ page }) => {
+  test("the one dropdown lists BrainWave, VitalWave, and each ultrasound study", async ({ page }) => {
     await openPortalAsAdmin(page);
     await pinLeft(page);
     await page.getByTestId("left-rail-tool-calendar").click();
-    // The one "Choose ancillary" picker lists the services.
+    // The one "Add appointment" dropdown lists the services.
     await page.getByTestId("scheduler-choose-ancillary").click();
+    await expect(page.getByTestId("scheduler-ancillary-menu")).toBeVisible();
     await expect(page.getByTestId("scheduler-pick-brainwave")).toBeVisible();
     await expect(page.getByTestId("scheduler-pick-vitalwave")).toBeVisible();
-    // Choosing Ultrasound opens the ONE Ultrasound tab whose body lists the
-    // registry's studies (never one tab per study).
-    await page.getByTestId("scheduler-pick-ultrasound").click();
-    await expect(page.getByTestId("scheduler-tab-ultrasound")).toBeVisible();
-    await expect(page.locator('[data-testid^="scheduler-tab-"]')).not.toHaveCount(0);
-    await expect(page.getByTestId("scheduler-ultrasound-tab")).toBeVisible();
-    const opts = page.locator('[data-testid^="scheduler-us-study-"]');
-    expect(await opts.count()).toBeGreaterThanOrEqual(5);
-    // Specific canonical study present.
-    await expect(page.getByTestId("scheduler-us-study-Bilateral Carotid Duplex")).toBeVisible();
+    // Each ultrasound study is its OWN option (scheduled separately) — never a
+    // single grouped "ultrasound" entry.
+    const usPicks = page.locator('[data-testid^="scheduler-pick-"]').filter({ hasText: /Duplex|Echocardiogram|Doppler|Ultrasound/ });
+    expect(await usPicks.count()).toBeGreaterThanOrEqual(5);
+    // Specific canonical study present as an individual option.
+    await expect(page.getByTestId("scheduler-pick-Bilateral Carotid Duplex")).toBeVisible();
   });
 
   test("time grid renders 15-min slots once a service is chosen", async ({ page }) => {
@@ -168,14 +165,12 @@ test.describe("Generic scheduling write", () => {
     // Pre-clean any leftover from a prior run so placement isn't deduped.
     if (Number.isFinite(psid)) await cancelPatientDay(psid);
 
-    // Patient context → QUALIFIED FOR is read-only guidance. The scheduler
-    // CHOOSES BrainWave from the "Choose ancillary" picker (Plexus IQ qualifies
-    // John Smith for it) → a BrainWave scheduling tab appears + activates.
-    await expect(page.getByTestId("scheduler-qualified-for")).toBeVisible();
+    // Pick BrainWave from the one "Add appointment" dropdown (Plexus IQ
+    // qualifies John Smith for it — flagged in the menu) → it becomes active.
     await page.getByTestId("scheduler-choose-ancillary").click();
     await page.getByTestId("scheduler-pick-brainwave").click();
     await page.waitForTimeout(300);
-    await expect(page.getByTestId("scheduler-tab-brainwave")).toBeVisible();
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
 
     // Navigate the month calendar to the fixed target date.
     const cell = page.getByTestId(`scheduler-day-${TARGET}`);
