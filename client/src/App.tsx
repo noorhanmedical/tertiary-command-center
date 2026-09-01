@@ -20,7 +20,9 @@ import BillingPage from "@/pages/billing";
 import InvoicesPage from "@/pages/invoices";
 import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
-import OutreachPage from "@/pages/outreach";
+// NOTE: OutreachPage (@/pages/outreach) is intentionally retained on disk but
+// no longer imported/mounted. /scheduler-portal now redirects to
+// /engagement-center (see routes below). Kept pending a dead-code audit.
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 // NOTE: TechnicianPortalPage (@/pages/technician-portal) and
 // LiaisonPortalPage (@/pages/liaison-portal) are intentionally retained on
@@ -183,13 +185,23 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/document-upload" component={DocumentUploadPage} />
                 <Route path="/appointments" component={AppointmentsPage} />
+                {/* Per-scheduler live call console. Retained on disk and
+                    routable by direct/deep link, but no longer surfaced via
+                    the (removed) Outreach Center dashboard tiles. */}
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
-                <Route path="/outreach-center">
-                  <Redirect to="/scheduler-portal" />
+                {/* Legacy Outreach Center surface removed from nav. The
+                    OutreachPage dashboard was mostly UI placeholders; the
+                    active canonical outreach surface is the Engagement Center.
+                    These legacy URLs now redirect there. OutreachPage remains
+                    on disk pending a dead-code audit. */}
+                <Route path="/scheduler-portal">
+                  <Redirect to="/engagement-center" />
                 </Route>
-                <Route path="/scheduler-portal" component={OutreachPage} />
+                <Route path="/outreach-center">
+                  <Redirect to="/engagement-center" />
+                </Route>
                 <Route path="/outreach">
-                  <Redirect to="/scheduler-portal" />
+                  <Redirect to="/engagement-center" />
                 </Route>
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 {/* Legacy direct mounts removed from user-facing nav. These

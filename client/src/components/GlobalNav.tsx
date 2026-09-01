@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   CalendarDays,
   Home as HomeIcon,
-  Phone,
   FileText,
   CreditCard,
   Receipt,
@@ -38,14 +37,12 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/mission-control",  label: "Mission Control",  Icon: Radar,        roles: ["admin"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
   { href: "/imaging-central",  label: "Imaging Central",  Icon: ScanLine,     roles: ["admin", "clinician", "technician", "liaison"] },
-  // Phase-1 team-portal correction: there is no standalone Scheduler
-  // Portal product. The legacy /scheduler-portal route mounts the
-  // OutreachPage (marketing / scheduler-coverage metrics) and is
-  // relabeled here as "Outreach Center" so users find the correct
-  // surface. Patient call execution lives in PCS Workspace; ancillary
-  // execution lives in ACS Workspace. The route path stays
-  // /scheduler-portal for back-compat with deep links.
-  { href: "/scheduler-portal",         label: "Outreach Center",   Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
+  // The legacy "Outreach Center" nav item (→ /scheduler-portal → OutreachPage,
+  // a mostly-placeholder dashboard) has been removed. The active canonical
+  // outreach surface is the Engagement Center, reached from the Home
+  // "Outreach / Engagement Center" tile and the tool dock. The /scheduler-portal
+  // route now redirects to /engagement-center (see App.tsx). OutreachPage and
+  // the per-scheduler call console remain on disk pending a dead-code audit.
   { href: "/ancillary-documents",        label: "Ancillary Documents",   Icon: FileText,     roles: ["admin", "clinician"] },
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
