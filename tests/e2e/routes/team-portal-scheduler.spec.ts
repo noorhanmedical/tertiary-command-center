@@ -134,28 +134,68 @@ test.describe("Patient-context scheduler", () => {
 // Schedule → success (the write goes through the canonical path).
 test.describe("Generic scheduling write", () => {
   test("search patient, pick service + time, Schedule succeeds", async ({ page }) => {
+    // A fixed far-future BrainWave operating day (Tuesday) so the write never
+    // collides with "today" on reruns; cleaned up via the canonical mutator.
+    const TARGET = "2027-03-16";
+    async function cancelPatientDay(psid: number) {
+      const res = await page.request.get(
+        `/api/global-schedule-events?facilityId=${encodeURIComponent(CLINIC)}&patientScreeningId=${psid}&startDate=${TARGET}T00:00:00&endDate=${TARGET}T23:59:59`,
+      );
+      if (!res.ok()) return;
+      const events = (await res.json()) as Array<{ id: number }>;
+      for (const e of events) {
+        await page.request
+          .post(`/api/global-schedule-events/${e.id}/transition`, { data: { transition: "cancel", note: "e2e cleanup" } })
+          .catch(() => {});
+      }
+    }
+
     await openPortalAsAdmin(page);
     await pinLeft(page);
     await page.getByTestId("left-rail-tool-calendar").click();
     await expect(page.getByTestId("unified-scheduler")).toBeVisible();
 
-    // Patient search → pick a seeded patient.
+    // Patient search → pick a seeded patient; capture its screening id.
     await page.getByTestId("scheduler-patient-search").fill("testguy");
     const result = page.locator('[data-testid^="scheduler-patient-result-"]').first();
     await expect(result).toBeVisible({ timeout: 8000 });
+    const rid = (await result.getAttribute("data-testid")) ?? "";
+    const psid = Number(rid.split("-").pop());
     await result.click();
     await expect(page.getByTestId("scheduler-patient-name")).toBeVisible();
+    // Pre-clean any leftover from a prior run so placement isn't deduped.
+    if (Number.isFinite(psid)) await cancelPatientDay(psid);
 
-    // Service (BrainWave) from the dropdown + a time slot.
+    // Service (BrainWave) from the dropdown, then close the menu.
     await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-service-brainwave").click();
-    await page.getByTestId("scheduler-slot-09:00").click();
+    const bw = page.getByTestId("scheduler-service-brainwave");
+    if ((await bw.getAttribute("aria-pressed")) !== "true") await bw.click();
+    await page.getByTestId("scheduler-service-dropdown").click(); // close menu
 
-    // Schedule.
+    // Navigate the month calendar to the fixed target date.
+    const cell = page.getByTestId(`scheduler-day-${TARGET}`);
+    for (let i = 0; i < 24 && !(await cell.isVisible().catch(() => false)); i++) {
+      await page.getByTestId("scheduler-next-month").click();
+      await page.waitForTimeout(120);
+    }
+    await cell.click();
+    await page.waitForTimeout(500);
+
+    // Assign the recommended time for the active BrainWave unit.
+    const use = page.getByTestId("scheduler-recommended-use");
+    await use.waitFor({ state: "visible", timeout: 8000 });
+    await use.click();
+
+    // Review & Confirm → the confirmation summary → Confirm Schedule.
     const submit = page.getByTestId("scheduler-submit");
     await expect(submit).toBeEnabled();
     await submit.click();
-    // Success surfaces as a toast; the submit re-enables (time cleared) without error.
+    await expect(page.getByTestId("scheduler-confirm-dialog")).toBeVisible();
+    await page.getByTestId("scheduler-confirm-schedule").click();
+    // Success surfaces as a toast.
     await expect(page.getByText(/Scheduled/i).first()).toBeVisible({ timeout: 8000 });
+
+    // Clean up the event this test created.
+    if (Number.isFinite(psid)) await cancelPatientDay(psid);
   });
 });

@@ -180,30 +180,88 @@ test.describe("Scheduler UI — preselection + admin review + multi-select (A, B
     await expect(page.getByTestId("unified-scheduler")).toBeVisible();
   }
 
-  test("C+J. multi-select recalculates + operating-day muting renders", async ({ page }) => {
-    await openScheduler(page);
-    // Appointment types is a compact dropdown; open it, then multi-select.
+  // Select all three services (BrainWave + VitalWave + one Ultrasound study).
+  async function selectAllThree(page: Page) {
     await page.getByTestId("scheduler-service-dropdown").click();
     await page.getByTestId("scheduler-service-brainwave").click();
     await page.getByTestId("scheduler-service-vitalwave").click();
-    await expect(page.getByTestId("scheduler-service-brainwave")).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("scheduler-service-vitalwave")).toHaveAttribute("aria-pressed", "true");
-    // Expand the nested Ultrasound sub-dropdown + select a study.
     await page.getByTestId("scheduler-service-ultrasound").click();
-    const opt = page.locator('[data-testid^="scheduler-ultrasound-option-"]').first();
-    await opt.click();
+    await page.locator('[data-testid^="scheduler-ultrasound-option-"]').first().click();
+    await page.getByTestId("scheduler-service-dropdown").click(); // close the menu
     await page.waitForTimeout(600);
-    // Close the dropdown; the time grid stays visible without machine counts.
-    await page.getByTestId("scheduler-service-dropdown").click();
+  }
+
+  test("C+E+J. calendar eligibility follows the ACTIVE service — NOT the intersection", async ({ page }) => {
+    await openScheduler(page);
+    await selectAllThree(page);
+
+    // Multi-select drives WHAT the patient needs → one actionable row each.
+    await expect(page.getByTestId("scheduler-unit-brainwave")).toBeVisible();
+    await expect(page.getByTestId("scheduler-unit-vitalwave")).toBeVisible();
+    await expect(page.getByTestId("scheduler-unit-ultrasound")).toBeVisible();
+    // Default active = first unscheduled = BrainWave; the grid is visible.
+    await expect(page.getByTestId("scheduler-unit-brainwave").getByTestId("scheduler-unit-active")).toBeVisible();
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
     await expect(page.getByTestId("scheduler-time-slots")).toBeVisible();
-    // With ultrasound selected, some month days are muted (off-day markers).
-    const offDayMarks = page.locator('[data-testid^="scheduler-day-offday-"]');
-    expect(await offDayMarks.count()).toBeGreaterThan(0);
-    // Machine inventory is NOT shown by default — the equipment detail is
-    // behind a compact disclosure.
+
+    // BrainWave is Mon–Fri, so only weekends are muted as off-days.
+    const offBrainWave = await page.locator('[data-testid^="scheduler-day-offday-"]').count();
+
+    // Activate Ultrasound (Tue/Thu). The SAME calendar now mutes Mon/Wed/Fri
+    // too → strictly MORE off-days. This proves the calendar reflects the
+    // active service, not the intersection of all selected services (which
+    // would have locked the whole calendar to Tue/Thu from the start).
+    await page.getByTestId("scheduler-unit-ultrasound").click();
+    await page.waitForTimeout(600);
+    await expect(page.getByTestId("scheduler-unit-ultrasound").getByTestId("scheduler-unit-active")).toBeVisible();
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("Ultrasound");
+    const offUltrasound = await page.locator('[data-testid^="scheduler-day-offday-"]').count();
+    expect(offUltrasound).toBeGreaterThan(offBrainWave);
+
+    // Machine inventory is NOT shown by default — behind a compact disclosure.
     await expect(page.getByTestId("scheduler-equipment")).toHaveCount(0);
     await page.getByTestId("scheduler-equipment-toggle").click();
     await expect(page.getByTestId("scheduler-equipment-ultrasound")).toBeVisible();
+  });
+
+  test("G(auto-advance)+H(same-day)+I(per-service). place each service, plan advances", async ({ page }) => {
+    await openScheduler(page);
+    await selectAllThree(page);
+
+    // Place the ACTIVE service at its recommended time, jumping to the
+    // service's own next eligible day first if today is one of its off-days.
+    async function placeActive() {
+      await page.waitForTimeout(500);
+      const chooseNext = page.getByTestId("scheduler-offday-choose-next");
+      if (await chooseNext.isVisible().catch(() => false)) {
+        await chooseNext.click();
+        await page.waitForTimeout(500);
+      }
+      const use = page.getByTestId("scheduler-recommended-use");
+      await use.waitFor({ state: "visible", timeout: 8000 });
+      await use.click();
+      await page.waitForTimeout(500);
+    }
+
+    // BrainWave first (active by default) → auto-advances to VitalWave.
+    await placeActive();
+    await expect(page.getByTestId("scheduler-unit-status-brainwave")).not.toHaveText("Not scheduled");
+    await expect(page.getByTestId("scheduler-unit-vitalwave").getByTestId("scheduler-unit-active")).toBeVisible();
+
+    // VitalWave → auto-advances to Ultrasound.
+    await placeActive();
+    await expect(page.getByTestId("scheduler-unit-status-vitalwave")).not.toHaveText("Not scheduled");
+    await expect(page.getByTestId("scheduler-unit-ultrasound").getByTestId("scheduler-unit-active")).toBeVisible();
+
+    // Same-day sequencing: BrainWave + VitalWave share the same date.
+    const bwStatus = (await page.getByTestId("scheduler-unit-status-brainwave").textContent()) ?? "";
+    const vwStatus = (await page.getByTestId("scheduler-unit-status-vitalwave").textContent()) ?? "";
+    expect(bwStatus.split("·")[0].trim()).toBe(vwStatus.split("·")[0].trim());
+
+    // Ultrasound (its own eligible day) → all three placed.
+    await placeActive();
+    await expect(page.getByTestId("scheduler-unit-status-ultrasound")).not.toHaveText("Not scheduled");
+    await expect(page.getByTestId("scheduler-units-progress")).toHaveText("3 of 3 scheduled");
   });
 
   test("B. patient-context shows admin-review tag and stays scheduleable", async ({ page }) => {

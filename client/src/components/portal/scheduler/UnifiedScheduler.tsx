@@ -48,7 +48,6 @@ import {
   type ResourceType as CapResourceType,
   type ServiceRequest as CapServiceRequest,
   type SoftConstraint,
-  type VisitPlan,
 } from "@/lib/scheduling/availabilityApi";
 import { getAncillaryCategory } from "@shared/ancillaryCategory";
 
@@ -66,6 +65,17 @@ function prettyDateLong(iso: string): string {
 function weekdayOf(iso: string): number {
   const d = new Date(`${iso}T00:00:00`);
   return Number.isNaN(d.getTime()) ? -1 : d.getDay();
+}
+function prettyDateShort(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+function hmToMin(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map((x) => parseInt(x, 10));
+  return (h || 0) * 60 + (m || 0);
+}
+function minToHm(min: number): string {
+  return `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
 }
 
 export type UnifiedSchedulerContext = {
@@ -95,17 +105,35 @@ type SelectedService = {
   plexusSourced: boolean;
 };
 
-// A concrete, confirmable visit plan: each selected service mapped to an exact
-// date + time. May span multiple dates (split visit).
-type PlannedVisit = {
-  dates: string[];
-  steps: Array<{
-    internalCode: string;
-    displayName: string;
-    resourceType: CapResourceType;
-    isoDate: string;
-    time: string;
-  }>;
+// A SCHEDULING UNIT is one actionable service the user places on the calendar.
+// Multi-select decides WHAT the patient needs; the ACTIVE unit decides what the
+// calendar is currently scheduling. BrainWave + VitalWave are single-service
+// units; every selected ultrasound study folds into ONE "Ultrasound ×N" unit
+// (a single continuous block) unless a future advanced split-studies workflow
+// is added.
+type SchedulingUnit = {
+  key: string; // stable per resource bucket: "brainwave" | "vitalwave" | "ultrasound"
+  resourceType: CapResourceType;
+  label: string; // "BrainWave" | "VitalWave" | "Ultrasound ×4"
+  internalCodes: string[]; // canonical service code(s) written for this unit
+  studyCount: number; // 1 for brainwave/vitalwave; N for ultrasound
+};
+
+// One placed block in the CLIENT-SIDE visit plan: an active unit assigned an
+// exact date + time. The plan is the source of truth before the single grouped
+// write; each block may carry its own soft-constraint override.
+type PlanBlock = {
+  unitKey: string;
+  resourceType: CapResourceType;
+  label: string;
+  internalCodes: string[];
+  studyCount: number;
+  isoDate: string;
+  time: string; // "HH:MM" start
+  startMinutes: number;
+  durationMin: number; // whole-unit occupancy (ultrasound = studies × perStudy)
+  perStudyMin: number; // ultrasound per-study step (for sequential expansion)
+  override?: { constraint: SoftConstraint; reason: string; category: string | null } | null;
 };
 
 type PatientQualification = {
@@ -179,27 +207,28 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     context.initialDate && /^\d{4}-\d{2}-\d{2}$/.test(context.initialDate) ? context.initialDate : todayIso(),
   );
   const [time, setTime] = useState<string>(context.initialTime ?? "");
-  // Multi-select: internalCode -> SelectedService.
+  // Multi-select: internalCode -> SelectedService. (WHAT the patient needs.)
   const [selected, setSelected] = useState<Map<string, SelectedService>>(new Map());
   const [ultrasoundOpen, setUltrasoundOpen] = useState(false);
   // Appointment-types dropdown open state (the compact multi-select control).
   const [serviceMenuOpen, setServiceMenuOpen] = useState(false);
-  // Recommended section: reveal the secondary plan options.
-  const [showOtherOptions, setShowOtherOptions] = useState(false);
   // Compact equipment disclosure (secondary; not shown by default).
   const [equipmentOpen, setEquipmentOpen] = useState(false);
   // Today's Schedule collapse (keeps Available Times above the fold).
   const [agendaExpanded, setAgendaExpanded] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
   const [quickDate, setQuickDate] = useState<string | null>(null);
-  // Per-service planned times (from a chosen visit plan). Keyed by internalCode.
-  const [plannedTimes, setPlannedTimes] = useState<Record<string, string>>({});
-  // A multi-date plan awaiting confirmation before it is written. Set when a
-  // split-visit (or any multi-date) plan is accepted; confirming writes all
-  // dates as one visit group.
-  const [pendingPlan, setPendingPlan] = useState<PlannedVisit | null>(null);
-  // Override dialog state.
+  // The ACTIVE scheduling unit — WHAT the calendar is currently scheduling.
+  // Exactly one at a time. null until units exist (then defaulted by effect).
+  const [activeUnitKey, setActiveUnitKey] = useState<string | null>(null);
+  // CLIENT-SIDE visit plan: unitKey -> placed block (date + time). Source of
+  // truth before the single grouped write. Editable until the user confirms.
+  const [visitPlan, setVisitPlan] = useState<Record<string, PlanBlock>>({});
+  // Confirmation summary open state (shows every planned date before writing).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // Override dialog state — scoped to the unit being placed (per-service).
   const [overrideCtx, setOverrideCtx] = useState<{
+    unitKey: string;
     constraint: SoftConstraint;
     time: string;
     message: string;
@@ -258,50 +287,73 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       else next.set(svc.internalCode, { internalCode: svc.internalCode, displayName: svc.displayName, resourceType, plexusSourced: false });
       return next;
     });
-    setPlannedTimes({});
   }
 
   const selectedList = useMemo(() => Array.from(selected.values()), [selected]);
   const ultrasoundSelected = useMemo(() => selectedList.filter((s) => s.resourceType === "ultrasound"), [selectedList]);
 
-  // Build the ServiceRequest[] for the availability engine: one per
-  // brainwave/vitalwave + ONE ultrasound entry (studyCount = # of studies).
-  const serviceRequests: CapServiceRequest[] = useMemo(() => {
-    const out: CapServiceRequest[] = [];
-    for (const s of selectedList) {
-      if (s.resourceType === "brainwave" || s.resourceType === "vitalwave") out.push({ resourceType: s.resourceType });
+  // ── Scheduling UNITS (derived from the multi-select) ──
+  // Bucket order (BrainWave → VitalWave → Ultrasound) doubles as the default
+  // active-service priority; the ultrasound studies collapse into ONE unit.
+  const units = useMemo<SchedulingUnit[]>(() => {
+    const out: SchedulingUnit[] = [];
+    const bw = selectedList.find((s) => s.resourceType === "brainwave");
+    if (bw) out.push({ key: "brainwave", resourceType: "brainwave", label: "BrainWave", internalCodes: [bw.internalCode], studyCount: 1 });
+    const vw = selectedList.find((s) => s.resourceType === "vitalwave");
+    if (vw) out.push({ key: "vitalwave", resourceType: "vitalwave", label: "VitalWave", internalCodes: [vw.internalCode], studyCount: 1 });
+    if (ultrasoundSelected.length > 0) {
+      out.push({
+        key: "ultrasound",
+        resourceType: "ultrasound",
+        label: `Ultrasound ×${ultrasoundSelected.length}`,
+        internalCodes: ultrasoundSelected.map((s) => s.internalCode),
+        studyCount: ultrasoundSelected.length,
+      });
     }
-    if (ultrasoundSelected.length > 0) out.push({ resourceType: "ultrasound", studyCount: ultrasoundSelected.length });
     return out;
   }, [selectedList, ultrasoundSelected]);
-  const primary = serviceRequests[0] ?? null;
+  const unitByKey = useMemo(() => new Map(units.map((u) => [u.key, u])), [units]);
+
+  const activeUnit = activeUnitKey ? unitByKey.get(activeUnitKey) ?? null : null;
+
+  // The availability engine is asked about ONLY the active unit — so the time
+  // grid, duration, conflict, and (below) the calendar eligibility all reflect
+  // the service being scheduled RIGHT NOW, never the intersection of all
+  // selected services.
+  const activeRequest: CapServiceRequest | null = activeUnit
+    ? activeUnit.resourceType === "ultrasound"
+      ? { resourceType: "ultrasound", studyCount: activeUnit.studyCount }
+      : { resourceType: activeUnit.resourceType }
+    : null;
+  const primary = activeRequest;
 
   const patientKey =
     patient.patientScreeningId != null ? `ps:${patient.patientScreeningId}`
       : patient.executionCaseId != null ? `ec:${patient.executionCaseId}` : null;
 
-  // ── Availability (the ONE engine) ──
+  // ── Availability (the ONE engine) — asked about the ACTIVE service only ──
+  const activeServices: CapServiceRequest[] = activeRequest ? [activeRequest] : [];
   const { data: availability } = useQuery<AvailabilityResult>({
     queryKey: [
       "scheduler-availability", facility, selectedDate,
-      serviceRequests.map((s) => `${s.resourceType}:${s.studyCount ?? 1}`).join("|"),
+      activeServices.map((s) => `${s.resourceType}:${s.studyCount ?? 1}`).join("|"),
       patientKey ?? "",
     ],
-    queryFn: () => fetchAvailability({ facility, date: selectedDate, services: serviceRequests, patientKey, preferredTime: time || null }),
-    enabled: !!facility && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate),
+    queryFn: () => fetchAvailability({ facility, date: selectedDate, services: activeServices, patientKey, preferredTime: time || null }),
+    enabled: !!facility && activeServices.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate),
     staleTime: 10_000,
   });
   const slots = availability?.slots ?? [];
   const agenda = availability?.agenda ?? [];
   const equipment = availability?.equipment ?? [];
   const operatingDays = availability?.operatingDays ?? [];
-  const oneVisit = availability?.visit?.oneVisit ?? null;
-  const splitVisit = availability?.visit?.splitVisit ?? null;
+  const durations = availability?.durations ?? {};
   const selectedSlot = slots.find((s) => s.time === time) ?? null;
 
-  // Off-day info for the primary service on the selected date.
-  const primaryOpDay = primary ? operatingDays.find((o) => o.resourceType === primary.resourceType) ?? null : null;
-  const primaryIsOffDay = !!primaryOpDay && !primaryOpDay.isOperatingToday;
+  // Off-day + duration info for the ACTIVE service on the selected date.
+  const activeOpDay = activeUnit ? operatingDays.find((o) => o.resourceType === activeUnit.resourceType) ?? null : null;
+  const activeIsOffDay = !!activeOpDay && !activeOpDay.isOperatingToday;
+  const activeDurationMin = activeUnit ? durations[activeUnit.resourceType] ?? null : null;
 
   // ── Calendar dots ──
   const { data: summary = [] } = useQuery<CommandCalendarSummaryRow[]>({
@@ -315,20 +367,22 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   });
   const dayCells = useMemo(() => buildCommandCalendarCells({ summary, facility }), [summary, facility]);
 
-  // A date is "normal" when every selected resource is offered that weekday.
-  const selectedResourceTypes = useMemo(
-    () => Array.from(new Set(serviceRequests.map((s) => s.resourceType))),
-    [serviceRequests],
-  );
+  // ── Calendar eligibility — the ACTIVE service ONLY ──
+  // A date is "normal" when the ACTIVE service is offered that weekday. We
+  // deliberately do NOT intersect all selected services: the visible date
+  // eligibility belongs to the service being scheduled right now. A patient can
+  // need BrainWave (Mon–Fri) + Ultrasound (Tue/Thu) at once; the calendar must
+  // not gray out Mon/Wed/Fri just because ultrasound is limited.
   const operatingDaysByResource = useMemo(() => {
     const m = new Map<string, number[]>();
     for (const o of operatingDays) m.set(o.resourceType, o.days);
     return m;
   }, [operatingDays]);
   function isNormalDay(iso: string): boolean {
-    if (selectedResourceTypes.length === 0 || operatingDays.length === 0) return true;
-    const wd = weekdayOf(iso);
-    return selectedResourceTypes.every((rt) => (operatingDaysByResource.get(rt) ?? []).includes(wd));
+    if (!activeUnit || operatingDays.length === 0) return true;
+    const days = operatingDaysByResource.get(activeUnit.resourceType) ?? [];
+    if (days.length === 0) return true;
+    return days.includes(weekdayOf(iso));
   }
 
   // ── Patient search ──
@@ -349,57 +403,165 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     if (changed) setSelected(next);
   }, [services]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canSubmit = hasPatient && selectedList.length > 0 && !!time;
+  // ── Existing appointments (dedupe) ──
+  // Resource types this patient already has on the SELECTED date (read from the
+  // day agenda). Such a unit is shown as an existing appointment and excluded
+  // from the write so we never create a duplicate.
+  const existingOnSelectedDate = useMemo(() => {
+    const m = new Map<string, { time: string; endTime: string }>();
+    if (!patient.name) return m;
+    for (const a of agenda) {
+      if (a.patient !== patient.name) continue;
+      if (!m.has(a.resourceType)) m.set(a.resourceType, { time: a.time, endTime: a.endTime });
+    }
+    return m;
+  }, [agenda, patient.name]);
+
+  // A unit is "done" for auto-advance purposes when it is either placed in the
+  // plan or already exists for the patient on the selected date.
+  function unitIsPlaced(key: string): boolean {
+    if (visitPlan[key]) return true;
+    const u = unitByKey.get(key);
+    return !!u && existingOnSelectedDate.has(u.resourceType);
+  }
+  function firstUnscheduledKey(): string | null {
+    return units.find((u) => !unitIsPlaced(u.key))?.key ?? units[0]?.key ?? null;
+  }
+
+  // Reconcile the plan when the selection changes: drop uncommitted blocks whose
+  // unit no longer exists (service unchecked), and keep the ultrasound block's
+  // study set current. Persisted existing appointments are never touched here.
+  useEffect(() => {
+    setVisitPlan((prev) => {
+      let changed = false;
+      const next: Record<string, PlanBlock> = {};
+      for (const [k, b] of Object.entries(prev)) {
+        const u = unitByKey.get(k);
+        if (!u) { changed = true; continue; }
+        if (u.studyCount !== b.studyCount || u.label !== b.label) {
+          next[k] = { ...b, studyCount: u.studyCount, label: u.label, internalCodes: u.internalCodes, durationMin: b.perStudyMin * u.studyCount };
+          changed = true;
+        } else {
+          next[k] = b;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [unitByKey]);
+
+  // Default / repair the ACTIVE unit: first unscheduled selected service by
+  // bucket order; falls back to the first unit. Runs whenever units change.
+  useEffect(() => {
+    setActiveUnitKey((cur) => {
+      if (cur && unitByKey.has(cur)) return cur;
+      return firstUnscheduledKey();
+    });
+  }, [unitByKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const plannedBlocks = useMemo(() => Object.values(visitPlan), [visitPlan]);
+  const canConfirm = hasPatient && plannedBlocks.length > 0;
+
+  // Advance to the next unscheduled unit (skipping `justPlaced`). If everything
+  // is placed, keep focus on the just-placed unit so the user can still edit it.
+  function advanceActive(justPlaced: string) {
+    const nextUnit =
+      units.find((u) => u.key !== justPlaced && !unitIsPlaced(u.key) && !visitPlan[u.key]) ?? null;
+    setActiveUnitKey(nextUnit ? nextUnit.key : justPlaced);
+  }
+
+  // Place the ACTIVE unit into the visit plan at the given time on the selected
+  // date, then auto-advance. `startMinutes` comes from the chosen slot when
+  // available; otherwise it is derived from the time string.
+  function placeActiveUnit(
+    at: { time: string; startMinutes?: number },
+    override?: { constraint: SoftConstraint; reason: string; category: string | null } | null,
+  ) {
+    if (!activeUnit) return;
+    // Dedupe: never place a service on a date where the patient already has one
+    // (existingOnSelectedDate is scoped to the selected date's agenda).
+    if (existingOnSelectedDate.has(activeUnit.resourceType)) {
+      toast({ title: "Already scheduled", description: `${activeUnit.label} already has an appointment on ${prettyDateShort(selectedDate)}.` });
+      return;
+    }
+    const startMinutes = at.startMinutes ?? hmToMin(at.time);
+    const perStudyMin =
+      activeUnit.resourceType === "ultrasound"
+        ? Math.max(5, Math.round((activeDurationMin ?? 15 * activeUnit.studyCount) / activeUnit.studyCount))
+        : activeDurationMin ?? 0;
+    const durationMin = activeDurationMin ?? (activeUnit.resourceType === "ultrasound" ? perStudyMin * activeUnit.studyCount : 0);
+    const block: PlanBlock = {
+      unitKey: activeUnit.key,
+      resourceType: activeUnit.resourceType,
+      label: activeUnit.label,
+      internalCodes: activeUnit.internalCodes,
+      studyCount: activeUnit.studyCount,
+      isoDate: selectedDate,
+      time: at.time,
+      startMinutes,
+      durationMin,
+      perStudyMin,
+      override: override ?? null,
+    };
+    setVisitPlan((prev) => ({ ...prev, [activeUnit.key]: block }));
+    setTime("");
+    advanceActive(activeUnit.key);
+  }
+
+  function removePlanBlock(key: string) {
+    setVisitPlan((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
 
   // ── Write via the multi-service visit endpoint ──
-  const scheduleMutation = useMutation({
-    mutationFn: async (opts?: {
-      override?: { constraint: SoftConstraint; reason: string; category: string | null };
-      plan?: PlannedVisit;
-    }) => {
-      if (selectedList.length === 0) throw new Error("Choose at least one appointment type");
-
-      // Build the visit body as one or more date groups sharing one visit.
-      let groups: Array<{
-        date: string;
-        services: Array<{ serviceType: string; time: string }>;
-        overrides?: Record<string, { constraint: SoftConstraint; reason: string; category?: string | null; capacityState?: Record<string, unknown> }>;
-      }>;
-
-      if (opts?.plan) {
-        // Multi-date (or one-visit) plan: group the plan's per-service blocks
-        // by date. Plans are placed on normal operating days, so no overrides.
-        const byDate: Record<string, Array<{ serviceType: string; time: string }>> = {};
-        for (const step of opts.plan.steps) {
-          (byDate[step.isoDate] ??= []).push({ serviceType: step.internalCode, time: step.time });
+  type WriteGroup = {
+    date: string;
+    services: Array<{ serviceType: string; time: string }>;
+    overrides?: Record<string, { constraint: SoftConstraint; reason: string; category?: string | null; capacityState?: Record<string, unknown> }>;
+  };
+  // Map the CLIENT visit plan → the existing grouped visit endpoint. Blocks are
+  // grouped by date; the ultrasound unit expands into sequential per-study
+  // events (T, T+perStudy, …) so the single machine is never double-booked.
+  // Per-block overrides ride along keyed by serviceType.
+  function buildGroupsFromPlan(): WriteGroup[] {
+    const byDate = new Map<string, WriteGroup>();
+    const ordered = [...plannedBlocks].sort((a, b) =>
+      a.isoDate === b.isoDate ? a.startMinutes - b.startMinutes : a.isoDate.localeCompare(b.isoDate),
+    );
+    for (const b of ordered) {
+      const g = byDate.get(b.isoDate) ?? { date: b.isoDate, services: [] };
+      const addOverride = (code: string) => {
+        if (!b.override) return;
+        (g.overrides ??= {})[code] = {
+          constraint: b.override.constraint,
+          reason: b.override.reason,
+          category: b.override.category,
+          capacityState: { operatingDays },
+        };
+      };
+      if (b.resourceType === "ultrasound") {
+        let t = b.startMinutes;
+        for (const code of b.internalCodes) {
+          g.services.push({ serviceType: code, time: minToHm(t) });
+          addOverride(code);
+          t += b.perStudyMin || 15;
         }
-        groups = Object.entries(byDate).map(([date, services]) => ({ date, services }));
       } else {
-        // Manual single-date write. Times come from a chosen plan's per-service
-        // times when present, else the single selected time.
-        if (!time) throw new Error("Pick a time");
-        const svcEntries = selectedList.map((s) => ({
-          serviceType: s.internalCode,
-          time: plannedTimes[s.internalCode] ?? time,
-        }));
-        const overrides: Record<string, { constraint: SoftConstraint; reason: string; category?: string | null; capacityState?: Record<string, unknown> }> = {};
-        if (opts?.override) {
-          for (const s of selectedList) {
-            overrides[s.internalCode] = {
-              constraint: opts.override.constraint,
-              reason: opts.override.reason,
-              category: opts.override.category,
-              capacityState: { slots: slots.slice(0, 40), operatingDays },
-            };
-          }
-        }
-        groups = [{
-          date: selectedDate,
-          services: svcEntries,
-          overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
-        }];
+        g.services.push({ serviceType: b.internalCodes[0], time: b.time });
+        addOverride(b.internalCodes[0]);
       }
+      byDate.set(b.isoDate, g);
+    }
+    return Array.from(byDate.values());
+  }
 
+  // ── Write via the multi-service visit endpoint (grouped, multi-date) ──
+  const scheduleMutation = useMutation({
+    mutationFn: async (groups: WriteGroup[]) => {
+      if (groups.length === 0) throw new Error("Nothing to schedule");
       const res = await fetch("/api/scheduling/visit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -422,6 +584,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
         scheduledCount: number;
         totalCount: number;
         dates: string[];
+        visitGroupId?: string;
         services: Array<{ date: string; serviceType: string; status: string; error?: string }>;
       };
     },
@@ -435,11 +598,14 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
         setTime("");
         setOverrideCtx(null);
         setOverrideReason("");
+        setOverrideCategory("");
         setQuickDate(null);
-        setPendingPlan(null);
+        setConfirmOpen(false);
+        setVisitPlan({});
       } else if (result.overall === "partial") {
         const failed = result.services.filter((s) => s.status !== "scheduled").map((s) => s.serviceType);
         toast({ title: "Partially scheduled", description: `${result.scheduledCount} of ${result.totalCount} scheduled. Not scheduled: ${failed.join(", ")}.`, variant: "destructive" });
+        setConfirmOpen(false);
       } else {
         toast({ title: "Not scheduled", description: result.services.map((s) => s.error).filter(Boolean).join("; ") || "No services could be scheduled.", variant: "destructive" });
       }
@@ -449,71 +615,69 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     },
   });
 
-  // Attempt to schedule; if the chosen slot is a soft conflict, open the
-  // override dialog instead of writing.
-  function attemptSchedule(fromQuick = false) {
-    if (!canSubmit) return;
-    const conflicted = selectedSlot && !selectedSlot.fits;
-    if (conflicted && selectedSlot) {
-      setOverrideCtx({
-        constraint: selectedSlot.constraint ?? "full",
-        time,
-        message:
-          selectedSlot.constraint === "off_day"
-            ? `${primary ? RESOURCE_LABELS[primary.resourceType] : "This service"} is not normally scheduled on ${prettyDateLong(selectedDate)}.`
-            : selectedSlot.constraint === "outage"
-              ? `${primary ? RESOURCE_LABELS[primary.resourceType] : "This service"} is unavailable (equipment outage).`
-              : `${primary ? RESOURCE_LABELS[primary.resourceType] : "This service"} capacity is full at ${pretty12h(time)}.`,
-      });
-      return;
-    }
-    scheduleMutation.mutate(undefined);
-    void fromQuick;
+  function confirmVisit() {
+    const groups = buildGroupsFromPlan();
+    if (groups.length === 0) return;
+    scheduleMutation.mutate(groups);
   }
 
+  // Click a time slot for the ACTIVE unit: a fitting slot places immediately +
+  // auto-advances; a conflicted slot (full / off-day / outage) opens the
+  // per-service override dialog first.
+  function onPickSlot(slot: { time: string; startMinutes: number; fits: boolean; constraint?: SoftConstraint }) {
+    if (!activeUnit) return;
+    setTime(slot.time);
+    if (slot.fits) {
+      placeActiveUnit({ time: slot.time, startMinutes: slot.startMinutes });
+      return;
+    }
+    setOverrideCtx({
+      unitKey: activeUnit.key,
+      constraint: slot.constraint ?? "full",
+      time: slot.time,
+      message:
+        slot.constraint === "off_day"
+          ? `${activeUnit.label} is not normally scheduled on ${prettyDateLong(selectedDate)}.`
+          : slot.constraint === "outage"
+            ? `${activeUnit.label} is unavailable (equipment outage) at ${pretty12h(slot.time)}.`
+            : `${activeUnit.label} capacity is full at ${pretty12h(slot.time)}.`,
+    });
+  }
+
+  // Confirm a per-service override → place the ACTIVE unit WITH the override.
+  // The override stays attached to that one service/date/time only.
   function confirmOverride() {
     if (!overrideCtx || !overrideReason.trim()) return;
-    scheduleMutation.mutate({ override: { constraint: overrideCtx.constraint, reason: overrideReason.trim(), category: overrideCategory || null } });
+    if (activeUnit && overrideCtx.unitKey === activeUnit.key) {
+      placeActiveUnit(
+        { time: overrideCtx.time, startMinutes: hmToMin(overrideCtx.time) },
+        { constraint: overrideCtx.constraint, reason: overrideReason.trim(), category: overrideCategory || null },
+      );
+    }
+    setOverrideCtx(null);
+    setOverrideReason("");
+    setOverrideCategory("");
   }
 
-  // Map a server VisitPlan's steps back to the SELECTED services, giving each
-  // an exact date + time. Ultrasound: one plan step covers all selected studies.
-  function buildPlannedVisit(plan: VisitPlan): PlannedVisit {
-    const byResource: Record<string, SelectedService[]> = {};
-    for (const s of selectedList) (byResource[s.resourceType] ??= []).push(s);
-    const cursorByResource: Record<string, number> = {};
-    const steps: PlannedVisit["steps"] = [];
-    for (const step of plan.steps) {
-      const svcs = byResource[step.resourceType] ?? [];
-      if (step.resourceType === "ultrasound") {
-        for (const s of svcs) steps.push({ internalCode: s.internalCode, displayName: s.displayName, resourceType: s.resourceType, isoDate: step.isoDate, time: step.time });
-      } else {
-        const idx = cursorByResource[step.resourceType] ?? 0;
-        const s = svcs[idx];
-        if (s) {
-          steps.push({ internalCode: s.internalCode, displayName: s.displayName, resourceType: s.resourceType, isoDate: step.isoDate, time: step.time });
-          cursorByResource[step.resourceType] = idx + 1;
-        }
-      }
+  // ── Recommendation for the ACTIVE service (client-side smart hint) ──
+  // Keeps the visit tight: if other services are already placed on the selected
+  // date, recommend the first fitting slot AT/AFTER their latest end (minimize
+  // patient idle time). Otherwise the earliest fitting slot.
+  const activeRecommendation = useMemo(() => {
+    if (!activeUnit) return null;
+    const fitting = slots.filter((s) => s.fits);
+    if (fitting.length === 0) return null;
+    const sameDayEnds = plannedBlocks
+      .filter((b) => b.isoDate === selectedDate && b.unitKey !== activeUnit.key)
+      .map((b) => b.startMinutes + b.durationMin);
+    if (sameDayEnds.length > 0) {
+      const after = Math.max(...sameDayEnds);
+      const seq = fitting.find((s) => s.startMinutes >= after);
+      if (seq) return { time: seq.time, startMinutes: seq.startMinutes, reason: "Right after the previous service — same visit" };
     }
-    return { dates: Array.from(new Set(steps.map((s) => s.isoDate))).sort(), steps };
-  }
-
-  function applyPlan(plan: VisitPlan) {
-    const planned = buildPlannedVisit(plan);
-    if (planned.dates.length > 1) {
-      // Multi-date split visit → confirm the two dates before writing.
-      setPendingPlan(planned);
-      return;
-    }
-    // Single-date plan → apply times inline into the manual flow.
-    setPendingPlan(null);
-    setSelectedDate(plan.isoDate);
-    const times: Record<string, string> = {};
-    for (const s of planned.steps) times[s.internalCode] = s.time;
-    setPlannedTimes(times);
-    setTime(plan.steps[0]?.time ?? time);
-  }
+    const first = fitting[0];
+    return { time: first.time, startMinutes: first.startMinutes, reason: sameDayEnds.length > 0 ? "Next open time today" : "Earliest available" };
+  }, [activeUnit, slots, plannedBlocks, selectedDate]);
 
   const monthCells = useMemo(() => {
     const first = new Date(cursor.y, cursor.m, 1);
@@ -637,6 +801,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   // ── Time grid (compact, 15-min). No machine-count clutter — a conflicted
   // slot is marked FULL and, when selected, routes through the override flow
   // where the detailed reason is shown. ──
+  const activePlanned = activeUnit ? visitPlan[activeUnit.key] ?? null : null;
   const timeGrid = !primary ? (
     <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Choose one or more appointment types to see availability.</p>
   ) : slots.length === 0 ? (
@@ -644,12 +809,14 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   ) : (
     <div className="grid grid-cols-4 gap-1.5" data-testid="scheduler-time-slots">
       {slots.map((slot) => {
-        const isSel = time === slot.time;
+        // Highlight the slot this active unit is currently placed at (if any),
+        // else the transient focus time.
+        const isSel = (activePlanned && activePlanned.isoDate === selectedDate ? activePlanned.time : time) === slot.time;
         const offDay = slot.constraint === "off_day";
         const full = slot.constraint === "full" || slot.constraint === "outage";
-        // Not disabled — a conflicted slot opens the override flow.
+        // Not disabled — a conflicted slot opens the per-service override flow.
         return (
-          <button key={slot.time} type="button" onClick={() => setTime(slot.time)}
+          <button key={slot.time} type="button" onClick={() => onPickSlot(slot)}
             className={`relative rounded-lg border px-1 py-1.5 text-center text-[12px] font-medium tabular-nums transition-colors ${
               isSel ? "border-transparent bg-slate-900 text-white"
                 : full ? "border-red-100 bg-red-50/50 text-red-400 hover:bg-red-100"
@@ -665,19 +832,20 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   );
 
-  // ── Off-day banner + next eligible day ──
-  const offDayBanner = primaryIsOffDay && primaryOpDay ? (
+  // ── Off-day banner (ACTIVE service) + its OWN next eligible day ──
+  // Only the active service's day rule applies here — never the whole visit.
+  const offDayBanner = activeIsOffDay && activeOpDay && activeUnit ? (
     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800" data-testid="scheduler-offday-banner">
       <div className="flex items-start gap-1.5">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <div>
-          {RESOURCE_LABELS[primaryOpDay.resourceType]} is not normally scheduled{facility ? ` at ${facility}` : ""} on {WEEKDAYS[weekdayOf(selectedDate)] ?? "this day"}s.
-          {primaryOpDay.nextEligibleDay ? (
+          {activeUnit.label} is not normally scheduled{facility ? ` at ${facility}` : ""} on {WEEKDAYS[weekdayOf(selectedDate)] ?? "this day"}s.
+          {activeOpDay.nextEligibleDay ? (
             <div className="mt-1 flex flex-wrap gap-2">
-              <button type="button" onClick={() => { setSelectedDate(primaryOpDay.nextEligibleDay!); setTime(""); }} className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-700 hover:bg-amber-100" data-testid="scheduler-offday-choose-next">
-                Choose {prettyDateLong(primaryOpDay.nextEligibleDay)}
+              <button type="button" onClick={() => { setSelectedDate(activeOpDay.nextEligibleDay!); setTime(""); }} className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-700 hover:bg-amber-100" data-testid="scheduler-offday-choose-next">
+                Choose {prettyDateLong(activeOpDay.nextEligibleDay)}
               </button>
-              <button type="button" onClick={() => setOverrideCtx({ constraint: "off_day", time: time || slots.find((s) => s.capacityFits)?.time || "", message: `${RESOURCE_LABELS[primaryOpDay.resourceType]} is not normally scheduled on ${prettyDateLong(selectedDate)}.` })} className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-700 hover:bg-amber-100" data-testid="scheduler-offday-override">
+              <button type="button" onClick={() => setOverrideCtx({ unitKey: activeUnit.key, constraint: "off_day", time: time || slots.find((s) => s.capacityFits)?.time || slots[0]?.time || "09:00", message: `${activeUnit.label} is not normally scheduled on ${prettyDateLong(selectedDate)}.` })} className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-700 hover:bg-amber-100" data-testid="scheduler-offday-override">
                 Override this day
               </button>
             </div>
@@ -687,15 +855,15 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   ) : null;
 
-  // ── Conflict indicator ──
-  const conflictBanner = primary && time && selectedSlot && !selectedSlot.fits && selectedSlot.constraint !== "off_day" ? (
+  // ── Conflict indicator (ACTIVE service) ──
+  const conflictBanner = activeUnit && time && selectedSlot && !selectedSlot.fits && selectedSlot.constraint !== "off_day" ? (
     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700" data-testid="scheduler-conflict">
       <span className="font-semibold">Conflict.</span>{" "}
-      {(primary ? RESOURCE_LABELS[primary.resourceType] : "This service")} {selectedSlot.constraint === "outage" ? "is unavailable" : "is full"} at {pretty12h(time)}.
+      {activeUnit.label} {selectedSlot.constraint === "outage" ? "is unavailable" : "is full"} at {pretty12h(time)}.
       {availability?.conflict?.nextAvailableMinutes != null ? (
         <> {" "}Next available{" "}
-          <button type="button" className="font-semibold underline" onClick={() => { const m = availability.conflict!.nextAvailableMinutes!; setTime(`${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`); }} data-testid="scheduler-conflict-next">
-            {pretty12h(`${pad2(Math.floor(availability.conflict.nextAvailableMinutes / 60))}:${pad2(availability.conflict.nextAvailableMinutes % 60)}`)}
+          <button type="button" className="font-semibold underline" onClick={() => { const m = availability.conflict!.nextAvailableMinutes!; setTime(minToHm(m)); }} data-testid="scheduler-conflict-next">
+            {pretty12h(minToHm(availability.conflict.nextAvailableMinutes))}
           </button>.
         </>
       ) : null}
@@ -732,52 +900,87 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   ) : null;
 
-  // ── Recommended (concise) ──
-  // The single best plan + a one-line reason, with a "Use Recommendation"
-  // action. Alternatives sit behind "View other options" so the recommendation
-  // never crowds out the time grid.
-  const plans = [oneVisit, splitVisit].filter((p): p is VisitPlan => !!p);
-  const topPlan = plans.find((p) => p.recommended) ?? plans[0] ?? null;
-  const otherPlans = plans.filter((p) => p !== topPlan);
-  function planLine(p: VisitPlan): string {
-    return p.steps.map((s) => `${pretty12h(s.time)} ${s.serviceLabel}`).join("  →  ");
-  }
-  const recommendedBlock = topPlan && selectedList.length > 0 ? (
-    <div className="flex flex-col gap-1.5">
-      <button type="button" onClick={() => applyPlan(topPlan)}
-        className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left transition-colors hover:bg-emerald-100"
-        data-testid={topPlan.kind === "one_visit" ? "scheduler-plan-one-visit" : "scheduler-plan-split-visit"}>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-slate-900">
-            {topPlan.kind === "split_visit" ? `Split · ${topPlan.dates.map(prettyDateLong).join(", ")}` : prettyDateLong(topPlan.isoDate)}
-          </span>
-          <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">Use</span>
-        </div>
-        <div className="mt-0.5 truncate text-[11px] text-slate-600">{planLine(topPlan)}</div>
-      </button>
-      {otherPlans.length > 0 ? (
-        <>
-          <button type="button" onClick={() => setShowOtherOptions((v) => !v)} className="self-start text-[10px] font-medium text-slate-500 underline hover:text-slate-700" data-testid="scheduler-other-options-toggle">
-            {showOtherOptions ? "Hide other options" : "View other options"}
-          </button>
-          {showOtherOptions ? (
-            <div className="flex flex-col gap-1.5" data-testid="scheduler-other-options">
-              {otherPlans.map((p, i) => (
-                <button key={i} type="button" onClick={() => applyPlan(p)}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50"
-                  data-testid={p.kind === "one_visit" ? "scheduler-plan-one-visit" : "scheduler-plan-split-visit"}>
-                  <div className="text-sm font-semibold text-slate-900">{p.kind === "split_visit" ? `Split · ${p.dates.map(prettyDateLong).join(", ")}` : prettyDateLong(p.isoDate)}</div>
-                  <div className="mt-0.5 truncate text-[11px] text-slate-500">{planLine(p)}</div>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </>
-      ) : null}
-    </div>
-  ) : (
+  // ── Recommended (ACTIVE service, concise) ──
+  // One best time for the service being placed + a one-line reason. Same-day
+  // sequencing is preferred when other services are already on this date.
+  const recommendedBlock = !activeUnit ? (
     <p className="text-[11px] italic text-slate-400" data-testid="scheduler-recommended-empty">Select appointment types to see a recommendation.</p>
+  ) : activeRecommendation ? (
+    <button type="button" onClick={() => placeActiveUnit({ time: activeRecommendation.time, startMinutes: activeRecommendation.startMinutes })}
+      className="flex w-full items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left transition-colors hover:bg-emerald-100"
+      data-testid="scheduler-recommended-use">
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-slate-900">{pretty12h(activeRecommendation.time)} · {activeUnit.label}</span>
+        <span className="block truncate text-[11px] text-slate-600">{activeRecommendation.reason}</span>
+      </span>
+      <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">Use</span>
+    </button>
+  ) : (
+    <p className="text-[11px] italic text-slate-400" data-testid="scheduler-recommended-empty">
+      {activeIsOffDay ? `${activeUnit.label} isn't offered on this day — pick its next eligible day below.` : "No open times for this service today — try another day."}
+    </p>
   );
+
+  // ── SCHEDULE EACH SERVICE (units) ──
+  // One actionable row per selected unit: click to activate (calendar + times
+  // switch to that service); status shows Not scheduled / date + time /
+  // Existing appointment. Doubles as the running visit-plan summary.
+  const ACTIVE_TINT: Record<string, string> = { brainwave: "border-violet-300 bg-violet-50", vitalwave: "border-red-300 bg-red-50", ultrasound: "border-emerald-300 bg-emerald-50" };
+  const unitsSection = units.length === 0 ? (
+    <p className="text-[11px] italic text-slate-400" data-testid="scheduler-units-empty">Choose appointment types to schedule each service.</p>
+  ) : (
+    <div className="flex flex-col gap-1" data-testid="scheduler-units">
+      {units.map((u) => {
+        const isActive = activeUnitKey === u.key;
+        const block = visitPlan[u.key];
+        const existing = existingOnSelectedDate.get(u.resourceType);
+        const scheduled = !!block;
+        return (
+          <button key={u.key} type="button"
+            onClick={() => { setActiveUnitKey(u.key); if (block) setSelectedDate(block.isoDate); setTime(""); }}
+            className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-left transition-colors ${isActive ? (ACTIVE_TINT[u.resourceType] ?? "border-slate-300 bg-slate-50") : "border-slate-200 bg-white hover:bg-slate-50"}`}
+            data-testid={`scheduler-unit-${u.key}`} aria-pressed={isActive}>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${RESOURCE_DOT[u.resourceType] ?? "bg-slate-300"}`} />
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-900">
+                  {scheduled ? <Check className="h-3 w-3 text-emerald-600" /> : null}
+                  {u.label}
+                  {isActive ? <span className="rounded bg-slate-900 px-1 py-0 text-[8px] font-bold uppercase tracking-wide text-white" data-testid="scheduler-unit-active">Active</span> : null}
+                </span>
+                <span className="block truncate text-[11px] text-slate-500" data-testid={`scheduler-unit-status-${u.key}`}>
+                  {scheduled
+                    ? `${prettyDateShort(block.isoDate)} · ${pretty12h(block.time)}${block.override ? " · override" : ""}`
+                    : existing
+                      ? `Existing appointment · ${pretty12h(existing.time)}`
+                      : "Not scheduled"}
+                </span>
+              </span>
+            </span>
+            {scheduled ? (
+              <span role="button" tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); removePlanBlock(u.key); setActiveUnitKey(u.key); }}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); removePlanBlock(u.key); setActiveUnitKey(u.key); } }}
+                className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600" title="Clear this service's time" data-testid={`scheduler-unit-clear-${u.key}`}>
+                <X className="h-3 w-3" />
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+      <div className="pt-0.5 text-[10px] font-medium text-slate-400" data-testid="scheduler-units-progress">
+        {plannedBlocks.length} of {units.length} scheduled
+      </div>
+    </div>
+  );
+
+  // Compact "what the calendar is currently showing" indicator.
+  const activeServiceIndicator = activeUnit ? (
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500" data-testid="scheduler-active-service">
+      <span className={`h-2 w-2 rounded-full ${RESOURCE_DOT[activeUnit.resourceType] ?? "bg-slate-300"}`} />
+      {activeUnit.label}{activeDurationMin ? ` · ${activeDurationMin} min` : ""}
+    </span>
+  ) : null;
 
   // ── Day agenda (grouped by patient) ──
   const groupedAgenda = useMemo(() => {
@@ -877,9 +1080,9 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   );
 
   const scheduleButton = (
-    <button type="button" disabled={!canSubmit || scheduleMutation.isPending} onClick={() => attemptSchedule(false)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-submit">
+    <button type="button" disabled={!canConfirm || scheduleMutation.isPending} onClick={() => setConfirmOpen(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-submit">
       {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />}
-      Schedule{selectedList.length > 1 ? ` ${selectedList.length} services` : ""}
+      Review &amp; Confirm{plannedBlocks.length > 0 ? ` (${plannedBlocks.length})` : ""}
     </button>
   );
 
@@ -907,34 +1110,50 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </>
   ) : null;
 
-  // ── Multi-date split-visit confirmation ──
-  // Shown when a plan spanning >1 date is accepted; the user sees BOTH dates
-  // and their service blocks before anything is written.
-  const splitConfirmDialog = pendingPlan ? (
+  // ── Confirmation summary (visit plan → one or more dates) ──
+  // Built entirely from the CLIENT visit plan; the user sees every date and its
+  // service blocks before the single grouped write. Works for one date or many.
+  const confirmGroups = useMemo(() => {
+    const byDate = new Map<string, PlanBlock[]>();
+    for (const b of plannedBlocks) {
+      const arr = byDate.get(b.isoDate);
+      if (arr) arr.push(b);
+      else byDate.set(b.isoDate, [b]);
+    }
+    return Array.from(byDate.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, blocks]) => ({ date, blocks: blocks.sort((x, y) => x.startMinutes - y.startMinutes) }));
+  }, [plannedBlocks]);
+  const confirmDialog = confirmOpen ? (
     <>
-      <div className="absolute inset-0 z-40 rounded-2xl bg-slate-900/20" onClick={() => setPendingPlan(null)} aria-hidden />
-      <div className="absolute left-1/2 top-1/2 z-50 max-h-[92%] w-[380px] max-w-[94%] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl" data-testid="scheduler-split-confirm-dialog">
-        <div className="mb-2 flex items-center gap-1.5 text-sm font-bold uppercase tracking-tight text-slate-900"><CalendarDays className="h-4 w-4 text-slate-400" /> Schedule visit</div>
-        <p className="mb-3 text-[12px] text-slate-500">{patient.name ?? "Patient"} · this visit spans {pendingPlan.dates.length} dates.</p>
-        <div className="flex flex-col gap-3">
-          {pendingPlan.dates.map((d) => (
-            <div key={d} data-testid={`scheduler-split-date-${d}`}>
-              <div className="mb-1 text-[12px] font-bold text-slate-900">{prettyDateLong(d)}</div>
-              <div className="flex flex-col gap-0.5">
-                {pendingPlan.steps.filter((s) => s.isoDate === d).sort((a, b) => a.time.localeCompare(b.time)).map((s, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1 text-[12px] text-slate-700">
-                    <span className={`h-1.5 w-1.5 rounded-full ${RESOURCE_DOT[s.resourceType]}`} />
-                    <span className="w-14 shrink-0 tabular-nums font-semibold">{pretty12h(s.time)}</span>
-                    <span className="truncate">{s.displayName}</span>
-                  </div>
-                ))}
+      <div className="absolute inset-0 z-40 rounded-2xl bg-slate-900/20" onClick={() => setConfirmOpen(false)} aria-hidden />
+      <div className="absolute left-1/2 top-1/2 z-50 max-h-[92%] w-[380px] max-w-[94%] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl" data-testid="scheduler-confirm-dialog">
+        <div className="mb-2 flex items-center gap-1.5 text-sm font-bold uppercase tracking-tight text-slate-900"><CalendarDays className="h-4 w-4 text-slate-400" /> Confirm schedule</div>
+        <p className="mb-3 text-[12px] text-slate-500">{patient.name ?? "Patient"}{confirmGroups.length > 1 ? ` · this visit spans ${confirmGroups.length} dates` : ""}.</p>
+        {confirmGroups.length === 0 ? (
+          <p className="text-[12px] italic text-slate-400">Assign a time to at least one service first.</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {confirmGroups.map(({ date, blocks }) => (
+              <div key={date} data-testid={`scheduler-confirm-date-${date}`}>
+                <div className="mb-1 text-[12px] font-bold text-slate-900">{prettyDateLong(date)}</div>
+                <div className="flex flex-col gap-0.5">
+                  {blocks.map((b) => (
+                    <div key={b.unitKey} className="flex items-center gap-2 rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1 text-[12px] text-slate-700" data-testid={`scheduler-confirm-block-${b.unitKey}`}>
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RESOURCE_DOT[b.resourceType]}`} />
+                      <span className="w-[92px] shrink-0 tabular-nums font-semibold">{pretty12h(b.time)}–{pretty12h(minToHm(b.startMinutes + b.durationMin))}</span>
+                      <span className="truncate">{b.label}</span>
+                      {b.override ? <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0 text-[9px] font-semibold uppercase text-amber-700"><AlertTriangle className="h-2.5 w-2.5" /> Override</span> : null}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={() => setPendingPlan(null)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100" data-testid="scheduler-split-cancel">Cancel</button>
-          <button type="button" disabled={scheduleMutation.isPending} onClick={() => scheduleMutation.mutate({ plan: pendingPlan })} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-split-confirm">
+          <button type="button" onClick={() => setConfirmOpen(false)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100" data-testid="scheduler-confirm-cancel">Back</button>
+          <button type="button" disabled={scheduleMutation.isPending || confirmGroups.length === 0} onClick={confirmVisit} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-confirm-schedule">
             {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />} Confirm Schedule
           </button>
         </div>
@@ -984,7 +1203,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                       : isToday ? "border-slate-300 bg-slate-50 text-slate-900"
                         : !normal ? "border-slate-100 bg-slate-50/40 text-slate-300 hover:bg-slate-50"
                           : "border-slate-100 text-slate-700 hover:bg-slate-50"}`}
-                  title={normal ? "Click to select · double-click for Quick Schedule" : "Not a normal service day for the selected services · still selectable"}
+                  title={normal ? "Click to select · double-click for Quick Schedule" : `Not a normal ${activeUnit ? activeUnit.label : "service"} day · still selectable`}
                   data-testid={`scheduler-day-${c.iso}`}>
                   <span className="font-semibold leading-none">{c.day}</span>
                   {!normal && !isSelected ? <span className="text-[8px] leading-none text-amber-400" data-testid={`scheduler-day-offday-${c.iso}`}>·</span> : null}
@@ -1012,22 +1231,31 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                     <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Appointment Types</div>
                     {serviceSelector}
                   </div>
-                  {topPlan && selectedList.length > 0 ? (
+                  {units.length > 0 ? (
+                    <div>
+                      <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Schedule Each Service</div>
+                      {unitsSection}
+                    </div>
+                  ) : null}
+                  {activeUnit ? (
                     <div>
                       <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Recommended</div>
                       {recommendedBlock}
                     </div>
                   ) : null}
                   <div>
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">Available Times</span>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">Available Times</span>
+                        {activeServiceIndicator}
+                      </span>
                       {equipmentControl}
                     </div>
                     {timeGrid}
                     {(offDayBanner || conflictBanner) ? <div className="mt-2 flex flex-col gap-2">{offDayBanner}{conflictBanner}</div> : null}
                   </div>
-                  <button type="button" disabled={!canSubmit || scheduleMutation.isPending} onClick={() => attemptSchedule(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-quick-submit">
-                    {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />} Schedule
+                  <button type="button" disabled={!canConfirm || scheduleMutation.isPending} onClick={() => setConfirmOpen(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-quick-submit">
+                    {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />} Review &amp; Confirm{plannedBlocks.length > 0 ? ` (${plannedBlocks.length})` : ""}
                   </button>
                   <button type="button" onClick={() => setQuickDate(null)} className="text-center text-[11px] font-medium text-slate-500 underline hover:text-slate-700" data-testid="scheduler-quick-expand">Expand to full Scheduler</button>
                 </div>
@@ -1036,7 +1264,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
           )}
 
           {overrideDialog}
-          {splitConfirmDialog}
+          {confirmDialog}
         </div>
 
         <div className="flex min-h-0 flex-col gap-2.5 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4" data-testid="scheduler-panel">
@@ -1051,18 +1279,23 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
             {patientBlock}
           </Section>
 
-          {/* APPOINTMENT TYPES */}
+          {/* APPOINTMENT TYPES — WHAT the patient needs (multi-select). */}
           <Section title="Appointment Types" testId="scheduler-section-types">
             {serviceSelector}
           </Section>
 
-          {/* RECOMMENDED */}
+          {/* SCHEDULE EACH SERVICE — WHAT the calendar is scheduling now. */}
+          <Section title="Schedule Each Service" testId="scheduler-section-units">
+            {unitsSection}
+          </Section>
+
+          {/* RECOMMENDED — best time for the ACTIVE service. */}
           <Section title="Recommended" testId="scheduler-section-recommended">
             {recommendedBlock}
           </Section>
 
           {/* AVAILABLE TIMES — kept high so it's visible without scrolling. */}
-          <Section title="Available Times" testId="scheduler-section-times" right={equipmentControl}>
+          <Section title="Available Times" testId="scheduler-section-times" right={<span className="flex items-center gap-2">{activeServiceIndicator}{equipmentControl}</span>}>
             {timeGrid}
             {(offDayBanner || conflictBanner) ? <div className="mt-2 flex flex-col gap-2">{offDayBanner}{conflictBanner}</div> : null}
           </Section>
