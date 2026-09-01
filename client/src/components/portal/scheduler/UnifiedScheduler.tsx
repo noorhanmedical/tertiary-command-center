@@ -242,6 +242,10 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   // Missing key ⇒ picked (default true).
   const [usPick, setUsPick] = useState<Record<string, boolean>>({});
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Success marker for the most recently COMMITTED service (shown so the user
+  // sees what they just scheduled — never an abrupt jump). Cleared when a new
+  // pending selection starts.
+  const [lastScheduled, setLastScheduled] = useState<{ key: string; label: string; isoDate: string; time: string } | null>(null);
   // Override dialog — placed against the CURRENT active unit + chosen time.
   const [overrideCtx, setOverrideCtx] = useState<{ constraint: SoftConstraint; time: string; message: string } | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
@@ -327,7 +331,9 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const activeStudyCount = activeUnit?.kind === "ultrasound" ? activeStudyCodes.length : 1;
   const activeLabel = !activeUnit
     ? null
-    : activeUnit.kind === "ultrasound" ? `Ultrasound ×${activeStudyCount}` : RESOURCE_LABELS[activeUnit.kind];
+    : activeUnit.kind === "ultrasound"
+      ? (activeStudyCount > 0 ? `Ultrasound ×${activeStudyCount}` : null) // 0 studies ⇒ no active label (zero means zero)
+      : RESOURCE_LABELS[activeUnit.kind];
 
   const activeRequest: CapServiceRequest | null = !activeUnit
     ? null
@@ -493,7 +499,11 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const plannedCount = placedItems.length;
   const canConfirm = hasPatient && plannedCount > 0;
 
-  // ── Placement ──
+  // ── Commit the pending selection into the client visit plan ──
+  // Called ONLY by the explicit "Schedule <service>" action — NEVER by a bare
+  // time-slot click. Adds/updates the plan, clears the pending time, records a
+  // success marker, and deliberately does NOT auto-advance to another service
+  // (a time click is a selection; scheduling is an explicit commit).
   function placeActive(at: { time: string; startMinutes?: number }, override?: OverrideMeta | null) {
     if (!activeUnit) return;
     const startMinutes = at.startMinutes ?? hmToMin(at.time);
@@ -503,14 +513,19 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       return;
     }
     let nextPlan: VisitPlan;
+    let successKey: string;
+    let successLabel: string;
+    let nextActive: ActiveUnit;
     if (activeUnit.kind === "brainwave") {
       const code = brainwave?.internalCode; if (!code) return;
       const durationMin = activeDurationMin ?? 0;
       nextPlan = { ...visitPlan, brainwave: { code, isoDate: selectedDate, time: at.time, startMinutes, durationMin, override: override ?? null } };
+      successKey = "brainwave"; successLabel = "BrainWave"; nextActive = { kind: "brainwave" };
     } else if (activeUnit.kind === "vitalwave") {
       const code = vitalwave?.internalCode; if (!code) return;
       const durationMin = activeDurationMin ?? 0;
       nextPlan = { ...visitPlan, vitalwave: { code, isoDate: selectedDate, time: at.time, startMinutes, durationMin, override: override ?? null } };
+      successKey = "vitalwave"; successLabel = "VitalWave"; nextActive = { kind: "vitalwave" };
     } else {
       const codes = activeUnit.studyCodes.filter((c) => selected.has(c));
       if (codes.length === 0) return;
@@ -519,10 +534,17 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       const groups = visitPlan.ultrasound.filter((g) => g.id !== activeUnit.editGroupId);
       groups.push({ id: activeUnit.editGroupId ?? nextGroupId(), studyCodes: codes, isoDate: selectedDate, time: at.time, startMinutes, durationMin, perStudyMin, override: override ?? null });
       nextPlan = { ...visitPlan, ultrasound: groups };
+      successKey = "ultrasound"; successLabel = `${codes.length} Ultrasound${codes.length === 1 ? "" : "s"}`;
+      // Stay on ultrasound for split flow: if studies remain, keep them active
+      // (same service — not a jump); otherwise keep the ultrasound context.
+      const done = new Set(nextPlan.ultrasound.flatMap((g) => g.studyCodes));
+      const remaining = ultrasoundSelected.map((s) => s.internalCode).filter((c) => !done.has(c));
+      nextActive = { kind: "ultrasound", studyCodes: remaining, editGroupId: null };
     }
     setVisitPlan(nextPlan);
     setTime("");
-    setActiveUnit(computeDefaultActive(nextPlan));
+    setLastScheduled({ key: successKey, label: successLabel, isoDate: selectedDate, time: at.time });
+    setActiveUnit(nextActive);
   }
 
   function removeBrain() { setVisitPlan((p) => { const n = { ...p }; delete n.brainwave; return n; }); }
@@ -613,22 +635,35 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     scheduleMutation.mutate(groups);
   }
 
-  // Click a time slot for the ACTIVE unit: a fitting slot places immediately +
-  // auto-advances; a conflicted slot opens the per-service override dialog.
-  function onPickSlot(slot: { time: string; startMinutes: number; fits: boolean; constraint?: SoftConstraint }) {
-    if (!activeUnit || !activeLabel) return;
+  // Click a time slot for the ACTIVE unit: this ONLY SELECTS the time (pending).
+  // It never commits and never advances. The visible SELECTED APPOINTMENT
+  // summary + explicit "Schedule <service>" button is the commit (and, for a
+  // soft conflict, routes through the override reason first).
+  function onPickSlot(slot: { time: string }) {
+    if (!activeUnit) return;
+    setLastScheduled(null);
     setTime(slot.time);
-    if (slot.fits) { placeActive({ time: slot.time, startMinutes: slot.startMinutes }); return; }
-    setOverrideCtx({
-      constraint: slot.constraint ?? "full",
-      time: slot.time,
-      message:
-        slot.constraint === "off_day"
-          ? `${activeLabel} is not normally scheduled on ${prettyDateLong(selectedDate)}.`
-          : slot.constraint === "outage"
-            ? `${activeLabel} is unavailable (equipment outage) at ${pretty12h(slot.time)}.`
-            : `${activeLabel} capacity is full at ${pretty12h(slot.time)}.`,
-    });
+  }
+
+  // Explicit commit of the pending selection (the primary Schedule button).
+  function scheduleActive() {
+    if (!activeUnit || !time) return;
+    const slot = slots.find((s) => s.time === time) ?? null;
+    if (slot && !slot.fits) {
+      // Soft conflict — require an override reason before committing.
+      setOverrideCtx({
+        constraint: slot.constraint ?? "full",
+        time,
+        message:
+          slot.constraint === "off_day"
+            ? `${activeLabel} is not normally scheduled on ${prettyDateLong(selectedDate)}.`
+            : slot.constraint === "outage"
+              ? `${activeLabel} is unavailable (equipment outage) at ${pretty12h(time)}.`
+              : `${activeLabel} capacity is full at ${pretty12h(time)}.`,
+      });
+      return;
+    }
+    placeActive({ time, startMinutes: slot?.startMinutes });
   }
 
   function confirmOverride() {
@@ -695,10 +730,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   // Activate a unit from inside the dropdown, then close the menu (+ jump the
   // calendar to a placed block's date when editing).
   function activateAndClose(unit: ActiveUnit, jumpTo?: string) {
-    setActiveUnit(unit);
-    if (jumpTo) setSelectedDate(jumpTo);
-    setTime("");
-    setServiceMenuOpen(false);
+    activate(unit, jumpTo ? { date: jumpTo } : undefined);
   }
 
   // ── The ONE Appointment Types dropdown (selection + scheduling actions) ──
@@ -920,20 +952,9 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   ) : null;
 
-  // ── Conflict indicator (ACTIVE service) ──
-  const conflictBanner = activeLabel && time && selectedSlot && !selectedSlot.fits && selectedSlot.constraint !== "off_day" ? (
-    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700" data-testid="scheduler-conflict">
-      <span className="font-semibold">Conflict.</span>{" "}
-      {activeLabel} {selectedSlot.constraint === "outage" ? "is unavailable" : "is full"} at {pretty12h(time)}.
-      {availability?.conflict?.nextAvailableMinutes != null ? (
-        <> {" "}Next available{" "}
-          <button type="button" className="font-semibold underline" onClick={() => { const m = availability.conflict!.nextAvailableMinutes!; setTime(minToHm(m)); }} data-testid="scheduler-conflict-next">
-            {pretty12h(minToHm(availability.conflict.nextAvailableMinutes))}
-          </button>.
-        </>
-      ) : null}
-    </div>
-  ) : null;
+  // (Soft conflicts are surfaced in the SELECTED APPOINTMENT summary with an
+  // explicit "Override & Schedule" action — never as a bare time-click side
+  // effect.)
 
   // ── Compact equipment access (secondary; not shown by default) ──
   const anyOffToday = operatingDays.some((o) => !o.isOperatingToday);
@@ -966,7 +987,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const recommendedBlock = !activeUnit ? (
     <p className="text-[11px] italic text-slate-400" data-testid="scheduler-recommended-empty">Choose an appointment type to see a recommendation.</p>
   ) : activeRecommendation ? (
-    <button type="button" onClick={() => placeActive({ time: activeRecommendation.time, startMinutes: activeRecommendation.startMinutes })}
+    <button type="button" onClick={() => { setLastScheduled(null); setTime(activeRecommendation.time); }}
       className="flex w-full items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left transition-colors hover:bg-emerald-100"
       data-testid="scheduler-recommended-use">
       <span className="min-w-0">
@@ -988,6 +1009,187 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       {activeLabel}{activeDurationMin ? ` · ${activeDurationMin} min` : ""}
     </span>
   ) : null;
+
+  // Set the active scheduling context (from a Qualified Ancillaries row or the
+  // generic dropdown). Optionally prefill a placed block's date/time (edit).
+  function activate(unit: ActiveUnit, opts?: { date?: string; time?: string }) {
+    setLastScheduled(null);
+    setActiveUnit(unit);
+    if (opts?.date) setSelectedDate(opts.date);
+    setTime(opts?.time ?? "");
+    setServiceMenuOpen(false);
+  }
+
+  // ── Pending selection (a time is chosen but NOT yet scheduled) ──
+  const pendingSlot = activeUnit && time ? slots.find((s) => s.time === time) ?? null : null;
+  const pendingConflict = !!pendingSlot && !pendingSlot.fits;
+  const pendingEnd = time && activeDurationMin ? minToHm(hmToMin(time) + activeDurationMin) : null;
+  const scheduleLabel = !activeUnit
+    ? "Schedule"
+    : activeUnit.kind === "ultrasound" ? `Schedule ${activeStudyCount} Ultrasound${activeStudyCount === 1 ? "" : "s"}` : `Schedule ${activeLabel}`;
+  const editingPlaced =
+    (activeUnit?.kind === "brainwave" && brainPlaced) ||
+    (activeUnit?.kind === "vitalwave" && vitalPlaced) ||
+    (activeUnit?.kind === "ultrasound" && !!activeUnit.editGroupId);
+  // The active unit still has unscheduled work (so a recommendation is useful,
+  // e.g. the remaining ultrasound studies after a split, or an unplaced service).
+  const activeHasWork = !activeUnit
+    ? false
+    : activeUnit.kind === "ultrasound" ? activeStudyCount > 0
+      : activeUnit.kind === "brainwave" ? !brainPlaced : !vitalPlaced;
+
+  // SELECTED APPOINTMENT — visible ONLY after a time is picked; the explicit
+  // Schedule button here is the commit. A soft conflict routes through override.
+  const selectedAppointment = activeUnit && activeLabel && time ? (
+    <div className={`rounded-lg border px-3 py-2.5 ${pendingConflict ? "border-red-200 bg-red-50" : "border-slate-300 bg-slate-50"}`} data-testid="scheduler-selected-appointment">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Selected appointment</div>
+      <div className="mt-0.5 flex items-center gap-2">
+        <span className={`h-2 w-2 shrink-0 rounded-full ${RESOURCE_DOT[activeUnit.kind]}`} />
+        <span className="text-sm font-semibold text-slate-900">{activeLabel}</span>
+      </div>
+      <div className="text-[12px] text-slate-600">{prettyDateLong(selectedDate)}</div>
+      <div className="text-[13px] font-semibold tabular-nums text-slate-900" data-testid="scheduler-selected-time">{pretty12h(time)}{pendingEnd ? `–${pretty12h(pendingEnd)}` : ""}</div>
+      {pendingConflict ? (
+        <div className="mt-1 text-[11px] font-medium text-red-700" data-testid="scheduler-selected-conflict">
+          {pendingSlot?.constraint === "off_day" ? "Not a normal service day." : pendingSlot?.constraint === "outage" ? "Equipment outage." : "At capacity."} An override reason is required.
+        </div>
+      ) : null}
+      <div className="mt-2 flex items-center gap-2">
+        <button type="button" onClick={() => setTime("")} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-medium text-slate-600 hover:bg-slate-100" data-testid="scheduler-selected-change">Change</button>
+        <button type="button" disabled={scheduleMutation.isPending} onClick={scheduleActive} className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-white ${pendingConflict ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`} data-testid="scheduler-schedule-active">
+          <Check className="h-3.5 w-3.5" /> {pendingConflict ? "Override & Schedule" : editingPlaced ? "Reschedule" : scheduleLabel}
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  // Success confirmation — what was just added to the plan (no abrupt jump).
+  const successBlock = lastScheduled && !time ? (
+    <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800" data-testid="scheduler-scheduled-success">
+      <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+      <span><span className="font-semibold">{lastScheduled.label}</span> added · {prettyDateShort(lastScheduled.isoDate)} · {pretty12h(lastScheduled.time)}</span>
+    </div>
+  ) : null;
+
+  // ── QUALIFIED ANCILLARIES (patient context): the single checklist ──
+  // Rendered instead of the generic dropdown when a patient is loaded. Shows
+  // what Plexus IQ qualified + current selection + per-service scheduling.
+  const qualifiedBrainwave = !!qualification?.services.some((s) => s.resourceType === "brainwave");
+  const qualifiedVitalwave = !!qualification?.services.some((s) => s.resourceType === "vitalwave");
+  const qualifiedUltrasoundCount = qualification?.services.filter((s) => s.resourceType === "ultrasound").length ?? 0;
+  const scheduledUltrasoundCount = scheduledUltrasoundCodes.size;
+
+  function QualRow({ kind }: { kind: "brainwave" | "vitalwave" }) {
+    const reg = kind === "brainwave" ? brainwave : vitalwave;
+    if (!reg) return null;
+    const isSel = kind === "brainwave" ? brainSelected : vitalSelected;
+    const isQual = kind === "brainwave" ? qualifiedBrainwave : qualifiedVitalwave;
+    // Only surface services the patient qualifies for (or has been manually added).
+    if (!isQual && !isSel) return null;
+    const block = kind === "brainwave" ? visitPlan.brainwave : visitPlan.vitalwave;
+    const existing = existingOnSelectedDate.get(kind);
+    const isActive = activeUnit?.kind === kind;
+    const plexus = qualification?.services.some((s) => s.resourceType === kind && ("plexusSourced" in s ? true : true));
+    const status = block ? `${prettyDateShort(block.isoDate)} · ${pretty12h(block.time)}${block.override ? " · override" : ""}`
+      : existing ? `Existing · ${pretty12h(existing.time)}`
+        : isSel ? "Qualified · Not scheduled" : "Not included";
+    return (
+      <div className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${isActive ? (kind === "brainwave" ? "border-violet-300 bg-violet-50" : "border-red-300 bg-red-50") : "border-slate-200 bg-white"}`} data-testid={`scheduler-qual-${kind}`}>
+        <button type="button" onClick={() => toggleService(reg, kind)} className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSel ? (kind === "brainwave" ? "border-violet-500 bg-violet-500" : "border-red-500 bg-red-500") + " text-white" : "border-slate-300"}`} data-testid={`scheduler-qual-${kind}-check`} aria-pressed={isSel} title={isSel ? "Included" : "Not included"}>{isSel ? <Check className="h-3 w-3" /> : null}</button>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${RESOURCE_DOT[kind]}`} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-900">
+            {block ? <Check className="h-3 w-3 text-emerald-600" /> : null}{RESOURCE_LABELS[kind]}
+          </span>
+          <span className="block truncate text-[11px] text-slate-500" data-testid={`scheduler-qual-${kind}-status`}>{plexus && isSel && !block && !existing ? "Qualified by Plexus IQ · Not scheduled" : status}</span>
+        </span>
+        {isSel ? (
+          <button type="button" onClick={() => activate({ kind }, block ? { date: block.isoDate, time: block.time } : undefined)}
+            className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${kind === "brainwave" ? "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"}`}
+            data-testid={`scheduler-qual-${kind}-schedule`}>
+            {block ? "Change" : "Schedule"}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const ultrasoundStudyList = (
+    <div className="mt-1 rounded-lg border border-emerald-100 bg-emerald-50/40 py-1" data-testid="scheduler-ultrasound-menu">
+      <div className="max-h-52 overflow-y-auto py-0.5">
+        {ultrasound.map((u) => {
+          const on = selected.has(u.internalCode);
+          const grp = studyGroupFor(u.internalCode);
+          const picked = usPick[u.internalCode] !== false;
+          return (
+            <div key={u.internalCode} className="flex items-center gap-2 py-1 pl-3 pr-2.5 text-sm">
+              <button type="button" onClick={() => toggleService(u, "ultrasound")}
+                className={`flex min-w-0 flex-1 items-center gap-2 text-left ${on ? "text-emerald-700" : "text-slate-700"}`}
+                data-testid={`scheduler-ultrasound-option-${u.internalCode}`} aria-pressed={on}>
+                <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"}`}>{on ? <Check className="h-3 w-3" /> : null}</span>
+                <span className="min-w-0"><span className="block truncate">{u.displayName}</span>{u.cptCode ? <span className="block text-[10px] text-slate-400">CPT {u.cptCode}</span> : null}</span>
+              </button>
+              {on && grp ? (
+                <button type="button" onClick={() => activate({ kind: "ultrasound", studyCodes: grp.studyCodes, editGroupId: grp.id }, { date: grp.isoDate, time: grp.time })}
+                  className="shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                  data-testid={`scheduler-us-study-status-${u.internalCode}`}>
+                  {prettyDateShort(grp.isoDate)} · {pretty12h(grp.time)} ✓
+                </button>
+              ) : on ? (
+                <button type="button" onClick={() => setUsPick((p) => ({ ...p, [u.internalCode]: !(p[u.internalCode] !== false) }))}
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${picked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white"}`}
+                  title={picked ? "In next group" : "Not in next group"} data-testid={`scheduler-us-pick-${u.internalCode}`} aria-pressed={picked}>
+                  {picked ? <Check className="h-3 w-3" /> : null}
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      {unscheduledUltrasoundCodes.length > 0 ? (
+        <div className="border-t border-emerald-100 px-3 py-1.5">
+          <button type="button" disabled={pickedUltrasoundCodes.length === 0}
+            onClick={() => activate({ kind: "ultrasound", studyCodes: pickedUltrasoundCodes, editGroupId: null })}
+            className="w-full rounded-md bg-emerald-600 px-2 py-1 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+            data-testid="scheduler-us-schedule-together">
+            {pickedUltrasoundCodes.length === unscheduledUltrasoundCodes.length
+              ? `Schedule All ${unscheduledUltrasoundCodes.length} Together`
+              : `Schedule Selected Together (${pickedUltrasoundCodes.length})`}
+          </button>
+          <div className="mt-0.5 text-center text-[9px] text-slate-400">Uncheck a study on the right to split it onto another day.</div>
+        </div>
+      ) : ultrasoundSelected.length > 0 ? (
+        <div className="border-t border-emerald-100 px-3 py-1.5 text-center text-[10px] text-emerald-600" data-testid="scheduler-us-all-scheduled">All selected ultrasound studies scheduled.</div>
+      ) : (
+        <div className="border-t border-emerald-100 px-3 py-1.5 text-center text-[10px] text-slate-400" data-testid="scheduler-us-none-selected">0 selected — check a study to schedule it.</div>
+      )}
+    </div>
+  );
+
+  const qualifiedSection = (
+    <div className="flex flex-col gap-1" data-testid="scheduler-qualified">
+      {selectedList.some((s) => s.plexusSourced) ? (
+        <div className="inline-flex items-center gap-1 pb-0.5 text-[10px] font-medium text-indigo-500" data-testid="scheduler-plexus-hint"><Sparkles className="h-3 w-3" /> Qualified by Plexus IQ</div>
+      ) : null}
+      <QualRow kind="brainwave" />
+      <QualRow kind="vitalwave" />
+      {(qualifiedUltrasoundCount > 0 || ultrasoundSelected.length > 0) ? (
+        <div className={`rounded-lg border ${activeUnit?.kind === "ultrasound" ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`} data-testid="scheduler-qual-ultrasound">
+          <button type="button" onClick={() => setUltrasoundOpen((v) => !v)} className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold text-slate-900">Ultrasound</span>
+              <span className="block truncate text-[11px] text-slate-500" data-testid="scheduler-qual-ultrasound-status">
+                {ultrasoundSelected.length} selected{qualifiedUltrasoundCount > 0 ? ` of ${qualifiedUltrasoundCount} qualified` : ""} · {scheduledUltrasoundCount} scheduled
+              </span>
+            </span>
+            <span className="shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700" data-testid="scheduler-qual-ultrasound-schedule">{ultrasoundOpen ? "Hide" : "View / Schedule"}</span>
+          </button>
+          {ultrasoundOpen ? <div className="px-2 pb-2">{ultrasoundStudyList}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 
   // ── Day agenda (grouped by patient) ──
   const groupedAgenda = useMemo(() => {
@@ -1161,15 +1363,19 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </>
   ) : null;
 
-  // Right-panel body shared by full + quick. Order: PATIENT → APPOINTMENT TYPES
-  // → AVAILABLE TIMES → RECOMMENDED → confirm → TODAY'S SCHEDULE. No duplicate
-  // "Schedule Services" list; per-service status lives inside the dropdown.
+  // Available Times = grid + (active-service) off-day banner only. Soft conflict
+  // is shown in the SELECTED APPOINTMENT summary, not as a time-grid side effect.
   const availableTimesBlock = (
     <>
       {timeGrid}
-      {(offDayBanner || conflictBanner) ? <div className="mt-2 flex flex-col gap-2">{offDayBanner}{conflictBanner}</div> : null}
+      {offDayBanner ? <div className="mt-2">{offDayBanner}</div> : null}
     </>
   );
+
+  // Selection surface: patient context → Qualified Ancillaries checklist;
+  // generic (no patient) → the compact Appointment Type dropdown. Never both.
+  const selectionSurface = hasPatient ? qualifiedSection : serviceSelector;
+  const selectionTitle = hasPatient ? "Qualified Ancillaries" : "Appointment Type";
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent" data-testid="unified-scheduler">
@@ -1236,8 +1442,8 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                   <div className="text-sm font-semibold text-slate-900">{prettyDateLong(quickDate)}</div>
                   {patientBlock}
                   <div className="relative">
-                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Appointment Types</div>
-                    {serviceSelector}
+                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">{selectionTitle}</div>
+                    {selectionSurface}
                   </div>
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2">
@@ -1249,10 +1455,11 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                     </div>
                     {availableTimesBlock}
                   </div>
-                  {activeUnit ? (
-                    <div>
-                      <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Recommended</div>
-                      {recommendedBlock}
+                  {(activeUnit || time || lastScheduled) ? (
+                    <div className="flex flex-col gap-2">
+                      {selectedAppointment}
+                      {successBlock}
+                      {!time && activeUnit && activeHasWork ? recommendedBlock : null}
                     </div>
                   ) : null}
                   <button type="button" disabled={!canConfirm || scheduleMutation.isPending} onClick={() => setConfirmOpen(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-quick-submit">
@@ -1279,20 +1486,27 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
             {patientBlock}
           </Section>
 
-          {/* APPOINTMENT TYPES — the ONE control: select + schedule + status. */}
-          <Section title="Appointment Types" testId="scheduler-section-types">
-            <div className="relative">{serviceSelector}</div>
+          {/* SELECTION — ONE control. Patient: Qualified Ancillaries checklist.
+              Generic: Appointment Type dropdown. Never both. */}
+          <Section title={selectionTitle} testId="scheduler-section-types">
+            <div className="relative">{selectionSurface}</div>
           </Section>
 
-          {/* AVAILABLE TIMES — immediately under Appointment Types (above fold). */}
+          {/* AVAILABLE TIMES — immediately under the selection (above fold). */}
           <Section title="Available Times" testId="scheduler-section-times" right={<span className="flex items-center gap-2">{activeServiceIndicator}{equipmentControl}</span>}>
             {availableTimesBlock}
           </Section>
 
-          {/* RECOMMENDED — secondary; best time for the ACTIVE service. */}
-          <Section title="Recommended" testId="scheduler-section-recommended">
-            {recommendedBlock}
-          </Section>
+          {/* SELECTED APPOINTMENT (pending) / success / recommendation. A time
+              click lands here as a PENDING selection; the Schedule button
+              commits it. Nothing advances automatically. */}
+          {(activeUnit || time || lastScheduled) ? (
+            <div className="flex flex-col gap-2" data-testid="scheduler-pending-area">
+              {selectedAppointment}
+              {successBlock}
+              {!time && activeUnit && activeHasWork ? recommendedBlock : null}
+            </div>
+          ) : null}
 
           {scheduleButton}
 

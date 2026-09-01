@@ -166,11 +166,10 @@ test.describe("Generic scheduling write", () => {
     // Pre-clean any leftover from a prior run so placement isn't deduped.
     if (Number.isFinite(psid)) await cancelPatientDay(psid);
 
-    // Service (BrainWave) from the dropdown, then close the menu.
-    await page.getByTestId("scheduler-service-dropdown").click();
-    const bw = page.getByTestId("scheduler-service-brainwave");
-    if ((await bw.getAttribute("aria-pressed")) !== "true") await bw.click();
-    await page.getByTestId("scheduler-service-dropdown").click(); // close menu
+    // Patient context → Qualified Ancillaries. Activate BrainWave (Plexus IQ
+    // qualifies John Smith for it) from its row.
+    await page.getByTestId("scheduler-qual-brainwave-schedule").click();
+    await page.waitForTimeout(300);
 
     // Navigate the month calendar to the fixed target date.
     const cell = page.getByTestId(`scheduler-day-${TARGET}`);
@@ -181,10 +180,13 @@ test.describe("Generic scheduling write", () => {
     await cell.click();
     await page.waitForTimeout(500);
 
-    // Assign the recommended time for the active BrainWave unit.
+    // SELECT the recommended time (pending) then EXPLICITLY Schedule it — a time
+    // click alone never commits.
     const use = page.getByTestId("scheduler-recommended-use");
     await use.waitFor({ state: "visible", timeout: 8000 });
     await use.click();
+    await page.getByTestId("scheduler-schedule-active").click();
+    await page.waitForTimeout(300);
 
     // Review & Confirm → the confirmation summary → Confirm Schedule.
     const submit = page.getByTestId("scheduler-submit");

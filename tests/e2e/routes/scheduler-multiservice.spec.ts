@@ -192,16 +192,27 @@ test.describe("Scheduler UI — preselection + admin review + multi-select (A, B
     await page.waitForTimeout(600);
   }
 
-  // Place the ACTIVE service at its recommended time, jumping to the service's
-  // own next eligible day first if today is one of its off-days.
-  async function placeActive(page: Page) {
-    await page.waitForTimeout(500);
-    const chooseNext = page.getByTestId("scheduler-offday-choose-next");
-    if (await chooseNext.isVisible().catch(() => false)) { await chooseNext.click(); await page.waitForTimeout(500); }
+  // Select the ACTIVE service's recommended time (PENDING) then EXPLICITLY
+  // click Schedule to commit it — the real appointment flow. Jumps to the
+  // service's own next eligible day first if today is one of its off-days.
+  async function selectRecommended(page: Page) {
     const use = page.getByTestId("scheduler-recommended-use");
-    await use.waitFor({ state: "visible", timeout: 8000 });
-    await use.click();
-    await page.waitForTimeout(500);
+    const chooseNext = page.getByTestId("scheduler-offday-choose-next");
+    // Wait for the pending area to settle: either a recommended time (eligible
+    // day) or the off-day "choose next" prompt appears.
+    await expect(use.or(chooseNext)).toBeVisible({ timeout: 12000 });
+    if (await chooseNext.isVisible().catch(() => false)) {
+      await chooseNext.click();
+      await expect(use).toBeVisible({ timeout: 12000 });
+    }
+    await use.click(); // SELECT only (pending)
+  }
+  async function placeActiveExplicit(page: Page) {
+    await selectRecommended(page);
+    const sched = page.getByTestId("scheduler-schedule-active");
+    await sched.waitFor({ state: "visible", timeout: 8000 });
+    await sched.click(); // explicit commit
+    await page.waitForTimeout(400);
   }
 
   test("C+E+J. ONE dropdown drives the active service; calendar follows it (no intersection)", async ({ page }) => {
@@ -243,56 +254,89 @@ test.describe("Scheduler UI — preselection + admin review + multi-select (A, B
     await expect(page.getByTestId("scheduler-equipment-ultrasound")).toBeVisible();
   });
 
-  test("G(auto-advance)+H(same-day)+I(per-service). place each service, active advances", async ({ page }) => {
+  test("time click SELECTS (no commit, no auto-advance); explicit Schedule commits", async ({ page }) => {
     await openScheduler(page);
     await selectAllThree(page);
 
-    // BrainWave active by default → place → auto-advance to VitalWave.
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
-    await placeActive(page);
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("VitalWave");
-    // VitalWave → auto-advance to Ultrasound.
-    await placeActive(page);
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("Ultrasound");
-    // Ultrasound (its own eligible day).
-    await placeActive(page);
-
-    // Three placed blocks → the confirm button reflects the count.
-    await expect(page.getByTestId("scheduler-submit")).toContainText("(3)");
-
-    // Same-day sequencing: BrainWave + VitalWave share a date (read inline status
-    // inside the one dropdown — no duplicate section).
+    // Activate BrainWave from the one control.
     await page.getByTestId("scheduler-service-dropdown").click();
-    const bw = (await page.getByTestId("scheduler-svc-brainwave-status").textContent()) ?? "";
-    const vw = (await page.getByTestId("scheduler-svc-vitalwave-status").textContent()) ?? "";
-    expect(bw.split("·")[0].trim()).toBe(vw.split("·")[0].trim());
+    await page.getByTestId("scheduler-svc-brainwave-schedule").click();
+    await page.waitForTimeout(400);
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
+
+    // Click a time → SELECT only. It must NOT commit and must NOT jump service.
+    await selectRecommended(page);
+    await expect(page.getByTestId("scheduler-selected-appointment")).toBeVisible();
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave"); // no jump
+    await expect(page.getByTestId("scheduler-submit")).not.toContainText("("); // nothing added yet
+
+    // Explicit commit.
+    await page.getByTestId("scheduler-schedule-active").click();
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId("scheduler-scheduled-success")).toBeVisible();
+    await expect(page.getByTestId("scheduler-submit")).toContainText("(1)");
+    // Still BrainWave context afterwards — no forced switch to VitalWave.
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
   });
 
-  test("ultrasound SPLIT: subset scheduling yields two ultrasound groups", async ({ page }) => {
+  test("changing the pending time updates the selection; nothing persists before commit", async ({ page }) => {
     await openScheduler(page);
-    // Select two ultrasound studies from the one dropdown.
+    await selectAllThree(page);
+    await page.getByTestId("scheduler-service-dropdown").click();
+    await page.getByTestId("scheduler-svc-brainwave-schedule").click();
+    await page.waitForTimeout(400);
+    const chooseNext = page.getByTestId("scheduler-offday-choose-next");
+    if (await chooseNext.isVisible().catch(() => false)) { await chooseNext.click(); await page.waitForTimeout(400); }
+    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible();
+
+    const slots = page.locator('[data-testid^="scheduler-slot-"]');
+    await slots.nth(1).click();
+    await expect(page.getByTestId("scheduler-selected-appointment")).toBeVisible();
+    const t1 = await page.getByTestId("scheduler-selected-time").textContent();
+    await slots.nth(4).click();
+    const t2 = await page.getByTestId("scheduler-selected-time").textContent();
+    expect(t2).not.toBe(t1); // only the latest is selected
+    await expect(page.getByTestId("scheduler-submit")).not.toContainText("("); // still no commit
+  });
+
+  test("zero ultrasound means zero — no phantom scheduling unit", async ({ page }) => {
+    await openScheduler(page);
     await page.getByTestId("scheduler-service-dropdown").click();
     await page.getByTestId("scheduler-service-ultrasound").click();
     const opts = page.locator('[data-testid^="scheduler-ultrasound-option-"]');
     await opts.nth(0).click();
     await opts.nth(1).click();
-    // Both unscheduled + picked by default. Un-pick the 2nd so only 1 is in the
-    // first group.
+    await expect(page.getByTestId("scheduler-us-schedule-together")).toBeVisible();
+    // Uncheck every ultrasound study.
+    await opts.nth(0).click();
+    await opts.nth(1).click();
+    // No ultrasound scheduling unit, no phantom "1", no active service at all.
+    await expect(page.getByTestId("scheduler-us-schedule-together")).toHaveCount(0);
+    await page.waitForTimeout(400);
+    await expect(page.getByTestId("scheduler-active-service")).toHaveCount(0);
+  });
+
+  test("ultrasound SPLIT: explicit per-group scheduling yields two ultrasound groups", async ({ page }) => {
+    await openScheduler(page);
+    await page.getByTestId("scheduler-service-dropdown").click();
+    await page.getByTestId("scheduler-service-ultrasound").click();
+    const opts = page.locator('[data-testid^="scheduler-ultrasound-option-"]');
+    await opts.nth(0).click();
+    await opts.nth(1).click();
     const picks = page.locator('[data-testid^="scheduler-us-pick-"]');
     await expect(picks).toHaveCount(2);
-    await picks.nth(1).click();
+    await picks.nth(1).click(); // un-pick 2nd → group 1 has 1 study
     await expect(page.getByTestId("scheduler-us-schedule-together")).toContainText("(1)");
-    await page.getByTestId("scheduler-us-schedule-together").click(); // active = 1 ultrasound study
+    await page.getByTestId("scheduler-us-schedule-together").click();
     await page.waitForTimeout(400);
 
-    // Place group 1, then the remaining study auto-becomes active → place group 2.
-    await placeActive(page);
+    // Explicitly schedule group 1; the remaining study stays active (same
+    // service — not a jump). Explicitly schedule group 2.
+    await placeActiveExplicit(page);
     await expect(page.getByTestId("scheduler-active-service")).toContainText("Ultrasound");
-    await placeActive(page);
+    await placeActiveExplicit(page);
 
-    // Two independent ultrasound groups now exist in the plan.
     await expect(page.getByTestId("scheduler-submit")).toContainText("(2)");
-    // Reopen the dropdown: both studies show a scheduled status, none unscheduled.
     await page.getByTestId("scheduler-service-dropdown").click();
     if (!(await page.locator('[data-testid^="scheduler-us-study-status-"]').first().isVisible().catch(() => false))) {
       await page.getByTestId("scheduler-service-ultrasound").click();
