@@ -85,6 +85,51 @@ export function registerSchedulingAvailabilityRoutes(app: Express) {
           ? ((screening as { qualifyingTests?: string[] }).qualifyingTests as string[])
           : [];
 
+        // Per-service qualifying EVIDENCE (why this patient qualifies for THIS
+        // study) from the canonical patient_screenings.reasoning jsonb. Keyed by
+        // the qualifying-test name; a value may be a rich object or a plain
+        // string. This read-only projection lets the scheduler surface a subtle
+        // "why qualified" indicator without duplicating qualification logic.
+        const reasoningRaw =
+          ((screening as { reasoning?: Record<string, unknown> }).reasoning as
+            | Record<string, unknown>
+            | undefined) ?? {};
+        const reasoningByKey = new Map<string, unknown>();
+        for (const [k, v] of Object.entries(reasoningRaw)) {
+          const clean = k.replace(/\s*\(\d{4,5}\)\s*$/, "").trim().toLowerCase();
+          reasoningByKey.set(k.toLowerCase(), v);
+          if (!reasoningByKey.has(clean)) reasoningByKey.set(clean, v);
+        }
+        const evidenceOf = (raw: string, clean: string, displayName: string) => {
+          const v =
+            reasoningByKey.get(raw.toLowerCase()) ??
+            reasoningByKey.get(clean.toLowerCase()) ??
+            reasoningByKey.get(displayName.toLowerCase());
+          if (v == null) return null;
+          if (typeof v === "string") {
+            const understanding = v.trim();
+            return understanding
+              ? { qualifyingFactors: [] as string[], icd10: [] as string[], understanding, adminJustification: null as string | null }
+              : null;
+          }
+          if (typeof v === "object") {
+            const o = v as {
+              qualifying_factors?: unknown;
+              icd10_codes?: unknown;
+              clinician_understanding?: unknown;
+              admin_justification?: unknown;
+            };
+            const asStrings = (x: unknown) => (Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : []);
+            const qualifyingFactors = asStrings(o.qualifying_factors);
+            const icd10 = asStrings(o.icd10_codes);
+            const understanding = typeof o.clinician_understanding === "string" ? o.clinician_understanding.trim() : null;
+            const adminJustification = typeof o.admin_justification === "string" ? o.admin_justification.trim() : null;
+            if (qualifyingFactors.length === 0 && icd10.length === 0 && !understanding && !adminJustification) return null;
+            return { qualifyingFactors, icd10, understanding: understanding || null, adminJustification: adminJustification || null };
+          }
+          return null;
+        };
+
         const services = qualifyingTests
           .map((raw) => {
             // qualifyingTests may carry CPT suffixes like "Bilateral Carotid Duplex (93880)".
@@ -105,13 +150,15 @@ export function registerSchedulingAvailabilityRoutes(app: Express) {
               reviewByService.get(internalCode.toLowerCase()) ??
               reviewByService.get(clean.toLowerCase()) ??
               null;
+            const displayName = match?.displayName ?? clean;
             return {
               rawTest: raw,
               internalCode,
-              displayName: match?.displayName ?? clean,
+              displayName,
               resourceType: cat,
               cptCode: match?.cptCode ?? null,
               adminReviewStatus: reviewStatus, // approved | pending | needs_info | rejected | null
+              qualification: evidenceOf(raw, clean, displayName), // { qualifyingFactors, icd10, understanding, adminJustification } | null
             };
           })
           .filter((x): x is NonNullable<typeof x> => x !== null);

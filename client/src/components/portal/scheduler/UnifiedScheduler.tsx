@@ -30,6 +30,7 @@ import {
   Check,
   AlertTriangle,
   Sparkles,
+  Info,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
@@ -80,6 +81,14 @@ function minToHm(min: number): string {
 }
 let __seq = 0;
 function nextKey(): string { __seq += 1; return `p${__seq}_${Date.now().toString(36)}`; }
+// Monday of the week containing `iso` (matches the server schedule dashboard).
+function startOfWeekIso(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  const diff = (d.getDay() + 6) % 7; // days since Monday
+  d.setDate(d.getDate() - diff);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
 
 export type UnifiedSchedulerContext = {
   patientScreeningId?: number | null;
@@ -129,9 +138,22 @@ type PatientQualification = {
     resourceType: CapResourceType | "other";
     cptCode: string | null;
     adminReviewStatus: string | null;
+    // Per-service qualifying evidence (why this patient qualifies for THIS
+    // study). Read-only from patient_screenings.reasoning. null ⇒ no evidence.
+    qualification: {
+      qualifyingFactors: string[];
+      icd10: string[];
+      understanding: string | null;
+      adminJustification: string | null;
+    } | null;
   }>;
   adminReviewSummary: "approved" | "pending" | "partially_reviewed" | "not_reviewed";
 };
+
+// A committed patient row from the clinic schedule dashboard (per clinic+date).
+type ClinicPatientRow = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
+// A raw global-schedule event (ancillary day feed).
+type ScheduleEvent = { id: number; patientName: string | null; serviceType: string | null; eventType: string; status: string; startsAt: string; endsAt: string | null; metadata?: { override?: { constraint?: string; reason?: string } | null } | null };
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const RESOURCE_LABELS: Record<string, string> = { brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound" };
@@ -169,10 +191,21 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   // The client plan — each item is one ancillary at its OWN date/time.
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [ultrasoundGroupOpen, setUltrasoundGroupOpen] = useState(true);
   const [equipmentOpen, setEquipmentOpen] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
   const [quickDate, setQuickDate] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // ── Single-click DAY VIEW (inspection) — distinct from the scheduling date ──
+  // Inspecting a date opens a compact popover and NEVER touches the pending
+  // scheduling selection (selectedDate/time/plan). Double-click schedules.
+  const [inspectDate, setInspectDate] = useState<string | null>(null);
+  const [dayTab, setDayTab] = useState<"ancillary" | "clinic">("ancillary");
+  const [clinicProvider, setClinicProvider] = useState<string>("__all__");
+  // Which service's qualification-evidence popover is open (from the dropdown).
+  const [infoService, setInfoService] = useState<string | null>(null);
+  // Click-timing guard so a single-click doesn't fire before a double-click.
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastScheduled, setLastScheduled] = useState<{ label: string; isoDate: string; time: string } | null>(null);
   const [overrideCtx, setOverrideCtx] = useState<{ constraint: SoftConstraint; time: string; message: string } | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
@@ -277,6 +310,79 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     staleTime: 30_000,
   });
   const dayCells = useMemo(() => buildCommandCalendarCells({ summary, facility }), [summary, facility]);
+
+  // ── Day-view: ANCILLARY schedule for the inspected clinic+date ──
+  // Canonical global-schedule-events feed (facility name + day window), scoped
+  // to scheduled ancillary appointments. Independent of the active service.
+  const ANCILLARY_EVENT_TYPES = ["ancillary_appointment", "same_day_add"];
+  const { data: dayEvents = [], isFetching: dayEventsLoading } = useQuery<ScheduleEvent[]>({
+    queryKey: ["scheduler-day-events", facility, inspectDate],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/global-schedule-events?facilityId=${encodeURIComponent(facility ?? "")}&startDate=${inspectDate}T00:00:00&endDate=${inspectDate}T23:59:59&limit=500`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`Day events failed (${res.status})`);
+      return res.json();
+    },
+    enabled: !!facility && !!inspectDate && dayTab === "ancillary",
+    staleTime: 15_000,
+  });
+  const ancillaryDayRows = useMemo(() => {
+    return (dayEvents ?? [])
+      .filter((e) => ANCILLARY_EVENT_TYPES.includes(e.eventType) && e.status === "scheduled" && !!e.startsAt)
+      .map((e) => {
+        const d = new Date(e.startsAt);
+        const mins = Number.isNaN(d.getTime()) ? 0 : d.getHours() * 60 + d.getMinutes();
+        return { id: e.id, startMinutes: mins, time: minToHm(mins), patient: e.patientName ?? "Patient", service: e.serviceType ?? "—", override: e.metadata?.override ?? null };
+      })
+      .sort((a, b) => a.startMinutes - b.startMinutes);
+  }, [dayEvents]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Day-view: CLINIC schedule (committed patients) + provider list ──
+  // Reuses the canonical schedule dashboard (per clinic+date patient list) and
+  // screening batches (batchId → clinician) for real per-provider filtering.
+  const { data: scheduleDashboard } = useQuery<{ clinicTabs: Array<{ clinicLabel: string; monthCells: Array<{ isoDate: string; patients: ClinicPatientRow[] }> }> }>({
+    queryKey: ["scheduler-clinic-dashboard", inspectDate],
+    queryFn: async () => {
+      const ws = inspectDate ? startOfWeekIso(inspectDate) : undefined;
+      const res = await fetch(`/api/schedule/dashboard${ws ? `?weekStart=${ws}` : ""}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Clinic schedule failed (${res.status})`);
+      return res.json();
+    },
+    enabled: !!inspectDate && dayTab === "clinic",
+    staleTime: 30_000,
+  });
+  const { data: batchList = [] } = useQuery<Array<{ id: number; clinicianName: string | null }>>({
+    queryKey: ["scheduler-batches"],
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches", { credentials: "include" });
+      if (!res.ok) throw new Error(`Batches failed (${res.status})`);
+      return res.json();
+    },
+    enabled: !!inspectDate && dayTab === "clinic",
+    staleTime: 60_000,
+  });
+  const clinicianByBatch = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const b of batchList) if (b.clinicianName) m.set(b.id, b.clinicianName);
+    return m;
+  }, [batchList]);
+  const clinicDayPatients = useMemo<ClinicPatientRow[]>(() => {
+    if (!inspectDate || !scheduleDashboard) return [];
+    const tab = scheduleDashboard.clinicTabs.find((t) => t.clinicLabel === facility);
+    const cell = tab?.monthCells.find((c) => c.isoDate === inspectDate);
+    return cell?.patients ?? [];
+  }, [scheduleDashboard, facility, inspectDate]);
+  const clinicProviders = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of clinicDayPatients) { const c = clinicianByBatch.get(p.batchId); if (c) set.add(c); }
+    return Array.from(set).sort();
+  }, [clinicDayPatients, clinicianByBatch]);
+  const clinicDayFiltered = useMemo(() => {
+    if (clinicProvider === "__all__") return clinicDayPatients;
+    return clinicDayPatients.filter((p) => clinicianByBatch.get(p.batchId) === clinicProvider);
+  }, [clinicDayPatients, clinicProvider, clinicianByBatch]);
 
   // ── Calendar eligibility — the ACTIVE ancillary ONLY (never an intersection) ──
   const operatingDaysByResource = useMemo(() => {
@@ -470,6 +576,37 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   function shiftMonth(delta: number) { setCursor((c) => { const total = c.y * 12 + c.m + delta; return { y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 }; }); }
   function goToday() { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); setSelectedDate(todayIso()); }
 
+  // Single click = INSPECT the day (opens the day-view popover; never touches
+  // the pending scheduling selection). Double click = SCHEDULE on that day
+  // (sets the scheduling date + opens Quick Schedule). A short timer ensures the
+  // single-click action doesn't fire before a double-click is recognized.
+  function onDayClick(iso: string) {
+    if (clickTimer.current) clearTimeout(clickTimer.current);
+    clickTimer.current = setTimeout(() => {
+      clickTimer.current = null;
+      setInspectDate(iso);
+      setDayTab("ancillary");
+      setClinicProvider("__all__");
+    }, 220);
+  }
+  function onDayDoubleClick(iso: string) {
+    if (clickTimer.current) { clearTimeout(clickTimer.current); clickTimer.current = null; }
+    setInspectDate(null);
+    setSelectedDate(iso);
+    setTime("");
+    const d = new Date(`${iso}T00:00:00`);
+    if (!Number.isNaN(d.getTime())) setCursor({ y: d.getFullYear(), m: d.getMonth() });
+    setQuickDate(iso);
+  }
+  useEffect(() => () => { if (clickTimer.current) clearTimeout(clickTimer.current); }, []);
+  // Escape closes the single-click day-view popover.
+  useEffect(() => {
+    if (!inspectDate) return;
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setInspectDate(null); }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [inspectDate]);
+
   const title = hasPatient && patient.name ? `Schedule — ${patient.name}` : "Schedule";
 
   const reviewTag = (() => {
@@ -525,6 +662,83 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
 
   // ── Ancillary dropdown ──
   const anyQualified = ancillaryOptions.some((a) => a.qualified);
+  const bwOpt = ancillaryOptions.find((a) => a.resourceType === "brainwave") ?? null;
+  const vwOpt = ancillaryOptions.find((a) => a.resourceType === "vitalwave") ?? null;
+  const usOpts = ancillaryOptions.filter((a) => a.resourceType === "ultrasound");
+  // Per-service qualification record (evidence + admin-review status).
+  const qualByCode = useMemo(() => {
+    const m = new Map<string, PatientQualification["services"][number]>();
+    for (const s of qualification?.services ?? []) m.set(s.internalCode, s);
+    return m;
+  }, [qualification]);
+
+  // Inline "why qualified" evidence panel for one service (opened by its ⓘ).
+  function QualEvidence({ code, displayName }: { code: string; displayName: string }) {
+    const svc = qualByCode.get(code) ?? null;
+    const status = svc?.adminReviewStatus ?? null;
+    const statusLabel = status === "approved" ? "Admin Review: Complete"
+      : status === "needs_info" || status === "rejected" ? "Admin reviewed — needs attention"
+        : svc ? "Admin Review: Pending" : "Not qualified by Plexus IQ";
+    const statusTone = status === "approved" ? "text-emerald-700" : status === "needs_info" || status === "rejected" ? "text-amber-700" : "text-slate-500";
+    const ev = svc?.qualification ?? null;
+    return (
+      <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-2" data-testid={`scheduler-qual-info-${code}`}>
+        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Status</div>
+        <div className={`mb-1 text-[12px] font-semibold ${statusTone}`} data-testid={`scheduler-qual-status-${code}`}>{statusLabel}</div>
+        {ev ? (
+          <>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Why {displayName} qualifies</div>
+            {ev.understanding ? <div className="mt-0.5 text-[12px] text-slate-700">{ev.understanding}</div> : null}
+            {ev.qualifyingFactors.length > 0 ? (
+              <ul className="mt-1 list-disc pl-4 text-[12px] text-slate-700">
+                {ev.qualifyingFactors.map((f, i) => <li key={i}>{f}</li>)}
+              </ul>
+            ) : null}
+            {ev.icd10.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {ev.icd10.map((c) => <span key={c} className="rounded border border-slate-200 bg-white px-1.5 py-0 text-[10px] font-medium tabular-nums text-slate-600">{c}</span>)}
+              </div>
+            ) : null}
+            {ev.adminJustification ? <div className="mt-1 text-[11px] italic text-slate-500">Admin: {ev.adminJustification}</div> : null}
+            <div className="mt-1 text-[10px] text-slate-400">Source: Plexus IQ · Admin Review</div>
+          </>
+        ) : (
+          <div className="text-[11px] italic text-slate-500" data-testid={`scheduler-qual-none-${code}`}>No Plexus IQ qualification evidence for this service.</div>
+        )}
+      </div>
+    );
+  }
+
+  // One selectable row in the dropdown: clicking the label picks+schedules the
+  // service; the ⓘ is a SEPARATE hit target that only opens the evidence panel.
+  function MenuRow({ opt, indent }: { opt: Ancillary; indent?: boolean }) {
+    const scheduled = plannedCodes.has(opt.code);
+    const testId = opt.resourceType === "ultrasound" ? `scheduler-pick-${opt.code}` : `scheduler-pick-${opt.resourceType}`;
+    const infoOpen = infoService === opt.code;
+    return (
+      <div>
+        <div className={`flex items-center gap-1 pr-2 text-sm ${active?.code === opt.code ? "bg-slate-50" : ""}`}>
+          <button type="button" onClick={() => pickAncillary(opt)}
+            className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 text-left transition-colors hover:bg-slate-50 ${indent ? "pl-7" : ""} ${active?.code === opt.code ? "text-slate-900" : "text-slate-700"}`}
+            data-testid={testId}>
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RESOURCE_DOT[opt.resourceType]}`} />
+            <span className="truncate">{opt.displayName}</span>
+            {scheduled ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" data-testid={`scheduler-pick-scheduled-${opt.code}`} /> : null}
+          </button>
+          {hasPatient ? (
+            <button type="button" onClick={(e) => { e.stopPropagation(); setInfoService(infoOpen ? null : opt.code); }}
+              className={`shrink-0 rounded p-1 ${infoOpen ? "text-slate-700" : opt.qualified ? "text-indigo-400 hover:text-indigo-600" : "text-slate-300 hover:text-slate-500"}`}
+              aria-label={`Why patient qualifies for ${opt.displayName}`} title={`Why patient qualifies for ${opt.displayName}`}
+              data-testid={`scheduler-qual-info-btn-${opt.code}`}>
+              <Info className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+        {infoOpen ? <QualEvidence code={opt.code} displayName={opt.displayName} /> : null}
+      </div>
+    );
+  }
+
   const ancillaryDropdown = (
     <div className="relative" ref={menuRef} data-testid="scheduler-ancillary">
       {servicesLoading ? (
@@ -540,26 +754,23 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
           {menuOpen && (
             <div className="absolute z-30 mt-1 max-h-[60vh] w-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg" data-testid="scheduler-ancillary-menu">
               {ancillaryOptions.length === 0 ? <div className="px-3 py-2 text-xs italic text-slate-400">No appointment types available.</div> : null}
-              {ancillaryOptions.map((a) => {
-                const scheduled = plannedCodes.has(a.code);
-                const testId = a.resourceType === "ultrasound" ? `scheduler-pick-${a.code}` : `scheduler-pick-${a.resourceType}`;
-                return (
-                  <button key={a.code} type="button" onClick={() => pickAncillary(a)}
-                    className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-slate-50 ${active?.code === a.code ? "bg-slate-50 text-slate-900" : "text-slate-700"}`}
-                    data-testid={testId}>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RESOURCE_DOT[a.resourceType]}`} />
-                      <span className="truncate">{a.displayName}</span>
-                      {hasPatient && a.qualified ? <Sparkles className="h-3 w-3 shrink-0 text-indigo-400" aria-label="Qualified by Plexus IQ" /> : null}
-                    </span>
-                    {scheduled ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" data-testid={`scheduler-pick-scheduled-${a.code}`} /> : null}
+              {bwOpt ? <MenuRow opt={bwOpt} /> : null}
+              {vwOpt ? <MenuRow opt={vwOpt} /> : null}
+              {usOpts.length > 0 ? (
+                <div className="border-t border-slate-100">
+                  <button type="button" onClick={() => setUltrasoundGroupOpen((v) => !v)}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-50"
+                    data-testid="scheduler-pick-ultrasound-group" aria-expanded={ultrasoundGroupOpen}>
+                    <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-600" /> Ultrasound <span className="text-[11px] text-slate-400">· {usOpts.length} studies</span></span>
+                    <ChevronRight className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${ultrasoundGroupOpen ? "rotate-90" : ""}`} />
                   </button>
-                );
-              })}
+                  {ultrasoundGroupOpen ? usOpts.map((o) => <MenuRow key={o.code} opt={o} indent />) : null}
+                </div>
+              ) : null}
             </div>
           )}
           {hasPatient && anyQualified ? (
-            <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500" data-testid="scheduler-plexus-hint"><Sparkles className="h-3 w-3" /> ✦ = qualified by Plexus IQ</div>
+            <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-slate-400" data-testid="scheduler-plexus-hint"><Info className="h-3 w-3" /> ⓘ shows why the patient qualifies</div>
           ) : null}
         </>
       )}
@@ -792,6 +1003,84 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </>
   ) : null;
 
+  // ── Single-click DAY VIEW popover (inspection): Ancillary + Clinic tabs ──
+  const dayViewPopover = inspectDate ? (
+    <>
+      <div className="absolute inset-0 z-30 rounded-2xl bg-slate-900/10" onClick={() => setInspectDate(null)} aria-hidden />
+      <div className="absolute left-1/2 top-1/2 z-40 max-h-[92%] w-[340px] max-w-[92%] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl" data-testid="scheduler-day-view" role="dialog" aria-label="Day schedule">
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold uppercase tracking-tight text-slate-900" data-testid="scheduler-day-view-date">{prettyDateLong(inspectDate)}</div>
+            {facility ? <div className="truncate text-[11px] text-slate-500">{facility}</div> : null}
+          </div>
+          <button type="button" onClick={() => setInspectDate(null)} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" data-testid="scheduler-day-view-close" aria-label="Close day view"><X className="h-4 w-4" /></button>
+        </div>
+
+        {/* Tabs */}
+        <div className="mb-2 flex items-center gap-0.5 border-b border-slate-200" role="tablist">
+          <button type="button" role="tab" aria-selected={dayTab === "ancillary"} onClick={() => setDayTab("ancillary")}
+            className={`-mb-px border-b-2 px-2.5 py-1.5 text-[12px] font-semibold ${dayTab === "ancillary" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"}`}
+            data-testid="scheduler-day-tab-ancillary">Ancillary Schedule</button>
+          <button type="button" role="tab" aria-selected={dayTab === "clinic"} onClick={() => setDayTab("clinic")}
+            className={`-mb-px border-b-2 px-2.5 py-1.5 text-[12px] font-semibold ${dayTab === "clinic" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"}`}
+            data-testid="scheduler-day-tab-clinic">Clinic Schedule</button>
+        </div>
+
+        {dayTab === "ancillary" ? (
+          <div data-testid="scheduler-day-ancillary">
+            {dayEventsLoading ? (
+              <div className="flex items-center gap-2 px-1 py-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</div>
+            ) : ancillaryDayRows.length === 0 ? (
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-day-ancillary-empty">No ancillary appointments on this day.</p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {ancillaryDayRows.map((r) => (
+                  <div key={r.id} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-2.5 py-1.5 text-[12px]" data-testid={`scheduler-day-ancillary-row-${r.id}`}>
+                    <span className="w-[64px] shrink-0 tabular-nums font-semibold text-slate-900">{pretty12h(r.time)}</span>
+                    <span className="min-w-0 flex-1 truncate text-slate-700">{r.patient}</span>
+                    <span className="shrink-0 truncate text-slate-500">{r.service}</span>
+                    {r.override ? <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" aria-label="Override" /> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div data-testid="scheduler-day-clinic">
+            <div className="mb-1.5">
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Provider</div>
+              {clinicProviders.length === 0 ? (
+                <div className="text-[11px] italic text-slate-400" data-testid="scheduler-clinic-no-providers">No providers configured for this clinic on this day.</div>
+              ) : (
+                <select value={clinicProvider} onChange={(e) => setClinicProvider(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none focus:border-slate-400" data-testid="scheduler-clinic-provider" aria-label="Filter clinic schedule by provider">
+                  <option value="__all__">All providers</option>
+                  {clinicProviders.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              )}
+            </div>
+            {clinicDayFiltered.length === 0 ? (
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-day-clinic-empty">No clinic appointments on this day.</p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {clinicDayFiltered.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-2.5 py-1.5 text-[12px]" data-testid={`scheduler-day-clinic-row-${p.id}`}>
+                    <span className="w-[64px] shrink-0 tabular-nums font-semibold text-slate-900">{p.time ? pretty12h(p.time) : "—"}</span>
+                    <span className="min-w-0 flex-1 truncate text-slate-700">{p.name}</span>
+                    <span className="shrink-0 text-slate-400">{p.ancillaries.length} anc.</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button type="button" onClick={() => { const iso = inspectDate; setInspectDate(null); onDayDoubleClick(iso!); }} className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50" data-testid="scheduler-day-view-schedule">
+          Schedule a patient on this day →
+        </button>
+      </div>
+    </>
+  ) : null;
+
   // ── The scheduling column (shared by full panel + quick popover) ──
   const schedulingColumn = (
     <div className="flex flex-col gap-2.5">
@@ -850,16 +1139,18 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
               const isToday = c.iso === today;
               const dots = dayCells[c.iso]?.dots ?? [];
               const normal = isNormalDay(c.iso);
+              const isInspected = c.iso === inspectDate;
               return (
                 <button key={c.iso} type="button"
-                  onClick={() => { setSelectedDate(c.iso!); setTime(""); }}
-                  onDoubleClick={() => { setSelectedDate(c.iso!); setTime(""); setQuickDate(c.iso!); }}
+                  onClick={() => onDayClick(c.iso!)}
+                  onDoubleClick={() => onDayDoubleClick(c.iso!)}
                   className={`flex min-h-0 flex-col items-center justify-center rounded-lg border text-sm transition-colors ${
                     isSelected ? "border-transparent bg-slate-900 text-white ring-2 ring-slate-900/20"
-                      : isToday ? "border-slate-300 bg-slate-50 text-slate-900"
-                        : !normal ? "border-slate-100 bg-slate-50/40 text-slate-300 hover:bg-slate-50"
-                          : "border-slate-100 text-slate-700 hover:bg-slate-50"}`}
-                  title={normal ? "Click to select · double-click for Quick Schedule" : `Not a normal ${active?.displayName ?? "service"} day · still selectable`}
+                      : isInspected ? "border-slate-400 bg-white text-slate-900 ring-2 ring-slate-400"
+                        : isToday ? "border-slate-300 bg-slate-50 text-slate-900"
+                          : !normal ? "border-slate-100 bg-slate-50/40 text-slate-300 hover:bg-slate-50"
+                            : "border-slate-100 text-slate-700 hover:bg-slate-50"}`}
+                  title={normal ? "Click to inspect the day · double-click to schedule" : `Not a normal ${active?.displayName ?? "service"} day · still selectable`}
                   data-testid={`scheduler-day-${c.iso}`}>
                   <span className="font-semibold leading-none">{c.day}</span>
                   {!normal && !isSelected ? <span className="text-[8px] leading-none text-amber-400" data-testid={`scheduler-day-offday-${c.iso}`}>·</span> : null}
@@ -883,6 +1174,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
             </>
           )}
 
+          {dayViewPopover}
           {overrideDialog}
           {confirmDialog}
         </div>

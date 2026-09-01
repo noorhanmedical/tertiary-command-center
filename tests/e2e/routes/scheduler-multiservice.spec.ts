@@ -190,14 +190,18 @@ test.describe("Scheduler UI — dropdown + per-ancillary times + explicit confir
     await page.waitForTimeout(300);
   }
 
-  // Navigate the month calendar to a fixed ISO date and select it.
+  // Navigate to a fixed ISO date and make it the scheduling date. Single-click
+  // now INSPECTS a day, so scheduling on a date is a double-click (which opens
+  // Quick Schedule); we close that popover and operate in the right panel.
   async function goToDate(page: Page, iso: string) {
     const cell = page.getByTestId(`scheduler-day-${iso}`);
     for (let i = 0; i < 24 && !(await cell.isVisible().catch(() => false)); i++) {
       await page.getByTestId("scheduler-next-month").click();
       await page.waitForTimeout(120);
     }
-    await cell.click();
+    await cell.dblclick();
+    const quickClose = page.getByTestId("scheduler-quick-close");
+    if (await quickClose.isVisible().catch(() => false)) await quickClose.click();
     await page.waitForTimeout(400);
   }
 
@@ -338,9 +342,10 @@ test.describe("Scheduler UI — dropdown + per-ancillary times + explicit confir
       }
       await pick(page, "scheduler-pick-brainwave");
       await goToDate(page, THU_UI);
-      const full = page.getByTestId("scheduler-slot-09:00");
-      await expect(full).toBeVisible({ timeout: 8000 });
-      await full.click();
+      // Wait until availability reflects the fills (09:00 rendered as FULL),
+      // so the click is a genuine soft-conflict selection.
+      await expect(page.getByTestId("scheduler-slot-full-09:00")).toBeVisible({ timeout: 10000 });
+      await page.getByTestId("scheduler-slot-09:00").click();
       await expect(page.getByTestId("scheduler-selected-conflict")).toBeVisible();
       await page.getByTestId("scheduler-schedule-active").click();
       await expect(page.getByTestId("scheduler-override-dialog")).toBeVisible();
@@ -350,6 +355,138 @@ test.describe("Scheduler UI — dropdown + per-ancillary times + explicit confir
         await req.post(`/api/global-schedule-events/${id}/transition`, { data: { transition: "cancel", note: "e2e cleanup" } }).catch(() => {});
       }
     }
+  });
+});
+
+test.describe("Scheduler day-view (single/double click) + qualification indicators", () => {
+  const AUG31 = "2026-08-31"; // Taylor has committed patients + provider "Dr Taylor" here
+  const THU_DV = "2027-03-18";
+
+  async function openScheduler(page: Page) {
+    const { loginAs } = await import("../fixtures/auth");
+    await loginAs(page, "admin");
+    await page.goto(PCS_PORTAL);
+    await page.getByTestId("select-facility").selectOption(CLINIC);
+    await page.waitForTimeout(600);
+    await page.mouse.move(4, 450);
+    await page.waitForTimeout(300);
+    const pin = page.getByTestId("button-pin-left-rail");
+    if (await pin.isVisible().catch(() => false)) await pin.click().catch(() => {});
+    await page.getByTestId("left-rail-tool-calendar").click();
+    await expect(page.getByTestId("unified-scheduler")).toBeVisible();
+  }
+  async function selectPatient(page: Page) {
+    await page.getByTestId("scheduler-patient-search").fill("John Smith");
+    const result = page.locator('[data-testid^="scheduler-patient-result-"]').first();
+    await expect(result).toBeVisible({ timeout: 8000 });
+    await result.click();
+    await expect(page.getByTestId("scheduler-patient-name")).toBeVisible();
+  }
+  // Navigate the month grid (either direction) until the ISO cell is present.
+  async function revealDate(page: Page, iso: string, dir: "prev" | "next") {
+    const cell = page.getByTestId(`scheduler-day-${iso}`);
+    for (let i = 0; i < 30 && !(await cell.isVisible().catch(() => false)); i++) {
+      await page.getByTestId(`scheduler-${dir}-month`).click();
+      await page.waitForTimeout(100);
+    }
+    await expect(cell).toBeVisible();
+    return cell;
+  }
+
+  test("35+36. single-click opens the day-view (default Ancillary Schedule); no Quick Schedule", async ({ page }) => {
+    await openScheduler(page);
+    const cell = await revealDate(page, THU_DV, "next");
+    await cell.click();
+    await page.waitForTimeout(400); // click-timer settle
+    await expect(page.getByTestId("scheduler-day-view")).toBeVisible();
+    await expect(page.getByTestId("scheduler-day-view-date")).toContainText("March");
+    await expect(page.getByTestId("scheduler-day-ancillary")).toBeVisible(); // default tab
+    await expect(page.getByTestId("scheduler-quick-popover")).toHaveCount(0); // NOT scheduling
+
+    // Tab switch retains the date.
+    await page.getByTestId("scheduler-day-tab-clinic").click();
+    await expect(page.getByTestId("scheduler-day-clinic")).toBeVisible();
+    await expect(page.getByTestId("scheduler-day-view-date")).toContainText("March");
+    await page.getByTestId("scheduler-day-tab-ancillary").click();
+    await expect(page.getByTestId("scheduler-day-ancillary")).toBeVisible();
+  });
+
+  test("37. Clinic Schedule provider dropdown filters the day's patients", async ({ page }) => {
+    await openScheduler(page);
+    const cell = await revealDate(page, AUG31, "prev");
+    await cell.click();
+    await page.waitForTimeout(400);
+    await page.getByTestId("scheduler-day-tab-clinic").click();
+    const provider = page.getByTestId("scheduler-clinic-provider");
+    await expect(provider).toBeVisible({ timeout: 8000 });
+    // Real provider from canonical batches (Taylor's Aug 31 clinician).
+    await expect(provider).toContainText("Dr Taylor");
+    const allRows = await page.locator('[data-testid^="scheduler-day-clinic-row-"]').count();
+    expect(allRows).toBeGreaterThan(0);
+    await provider.selectOption("Dr Taylor");
+    await page.waitForTimeout(300);
+    const drRows = await page.locator('[data-testid^="scheduler-day-clinic-row-"]').count();
+    expect(drRows).toBeGreaterThan(0);
+    // Date unchanged.
+    await expect(page.getByTestId("scheduler-day-view-date")).toContainText("August");
+  });
+
+  test("38. double-click opens Quick Schedule for that date (not the day-view)", async ({ page }) => {
+    await openScheduler(page);
+    const cell = await revealDate(page, THU_DV, "next");
+    await cell.dblclick();
+    await expect(page.getByTestId("scheduler-quick-popover")).toBeVisible();
+    await expect(page.getByTestId("scheduler-day-view")).toHaveCount(0);
+    // The scheduling date became the double-clicked date.
+    await expect(page.getByTestId("scheduler-quick-popover")).toContainText("Mar 18");
+  });
+
+  test("24. single-click inspection does NOT destroy a pending time selection", async ({ page }) => {
+    await openScheduler(page);
+    // Stage a pending BrainWave time on Tuesday.
+    await page.getByTestId("scheduler-choose-ancillary").click();
+    await page.getByTestId("scheduler-pick-brainwave").click();
+    const cell = await revealDate(page, TUE, "next");
+    await cell.dblclick(); // set scheduling date via double-click
+    await expect(page.getByTestId("scheduler-quick-popover")).toBeVisible();
+    await page.getByTestId("scheduler-quick-close").click();
+    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible({ timeout: 8000 });
+    await page.getByTestId("scheduler-slot-08:00").click();
+    await expect(page.getByTestId("scheduler-selected-appointment")).toBeVisible();
+    const before = await page.getByTestId("scheduler-selected-time").textContent();
+
+    // Now single-click a DIFFERENT date to inspect it.
+    const other = page.getByTestId(`scheduler-day-${THU_DV}`);
+    if (await other.isVisible().catch(() => false)) { await other.click(); }
+    else { await (await revealDate(page, THU_DV, "next")).click(); }
+    await page.waitForTimeout(400);
+    await expect(page.getByTestId("scheduler-day-view")).toBeVisible();
+    // Pending selection is intact.
+    await expect(page.getByTestId("scheduler-selected-appointment")).toBeVisible();
+    await expect(page.getByTestId("scheduler-selected-time")).toHaveText(before ?? "");
+  });
+
+  test("39+40. ultrasound not preselected; info icon shows evidence without selecting", async ({ page }) => {
+    await openScheduler(page);
+    await selectPatient(page);
+    await page.getByTestId("scheduler-choose-ancillary").click();
+    await expect(page.getByTestId("scheduler-ancillary-menu")).toBeVisible();
+
+    // Ultrasound studies are listed (qualified) but none is active/scheduled.
+    // (The "Ultrasound ›" group is expanded by default.)
+    const usPicks = page.locator('[data-testid^="scheduler-pick-"]').filter({ hasText: /Duplex|Echocardiogram|Doppler/ });
+    expect(await usPicks.count()).toBeGreaterThanOrEqual(1);
+    await expect(page.getByTestId("scheduler-active-service")).toHaveCount(0); // nothing active
+    await expect(page.locator('[data-testid^="scheduler-pick-scheduled-"]')).toHaveCount(0); // none scheduled
+
+    // Click BrainWave's info icon → evidence + status, WITHOUT selecting it.
+    const infoBtn = page.locator('[data-testid^="scheduler-qual-info-btn-"]').first();
+    await infoBtn.click();
+    await expect(page.locator('[data-testid^="scheduler-qual-info-"]').filter({ hasText: /Status/i }).first()).toBeVisible();
+    await expect(page.locator('[data-testid^="scheduler-qual-status-"]').first()).toBeVisible();
+    // Info click did not activate/schedule anything.
+    await expect(page.getByTestId("scheduler-active-service")).toHaveCount(0);
+    await expect(page.getByTestId("scheduler-submit")).not.toContainText("(");
   });
 });
 
