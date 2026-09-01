@@ -93,7 +93,16 @@ function iso(v: unknown): string | null {
   return v ? new Date(v as unknown as Date).toISOString() : null;
 }
 
-export type OverviewInput = { clinicId: number };
+// Numeric clinic filters to that clinic; "all" is the admin cross-clinic
+// super-user scope (no clinic filter — sees every clinic's canonical data).
+export type ClinicScope = number | "all";
+export type OverviewInput = { clinicId: ClinicScope };
+
+// True when a row's clinic is in the requested scope. Admin ("all") accepts
+// every clinic; a numeric scope enforces exact-clinic tenant isolation.
+function inScope(rowClinicId: number | null | undefined, scope: ClinicScope): boolean {
+  return scope === "all" || rowClinicId === scope;
+}
 
 export async function getClinicianPortalCanonicalOverview(input: OverviewInput): Promise<ClinicianPortalCanonicalOverview> {
   const generatedAt = new Date().toISOString();
@@ -104,11 +113,11 @@ export async function getClinicianPortalCanonicalOverview(input: OverviewInput):
     buildOrdersNotes(input.clinicId),
     buildEngagement(input.clinicId),
   ]);
-  return { disabled: false, generatedAt, dataVersion: CLINICIAN_PORTAL_OVERVIEW_VERSION, clinicScoped: true, finance, ordersNotes, engagement };
+  return { disabled: false, generatedAt, dataVersion: CLINICIAN_PORTAL_OVERVIEW_VERSION, clinicScoped: input.clinicId !== "all", finance, ordersNotes, engagement };
 }
 
 // ─── Finance — operational billing readiness ONLY ────────────────────────────
-async function buildFinance(clinicId: number): Promise<FinanceOverview> {
+async function buildFinance(clinicId: ClinicScope): Promise<FinanceOverview> {
   const empty = { evaluated: 0, readyToGenerate: 0, missingRequirements: 0, billingDocumentPending: 0, billingDocumentGenerated: 0, claimBlockedOnly: 0, supersededOrInvalidated: 0 };
   const shell = (availability: SectionAvailability, warnings: string[] = []): FinanceOverview => ({ availability, warnings, counts: { ...empty }, billingBlockersByCode: [], claimBlockersByCode: [], lastEvaluatedAt: null, rows: [] });
   if (!billingReadinessRuntimeEnabled()) return shell("upstream_flag_off", ["canonical_billing_flags_off"]);
@@ -117,24 +126,24 @@ async function buildFinance(clinicId: number): Promise<FinanceOverview> {
     // one; determine truncation from the RAW fetched counts (before any in-memory filter),
     // then process only the bounded first SCAN_LIMIT rows.
     const readinessRaw = await db.select().from(canonicalBillingReadinessChecks).where(and(
-      eq(canonicalBillingReadinessChecks.clinicId, clinicId),
+      ...(clinicId === "all" ? [] : [eq(canonicalBillingReadinessChecks.clinicId, clinicId)]),
       isNull(canonicalBillingReadinessChecks.supersededAt),
     )).limit(SCAN_LIMIT + 1);
     const readinessTruncated = readinessRaw.length > SCAN_LIMIT;
     const readiness = readinessRaw.slice(0, SCAN_LIMIT);
-    // Exact clinic + current (non-superseded) + canonical — enforced in SQL AND
+    // Clinic scope + current (non-superseded) + canonical — enforced in SQL AND
     // in memory (defense-in-depth; superseded snapshots are never current).
-    const current = readiness.filter((r) => r.clinicId === clinicId && r.supersededAt == null && r.ancillaryCaseId != null && r.canonicalStatus != null);
+    const current = readiness.filter((r) => inScope(r.clinicId, clinicId) && r.supersededAt == null && r.ancillaryCaseId != null && r.canonicalStatus != null);
     // Current (non-superseded) active canonical Billing Documents per exact case.
     const docsRaw = await db.select().from(canonicalBillingDocumentRequests).where(and(
-      eq(canonicalBillingDocumentRequests.clinicId, clinicId),
+      ...(clinicId === "all" ? [] : [eq(canonicalBillingDocumentRequests.clinicId, clinicId)]),
       isNull(canonicalBillingDocumentRequests.supersededAt),
     )).limit(SCAN_LIMIT + 1);
     const docsTruncated = docsRaw.length > SCAN_LIMIT;
     const docs = docsRaw.slice(0, SCAN_LIMIT);
     const docByCase = new Map<number, string>();
     for (const d of docs) {
-      if (d.clinicId !== clinicId || d.supersededAt != null) continue;
+      if (!inScope(d.clinicId, clinicId) || d.supersededAt != null) continue;
       if (d.ancillaryCaseId == null || d.canonicalStatus == null) continue;
       if (["pending", "generating", "generated", "approved"].includes(d.canonicalStatus)) docByCase.set(d.ancillaryCaseId, d.canonicalStatus);
     }
@@ -193,17 +202,17 @@ async function buildFinance(clinicId: number): Promise<FinanceOverview> {
 }
 
 // ─── Orders & Notes — Unified Ancillary Documents spine (EXACT-source) ────────
-async function buildOrdersNotes(clinicId: number): Promise<OrdersNotesOverview> {
+async function buildOrdersNotes(clinicId: ClinicScope): Promise<OrdersNotesOverview> {
   const empty = { currentOrderNotes: 0, currentProcedureNotes: 0, currentReports: 0, pendingSignatures: 0, returnedForCorrection: 0, generatedNotes: 0, missingEvidence: 0 };
   const shell = (availability: SectionAvailability, warnings: string[] = []): OrdersNotesOverview => ({ availability, warnings, counts: { ...empty }, rows: [] });
   if (!featureFlags.unifiedAncillaryDocuments) return shell("upstream_flag_off", ["unified_documents_flag_off"]);
   try {
     const refs = await db.select().from(ancillaryDocumentReferences).where(and(
-      eq(ancillaryDocumentReferences.clinicId, clinicId),
+      ...(clinicId === "all" ? [] : [eq(ancillaryDocumentReferences.clinicId, clinicId)]),
       isNull(ancillaryDocumentReferences.supersededAt),
       inArray(ancillaryDocumentReferences.documentKind, ["order_note", "procedure_note", "report"]),
     )).limit(SCAN_LIMIT);
-    const currentRefs = refs.filter((r) => r.clinicId === clinicId && r.supersededAt == null && ["order_note", "procedure_note", "report"].includes(r.documentKind));
+    const currentRefs = refs.filter((r) => inScope(r.clinicId, clinicId) && r.supersededAt == null && ["order_note", "procedure_note", "report"].includes(r.documentKind));
 
     // Batched exact-source loads (never one query per row).
     const noteSourceIds = [...new Set(currentRefs
@@ -214,15 +223,15 @@ async function buildOrdersNotes(clinicId: number): Promise<OrdersNotesOverview> 
       .map((r) => r.sourceId as number))];
 
     const noteRows = noteSourceIds.length
-      ? await db.select().from(procedureNotes).where(and(eq(procedureNotes.clinicId, clinicId), inArray(procedureNotes.id, noteSourceIds))).limit(SCAN_LIMIT)
+      ? await db.select().from(procedureNotes).where(and(...(clinicId === "all" ? [] : [eq(procedureNotes.clinicId, clinicId)]), inArray(procedureNotes.id, noteSourceIds))).limit(SCAN_LIMIT)
       : [];
     const cdrRows = reportSourceIds.length
-      ? await db.select().from(caseDocumentReadiness).where(and(eq(caseDocumentReadiness.clinicId, clinicId), inArray(caseDocumentReadiness.id, reportSourceIds))).limit(SCAN_LIMIT)
+      ? await db.select().from(caseDocumentReadiness).where(and(...(clinicId === "all" ? [] : [eq(caseDocumentReadiness.clinicId, clinicId)]), inArray(caseDocumentReadiness.id, reportSourceIds))).limit(SCAN_LIMIT)
       : [];
     const noteById = new Map<number, typeof noteRows[number]>();
-    for (const n of noteRows) if (n.clinicId === clinicId) noteById.set(n.id, n);
+    for (const n of noteRows) if (inScope(n.clinicId, clinicId)) noteById.set(n.id, n);
     const cdrById = new Map<number, typeof cdrRows[number]>();
-    for (const c of cdrRows) if (c.clinicId === clinicId) cdrById.set(c.id, c);
+    for (const c of cdrRows) if (inScope(c.clinicId, clinicId)) cdrById.set(c.id, c);
 
     const counts = { ...empty };
     const warnCounts = new Map<string, number>();
@@ -360,17 +369,17 @@ function validateReportRef(
 }
 
 // ─── Engagement — ancillary case + Admin Review + Engagement lists ───────────
-async function buildEngagement(clinicId: number): Promise<EngagementOverview> {
+async function buildEngagement(clinicId: ClinicScope): Promise<EngagementOverview> {
   const empty = { activeCases: 0, approved: 0, needsInformation: 0, pending: 0, rejected: 0 };
   const shell = (availability: SectionAvailability, warnings: string[] = []): EngagementOverview => ({ availability, warnings, counts: { ...empty }, rows: [] });
   if (!featureFlags.ancillaryCaseWrite) return shell("upstream_flag_off", ["ancillary_case_flag_off"]);
   try {
     const casesRaw = await db.select().from(patientAncillaryCases).where(and(
-      eq(patientAncillaryCases.clinicId, clinicId),
+      ...(clinicId === "all" ? [] : [eq(patientAncillaryCases.clinicId, clinicId)]),
       inArray(patientAncillaryCases.lifecycleStatus, ANCILLARY_ACTIVE_LIFECYCLE_STATUSES as unknown as string[]),
     )).limit(SCAN_LIMIT);
     const activeSet = new Set<string>(ANCILLARY_ACTIVE_LIFECYCLE_STATUSES as unknown as string[]);
-    const cases = casesRaw.filter((c) => c.clinicId === clinicId && c.lifecycleStatus != null && activeSet.has(c.lifecycleStatus));
+    const cases = casesRaw.filter((c) => inScope(c.clinicId, clinicId) && c.lifecycleStatus != null && activeSet.has(c.lifecycleStatus));
 
     // ── Batched, exact-scoped Engagement list/membership wiring (§4) ──
     // Active memberships for these exact cases only; then the lists they name,
@@ -386,12 +395,12 @@ async function buildEngagement(clinicId: number): Promise<EngagementOverview> {
     const listIds = [...new Set(activeMemberships.map((m) => m.engagementListId))];
     const lists = listIds.length
       ? await db.select().from(engagementLists).where(and(
-          eq(engagementLists.clinicId, clinicId),
+          ...(clinicId === "all" ? [] : [eq(engagementLists.clinicId, clinicId)]),
           inArray(engagementLists.id, listIds),
         )).limit(SCAN_LIMIT)
       : [];
     const listById = new Map<number, typeof lists[number]>();
-    for (const l of lists) if (l.clinicId === clinicId) listById.set(l.id, l);
+    for (const l of lists) if (inScope(l.clinicId, clinicId)) listById.set(l.id, l);
 
     // Build distinct membership rows per case. A membership is valid ONLY when
     // its list exists in THIS clinic and its service matches the exact episode.

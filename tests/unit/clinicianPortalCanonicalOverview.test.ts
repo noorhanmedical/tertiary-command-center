@@ -493,15 +493,18 @@ async function testRouteClinicScope() {
   assert.equal(res.statusCode, 403, "(31) no clinic scope → 403 (never body-supplied)");
 }
 
-// (31b) Intentional contract: an admin WITHOUT a session clinic scope
-// (clinicContext sets req.clinicId=null for admins) is fail-closed 403 — the
-// Clinician Portal is strictly per-clinic and never inferred to all-clinics.
+// (31b) Intentional contract (UPDATED): admin is a cross-clinic super-user.
+// WITHOUT a single clinic scope it sees EVERY clinic (HTTP 200,
+// clinicScoped=false) — never a 403. Non-admin users without a clinic scope
+// remain fail-closed 403 (asserted in (31)); tenant isolation for clinic users
+// is unchanged.
 async function testRouteAdminNullClinic() {
   const h = await handlers(); const res = mockRes();
   await runWithDb(new Map(), { clinicianPortalCanonicalData: true }, async () => {
     await invoke(h, { session: { userId: "u", role: "admin" }, clinicId: null }, res);
   });
-  assert.equal(res.statusCode, 403, "(31b) admin without a clinic scope → 403 (fail-closed, intentional)");
+  assert.equal(res.statusCode, 200, "(31b) admin without a clinic scope → 200 (cross-clinic super-user)");
+  assert.equal((res.body as { clinicScoped?: boolean }).clinicScoped, false, "(31b) admin all-clinics overview is not clinic-scoped");
 }
 
 // ─── Route: migration-missing → 503 (§6) ──────────────────────────
@@ -633,7 +636,7 @@ const tests: Array<[string, () => Promise<void>]> = [
   ["(28-30) route role guard", testRouteRoleGuard],
   ["(30) clinician/admin allowed", testRouteAllowedRoles],
   ["(31) route clinic scope", testRouteClinicScope],
-  ["(31b) admin without clinic scope → 403", testRouteAdminNullClinic],
+  ["(31b) admin without clinic scope → all-clinics (200)", testRouteAdminNullClinic],
   ["(32) migration missing → 503", testMigration503],
   ["(33) ordinary section failure → 200", testOrdinarySectionFailure200],
   ["client flag defaults OFF", testClientFlagDefaultOff],

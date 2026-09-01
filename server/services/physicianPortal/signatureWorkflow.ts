@@ -175,7 +175,7 @@ export type SignOutcome =
  */
 export async function signProcedureNote(args: {
   id: number;
-  clinicId: number;
+  clinicId: number | "all";
   authenticatedSignerUserId: string | null;
   // Slice C — optional client version tokens (stale-client protection).
   expectedEvidenceFingerprint?: string | null;
@@ -184,6 +184,10 @@ export async function signProcedureNote(args: {
   const note = await getProcedureNoteByIdForClinic({ id: args.id, clinicId: args.clinicId });
   const guard = eligibleForSign(note);
   if (!guard.ok) return guard;
+  // Admin ("all") acts on the note's OWN clinic — every downstream scoped
+  // read/write uses this resolved numeric clinic, so tenant-safety is preserved.
+  const effectiveClinicId = args.clinicId === "all" ? (note?.clinicId ?? null) : args.clinicId;
+  if (effectiveClinicId == null) return { ok: false, code: 404, error: "Note not found" };
 
   // Slice C — Order Note signing gate (canonical flow only). Enforces
   // current-version, required-screening completeness, screening-version
@@ -223,7 +227,7 @@ export async function signProcedureNote(args: {
   // 'approved' preserved. WHERE requires id AND clinicId.
   const updated = await signProcedureNoteRow({
     id: args.id,
-    clinicId: args.clinicId,
+    clinicId: effectiveClinicId,
     signedByUserId: args.authenticatedSignerUserId,
   });
   if (!updated) return { ok: false, code: 404, error: "Note not found" };
@@ -250,7 +254,7 @@ export async function signProcedureNote(args: {
   // the committed signature. Dynamic import avoids the note-service import cycle.
   {
     const { triggerBillingReadinessForCommittedCase } = await import("../billingLifecycle/billingLifecycleOrchestration");
-    await triggerBillingReadinessForCommittedCase({ clinicId: args.clinicId, ancillaryCaseId: updated.ancillaryCaseId ?? null, source: "procedure_note_signed" });
+    await triggerBillingReadinessForCommittedCase({ clinicId: effectiveClinicId, ancillaryCaseId: updated.ancillaryCaseId ?? null, source: "procedure_note_signed" });
   }
 
   return { ok: true, note: updated };
@@ -263,7 +267,7 @@ export async function signProcedureNote(args: {
  */
 export async function bulkSignNotes(
   ids: number[],
-  clinicId: number,
+  clinicId: number | "all",
   authenticatedSignerUserId: string | null,
 ): Promise<{ signed: number[]; skipped: { id: number; reason: string }[] }> {
   const results: {
@@ -289,14 +293,18 @@ export type ReturnOutcome =
 
 export async function returnProcedureNoteForCorrection(args: {
   id: number;
-  clinicId: number;
+  clinicId: number | "all";
   reason: string;
 }): Promise<ReturnOutcome> {
   const trimmed = args.reason.trim();
   if (!trimmed) return { ok: false, code: 400, error: "A return reason is required" };
+  // Admin ("all") resolves the note's own clinic so the scoped write is tenant-safe.
+  const existing = await getProcedureNoteByIdForClinic({ id: args.id, clinicId: args.clinicId });
+  const effectiveClinicId = args.clinicId === "all" ? (existing?.clinicId ?? null) : args.clinicId;
+  if (effectiveClinicId == null) return { ok: false, code: 404, error: "Note not found" };
   const updated = await returnProcedureNoteRow({
     id: args.id,
-    clinicId: args.clinicId,
+    clinicId: effectiveClinicId,
     reason: trimmed,
   });
   if (!updated) return { ok: false, code: 404, error: "Note not found" };
@@ -306,7 +314,7 @@ export async function returnProcedureNoteForCorrection(args: {
   // eligibility; re-evaluate (which supersedes any stale current Billing Document).
   {
     const { triggerBillingReadinessForCommittedCase } = await import("../billingLifecycle/billingLifecycleOrchestration");
-    await triggerBillingReadinessForCommittedCase({ clinicId: args.clinicId, ancillaryCaseId: updated.ancillaryCaseId ?? null, source: "procedure_note_returned" });
+    await triggerBillingReadinessForCommittedCase({ clinicId: effectiveClinicId, ancillaryCaseId: updated.ancillaryCaseId ?? null, source: "procedure_note_returned" });
   }
   return { ok: true, note: updated };
 }

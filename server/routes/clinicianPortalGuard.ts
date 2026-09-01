@@ -56,7 +56,14 @@ export function requireClinicianOrAdmin(
  * who does carry a session clinic scope is allowed. Broadening this to an
  * all-clinics portal read is explicitly out of scope (see the Phase 2K backlog).
  */
-export function requireClinicScope(req: Request, res: Response): number | null {
+export function requireClinicScope(req: Request, res: Response): number | "all" | null {
+  // Admin is a cross-clinic super-user: it sees EVERY clinic's data. Rather
+  // than a single clinic scope it receives the "all" sentinel, which the
+  // portal read services treat as "no clinic filter" and the write paths treat
+  // as "resolve the target row's own clinic". Non-admin callers still require a
+  // concrete numeric clinic scope and fail closed (403) when absent — tenant
+  // isolation for clinic users is unchanged.
+  if (req.session?.role === "admin") return "all";
   const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
   if (clinicId == null) {
     res.status(403).json({ error: "Clinic scope required" });
