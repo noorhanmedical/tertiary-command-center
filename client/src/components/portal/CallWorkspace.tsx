@@ -47,6 +47,8 @@ import { isSelectablePhoneProviderId } from "@shared/phoneProvider";
 import type { PhoneProviderId } from "@/features/command-center/providers/phoneProviderTypes";
 import type { PhoneCallSession } from "@/features/command-center/providers/phoneProviderTypes";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
+import { getScriptForTest, fillScript } from "@/lib/outreachScripts";
+import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import type { OutreachCallOutcome } from "@shared/schema";
 
 export type CallWorkspaceProps = {
@@ -293,6 +295,11 @@ export function CallWorkspace({
   );
   const [callSession, setCallSession] = useState<PhoneCallSession | null>(null);
   const [dialing, setDialing] = useState(false);
+  // Compact call-script panel (parity with the legacy console's Current Call
+  // script). Content is the shared static source from @/lib/outreachScripts —
+  // no new script is authored here. Collapsed by default so the dialer stays
+  // the primary focus.
+  const [scriptOpen, setScriptOpen] = useState(false);
   // The resolved provider reported a not-live/"pending" session (e.g. RingCentral
   // with no credentials) — surface the honest manual-dial boundary.
   const [providerUnwired, setProviderUnwired] = useState(false);
@@ -606,6 +613,67 @@ export function CallWorkspace({
           </div>
         )}
       </Panel>
+
+      {/* ─── Call script ────────────────────────────────────────── */}
+      {targetService ? (
+        <Panel seedId="call-script" testId="call-workspace-script">
+          <button
+            type="button"
+            onClick={() => setScriptOpen((v) => !v)}
+            className="flex w-full items-center gap-2 text-left"
+            aria-expanded={scriptOpen}
+            aria-controls="call-workspace-script-body"
+            data-testid="call-script-toggle"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+            <span className="text-sm font-semibold text-slate-900">
+              Call script · {targetService}
+            </span>
+            <span className="ml-auto text-slate-400">
+              {scriptOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </span>
+          </button>
+          {scriptOpen
+            ? (() => {
+                const script = getScriptForTest(targetService);
+                const firstName = (ctx.patientName || "").split(" ")[0] || undefined;
+                return (
+                  <div
+                    id="call-workspace-script-body"
+                    className="mt-2 space-y-2 text-[12px] text-slate-700"
+                    data-testid="call-script-body"
+                  >
+                    <div className="rounded-md bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Intro</p>
+                      <p className="mt-1 leading-relaxed">
+                        {fillScript(script.intro, {
+                          name: firstName,
+                          clinic: ctx.facilityId ?? undefined,
+                        })}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Why this matters</p>
+                      <p className="mt-1 leading-relaxed">{script.whyThisMatters}</p>
+                    </div>
+                    {script.objections.length > 0 ? (
+                      <div className="rounded-md bg-slate-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">If they say…</p>
+                        <ul className="mt-1 space-y-1">
+                          {script.objections.map((o, i) => (
+                            <li key={i} className="leading-relaxed">
+                              <span className="font-semibold text-slate-600">"{o.objection}"</span> → <span>{o.response}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()
+            : null}
+        </Panel>
+      ) : null}
 
       {/* ─── Proof documents ────────────────────────────────────── */}
       <Panel seedId="call-proof" testId="call-workspace-proof">

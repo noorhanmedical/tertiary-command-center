@@ -6,7 +6,7 @@ import {
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   Home, BookOpen, CalendarDays, Mail, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
-  NotebookPen, ChevronDown, Wrench, PhoneCall, Pin, PinOff, Landmark,
+  NotebookPen, ChevronDown, ChevronUp, Wrench, PhoneCall, Pin, PinOff, Landmark,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,9 @@ import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
 import { HandoffDialog } from "@/components/portal/handoff/HandoffDialog";
 import { PriorityHandoffsInbox } from "@/components/portal/handoff/PriorityHandoffsInbox";
+import { PcsCallKpiHud } from "@/components/portal/PcsCallKpiHud";
+import { CancelAncillaryDialog, type CancelAncillaryTarget } from "@/components/portal/CancelAncillaryDialog";
+import { AiBar as OutreachAiBar } from "@/components/outreach/AiBar";
 import {
   CompactCallRow,
   CompactClinicRow,
@@ -1321,6 +1324,19 @@ export function TeamPortalShell({
   // instead of navigating to a Playground tab. CallWorkspace owns the honest
   // RingCentral boundary (manual-dial fallback when the provider is unwired).
   const [callWorkspaceCtx, setCallWorkspaceCtx] = useState<CallCaseContext | null>(null);
+  // PCS parity — call-queue cursor. Holds the row id of the "current" call in
+  // the assigned queue so Next/Skip and the keyboard shortcuts can advance
+  // through workspaceCallList WITHOUT creating a parallel queue: ordering,
+  // nextActionAt, and handoff priority remain server-owned; this is a pure
+  // pointer into the already-ordered list. Skipping only moves the pointer —
+  // it never logs a disposition.
+  const [callQueueCursorId, setCallQueueCursorId] = useState<string | number | null>(null);
+  // Visible keyboard-shortcuts help for the call workspace.
+  const [callShortcutsOpen, setCallShortcutsOpen] = useState(false);
+  // Cancel-ancillary dialog target (canonical schedule-event cancel). Null = closed.
+  const [cancelAncillaryTarget, setCancelAncillaryTarget] = useState<CancelAncillaryTarget | null>(null);
+  // Collapsible AI co-pilot panel in the PCS call rail (collapsed by default).
+  const [callAiOpen, setCallAiOpen] = useState(false);
   // Phase 5C — Handoff dialog target (execution case + facility + patient name).
   const [handoffCtx, setHandoffCtx] = useState<{ executionCaseId: number; facilityId: string | null; patientName: string } | null>(null);
   const openHandoffForRow = useCallback((row: TeamWorkspaceCallListItem) => {
@@ -1616,6 +1632,18 @@ export function TeamPortalShell({
       : workspaceRole === "ancillaryCareSpecialist" || workspaceRole === "technician"
         ? "acs"
         : undefined;
+
+  // Effective member whose daily KPIs the call-list HUD reflects: the admin's
+  // view-as target when one is selected (resolve its linked login id from the
+  // roster), otherwise the logged-in caller. Used only by the read-only KPI
+  // HUD — never by the call-list query scope (that stays server-resolved).
+  const kpiMemberUserId = useMemo(() => {
+    if (viewAsTeamMemberId) {
+      const picked = viewAsCandidates.find((m) => m.id === viewAsTeamMemberId);
+      return picked?.userId ?? null;
+    }
+    return currentUserId;
+  }, [viewAsTeamMemberId, viewAsCandidates, currentUserId]);
   const { data: workspaceCallList = [], isLoading: workspaceCallListLoading } = useQuery({
     queryKey: [
       "team-workspace-call-list",
@@ -2207,6 +2235,92 @@ export function TeamPortalShell({
     };
   }
 
+  // ── PCS call-queue navigation (Skip / Next) ─────────────────────────
+  // Live (non-historical) rows only — past days are read-only. Ordering is
+  // the server's; these helpers just move a pointer through the existing
+  // workspaceCallList. rowKey mirrors the map key used in the render.
+  const liveCallRows = (workspaceCallList as TeamWorkspaceCallListItem[]).filter(
+    (r) => !r.historical,
+  );
+  const currentCallIndex = (() => {
+    if (callQueueCursorId == null) return -1;
+    return liveCallRows.findIndex((r) => (r.id ?? null) === callQueueCursorId);
+  })();
+  const currentCallRow: TeamWorkspaceCallListItem | null =
+    currentCallIndex >= 0 ? liveCallRows[currentCallIndex] : null;
+
+  // Advance to the next live call in queue order. Wraps to the top so the
+  // caller can cycle. When nothing is selected yet, selects the first row.
+  function advanceCallQueue() {
+    if (liveCallRows.length === 0) return;
+    if (currentCallIndex < 0) {
+      setCallQueueCursorId(liveCallRows[0].id ?? null);
+      return;
+    }
+    const next = liveCallRows[(currentCallIndex + 1) % liveCallRows.length];
+    setCallQueueCursorId(next?.id ?? null);
+  }
+
+  // Skip is a pure pointer move — identical to Next. It NEVER logs a
+  // disposition (the legacy console's Skip behaved the same way).
+  function skipCallQueue() {
+    advanceCallQueue();
+  }
+
+  // Open the canonical disposition sheet for the current queue row (keyboard
+  // "D"). Reuses the shell-level DispositionSheet bound to callDialogRow.
+  function openDispositionForCurrent() {
+    if (currentCallRow) setCallDialogRow(currentCallRow);
+  }
+
+  // Open the canonical booking dialog for the current queue row (keyboard "S").
+  function openScheduleForCurrent() {
+    if (currentCallRow) openSchedulePatientDialog(callRowToDialogPatient(currentCallRow));
+  }
+
+  // PCS call-workspace keyboard shortcuts (parity with the legacy console):
+  //   N — next patient in queue      S — schedule/book current
+  //   D — disposition current        ? — toggle shortcut help
+  // Active ONLY when the PCS call list is the visible mode, and never while
+  // the user is typing in an input/textarea/contenteditable (accessibility +
+  // no hijacked typing). Deps are listed so the handler always sees fresh
+  // queue state.
+  const callShortcutsActive =
+    workspaceCallListContext === "pcs" && activeWorkspaceMode === "callList";
+  useEffect(() => {
+    if (!callShortcutsActive) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const typing =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        !!target?.isContentEditable;
+      if (typing) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setCallShortcutsOpen((v) => !v);
+        return;
+      }
+      const k = e.key.toLowerCase();
+      if (k === "n") {
+        e.preventDefault();
+        advanceCallQueue();
+      } else if (k === "d") {
+        e.preventDefault();
+        openDispositionForCurrent();
+      } else if (k === "s") {
+        e.preventDefault();
+        openScheduleForCurrent();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callShortcutsActive, callQueueCursorId, workspaceCallList]);
+
   // Open (or focus) a call-list Playground workflow tab. Each kind keeps a
   // stable id per patient/case so re-clicking the same action focuses the
   // existing tab instead of duplicating it. Multiple kinds for the same
@@ -2581,12 +2695,30 @@ export function TeamPortalShell({
     <PlaygroundWorkspaceProvider>
     <PlaygroundEventListener />
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
+      {/* Winter mountain background — the user's exact image, filling the
+          entire shell top to bottom, including under the header. `bg-cover` +
+          `bg-center` keep the mountains centered as the area stretches. Sits
+          behind all chrome (header, rails, playground). Non-interactive. */}
+      <div
+        className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: "url('/playground-bg.png')" }}
+        aria-hidden="true"
+        data-testid="playground-winter-background"
+      />
+      {/* Animated snowfall overlay — two gentle parallax layers of drifting
+          flakes on top of the static scene. Non-interactive; sits above the
+          image but behind all chrome. Respects prefers-reduced-motion. */}
+      <div
+        className="playground-snowfall pointer-events-none absolute inset-0 z-0"
+        aria-hidden="true"
+        data-testid="playground-snowfall"
+      />
       {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
           reclaimed space reads as usable canvas. Left: "The Playground" wordmark
           in a cursive script font, blue. Right: the existing Clinic selector,
           Calendar button, and (admins only) the "Viewing as" selector — all
           unchanged in behavior + test ids. */}
-      <header className="relative z-20 flex items-center justify-between gap-4 flex-wrap px-6 py-2" style={{ backgroundColor: "#FAFBF8" }}>
+      <header className="relative z-20 flex items-center justify-between gap-4 flex-wrap px-6 py-2">
         <div className="flex items-center gap-3">
           <span
             className="text-[30px] font-semibold leading-none text-[#2563EB]"
@@ -2671,10 +2803,8 @@ export function TeamPortalShell({
       </header>
 
       <div className="relative flex-1 overflow-hidden">
-        <div className="absolute inset-0">
-          {/* One continuous paper background — no alternating white/tan bands. */}
-          <div className="absolute inset-0" style={{ backgroundColor: "#FAFBF8" }} />
-        </div>
+        {/* Paper background intentionally transparent so the winter mountain
+            scene painted at the shell root shows through the playground. */}
 
         <div
           className="absolute inset-0 z-[1] overflow-auto px-6 py-5 transition-[padding] duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]"
@@ -3971,6 +4101,88 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "callList" && (
                   <div className="space-y-1" data-testid="workspace-mode-body-callList">
+                    {/* PCS parity — compact daily KPI HUD (calls worked /
+                        reached / booked / conversion + per-member targets),
+                        reusing the canonical Call Settings + today's-calls
+                        sources. Rendered for the PCS call workspace only. */}
+                    {workspaceCallListContext === "pcs" && rightRailSize !== "small" ? (
+                      <PcsCallKpiHud memberUserId={kpiMemberUserId} />
+                    ) : null}
+                    {/* PCS parity — queue navigation (Skip / Next). Advances a
+                        pointer through the server-ordered call list; never
+                        creates a parallel queue or logs a disposition. Shown
+                        for the PCS call workspace with at least one live row. */}
+                    {workspaceCallListContext === "pcs" && liveCallRows.length > 0 ? (
+                      <div
+                        className="mb-1 flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/70 px-2 py-1"
+                        data-testid="pcs-call-queue-nav"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-slate-600" data-testid="pcs-call-queue-current">
+                          {currentCallRow ? (
+                            <>
+                              <span className="font-medium text-slate-800">{currentCallRow.patientName ?? "Patient"}</span>
+                              <span className="text-slate-400">
+                                {" "}· {currentCallIndex + 1}/{liveCallRows.length}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-slate-400">No patient selected — press Next to start</span>
+                          )}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={openDispositionForCurrent}
+                          disabled={!currentCallRow}
+                          className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                          title="Disposition current patient (D)"
+                          data-testid="pcs-call-queue-disposition"
+                        >
+                          Disposition <kbd className="ml-1 rounded bg-slate-100 px-1 text-[9px]">D</kbd>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={skipCallQueue}
+                          className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                          title="Skip to next patient — does not log a call (N)"
+                          data-testid="pcs-call-queue-skip"
+                        >
+                          Skip
+                        </button>
+                        <button
+                          type="button"
+                          onClick={advanceCallQueue}
+                          className="rounded-md border border-[color:var(--sketch-blue)] bg-[color:var(--sketch-blue)]/10 px-2 py-0.5 text-[11px] font-semibold text-[color:var(--sketch-blue)] hover:bg-[color:var(--sketch-blue)]/20"
+                          title="Next patient in queue (N)"
+                          data-testid="pcs-call-queue-next"
+                        >
+                          Next <kbd className="ml-1 rounded bg-white/60 px-1 text-[9px]">N</kbd>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCallShortcutsOpen((v) => !v)}
+                          aria-label="Keyboard shortcuts"
+                          className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50"
+                          title="Keyboard shortcuts (?)"
+                          data-testid="pcs-call-queue-shortcuts"
+                        >
+                          ?
+                        </button>
+                      </div>
+                    ) : null}
+                    {callShortcutsActive && callShortcutsOpen ? (
+                      <div
+                        className="mb-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600"
+                        data-testid="pcs-call-shortcuts-help"
+                      >
+                        <div className="mb-1 font-semibold text-slate-700">Keyboard shortcuts</div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                          <div><kbd className="rounded bg-white px-1 text-[9px]">N</kbd> Next patient</div>
+                          <div><kbd className="rounded bg-white px-1 text-[9px]">D</kbd> Disposition current</div>
+                          <div><kbd className="rounded bg-white px-1 text-[9px]">S</kbd> Schedule current</div>
+                          <div><kbd className="rounded bg-white px-1 text-[9px]">?</kbd> Toggle this help</div>
+                        </div>
+                      </div>
+                    ) : null}
                     {/* Phase 5C — inbound PRIORITY / TEAM HANDOFFS surface above
                         standard assigned work (self-hides when empty). */}
                     <PriorityHandoffsInbox />
@@ -3999,12 +4211,19 @@ export function TeamPortalShell({
                             />
                           );
                         }
+                        const isCurrentQueueRow =
+                          !row.historical &&
+                          callQueueCursorId != null &&
+                          (row.id ?? null) === callQueueCursorId;
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-lg border border-l-2 px-2 py-1.5 text-slate-900 transition-colors hover:bg-slate-900/[0.03]"
+                          className={`rounded-lg border border-l-2 px-2 py-1.5 text-slate-900 transition-colors hover:bg-slate-900/[0.03] ${
+                            isCurrentQueueRow ? "ring-2 ring-[color:var(--sketch-blue)] ring-offset-1" : ""
+                          }`}
                           style={{ backgroundColor: SKETCH_COLORS.paper, borderColor: "rgba(148,163,184,0.35)", borderLeftColor: "var(--sketch-blue)" }}
                           data-testid={`workspace-call-${row.id ?? idx}`}
+                          aria-current={isCurrentQueueRow ? "true" : undefined}
                         >
                           {/* Minimal card: just the patient name + a circular
                               phone button (call) and a circular calendar button
@@ -4054,6 +4273,39 @@ export function TeamPortalShell({
                         );
                       })
                     )}
+                    {/* PCS parity — Plexus AI co-pilot. Collapsible so the queue
+                        stays primary. Backed by the existing /api/scheduler-ai/ask
+                        endpoint; fed the current queue as context (name / bucket /
+                        services) so the co-pilot can reason over the call list. No
+                        new AI backend and no fabricated recommendations. */}
+                    {workspaceCallListContext === "pcs" && rightRailSize !== "small" ? (
+                      <div className="mt-2 rounded-lg border border-slate-200 bg-white/70" data-testid="pcs-call-ai">
+                        <button
+                          type="button"
+                          onClick={() => setCallAiOpen((v) => !v)}
+                          className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
+                          aria-expanded={callAiOpen}
+                          data-testid="pcs-call-ai-toggle"
+                        >
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-600">
+                            AI co-pilot
+                          </span>
+                          <span className="ml-auto text-slate-400">
+                            {callAiOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          </span>
+                        </button>
+                        {callAiOpen ? (
+                          <OutreachAiBar
+                            selectedItem={null}
+                            callListContext={liveCallRows.slice(0, 25).map((r) => ({
+                              name: r.patientName ?? "Patient",
+                              bucket: r.engagementBucket ?? "outreach",
+                              qualifyingTests: (r.selectedServices ?? []).filter(Boolean),
+                            }))}
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 )}
 
@@ -4162,11 +4414,40 @@ export function TeamPortalShell({
                                 {row.facilityId ? ` · ${row.facilityId}` : ""}
                               </div>
                             </div>
-                            {row.status && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                {row.status}
-                              </Badge>
-                            )}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {row.status && (
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                  {row.status}
+                                </Badge>
+                              )}
+                              {/* Cancel appointment (canonical schedule-event
+                                  transition). Available to workspaces that can
+                                  schedule, for a live (not already terminal)
+                                  ancillary row with a numeric event id. Reason
+                                  is collected + required by the dialog/server. */}
+                              {workspaceCanCallAndSchedule &&
+                                typeof row.id === "number" &&
+                                !["cancelled", "completed", "no_show"].includes(
+                                  (row.status ?? "").toLowerCase(),
+                                ) && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setCancelAncillaryTarget({
+                                        eventId: row.id as number,
+                                        patientName: row.patientName ?? "Patient",
+                                        serviceType: row.serviceType ?? null,
+                                      });
+                                    }}
+                                    className="rounded-md border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-rose-600 hover:bg-rose-50"
+                                    title="Cancel appointment"
+                                    data-testid={`button-ancillary-cancel-${row.id ?? idx}`}
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
+                            </div>
                           </div>
                           {/* Document readiness (consent / screening / brainwave)
                               rendered inline on the row from the already-fetched
@@ -4571,6 +4852,12 @@ export function TeamPortalShell({
           patientName={handoffCtx.patientName}
         />
       ) : null}
+
+      {/* Cancel-ancillary dialog (canonical schedule-event cancel transition). */}
+      <CancelAncillaryDialog
+        target={cancelAncillaryTarget}
+        onOpenChange={(o) => { if (!o) setCancelAncillaryTarget(null); }}
+      />
 
       {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
       <CanonicalCommandCalendar
