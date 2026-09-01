@@ -64,6 +64,35 @@ async function recordHookRetry(input: EnsureOrderNoteInput, errorCode: string): 
   }
 }
 
+/**
+ * After the Order Note skeleton is created/reused, generate or refresh its
+ * unsigned body from current canonical evidence. Best-effort and NEVER throws —
+ * a body-generation failure must never reverse the parent's committed state.
+ * BW/VW self-skip until their structured screening is complete (their body is
+ * driven by the screening-completion hook); non-screening services generate
+ * here. Requires FEATURE_ORDER_NOTE_REFRESH (the refresh itself also re-checks
+ * all flags and enforces idempotency/versioning/immutability).
+ */
+async function triggerOrderNoteBodyAfterSkeleton(input: EnsureOrderNoteInput): Promise<void> {
+  if (!featureFlags.orderNoteRefresh) return;
+  try {
+    const { refreshUnsignedOrderNoteForCase } = await import("./orderNoteRefresh");
+    await refreshUnsignedOrderNoteForCase({
+      clinicId: input.clinicId,
+      ancillaryCaseId: input.ancillaryCaseId,
+      actorUserId: input.actorUserId ?? null,
+      source: `${input.source}:order_note_body`,
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error", source: "ancillary_document", kind: "order_note_body_trigger_threw",
+      clinic_id: input.clinicId, ancillary_case_id: input.ancillaryCaseId,
+      message: (e as { message?: string })?.message ?? "error",
+    }));
+  }
+}
+
 export async function ensureCanonicalOrderNoteForAncillaryCase(
   input: EnsureOrderNoteInput,
 ): Promise<OrderNoteHookResult> {
@@ -104,6 +133,13 @@ export async function ensureCanonicalOrderNoteForAncillaryCase(
         if (r.referenceDeferred) status = "deferred_reference";
         else if (r.adminReviewEvidenceDeferred && !r.adminReviewEvidenceRetryRecorded) status = "reconciliation_not_recorded";
         else if (r.adminReviewEvidenceDeferred) status = "deferred_evidence";
+        // Body-generation trigger. The skeleton now exists; generate/refresh the
+        // unsigned Order Note body from current evidence. BW/VW no-op here (they
+        // require a completed A0 questionnaire and are driven by screening
+        // completion); non-screening services (echo/ultrasound/vascular) have no
+        // A0 questionnaire, so THIS is their canonical generation trigger. All
+        // idempotency/versioning/fail-closed lives in refreshUnsignedOrderNoteForCase.
+        await triggerOrderNoteBodyAfterSkeleton(input);
         return { status, orderNoteId: r.orderNoteId, ancillaryCaseId: input.ancillaryCaseId, warnings: r.warnings };
       }
       default: {
