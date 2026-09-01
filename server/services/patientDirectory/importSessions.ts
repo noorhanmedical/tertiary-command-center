@@ -19,6 +19,7 @@ export type PendingImportPayload = {
     rowIndex: number;
     identity: Record<string, string | null | undefined>;
     extras?: { dateOfService?: string; procedure?: string };
+    clinical?: Record<string, string | undefined>;
     matchCandidates?: Array<{
       patientScreeningId: number;
       name: string;

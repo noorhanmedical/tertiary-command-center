@@ -300,6 +300,7 @@ export function registerPatientDirectoryRoutes(app: Express): void {
         rowIndex?: number;
         identity: Record<string, string | null | undefined>;
         extras?: { dateOfService?: string; procedure?: string };
+        clinical?: Record<string, string | undefined>;
         patientType?: "visit" | "outreach";
       }> = body.selected ?? [];
       const approvedMatches: Array<{
@@ -403,6 +404,21 @@ export function registerPatientDirectoryRoutes(app: Express): void {
           patientType: row.patientType ?? "visit",
         };
         if (row.identity?.mrn) insert.mrn = row.identity.mrn;
+        
+        // Carry clinical fields through to patient_screenings
+        const clinical = row.clinical;
+        if (clinical) {
+          if (clinical.email) insert.email = clinical.email;
+          if (clinical.insurance) insert.insurance = clinical.insurance;
+          if (clinical.gender) insert.gender = clinical.gender;
+          if (clinical.age) insert.age = parseInt(clinical.age, 10) || null;
+          if (clinical.diagnoses) insert.diagnoses = clinical.diagnoses;
+          if (clinical.history) insert.history = clinical.history;
+          if (clinical.medications) insert.medications = clinical.medications;
+          if (clinical.previousTests) insert.previousTests = clinical.previousTests;
+          if (clinical.previousTestsDate) insert.previousTestsDate = clinical.previousTestsDate;
+          if (clinical.notes) insert.notes = clinical.notes;
+        }
         let patientScreeningId: number;
         if (importKind === "service") {
           const createdRow = await storage.createPatientScreening(insert as never);
@@ -420,11 +436,30 @@ export function registerPatientDirectoryRoutes(app: Express): void {
             facility: row.identity?.facility ?? null,
             mrn: row.identity?.mrn ?? null,
             phoneNumber: row.identity?.phoneNumber ?? row.identity?.phone ?? null,
+            email: clinical?.email ?? null,
+            insurance: clinical?.insurance ?? null,
+            notes: clinical?.notes ?? null,
             batchId,
             patientType: row.patientType ?? "visit",
             actorUserId: actor,
           });
           patientScreeningId = result.patientScreeningId;
+          
+          // createPatientDirectoryProfile handles name, dob, facility, mrn, phone, email, insurance, notes.
+          // Remaining clinical fields need a direct update:
+          if (clinical) {
+            const extraClinical: Record<string, unknown> = {};
+            if (clinical.gender) extraClinical.gender = clinical.gender;
+            if (clinical.age) extraClinical.age = parseInt(clinical.age, 10) || null;
+            if (clinical.diagnoses) extraClinical.diagnoses = clinical.diagnoses;
+            if (clinical.history) extraClinical.history = clinical.history;
+            if (clinical.medications) extraClinical.medications = clinical.medications;
+            if (clinical.previousTests) extraClinical.previousTests = clinical.previousTests;
+            if (clinical.previousTestsDate) extraClinical.previousTestsDate = clinical.previousTestsDate;
+            if (Object.keys(extraClinical).length > 0) {
+              await storage.updatePatientScreening(patientScreeningId, extraClinical as never);
+            }
+          }
         }
         created.push(patientScreeningId);
 

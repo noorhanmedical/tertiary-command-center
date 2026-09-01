@@ -48,6 +48,8 @@
     "test:scheduler-assignment-wiring": "tsx script/testSchedulerAssignmentWiring.ts",
     "test:operational-flow-assigned-to-billing-ready": "tsx script/testOperationalFlowAssignedToBillingReady.ts",
     "test:billing-payment-invoice-flow": "tsx script/testBillingPaymentInvoiceFlow.ts",
+    "clear-patients": "tsx scripts/clear-patient-data.ts",
+    "clear-patients:prod": "tsx scripts/clear-patient-data.ts --prod",
     "test:billing-visibility-read-model": "tsx script/testBillingVisibilityReadModel.ts",
     "test:final-schedule-commit-to-caller": "tsx script/testFinalScheduleCommitToCaller.ts",
     "test:final-schedule-canonical-actions": "tsx script/testFinalScheduleCanonicalActions.ts",

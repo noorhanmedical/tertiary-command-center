@@ -16,11 +16,25 @@ export type ParsedImportRowExtras = {
   procedure?: string;
 };
 
+export type ParsedImportRowClinical = {
+  email?: string;
+  insurance?: string;
+  gender?: string;
+  age?: string;
+  diagnoses?: string;
+  history?: string;
+  medications?: string;
+  previousTests?: string;
+  previousTestsDate?: string;
+  notes?: string;
+};
+
 export type ParsedImportRow = {
   rowIndex: number; // 0-based, header excluded
   raw: Record<string, string>;
   identity: PatientIdentityInput;
   extras?: ParsedImportRowExtras;
+  clinical?: ParsedImportRowClinical;
 };
 
 export type ImportClassification =
@@ -119,12 +133,49 @@ const EXTRA_HEADER_ALIASES: Record<string, keyof ParsedImportRowExtras> = {
   "service": "procedure",
 };
 
+// Clinical data columns that land in patient_screenings.
+const CLINICAL_HEADER_ALIASES: Record<string, keyof ParsedImportRowClinical> = {
+  "email": "email",
+  "e-mail": "email",
+  "email address": "email",
+  "insurance": "insurance",
+  "insurance type": "insurance",
+  "payer": "insurance",
+  "gender": "gender",
+  "sex": "gender",
+  "age": "age",
+  "diagnoses": "diagnoses",
+  "diagnosis": "diagnoses",
+  "dx": "diagnoses",
+  "conditions": "diagnoses",
+  "history": "history",
+  "hx": "history",
+  "encounter history": "history",
+  "encounters": "history",
+  "medications": "medications",
+  "meds": "medications",
+  "rx": "medications",
+  "previous tests": "previousTests",
+  "previous_tests": "previousTests",
+  "previoustests": "previousTests",
+  "prior tests": "previousTests",
+  "ancillary": "previousTests",
+  "procedures": "previousTests",
+  "previous tests date": "previousTestsDate",
+  "previous_tests_date": "previousTestsDate",
+  "previoustestsdate": "previousTestsDate",
+  "prior tests date": "previousTestsDate",
+  "notes": "notes",
+  "note": "notes",
+  "comments": "notes",
+};
+
 /** Which identity/extra fields a set of CSV headers maps to. */
 export function detectSourceFields(headers: ReadonlyArray<string>): string[] {
   const out: string[] = [];
   for (const h of headers) {
     const key = h.toLowerCase().trim();
-    const mapped = HEADER_ALIASES[key] ?? EXTRA_HEADER_ALIASES[key] ?? null;
+    const mapped = HEADER_ALIASES[key] ?? EXTRA_HEADER_ALIASES[key] ?? CLINICAL_HEADER_ALIASES[key] ?? null;
     out.push(mapped ?? key);
   }
   return out;
@@ -169,6 +220,7 @@ export function parseCsv(text: string): ReadonlyArray<ParsedImportRow> {
     const raw: Record<string, string> = {};
     const identity: PatientIdentityInput = {};
     const extras: ParsedImportRowExtras = {};
+    const clinical: ParsedImportRowClinical = {};
     for (let c = 0; c < headers.length; c++) {
       const headerName = headers[c];
       const value = cells[c] ?? "";
@@ -180,12 +232,16 @@ export function parseCsv(text: string): ReadonlyArray<ParsedImportRow> {
       }
       const extraKey = EXTRA_HEADER_ALIASES[headerName];
       if (extraKey && value) extras[extraKey] = value;
+      
+      const clinicalKey = CLINICAL_HEADER_ALIASES[headerName];
+      if (clinicalKey && value) clinical[clinicalKey] = value;
     }
     rows.push({
       rowIndex: i - 1,
       raw,
       identity,
       ...(Object.keys(extras).length > 0 ? { extras } : {}),
+      ...(Object.keys(clinical).length > 0 ? { clinical } : {}),
     });
   }
   return rows;

@@ -1,0 +1,4 @@
+name,dob,mrn,phone,email,insurance,gender,facility,diagnoses,medications,previous tests,previous tests date,notes
+"ALAM, FARAH",1978-12-05,e32184,(281)-967-0323,farah@email.com,ANSI-Commercial,female,Taylor Family Practice,"[DX] E11.9 Type 2 diabetes","[RX] Metformin 500mg","BrainWave; VitalWave; Echo",2026-05-20,Ancillary patient - completed 7 procedures
+"SMITH, JOHN",1965-03-15,e32185,(512)-555-1234,john.smith@email.com,Medicare,male,Taylor Family Practice,"[DX] I10 Essential hypertension; [DX] E78.5 Hyperlipidemia","[RX] Lisinopril 10mg; [RX] Atorvastatin 20mg","VitalWave; CardioWave",2026-04-15,Prior patient with cardiovascular screening
+"JOHNSON, MARY",1982-07-22,e32186,(512)-555-5678,mary.j@email.com,ANSI-PPO,female,Taylor Family Practice,"[DX] M79.3 Panniculitis, unspecified","[RX] Ibuprofen 400mg PRN",BrainWave,2026-03-10,Screening visit completed

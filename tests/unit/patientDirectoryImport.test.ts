@@ -52,6 +52,26 @@ async function main() {
   assert.equal(txt[0].identity.name, "Alpha One");
   assert.equal(txt[1].identity.dob, "1985-02-02");
 
+  // Clinical column import.
+  const csvWithClinical = `name,dob,mrn,phone,email,insurance,gender,diagnoses,medications,previous tests,notes,facility
+Jane Doe,1980-05-12,M-1,2025550101,jane@test.com,ANSI-Commercial,female,"[DX] E11.9 Type 2 diabetes","[RX] Metformin 500mg","BrainWave; VitalWave",Prior ancillary patient,Plexus Cary
+`;
+
+  const parsedClinical = parseCsv(csvWithClinical);
+  assert.equal(parsedClinical.length, 1);
+  assert.equal(parsedClinical[0].identity.name, "Jane Doe");
+  assert.equal(parsedClinical[0].identity.dob, "1980-05-12");
+  assert.equal(parsedClinical[0].identity.mrn, "M-1");
+  assert.equal(parsedClinical[0].identity.facility, "Plexus Cary");
+  assert.equal(parsedClinical[0].clinical?.email, "jane@test.com");
+  assert.equal(parsedClinical[0].clinical?.insurance, "ANSI-Commercial");
+  assert.equal(parsedClinical[0].clinical?.gender, "female");
+  assert.equal(parsedClinical[0].clinical?.diagnoses, "[DX] E11.9 Type 2 diabetes");
+  assert.equal(parsedClinical[0].clinical?.medications, "[RX] Metformin 500mg");
+  assert.equal(parsedClinical[0].clinical?.previousTests, "BrainWave; VitalWave");
+  assert.equal(parsedClinical[0].clinical?.notes, "Prior ancillary patient");
+  console.log("Clinical column import test passed.");
+
   console.log("Patient Directory import preview test passed.");
 }
 
