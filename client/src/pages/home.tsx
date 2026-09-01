@@ -1,5 +1,5 @@
 import { useLocation } from "wouter";
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
   useScreeningBatches,
@@ -44,6 +44,10 @@ import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { HomeSidebar } from "@/components/HomeSidebar";
 import { HomeDashboard, type ScheduleDashboardResponse } from "@/components/HomeDashboard";
+import { PlexusHomeDashboard, type HomeDashboardData } from "@/components/PlexusHomeDashboard";
+import { buildHomeDashboardData } from "@/lib/homeDashboardData";
+import { useHomeStats } from "@/hooks/api/home-stats";
+import { useOverdueTasks } from "@/features/plexus-tasks/hooks";
 import { PatientDirectoryView } from "@/components/PatientDirectoryView";
 import { ResultsView } from "@/components/ResultsView";
 import { PatientCard } from "@/components/PatientCard";
@@ -54,6 +58,22 @@ export type ScreeningBatchWithPatients = ScreeningBatchWithPatientsHook;
 
 const FACILITIES = VALID_FACILITIES;
 const IMPORT_ACCESS_CODE = "1234";
+
+// Platform App tile label → route. Reuses existing routes only.
+const HOME_APP_ROUTES: Record<string, string> = {
+  "Mission Control": "/mission-control",
+  "Plexus EHR": "/patient-directory",
+  "Outreach / Engagement Center": "/engagement-center",
+  "Team Member Portals": "/team-member-portals",
+  "Team Ops": "/team-ops",
+  "Plexus Tasks": "/plexus-nucleus",
+  "Imaging Central": "/imaging-central",
+  "Document Upload": "/document-upload",
+  "Ancillary Documents": "/ancillary-documents",
+  "Clinician Portal": "/clinician-portal",
+  "Clinic Onboarding": "/clinic-onboarding",
+  "Clinic Analytics": "/clinic-analytics",
+};
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 export default function Home() {
@@ -483,6 +503,32 @@ export default function Home() {
     }
   }, [selectedBatch?.status, selectedBatchId]);
 
+  // ── New home dashboard view-model ──────────────────────────────────────
+  // Wired to REAL sources only: /api/home-stats (useHomeStats), the existing
+  // /api/schedule/dashboard (dashboardData), and the Plexus Tasks overdue
+  // queue. Metrics with no verified source render "—" (see homeDashboardData).
+  const { data: homeStats } = useHomeStats({ enabled: view === "home" });
+  const { data: overdueTasks } = useOverdueTasks();
+  // Minute ticker so the live global clocks stay current without a backend.
+  const [clockTick, setClockTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setClockTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const homeDashboardData: HomeDashboardData = useMemo(
+    () =>
+      buildHomeDashboardData({
+        userName: "there",
+        homeStats,
+        scheduleDashboard: dashboardData,
+        overdueTasks: overdueTasks
+          ? { overdueCount: overdueTasks.overdueCount, dueTodayCount: overdueTasks.dueTodayCount }
+          : undefined,
+      }),
+    // clockTick intentionally in deps to re-derive live clock strings.
+    [homeStats, dashboardData, overdueTasks, clockTick],
+  );
+
   return (
     <>
       <HomeSidebar
@@ -645,18 +691,13 @@ export default function Home() {
             sourceMode="visit"
           />
         ) : (
-          <HomeDashboard
-            batches={batches}
-            dashboardData={dashboardData}
-            dashboardLoading={dashboardLoading}
-            dashboardWeekOverride={dashboardWeekOverride}
-            setDashboardWeekOverride={setDashboardWeekOverride}
-            dashboardClinicKey={dashboardClinicKey}
-            setDashboardClinicKey={setDashboardClinicKey}
-            onOpenSidebar={() => setSidebarOpen(true)}
-            onOpenSchedule={(batchId) => {
-              const b = batches.find((x) => x.id === batchId);
-              openScheduleTab(batchId, b?.name || "Schedule");
+          <PlexusHomeDashboard
+            data={homeDashboardData}
+            onNewPatient={() => setLocation("/patient-directory")}
+            onOpenPlexusIq={() => setLocation("/plexus-iq")}
+            onOpenApp={(label) => {
+              const route = HOME_APP_ROUTES[label];
+              if (route) setLocation(route);
             }}
           />
         )}
