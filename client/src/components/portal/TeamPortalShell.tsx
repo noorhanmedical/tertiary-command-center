@@ -108,6 +108,7 @@ import type { DockAppDefinition } from "@/components/dock/types";
 import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
 import { PlaygroundWorkspaceProvider } from "@/components/playground";
 import { PlaygroundBridge } from "@/components/playground/PlaygroundBridge";
+import { WinterBackground } from "@/components/playground/WinterBackground";
 import { PlaygroundEventListener } from "@/components/playground/PlaygroundEventListener";
 import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import { SketchButton, SketchBadge } from "@/components/playground/sketch/SketchPrimitives";
@@ -2688,11 +2689,13 @@ export function TeamPortalShell({
         >
           <div
             ref={playgroundSurfaceRef}
-            className="relative mx-auto flex h-full min-h-full w-full flex-col bg-transparent px-6 pt-2 pb-6"
+            className="relative isolate mx-auto flex h-full min-h-full w-full flex-col bg-transparent px-6 pt-2 pb-6"
             data-testid="playground-canvas-surface"
             onDragOver={handlePlaygroundDragOver}
             onDrop={handlePlaygroundDrop}
           >
+            {/* Winter scene + light snowfall backdrop (behind all content). */}
+            <WinterBackground />
             {workspacePrefs.stickyNotesVisible && (
               <PlaygroundWidgetLayer
                 widgets={playgroundWidgets}
