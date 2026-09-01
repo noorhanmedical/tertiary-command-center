@@ -60,8 +60,12 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },
-  { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
-  { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  // Consolidated team-member entry point. Replaces the legacy standalone
+  // "Technician Portal" and "Liaison Technician Portal" nav items (which
+  // mounted the old PortalShell directly). This routes to the canonical
+  // Team Portals hub (/team-member-portals), from which users enter the
+  // PCS or ACS workspace per their role/capability.
+  { href: "/team-member-portals", label: "Team Portals", Icon: HeartHandshake, roles: ["admin", "clinician", "technician", "liaison"] },
   { href: "/admin/settings",   label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 

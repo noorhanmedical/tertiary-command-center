@@ -22,8 +22,11 @@ import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
 import OutreachPage from "@/pages/outreach";
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
-import TechnicianPortalPage from "@/pages/technician-portal";
-import LiaisonPortalPage from "@/pages/liaison-portal";
+// NOTE: TechnicianPortalPage (@/pages/technician-portal) and
+// LiaisonPortalPage (@/pages/liaison-portal) are intentionally retained on
+// disk but no longer imported/mounted. Their old routes now redirect to the
+// canonical ACS/PCS workspaces (see routes below). Kept pending a separate
+// dead-code audit.
 import PhysicianPortalPage from "@/pages/physician-portal";
 import AdminSettingsPage from "@/pages/admin-settings";
 import BillingReadinessPage from "@/pages/billing-readiness";
@@ -189,8 +192,18 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/scheduler-portal" />
                 </Route>
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
-                <Route path="/technician-portal" component={TechnicianPortalPage} />
-                <Route path="/liaison-technician-portal" component={LiaisonPortalPage} />
+                {/* Legacy direct mounts removed from user-facing nav. These
+                    URLs no longer render the old PortalShell; they redirect
+                    to the canonical team-member workspaces:
+                      /technician-portal          → ACS workspace
+                      /liaison-technician-portal  → PCS workspace
+                    Back-compat with existing bookmarks/deep links. */}
+                <Route path="/technician-portal">
+                  <Redirect to="/ancillary-care-specialist-portal" />
+                </Route>
+                <Route path="/liaison-technician-portal">
+                  <Redirect to="/patient-care-specialist-portal" />
+                </Route>
                 <Route path="/clinician-portal">
                   <RoleGuard user={user} roles={["admin", "clinician"]}><PhysicianPortalPage /></RoleGuard>
                 </Route>
@@ -198,7 +211,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/clinician-portal" />
                 </Route>
                 <Route path="/liaison-portal">
-                  <Redirect to="/liaison-technician-portal" />
+                  <Redirect to="/patient-care-specialist-portal" />
                 </Route>
         <Route path="/patient-intake" component={QualificationPage} />
         <Route path="/qualification">
