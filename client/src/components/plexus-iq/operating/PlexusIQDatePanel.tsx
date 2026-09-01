@@ -27,7 +27,18 @@ export type PlexusIQBatchNode = {
   statusTone: "ready" | "running" | "errors" | "pending";
   /** Sort key — batch createdAt epoch ms, newest first. */
   createdAtMs: number;
+  /** Batch facility (for the TIME / FACILITY / CLINICIAN metadata row). */
+  facility?: string | null;
+  /** Batch clinician snapshot. null → legacy run ("Clinician not recorded"). */
+  clinicianName?: string | null;
 };
+
+/** Shared display for a batch's clinician attribution. Legacy runs (no stored
+ *  clinician) show an honest "Clinician not recorded" — never inferred. */
+export function clinicianLabel(clinicianName: string | null | undefined): string {
+  const n = (clinicianName ?? "").trim();
+  return n.length > 0 ? n : "Clinician not recorded";
+}
 
 export type PlexusIQDateGroup = {
   /** ISO date or "unscheduled". */
@@ -93,30 +104,48 @@ function BatchRows({
             <button
               type="button"
               onClick={() => onSelectBatch(b.batchId)}
-              className={`min-w-0 flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
+              className={`min-w-0 flex-1 flex flex-col gap-0.5 px-2 py-1.5 rounded-lg text-left transition-colors ${
                 active ? "bg-sky-50 ring-1 ring-sky-200" : "hover:bg-sky-50/60"
               }`}
               data-testid={`button-batch-node-${b.batchId}`}
               aria-current={active ? "true" : undefined}
             >
-              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${TONE_DOT[b.statusTone]}`} />
+              {/* Line 1: TIME + status/count */}
+              <div className="flex items-center gap-2">
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${TONE_DOT[b.statusTone]}`} />
+                <span
+                  className={`text-xs font-medium truncate flex-1 ${
+                    active ? "text-sky-900" : "text-slate-700"
+                  }`}
+                >
+                  {b.timeLabel}
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1 text-[10px] ${
+                    active ? "text-sky-700" : "text-slate-400"
+                  }`}
+                >
+                  {b.statusTone === "running" && (
+                    <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
+                  )}
+                  {b.statusLabel}
+                  <span className="tabular-nums">· {b.patientCount}</span>
+                </span>
+              </div>
+              {/* Line 2: FACILITY */}
+              {b.facility ? (
+                <span className={`pl-3.5 text-[10px] truncate ${active ? "text-sky-700" : "text-slate-500"}`}>
+                  {b.facility}
+                </span>
+              ) : null}
+              {/* Line 3: CLINICIAN (legacy → "Clinician not recorded") */}
               <span
-                className={`text-xs font-medium truncate flex-1 ${
-                  active ? "text-sky-900" : "text-slate-700"
+                className={`pl-3.5 text-[10px] truncate ${
+                  b.clinicianName ? (active ? "text-sky-600" : "text-slate-500") : "text-slate-400 italic"
                 }`}
+                data-testid={`batch-node-clinician-${b.batchId}`}
               >
-                {b.timeLabel}
-              </span>
-              <span
-                className={`inline-flex items-center gap-1 text-[10px] ${
-                  active ? "text-sky-700" : "text-slate-400"
-                }`}
-              >
-                {b.statusTone === "running" && (
-                  <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
-                )}
-                {b.statusLabel}
-                <span className="tabular-nums">· {b.patientCount}</span>
+                {clinicianLabel(b.clinicianName)}
               </span>
             </button>
             {onChangeDate && (
@@ -163,16 +192,28 @@ function ListView({
 
   const [filterYear, setFilterYear] = useState<number | "all">("all");
   const [filterMonth, setFilterMonth] = useState<number | "all">("all");
+  const [filterClinician, setFilterClinician] = useState("");
 
   const filteredGroups = useMemo(() => {
-    return groups.filter((g) => {
-      const d = parseIsoDate(g.key);
-      if (!d) return filterYear === "all" && filterMonth === "all";
-      if (filterYear !== "all" && d.getFullYear() !== filterYear) return false;
-      if (filterMonth !== "all" && d.getMonth() !== filterMonth) return false;
-      return true;
-    });
-  }, [groups, filterYear, filterMonth]);
+    const cq = filterClinician.trim().toLowerCase();
+    return groups
+      .filter((g) => {
+        const d = parseIsoDate(g.key);
+        if (!d) return filterYear === "all" && filterMonth === "all";
+        if (filterYear !== "all" && d.getFullYear() !== filterYear) return false;
+        if (filterMonth !== "all" && d.getMonth() !== filterMonth) return false;
+        return true;
+      })
+      // Clinician filter narrows the batches WITHIN each group (matches the
+      // stored clinicianName — works for free-text names too). Groups with no
+      // matching batch drop out.
+      .map((g) =>
+        cq
+          ? { ...g, batches: g.batches.filter((b) => (b.clinicianName ?? "").toLowerCase().includes(cq)) }
+          : g,
+      )
+      .filter((g) => g.batches.length > 0 || !cq);
+  }, [groups, filterYear, filterMonth, filterClinician]);
 
   return (
     <div className="flex-1 min-h-0 overflow-auto p-2 space-y-1">
@@ -208,6 +249,17 @@ function ListView({
             </option>
           ))}
         </select>
+      </div>
+      {/* Clinician filter — matches the stored clinicianName (free-text too). */}
+      <div className="pb-1">
+        <input
+          type="text"
+          value={filterClinician}
+          onChange={(e) => setFilterClinician(e.target.value)}
+          placeholder="Filter by clinician…"
+          className="w-full text-xs rounded border border-slate-200 bg-white px-1.5 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-slate-400"
+          data-testid="input-filter-clinician"
+        />
       </div>
 
       {filteredGroups.length === 0 && (

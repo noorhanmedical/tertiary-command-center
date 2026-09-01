@@ -1,20 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+  SketchDialog as Dialog,
+  SketchDialogContent as DialogContent,
+  SketchDialogFooter as DialogFooter,
+  SketchDialogTitle as DialogTitle,
+  SketchDialogDescription as DialogDescription,
+  SketchPopover as Popover,
+  SketchPopoverContent as PopoverContent,
+  SketchPopoverTrigger as PopoverTrigger,
+} from "@/components/playground/sketch/SketchOverlays";
+import { SketchButton } from "@/components/playground/sketch/SketchPrimitives";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { CanonicalMonthCalendar } from "@/calendar";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -421,6 +419,7 @@ export function SchedulePatientDialog({
       }}
     >
       <DialogContent
+        hideClose
         className="z-[95] max-w-3xl gap-0 overflow-hidden p-0"
         data-testid="dialog-schedule-patient"
       >
@@ -628,20 +627,21 @@ export function SchedulePatientDialog({
         </div>
 
         <DialogFooter className="gap-2 border-t border-slate-100 bg-slate-50/40 px-6 py-4">
-          <Button
+          <SketchButton
             type="button"
-            variant="outline"
+            variant="secondary"
+            seedId="schedule-patient-cancel"
             onClick={() => onOpenChange(false)}
             data-testid="button-schedule-patient-cancel"
           >
             Cancel
-          </Button>
-          <Button
+          </SketchButton>
+          <SketchButton
             type="button"
+            variant="primary"
+            seedId="schedule-patient-submit"
             disabled={!canSubmit || scheduleMutation.isPending}
             onClick={() => scheduleMutation.mutate()}
-            className="gap-1.5 text-white"
-            style={{ backgroundColor: ACCENT }}
             data-testid="button-schedule-patient-submit"
           >
             {scheduleMutation.isPending ? (
@@ -652,7 +652,7 @@ export function SchedulePatientDialog({
             {selectedServices.length > 1
               ? `Schedule ${selectedServices.length} tests`
               : "Confirm schedule"}
-          </Button>
+          </SketchButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

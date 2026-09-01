@@ -21,6 +21,9 @@
 //   - docs/architecture/engagement-call-list-ownership-final-contract.md
 //   - docs/architecture/engagement-call-list-service-module-plan.md
 
+// Type-only import — erased at compile, preserves the module's purity.
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
+
 /** Canonical engagement-status transitions (non-terminal). */
 export type EngagementCallListEngagementStatus =
   | "contacted"
@@ -47,6 +50,20 @@ export type EngagementCallListItem = {
   facilityId: string | null;
   /** Present when joined from scheduler_assignments for the day. */
   callListAssignmentDate: string | null;
+  /**
+   * Phase 2C — service-level eligibility. When
+   * FEATURE_ENGAGEMENT_ADMIN_REVIEW_SYNC is ON, this reflects the
+   * approved-and-membership-active services only. When OFF, this
+   * mirrors selectedServices (legacy compat).
+   */
+  eligibleServices?: string[];
+  /**
+   * Phase 2D-D1 — canonical per-service appointment projection. Present
+   * only when FEATURE_CANONICAL_APPOINTMENT is ON and keyed by
+   * serviceType (one active event per ancillary case; historical events
+   * are history-only). Never inferred from appointmentStatus/doctor_visit.
+   */
+  appointmentByService?: Record<string, AncillaryAppointmentProjection>;
 };
 
 /**

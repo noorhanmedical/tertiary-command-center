@@ -20,10 +20,15 @@ import BillingPage from "@/pages/billing";
 import InvoicesPage from "@/pages/invoices";
 import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
-import OutreachPage from "@/pages/outreach";
+// NOTE: OutreachPage (@/pages/outreach) is intentionally retained on disk but
+// no longer imported/mounted. /scheduler-portal now redirects to
+// /engagement-center (see routes below). Kept pending a dead-code audit.
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
-import TechnicianPortalPage from "@/pages/technician-portal";
-import LiaisonPortalPage from "@/pages/liaison-portal";
+// NOTE: TechnicianPortalPage (@/pages/technician-portal) and
+// LiaisonPortalPage (@/pages/liaison-portal) are intentionally retained on
+// disk but no longer imported/mounted. Their old routes now redirect to the
+// canonical ACS/PCS workspaces (see routes below). Kept pending a separate
+// dead-code audit.
 import PhysicianPortalPage from "@/pages/physician-portal";
 import AdminSettingsPage from "@/pages/admin-settings";
 import BillingReadinessPage from "@/pages/billing-readiness";
@@ -39,7 +44,9 @@ import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
 import { TopBanner } from "@/components/TopBanner";
-import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
+// @deprecated — replaced by GlobalDock. Preserved for reference only.
+// import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
+import { GlobalDock } from "@/components/dock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
@@ -49,8 +56,12 @@ import ClinicalIntelligencePage from "@/pages/clinical-intelligence";
 // Temporary design-prototype route — mock data only, not production.
 import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
+// Preview-only route — real Team Portal with iOS-frosted rails scoped under
+// .rail-glass-preview. Live portals unchanged. Not production.
+import TeamPortalGlassPreviewPage from "@/pages/team-portal-glass-preview";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
+import AncillaryScreeningPage from "@/pages/ancillary-screening";
 import EngagementCenterPage from "@/pages/engagement-center";
 // Slice 1.5: PatientDirectoryLiveRoute import removed — the
 // /patient-directory/live route now redirects to /patient-directory.
@@ -85,7 +96,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
       <Route>
         <div className="flex flex-col h-screen w-full overflow-hidden">
           <TopBanner user={user} onLogout={onLogout} />
-          <GlobalFloatingDock />
+          <GlobalDock />
+          {/* Legacy GlobalFloatingDock preserved for feature-parity transition */}
+          {/* <GlobalFloatingDock /> */}
           <div className="flex flex-1 min-h-0 min-w-0">
             {showGlobalNav && <GlobalNav user={user} onLogout={onLogout} />}
             <div className="flex flex-col flex-1 min-w-0 min-h-0">
@@ -110,6 +123,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                     <HomePreview />
                   </SidebarProvider>
                 </Route>
+                {/* iOS-frosted rails preview on the real Team Portal (not production). */}
+                <Route path="/team-portal-glass-preview" component={TeamPortalGlassPreviewPage} />
+                <Route path="/ancillary-screening/:ancillaryCaseId" component={AncillaryScreeningPage} />
                 <Route path="/mission-control">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <MissionControlPage />
@@ -169,17 +185,37 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/document-upload" component={DocumentUploadPage} />
                 <Route path="/appointments" component={AppointmentsPage} />
+                {/* Per-scheduler live call console. Retained on disk and
+                    routable by direct/deep link, but no longer surfaced via
+                    the (removed) Outreach Center dashboard tiles. */}
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
-                <Route path="/outreach-center">
-                  <Redirect to="/scheduler-portal" />
+                {/* Legacy Outreach Center surface removed from nav. The
+                    OutreachPage dashboard was mostly UI placeholders; the
+                    active canonical outreach surface is the Engagement Center.
+                    These legacy URLs now redirect there. OutreachPage remains
+                    on disk pending a dead-code audit. */}
+                <Route path="/scheduler-portal">
+                  <Redirect to="/engagement-center" />
                 </Route>
-                <Route path="/scheduler-portal" component={OutreachPage} />
+                <Route path="/outreach-center">
+                  <Redirect to="/engagement-center" />
+                </Route>
                 <Route path="/outreach">
-                  <Redirect to="/scheduler-portal" />
+                  <Redirect to="/engagement-center" />
                 </Route>
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
-                <Route path="/technician-portal" component={TechnicianPortalPage} />
-                <Route path="/liaison-technician-portal" component={LiaisonPortalPage} />
+                {/* Legacy direct mounts removed from user-facing nav. These
+                    URLs no longer render the old PortalShell; they redirect
+                    to the canonical team-member workspaces:
+                      /technician-portal          → ACS workspace
+                      /liaison-technician-portal  → PCS workspace
+                    Back-compat with existing bookmarks/deep links. */}
+                <Route path="/technician-portal">
+                  <Redirect to="/ancillary-care-specialist-portal" />
+                </Route>
+                <Route path="/liaison-technician-portal">
+                  <Redirect to="/patient-care-specialist-portal" />
+                </Route>
                 <Route path="/clinician-portal">
                   <RoleGuard user={user} roles={["admin", "clinician"]}><PhysicianPortalPage /></RoleGuard>
                 </Route>
@@ -187,7 +223,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/clinician-portal" />
                 </Route>
                 <Route path="/liaison-portal">
-                  <Redirect to="/liaison-technician-portal" />
+                  <Redirect to="/patient-care-specialist-portal" />
                 </Route>
         <Route path="/patient-intake" component={QualificationPage} />
         <Route path="/qualification">

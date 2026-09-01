@@ -7,7 +7,7 @@
 // color throughout (selected/unread), matching the portal's purple bubbles.
 
 import { useMemo, useState } from "react";
-import { Search, MessageSquare, Users, Smartphone } from "lucide-react";
+import { Search, MessageSquare, Users, Smartphone, Plus } from "lucide-react";
 import {
   type Conversation,
   type ConversationType,
@@ -48,17 +48,39 @@ function AvatarBubble({ conversation }: { conversation: Conversation }) {
   );
 }
 
+export type ComposePerson = {
+  id: string;
+  username: string;
+  role: string | null;
+  unread: number;
+};
+
 export function PortalMessagesPanel({
   conversations,
   activeConversationId,
   onOpenConversation,
+  roster = [],
+  rosterLoading = false,
+  onCompose,
+  composePending = false,
+  clinicNotSelected = false,
 }: {
   conversations: Conversation[];
   activeConversationId: string | null;
   onOpenConversation: (id: string) => void;
+  /** Eligible recipients for the compose people-picker. */
+  roster?: ComposePerson[];
+  rosterLoading?: boolean;
+  /** Find-or-create a direct conversation with the chosen person → returns id. */
+  onCompose?: (otherUserId: string) => Promise<string>;
+  composePending?: boolean;
+  /** Admin has no clinic selected → messaging is unavailable until they pick one. */
+  clinicNotSelected?: boolean;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [personSearch, setPersonSearch] = useState("");
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -75,11 +97,52 @@ export function PortalMessagesPanel({
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }, [conversations, filter, search]);
 
+  const people = useMemo(() => {
+    const q = personSearch.trim().toLowerCase();
+    return roster
+      .filter((p) =>
+        !q
+          ? true
+          : p.username.toLowerCase().includes(q) ||
+            (p.role?.toLowerCase().includes(q) ?? false),
+      )
+      .sort((a, b) => a.username.localeCompare(b.username));
+  }, [roster, personSearch]);
+
+  const handlePick = async (personId: string) => {
+    if (!onCompose) return;
+    const id = await onCompose(personId);
+    setComposeOpen(false);
+    setPersonSearch("");
+    onOpenConversation(id);
+  };
+
+  // Admin with no clinic selected — clear, honest empty state; no Compose.
+  if (clinicNotSelected) {
+    return (
+      <div
+        className="flex h-full min-h-0 flex-col items-center justify-center px-6 text-center"
+        data-testid="portal-messages-panel"
+      >
+        <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+          <MessageSquare className="h-5 w-5" />
+        </div>
+        <div className="text-sm font-semibold text-slate-700" data-testid="messages-select-clinic">
+          Select a clinic to use messaging
+        </div>
+        <p className="mt-1 text-[11px] leading-snug text-slate-500">
+          Choose a clinic from the selector at the top right. Messaging is scoped
+          to the selected clinic's team.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="portal-messages-panel">
-      {/* Search */}
-      <div className="px-1 pb-2">
-        <div className="relative">
+      {/* New Message + Search */}
+      <div className="flex items-center gap-1.5 px-1 pb-2">
+        <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
@@ -89,7 +152,74 @@ export function PortalMessagesPanel({
             data-testid="messages-search"
           />
         </div>
+        <button
+          type="button"
+          onClick={() => { setComposeOpen((v) => !v); setPersonSearch(""); }}
+          disabled={!onCompose}
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-xl bg-purple-600 px-2.5 text-[11px] font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+          data-testid="messages-new-message"
+          title="New message"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New
+        </button>
       </div>
+
+      {/* Compose people picker (Direct). Searchable roster of eligible active
+          team members; picking one find-or-creates the 1:1 conversation. */}
+      {composeOpen && (
+        <div
+          className="mx-1 mb-2 rounded-xl border border-purple-200 bg-white shadow-sm"
+          data-testid="messages-compose-picker"
+        >
+          <div className="border-b border-slate-100 p-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                autoFocus
+                value={personSearch}
+                onChange={(e) => setPersonSearch(e.target.value)}
+                placeholder="Search people…"
+                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-2.5 text-xs text-slate-800 outline-none placeholder:text-slate-400 focus:border-purple-300 focus:ring-1 focus:ring-purple-200"
+                data-testid="messages-compose-search"
+              />
+            </div>
+          </div>
+          <div className="max-h-56 overflow-y-auto p-1" data-testid="messages-compose-list">
+            {rosterLoading ? (
+              <div className="px-2 py-3 text-center text-[11px] italic text-slate-400">Loading people…</div>
+            ) : people.length === 0 ? (
+              <div className="px-2 py-3 text-center text-[11px] italic text-slate-400" data-testid="messages-compose-empty">
+                No eligible team members.
+              </div>
+            ) : (
+              people.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={composePending}
+                  onClick={() => handlePick(p.id)}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-purple-50 disabled:opacity-50"
+                  data-testid={`messages-compose-person-${p.id}`}
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-500 text-[10px] font-semibold text-white">
+                    {p.username.slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-slate-800">{p.username}</span>
+                    {p.role ? <span className="block truncate text-[10px] text-slate-400">{p.role}</span> : null}
+                  </span>
+                  {p.unread > 0 ? (
+                    <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-purple-600 px-1 text-[9px] font-semibold text-white">
+                      {p.unread}
+                    </span>
+                  ) : null}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Segmented control */}
       <div

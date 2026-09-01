@@ -22,6 +22,16 @@ export interface SendOutreachEmailResult {
 
 let cachedTransporter: Transporter | null = null;
 
+/** True when SMTP is configured (env present). PHI/secret-safe: returns only a
+ *  boolean — never the credential values. Drives the client's LIVE / NOT
+ *  CONFIGURED signal so the UI never fakes a working email sender. */
+export function isEmailConfigured(): boolean {
+  const host = process.env.SMTP_HOST?.trim();
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS;
+  return !!host && !!user && !!pass;
+}
+
 function buildTransporterFromEnv(): Transporter {
   const host = process.env.SMTP_HOST?.trim();
   const port = Number(process.env.SMTP_PORT ?? 587);

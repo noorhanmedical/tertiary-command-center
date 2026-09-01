@@ -25,3 +25,7 @@ cookies.txt
 infrastructure/cdk.out/
 infrastructure/cookies.txt
 import_remaining.sh
+# Playwright test output — regenerated locally, never source-controlled.
+test-results/
+# Stray nested repo clone — operator-local, must never be tracked.
+tertiary-command-center/

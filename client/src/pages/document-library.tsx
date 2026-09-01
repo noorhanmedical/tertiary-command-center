@@ -53,7 +53,7 @@ const KIND_LABELS: Record<string, string> = {
   marketing: "Marketing",
   training: "Training",
   reference: "Reference",
-  clinician_pdf: "Clinician PDF",
+  clinician_pdf: "Clinician Atlas",
   report: "Report",
   other: "Other",
 };

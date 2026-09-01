@@ -30,7 +30,13 @@ export interface CallSettingsMember {
   team: EngagementTeam;
   callWorkdayPercent: number;
   visitPercent: number | null;
+  /** @deprecated Legacy Phase-1 input. NOT consumed by the target math
+   *  (computeCallTargets uses the global config/tiers + explicit overrides).
+   *  Returned for backward compat only; the Call Settings UI no longer edits
+   *  or writes it. */
   baseCompletedCallKpi: number;
+  /** @deprecated Legacy Phase-1 input — see baseCompletedCallKpi. Not the same
+   *  as GlobalCallConfig.scheduledKpiPercent (that global field IS consumed). */
   scheduledKpiPercent: number;
   maxDailyCapacity: number | null;
   explicitCompletedKpi: number | null;

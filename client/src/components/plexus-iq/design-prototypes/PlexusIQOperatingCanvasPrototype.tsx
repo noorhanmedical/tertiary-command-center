@@ -1291,10 +1291,10 @@ export function PlexusIQOperatingCanvasPrototype(): JSX.Element {
             <RotateCw size={14} /> Retry Failed
           </PillButton>
           <PillButton onClick={() => openPacket("clinician")} variant="secondary">
-            <FileText size={14} /> Clinician PDF
+            <FileText size={14} /> Clinician Atlas
           </PillButton>
           <PillButton onClick={() => openPacket("plexus")} variant="secondary">
-            <FileBarChart size={14} /> Plexus PDF
+            <FileBarChart size={14} /> Plexus Atlas
           </PillButton>
         </div>
       </div>
@@ -2099,10 +2099,10 @@ function AdminReviewOverlay({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <FooterButton tone="ghost" onClick={() => onOpenPacket("clinician")}>
-            <FileText size={12} /> Clinician PDF
+            <FileText size={12} /> Clinician Atlas
           </FooterButton>
           <FooterButton tone="ghost" onClick={() => onOpenPacket("plexus")}>
-            <FileBarChart size={12} /> Plexus PDF
+            <FileBarChart size={12} /> Plexus Atlas
           </FooterButton>
           <FooterButton tone="secondary">Needs Info</FooterButton>
           <FooterButton tone="outline-blue">Reviewed</FooterButton>

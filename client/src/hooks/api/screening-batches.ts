@@ -70,6 +70,10 @@ export function useCreateBatch() {
       name: string;
       facility: string;
       scheduleDate?: string;
+      // Batch clinician attribution (Plexus IQ). Optional.
+      clinicianId?: number | null;
+      clinicianName?: string | null;
+      clinicianSource?: "facility_clinician" | "free_text" | null;
       // Plexus IQ runtime hardening — Routes step 4.
       // Optional. When omitted the server defaults to `newRun`
       // (preserves today's "create a fresh batch each time" behavior).

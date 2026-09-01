@@ -21,6 +21,10 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 // platform does not ship a live patient-messaging path, so the only
 // tray tabs are Direct Messages and Team Chat.
 const prefsSchema = z.object({
+  // K7 — which top-level left-rail tab opens by default. Optional for
+  // backward compatibility with older clients that don't send it; the
+  // client always falls back to "tools" when absent.
+  defaultLeftTab: z.enum(["tools", "messaging"]).optional(),
   defaultTrayTab: z.enum(["direct", "team"]),
   stickyNotesVisible: z.boolean(),
   toolsPinnedByDefault: z.boolean(),

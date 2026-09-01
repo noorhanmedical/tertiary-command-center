@@ -23,13 +23,18 @@ import {
   patientScreenings,
   screeningBatches,
   users,
+  type NeedsCoverageCategory,
 } from "@shared/schema";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
+import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
+import { needsCoverageRepository } from "../../repositories/needsCoverage.repo";
+import { facilityCoverageRepository } from "../../repositories/facilityCoverage.repo";
 import { appendJourneyEvent, type AppendJourneyEventInput } from "../journey/appendJourneyEvent";
 import { calculateNextActionAt } from "../callList/nextActionPolicy";
 import {
   computeCallTargets,
   remainingCapacity,
+  computeMemberCapacityState,
   getCarryoverCounts,
   getPtoUserIdsForToday,
   deriveWorkingStatus,
@@ -59,6 +64,15 @@ export interface DistributionMemberInput {
   // Per-lane sub-caps; visitTarget + outreachTarget == completedCallKpi.
   visitTarget: number;
   outreachTarget: number;
+  // ─ Canonical capacity-state display fields (K2/K3, Phase 3B) ─
+  // Carried through to memberSummaries so the manager preview shows the SAME
+  // numbers as the workload display. The pure allocator ignores these for
+  // planning (it only reads remainingCapacity + lane targets).
+  configuredWorkloadPercent: number;
+  dailyCallCapacity: number; // completed-call KPI capped by maxDailyCapacity
+  assigned: number; // current standard workload (live owned queue)
+  carryover: number; // past-due carryover
+  priorityHandoffs: number; // outstanding P1/P2 handoffs (Phase 3C populates)
 }
 
 export interface DistributionCaseInput {
@@ -90,6 +104,9 @@ export interface UnplacedCase {
   facility: string | null;
   lane: DistributionLane;
   reason: string;
+  // Structured NEEDS COVERAGE category (K8) so the manager view can group /
+  // filter, not just read a free-text string.
+  category: NeedsCoverageCategory;
 }
 
 export interface MemberAllocationSummary {
@@ -99,11 +116,19 @@ export interface MemberAllocationSummary {
   remainingCapacity: number;
   visitTarget: number;
   outreachTarget: number;
-  assignedTotal: number;
+  assignedTotal: number; // NEW cases this plan proposes for the member
   assignedVisit: number;
   assignedOutreach: number;
   workingToday: boolean;
   active: boolean;
+  // ─ Canonical capacity state (K2/K3) — pre-plan standing + projections ─
+  configuredWorkloadPercent: number;
+  dailyCallCapacity: number;
+  carryover: number;
+  priorityHandoffs: number;
+  standardWorkload: number; // current owned queue BEFORE this plan (member.assigned)
+  projectedEffectiveWorkload: number; // standardWorkload + priorityHandoffs + assignedTotal
+  overCapacity: number; // max(0, projectedEffectiveWorkload − dailyCallCapacity)
 }
 
 export interface DistributionPlan {
@@ -204,13 +229,15 @@ export function buildDistributionPlan(
     );
 
     if (eligible.length === 0) {
+      const { category, reason } = explainUnplaced(workingPool, c, lane);
       unplaced.push({
         executionCaseId: c.executionCaseId,
         patientScreeningId: c.patientScreeningId,
         patientName: c.patientName,
         facility: c.facility,
         lane,
-        reason: explainUnplaced(workingPool, c, lane),
+        reason,
+        category,
       });
       continue;
     }
@@ -243,19 +270,36 @@ export function buildDistributionPlan(
     });
   }
 
-  const memberSummaries: MemberAllocationSummary[] = state.map((m) => ({
-    schedulerId: m.schedulerId,
-    name: m.name,
-    facility: m.facility,
-    remainingCapacity: m.remainingCapacity,
-    visitTarget: m.visitTarget,
-    outreachTarget: m.outreachTarget,
-    assignedTotal: m.assignedTotal,
-    assignedVisit: m.assignedVisit,
-    assignedOutreach: m.assignedOutreach,
-    workingToday: m.workingToday,
-    active: m.active,
-  }));
+  const memberSummaries: MemberAllocationSummary[] = state.map((m) => {
+    const standardWorkload = Math.max(0, m.assigned);
+    const priorityHandoffs = Math.max(0, m.priorityHandoffs);
+    const projectedEffectiveWorkload =
+      standardWorkload + priorityHandoffs + m.assignedTotal;
+    const overCapacity = Math.max(
+      0,
+      projectedEffectiveWorkload - m.dailyCallCapacity,
+    );
+    return {
+      schedulerId: m.schedulerId,
+      name: m.name,
+      facility: m.facility,
+      remainingCapacity: m.remainingCapacity,
+      visitTarget: m.visitTarget,
+      outreachTarget: m.outreachTarget,
+      assignedTotal: m.assignedTotal,
+      assignedVisit: m.assignedVisit,
+      assignedOutreach: m.assignedOutreach,
+      workingToday: m.workingToday,
+      active: m.active,
+      configuredWorkloadPercent: m.configuredWorkloadPercent,
+      dailyCallCapacity: m.dailyCallCapacity,
+      carryover: m.carryover,
+      priorityHandoffs,
+      standardWorkload,
+      projectedEffectiveWorkload,
+      overCapacity,
+    };
+  });
 
   return {
     assignments,
@@ -270,27 +314,37 @@ export function buildDistributionPlan(
   };
 }
 
-// Human-readable reason a case could not be placed, narrowing from broad to
-// specific so the UI can show a clear, actionable warning.
+// Structured + human-readable reason a case could not be placed, narrowing
+// from broad to specific so the manager view can group by category (K8) and
+// show a clear, actionable warning.
 function explainUnplaced(
   workingPool: MemberState[],
   c: DistributionCaseInput,
   lane: DistributionLane,
-): string {
+): { category: NeedsCoverageCategory; reason: string } {
   if (workingPool.length === 0) {
-    return "No team members are working today.";
+    return { category: "no_eligible_staff", reason: "No team members are working today." };
   }
   const facilityMembers = workingPool.filter((m) => coversFacility(m, c.facility));
   if (facilityMembers.length === 0) {
-    return `No working team member covers ${c.facility ? `facility "${c.facility}"` : "this patient's (missing) facility"}.`;
+    return {
+      category: "facility_coverage_mismatch",
+      reason: `No working team member covers ${c.facility ? `facility "${c.facility}"` : "this patient's (missing) facility"}.`,
+    };
   }
   const laneMembers = facilityMembers.filter(
     (m) => laneAssigned(m, lane) < laneTarget(m, lane),
   );
   if (laneMembers.length === 0) {
-    return `All covering members have reached their ${lane} target.`;
+    return {
+      category: "capacity_exhausted",
+      reason: `All covering members have reached their ${lane} target.`,
+    };
   }
-  return "All covering members are at their remaining capacity.";
+  return {
+    category: "capacity_exhausted",
+    reason: "All covering members are at their remaining capacity.",
+  };
 }
 
 // ─── DB gather: build the live pool + roster capacity ───────────────────────
@@ -390,15 +444,20 @@ export async function gatherDistributionMembers(): Promise<
     settingsRows.map((r) => [r.schedulerId, r]),
   );
 
-  const carryoverBySched = await getCarryoverCounts(
-    schedulerIds,
-    startOfTodayUtc(),
-  );
+  const [carryoverBySched, activeQueueBySched, priorityHandoffByUser] =
+    await Promise.all([
+      getCarryoverCounts(schedulerIds, startOfTodayUtc()),
+      getActiveQueueCounts(schedulerIds),
+      callHandoffsRepository.countOpenPriorityByRecipient(),
+    ]);
 
   const userIds = schedulers
     .map((s) => s.userId)
     .filter((id): id is string => !!id);
-  const ptoUserIds = await getPtoUserIdsForToday(userIds);
+  const [ptoUserIds, canonicalCoverageByUser] = await Promise.all([
+    getPtoUserIdsForToday(userIds),
+    facilityCoverageRepository.coveredFacilitiesForUsers(userIds),
+  ]);
 
   return schedulers.map((s) => {
     const saved = settingsByScheduler.get(s.id);
@@ -407,7 +466,14 @@ export async function gatherDistributionMembers(): Promise<
     const explicitCompletedKpi = saved?.explicitCompletedKpi ?? null;
     const explicitScheduledKpi = saved?.explicitScheduledKpi ?? null;
     const maxDailyCapacity = saved?.maxDailyCapacity ?? null;
-    const facilitiesCovered = saved?.facilitiesCovered ?? null;
+    // CANONICAL coverage (Phase 4B): the team_member_facility_coverage rows for
+    // this member's login. Falls back to the legacy engagement_call_settings
+    // .facilitiesCovered only while a member has no canonical rows yet (safe
+    // transition). Empty/null list still means "covers ANY facility".
+    const canonicalCovered = s.userId ? canonicalCoverageByUser.get(s.userId) ?? [] : [];
+    const facilitiesCovered = canonicalCovered.length > 0
+      ? canonicalCovered
+      : saved?.facilitiesCovered ?? null;
     const manualWorkingToday = saved?.manualWorkingToday ?? null;
     const active = saved?.active ?? true;
 
@@ -423,11 +489,26 @@ export async function gatherDistributionMembers(): Promise<
       tiers,
     );
     const carryover = carryoverBySched.get(s.id) ?? 0;
+    const assigned = activeQueueBySched.get(s.id) ?? 0;
+    const priorityHandoffs = s.userId
+      ? priorityHandoffByUser.get(s.userId) ?? 0
+      : 0;
     const working = deriveWorkingStatus(s.userId, ptoUserIds);
     const workingToday = resolveWorkingToday(
       manualWorkingToday,
       working.calendarWorkingToday,
     );
+
+    // Canonical capacity state — one source of truth shared with the workload
+    // display (teamMetricsService uses the same computeMemberCapacityState).
+    const capacity = computeMemberCapacityState({
+      targets,
+      configuredWorkloadPercent: callWorkdayPercent,
+      assigned,
+      carryover,
+      priorityHandoffs, // open P1/P2 handoffs addressed to this member.
+      workingToday,
+    });
 
     return {
       schedulerId: s.id,
@@ -436,11 +517,46 @@ export async function gatherDistributionMembers(): Promise<
       active,
       workingToday,
       facilitiesCovered,
-      remainingCapacity: remainingCapacity(targets.completedCallKpi, carryover),
+      remainingCapacity: capacity.remainingCapacity,
       visitTarget: targets.visitTarget,
       outreachTarget: targets.outreachTarget,
+      configuredWorkloadPercent: capacity.configuredWorkloadPercent,
+      dailyCallCapacity: capacity.dailyCallCapacity,
+      assigned: capacity.assigned,
+      carryover: capacity.carryover,
+      priorityHandoffs: capacity.priorityHandoffs,
     };
   });
+}
+
+/** Active (non-terminal) execution cases currently owned by each member,
+ *  keyed by outreach_schedulers.id — the member's live standard workload.
+ *  Mirrors teamMetricsService.getActiveQueueCounts so distribution and the
+ *  workload display measure "assigned" identically. */
+async function getActiveQueueCounts(
+  schedulerIds: number[],
+): Promise<Map<number, number>> {
+  const result = new Map<number, number>();
+  if (schedulerIds.length === 0) return result;
+  const rows = await db
+    .select({
+      schedulerId: patientExecutionCases.assignedTeamMemberId,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(patientExecutionCases)
+    .where(
+      and(
+        isNotNull(patientExecutionCases.assignedTeamMemberId),
+        inArray(patientExecutionCases.assignedTeamMemberId, schedulerIds),
+        eq(patientExecutionCases.lifecycleStatus, "active"),
+        sql`${patientExecutionCases.engagementStatus} NOT IN ('completed','scheduled','cancelled','archived','closed')`,
+      ),
+    )
+    .groupBy(patientExecutionCases.assignedTeamMemberId);
+  for (const r of rows) {
+    if (r.schedulerId != null) result.set(r.schedulerId, Number(r.n));
+  }
+  return result;
 }
 
 /** One-shot read-only preview: gather the live pool + roster and run the
@@ -922,12 +1038,17 @@ export async function applyDistribution(
   // apply forever. Deferring the (best-effort) audit write past commit keeps
   // the previous "audit failure never rolls back the assignment" semantics.
   const pendingEvents: AppendJourneyEventInput[] = [];
+  // Captured from inside the tx so we can sync structured NEEDS COVERAGE state
+  // (K8) after commit — cases the allocator could not place enter needs-coverage
+  // instead of being silently dropped (overflow, req 14).
+  let planUnplaced: UnplacedCase[] = [];
   const result = await db.transaction(async (tx) => {
     const [cases, members] = await Promise.all([
       gatherCases(tx),
       gatherMembers(),
     ]);
     const plan = buildDistributionPlan(cases, members);
+    planUnplaced = plan.unplaced;
     const memberById = new Map(members.map((m) => [m.schedulerId, m]));
 
     const applied: AppliedAssignment[] = [];
@@ -1100,6 +1221,32 @@ export async function applyDistribution(
         err instanceof Error ? err.message : err,
       );
     }
+  }
+
+  // ── Sync structured NEEDS COVERAGE (K8, req 14) — post-commit, best-effort.
+  // Cases that got an owner are resolved; cases the allocator could not place
+  // are recorded with a structured category so nothing is silently dropped.
+  try {
+    const appliedIds = result.applied.map((a) => a.executionCaseId);
+    if (appliedIds.length > 0) {
+      await needsCoverageRepository.resolveForCases(appliedIds, actorUserId);
+    }
+    for (const u of planUnplaced) {
+      await needsCoverageRepository.upsert({
+        executionCaseId: u.executionCaseId,
+        patientScreeningId: u.patientScreeningId ?? null,
+        facilityId: u.facility ?? null,
+        category: u.category,
+        reason: u.reason,
+        source: "distribution",
+        metadata: { lane: u.lane },
+      });
+    }
+  } catch (err) {
+    console.error(
+      "[engagement/distribution] needs-coverage sync failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
   }
 
   return result;

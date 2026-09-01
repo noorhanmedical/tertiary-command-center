@@ -5,6 +5,7 @@ import {
   getAdminSettingById,
   createAdminSetting,
   updateAdminSetting,
+  upsertAdminSetting,
 } from "../repositories/adminSettings.repo";
 import { getEffectiveAdminSettings } from "../services/adminSettings/adminSettingsEffectiveService";
 
@@ -105,6 +106,31 @@ export function registerAdminSettingsRoutes(app: Express) {
         active: parsed.data.active ?? true,
       });
       res.status(201).json(row);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/admin-settings/upsert — idempotent scoped upsert by
+  // (domain, key, facilityId, userId, testType). The canonical write path for
+  // scoped settings such as the team-member workspace_profile (previously the
+  // client called this route but it did not exist → saves 404'd).
+  app.post("/api/admin-settings/upsert", requireAdmin, async (req, res) => {
+    try {
+      const parsed = createBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      const row = await upsertAdminSetting({
+        settingDomain: parsed.data.settingDomain,
+        settingKey: parsed.data.settingKey,
+        settingValue: parsed.data.settingValue,
+        facilityId: parsed.data.facilityId ?? null,
+        userId: parsed.data.userId ?? null,
+        testType: parsed.data.testType ?? null,
+        description: parsed.data.description ?? null,
+      });
+      res.json(row);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

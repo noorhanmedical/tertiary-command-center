@@ -14,6 +14,13 @@ export type CallCaseContext = {
   callReason: string;
   /** Target ancillary/workflow services on the execution case. */
   targetServices: string[];
+  // Phase 2E-B3 — EXACT ancillary-case identity for the selected case. Only
+  // set when the source row unambiguously carries a Phase 2B ancillary-case
+  // id (one case = one service). When null, canonical document surfaces
+  // render NOTHING and issue NO screening-wide request (no case guessing).
+  ancillaryCaseId: number | null;
+  /** The single service for the selected ancillary case, when known. */
+  serviceType: string | null;
   /** Originating workspace — "ACS" / "PCS" (workspaceRole). */
   sourcePortal: string;
   engagementStatus: string | null;
@@ -112,7 +119,7 @@ export type CaseProofDoc = {
 };
 
 // Fetch the canonical document-library rows for a patient and classify the
-// Clinician PDF / Plexus PDF proof documents that explain why the patient is
+// Clinician Atlas / Plexus Atlas proof documents that explain why the patient is
 // being called. Returns nulls (not fakes) when documents are missing.
 export function useCaseProofDocs(patientScreeningId: number | null) {
   const enabled = typeof patientScreeningId === "number" && patientScreeningId > 0;

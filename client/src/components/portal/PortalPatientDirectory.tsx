@@ -19,12 +19,17 @@ export function PortalPatientDirectory({
   seedName,
   onBack,
   onSchedule,
+  focusSection,
+  focusToken,
 }: {
   patientScreeningId: number;
   seedName?: string | null;
   onBack?: () => void;
   /** Opens the in-portal scheduling dialog (calendar popup) for this patient. */
   onSchedule?: () => void;
+  /** Service-focus: section to scroll/highlight on a one-shot focus request. */
+  focusSection?: string | null;
+  focusToken?: number;
 }) {
   const resolveQuery = useQuery<ResolveResponse>({
     queryKey: ["/api/patients/database/resolve", String(patientScreeningId)],
@@ -69,6 +74,8 @@ export function PortalPatientDirectory({
       seedName={name}
       onBack={onBack}
       onSchedule={onSchedule}
+      focusSection={focusSection}
+      focusToken={focusToken}
     />
   );
 }

@@ -17,6 +17,15 @@ import {
   recallExecutionCaseToCallList,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import { featureFlags } from "../lib/featureFlags";
+import {
+  runCallResultScheduling,
+  engagementActionForOutcome,
+} from "../services/canonicalAppointments/callResultSchedulingBridge";
+import {
+  getSerializedAppointmentsByService,
+  filterAppointmentsToEligibleServices,
+} from "../services/canonicalAppointments/appointmentProjection";
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires /api/scheduler-
 // portal/cases through the same role + facility access checks the
 // other portal endpoints already use. See the matching block in
@@ -99,10 +108,12 @@ import {
 import type {
   CallResultExecutionDependencies,
   AppendJourneyEventArgs,
+  CreateOutreachCallArgs,
   UpdateExecutionCaseEngagementArgs,
   UpsertTriageCaseArgs,
   CreateFollowUpTaskArgs,
 } from "../services/callResult/recordCallResultExecutionAdapter";
+import { ensureCanonicalCallRecord } from "../services/callResult/canonicalCallRecord";
 
 /**
  * Outcomes the canonical recordCallResult planner understands. The
@@ -153,6 +164,21 @@ const callResultBodySchema = z.object({
   assignedRole: z.string().optional().nullable(),
   facilityId: z.string().optional().nullable(),
   metadata: z.record(z.unknown()).optional(),
+  // Phase 2D-B3 — optional real scheduling inputs. Only consulted when
+  // FEATURE_CANONICAL_APPOINTMENT is ON and the callResult maps to a
+  // canonical scheduling transition. Never fabricated by the server.
+  globalScheduleEventId: z.number().int().optional().nullable(),
+  cancelReason: z.string().optional().nullable(),
+  noShowReason: z.string().optional().nullable(),
+  newStartsAt: z.string().optional().nullable(),
+  // Canonical call-record closeout: idempotency key for the durable
+  // outreach_calls attempt record (client-minted UUID or provider session id).
+  // Repeat submissions with the same key resolve the existing row (no dup).
+  callKey: z.string().min(1).max(128).optional().nullable(),
+  // When explicitly false, this disposition is an administrative / note-only /
+  // schedule-only action, NOT a real dialed attempt → no call record is
+  // created. Defaults to true (a logged call result represents a real call).
+  isCallAttempt: z.boolean().optional(),
 });
 
 const CALL_RESULTS_NEEDING_TRIAGE = new Set([
@@ -193,6 +219,39 @@ const TERMINAL_ENGAGEMENT_STATUSES_FOR_CALL_RESULT = new Set(["completed", "clos
 function sessionUserIdFrom(req: Request): string | null {
   const sess = (req as Request & { session?: { userId?: string } }).session;
   return sess?.userId ?? null;
+}
+
+/**
+ * Phase 2E final review — SERVICE-AWARE ancillary-case identity for a
+ * scheduler call-list row. Matching hierarchy:
+ *   A. a direct ancillaryCaseId already on the row → preserved only when it is
+ *      an active same-clinic case for this row;
+ *   B. a service-SPECIFIC row (exactly one selected service) → filter active
+ *      cases by that exact service; one match → attach, else null;
+ *   C. non-service-specific row (multi/none) → exactly one active case overall
+ *      → attach, else null.
+ * Multiple same-service episodes → null. Never first/newest.
+ */
+export function selectAncillaryCaseForRow(
+  row: { clinicId: number | null; selectedServices?: string[] | null; ancillaryCaseId?: number | null },
+  activeCases: Array<{ id: number; clinicId: number; serviceType: string }>,
+): { ancillaryCaseId: number | null; serviceType: string | null } {
+  const sameClinic = activeCases.filter((c) => row.clinicId != null && c.clinicId === row.clinicId);
+  // A. Direct ancillaryCaseId already present — preserve only when valid.
+  if (row.ancillaryCaseId != null) {
+    const match = sameClinic.find((c) => c.id === row.ancillaryCaseId);
+    return match ? { ancillaryCaseId: match.id, serviceType: match.serviceType } : { ancillaryCaseId: null, serviceType: null };
+  }
+  const services = (row.selectedServices ?? []).filter(Boolean);
+  // B. Service-specific ONLY when exactly one selected service (never infer
+  //    specificity from selectedServices[0] when there are several).
+  if (services.length === 1) {
+    const svc = services[0];
+    const matches = sameClinic.filter((c) => c.serviceType === svc);
+    return matches.length === 1 ? { ancillaryCaseId: matches[0].id, serviceType: matches[0].serviceType } : { ancillaryCaseId: null, serviceType: null };
+  }
+  // C. Non-service-specific → exactly one active case overall.
+  return sameClinic.length === 1 ? { ancillaryCaseId: sameClinic[0].id, serviceType: sameClinic[0].serviceType } : { ancillaryCaseId: null, serviceType: null };
 }
 
 export function registerExecutionCaseRoutes(app: Express) {
@@ -238,7 +297,74 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
-      const rows = await listEngagementCenterCases(filters, limit);
+      let rows = await listEngagementCenterCases(filters, limit);
+      // Phase 2C — apply service-level eligibility projection when the
+      // sync flag is ON. Never fall back to unrestricted queue on
+      // failure — return 503.
+      const { featureFlags: ff } = await import("../lib/featureFlags");
+      if (ff.engagementAdminReviewSync && rows.length > 0) {
+        try {
+          const { projectServiceLevelEligibility } = await import(
+            "../services/engagementLists/queueProjection"
+          );
+          const filtered = await projectServiceLevelEligibility({
+            executionCases: rows,
+            requireActiveMembership: ff.engagementMultiListRepository,
+          });
+          rows = filtered.map((f) =>
+            Object.assign(f.executionCase, { eligibleServices: f.eligibleServices }),
+          );
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error(JSON.stringify({
+            level: "error",
+            source: "engagement_center_cases",
+            kind: "phase_2c_projection_failed",
+            code: (e as { code?: string })?.code,
+            message: (e as Error)?.message ?? String(e),
+          }));
+          return res.status(503).json({
+            error: "Engagement eligibility projection unavailable",
+            code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+          });
+        }
+      }
+
+      // Phase 2D-C1 — attach the canonical per-service appointment
+      // projection when the flag is ON and the caller opts in
+      // (?withAppointments=true). Each eligible service gets its OWN
+      // canonical appointment (matched by ancillary case); one
+      // execution-case appointment is never fanned out across services.
+      // Phase 2C eligibleServices filtering is preserved untouched.
+      if (featureFlags.canonicalAppointment && q.withAppointments === "true" && rows.length > 0) {
+        const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        if (clinicId != null) {
+          try {
+            for (const row of rows) {
+              // eslint-disable-next-line no-await-in-loop
+              const byService = await getSerializedAppointmentsByService({
+                clinicId, executionCaseId: row.id, includeHistory: false,
+              });
+              // Constrain to Phase 2C eligible services (admin-approved).
+              // When the sync flag is OFF, eligibleServices is undefined
+              // and the legacy selected-service contract is preserved.
+              const eligible = (row as { eligibleServices?: string[] }).eligibleServices;
+              Object.assign(row, {
+                appointmentByService: filterAppointmentsToEligibleServices(byService, eligible),
+              });
+            }
+          } catch (e) {
+            const code = (e as { code?: string })?.code;
+            if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+              return res.status(503).json({
+                error: "canonical appointment schema unavailable — apply migration 0052",
+                code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+              });
+            }
+            throw e;
+          }
+        }
+      }
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -290,8 +416,31 @@ export function registerExecutionCaseRoutes(app: Express) {
           }
           if (filters.assignedRole) repoFilters.assignedRole = filters.assignedRole;
           if (filters.engagementStatus) repoFilters.engagementStatus = filters.engagementStatus;
-          const rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
-          return rows.map<EngagementCallListItem>((row) => ({
+          let rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
+
+          // Phase 2C — apply service-specific eligibility for the PCS
+          // call list. When the sync flag is ON, only approved services
+          // (with active memberships when multi-list is ON) appear,
+          // and each row is enriched with eligibleServices[]. Projection
+          // failure → throw so the outer route returns a controlled
+          // 503 rather than falling back to the unrestricted legacy list.
+          const { featureFlags: ff } = await import("../lib/featureFlags");
+          // Preserve the eligibleServices map keyed by execution case
+          // id so we can attach it to every returned row.
+          let eligibilityByCase: Map<number, string[]> | null = null;
+          if (ff.engagementAdminReviewSync && rows.length > 0) {
+            const { projectServiceLevelEligibility } = await import(
+              "../services/engagementLists/queueProjection"
+            );
+            const filtered = await projectServiceLevelEligibility({
+              executionCases: rows,
+              requireActiveMembership: ff.engagementMultiListRepository,
+            });
+            rows = filtered.map((f) => f.executionCase);
+            eligibilityByCase = new Map(filtered.map((f) => [f.executionCase.id, f.eligibleServices]));
+          }
+
+          const items: EngagementCallListItem[] = rows.map((row) => ({
             patientScreeningId:
               row.patientScreeningId != null ? String(row.patientScreeningId) : "",
             patientExecutionCaseId: String(row.id),
@@ -309,7 +458,36 @@ export function registerExecutionCaseRoutes(app: Express) {
               row.nextActionAt instanceof Date ? row.nextActionAt.toISOString() : null,
             facilityId: row.facilityId ?? null,
             callListAssignmentDate: null,
+            // Phase 2C — service-level eligibility carried through to
+            // the serialized PCS response. When the sync flag is OFF,
+            // eligibilityByCase is null and this remains undefined
+            // (legacy contract preserved).
+            eligibleServices: eligibilityByCase?.get(row.id),
           }));
+
+          // Phase 2D-D1 — attach the canonical per-service appointment
+          // projection inline when FEATURE_CANONICAL_APPOINTMENT is ON.
+          // One active event per ancillary case; historical events are
+          // history-only; doctor_visit excluded. Missing migration
+          // propagates so the outer route returns a controlled 503.
+          if (ff.canonicalAppointment) {
+            const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+            if (clinicId != null) {
+              for (let i = 0; i < items.length; i++) {
+                const execId = rows[i]?.id;
+                if (execId == null) continue;
+                // eslint-disable-next-line no-await-in-loop
+                const byService = await getSerializedAppointmentsByService({
+                  clinicId, executionCaseId: execId, includeHistory: false,
+                });
+                // keys ⊆ eligibleServices (undefined → legacy passthrough).
+                items[i].appointmentByService = filterAppointmentsToEligibleServices(
+                  byService, items[i].eligibleServices,
+                );
+              }
+            }
+          }
+          return items;
         },
       };
       const result = await getEngagementCallList(
@@ -326,6 +504,24 @@ export function registerExecutionCaseRoutes(app: Express) {
       );
       return res.json(result);
     } catch (error: any) {
+      // Phase 2C — if the projector threw (migration missing, etc.),
+      // return a controlled 503 rather than fall back to the
+      // unrestricted list.
+      const code = (error as { code?: string })?.code;
+      if (code === "ENGAGEMENT_MIGRATION_MISSING" || code === "ANCILLARY_CASE_MIGRATION_MISSING") {
+        return res.status(503).json({
+          error: "PCS call-list eligibility projection unavailable",
+          code: "ENGAGEMENT_ELIGIBILITY_UNAVAILABLE",
+        });
+      }
+      // Phase 2D-D1 — canonical appointment schema missing → controlled
+      // 503, never a fall back to the unrestricted legacy list.
+      if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+        return res.status(503).json({
+          error: "canonical appointment schema unavailable — apply migration 0052",
+          code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+        });
+      }
       return res.status(500).json({ error: error.message });
     }
   });
@@ -431,6 +627,64 @@ export function registerExecutionCaseRoutes(app: Express) {
         });
       }
 
+      // ── Canonical call-record closeout — IDEMPOTENT REPLAY ─────────────
+      // If the caller supplied a callKey that already maps to a durable call
+      // record, this is a retry of the SAME attempt. Return the current state
+      // WITHOUT re-applying any side effects (no second attempt-count
+      // increment, no duplicate journey/triage/task, no duplicate call row).
+      // The guarantee is exactly-once per real attempt.
+      if (data.callKey) {
+        const existingCall = await storage.findOutreachCallByExternalId(data.callKey);
+        if (existingCall) {
+          const currentEc =
+            executionCaseId !== null
+              ? await getExecutionCaseById(executionCaseId).catch(() => null)
+              : executionCase;
+          return res.json({
+            ok: true,
+            executionCase: currentEc ?? executionCase,
+            journeyEvent: null,
+            triageCase: null,
+            task: null,
+            ownershipUpdated: false,
+            callRecordCreated: false,
+            idempotentReplay: true,
+          });
+        }
+      }
+
+      // ── Phase 2D-B3: canonical scheduling bridge ───────────────
+      // When the flag is ON, route scheduling-state outcomes
+      // (cancelled / no_show / reschedule) through the canonical
+      // orchestration. The call is recorded first; a scheduling action
+      // is attempted only when the caller supplied the REAL inputs
+      // (event id + reason / newStartsAt) — otherwise 409, never a
+      // fabricated transition. Non-scheduling outcomes fall through to
+      // the legacy engagement writes unchanged.
+      if (featureFlags.canonicalAppointment) {
+        const schedulingAction = engagementActionForOutcome(data.callResult);
+        if (schedulingAction !== "none") {
+          const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+          const bridged = await runCallResultScheduling({
+            clinicId: reqClinicId,
+            executionCaseId,
+            patientScreeningId,
+            callOutcome: data.callResult,
+            schedulingAction,
+            appointmentInput: {
+              eventId: data.globalScheduleEventId ?? undefined,
+              reason: schedulingAction === "cancel" ? (data.cancelReason ?? undefined) : (data.noShowReason ?? undefined),
+              newStartsAt: data.newStartsAt ? new Date(data.newStartsAt) : undefined,
+            },
+            actorUserId,
+            source: "engagement_call_result",
+          });
+          if (bridged.handled) {
+            return res.status(bridged.http).json(bridged.body);
+          }
+        }
+      }
+
       // Compute next-action timestamp — explicit value wins, otherwise
       // default from admin settings:
       //   callback / patient_requested_call_later → scheduling_triage.default_callback_due_hours
@@ -460,6 +714,27 @@ export function registerExecutionCaseRoutes(app: Express) {
           computedNextActionAt = dt;
         }
       }
+
+      // Resolve the effective settings + attempt-count plan BEFORE the
+      // delegation branch so the canonical delegation path and the
+      // legacy path apply the SAME attempt-count semantics
+      // (callAttemptCount / lastCallOutcome / lastAttemptAt /
+      // unable_to_reach transition). Without this the delegation path
+      // silently dropped attempt tracking — a parity break caught in
+      // Item 4 parity testing.
+      const effectiveBundle = await getEffectiveAdminSettings({
+        facilityId: facilityId ?? null,
+        userId: auditIdentity.actorUserId ?? null,
+      });
+      // Phase 2 hardening — read the prior attempt count from the
+      // resolved execution case (may be null/undefined for legacy
+      // rows without the column populated; treat as 0).
+      const previousAttemptCount = executionCase?.callAttemptCount ?? 0;
+      const attemptPlan = planCallAttempt({
+        currentAttemptCount: previousAttemptCount,
+        outcome: data.callResult,
+        maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
+      });
 
       // ─── Engagement-route DELEGATION (Batch 3 of Engagement completion run) ──
       //
@@ -520,9 +795,34 @@ export function registerExecutionCaseRoutes(app: Express) {
         let delegatedExecutionCase = executionCase;
         let delegatedOwnershipUpdated = false;
 
+        // Canonical call-record closeout: a real dialed attempt through the
+        // engagement surface must create exactly ONE durable outreach_calls
+        // row so it appears in Call Results (which reads only outreach_calls).
+        // All ENGAGEMENT_DELEGATION_CANONICAL_OUTCOMES represent a real dial;
+        // callers submitting an administrative / note-only action pass
+        // isCallAttempt:false to opt out. Idempotency via data.callKey.
+        const shouldCreateCallRecord = data.isCallAttempt !== false;
+        let delegatedCallRecordCreated = false;
+
         const deps: CallResultExecutionDependencies = {
-          createOutreachCall: () => {
-            // engagement-suppressed step; never reached.
+          createOutreachCall: async (args: CreateOutreachCallArgs) => {
+            // Insert-only durable record. NEVER mutates appointmentStatus
+            // (Item 2F) — that is the outreach surface's concern, applied
+            // there via createOutreachCallAtomic. Idempotent by callKey.
+            const { created } = await ensureCanonicalCallRecord({
+              patientScreeningId: patientScreeningId as number,
+              outcome: data.callResult,
+              // Consistent with the attempt-count plan the exec-case executor
+              // writes, so the record's attemptNumber matches the case counter.
+              attemptNumber: attemptPlan.newAttemptCount,
+              schedulerUserId: actorUserId,
+              callbackAt: args.callbackAt ?? computedNextActionAt ?? null,
+              notes: data.note ?? null,
+              durationSeconds: args.durationSeconds ?? null,
+              externalCallId: data.callKey ?? null,
+              sourceSurface: "engagement_center_route",
+            });
+            delegatedCallRecordCreated = created;
           },
           appendJourneyEvent: async (args: AppendJourneyEventArgs) => {
             try {
@@ -546,7 +846,8 @@ export function registerExecutionCaseRoutes(app: Express) {
           },
           updateExecutionCaseEngagement: async (args: UpdateExecutionCaseEngagementArgs) => {
             if (!executionCase) return;
-            const updates: Record<string, unknown> = { updatedAt: new Date() };
+            const nowTimestamp = new Date();
+            const updates: Record<string, unknown> = { updatedAt: nowTimestamp };
             // Re-apply the legacy "don't overwrite terminal" guard.
             if (
               args.engagementStatus &&
@@ -559,6 +860,19 @@ export function registerExecutionCaseRoutes(app: Express) {
             }
             if (args.assignedRole && args.assignedRole !== executionCase.assignedRole) {
               updates.assignedRole = args.assignedRole;
+            }
+            // Attempt-count plan — byte-equivalent to the legacy path.
+            // Always write the new count (may equal the old one when the
+            // outcome did not count as an attempt) so the column stays
+            // consistent with the latest call.
+            updates.callAttemptCount = attemptPlan.newAttemptCount;
+            updates.lastCallOutcome = data.callResult;
+            if (attemptPlan.updateLastAttempt) {
+              updates.lastAttemptAt = nowTimestamp;
+            }
+            if (attemptPlan.transitionToUnableToReach) {
+              updates.unableToReachAt = nowTimestamp;
+              updates.engagementStatus = "unable_to_reach";
             }
             // Re-apply ownership-preservation guard.
             if (assignedTeamCandidate !== null) {
@@ -652,6 +966,7 @@ export function registerExecutionCaseRoutes(app: Express) {
             | "facility_specific_issue",
           callbackAt: computedNextActionAt ? computedNextActionAt.toISOString() : null,
           notes: data.note ?? null,
+          createDurableCallRecord: shouldCreateCallRecord,
           assignedTeamMemberId:
             assignedTeamCandidate !== null ? String(assignedTeamCandidate) : null,
           assignedRole: data.assignedRole ?? null,
@@ -692,30 +1007,16 @@ export function registerExecutionCaseRoutes(app: Express) {
           triageCase: delegatedTriageCase,
           task: delegatedTask,
           ownershipUpdated: delegatedOwnershipUpdated,
+          callRecordCreated: delegatedCallRecordCreated,
         });
       }
 
       // ─── Legacy code path (flag OFF, non-canonical outcome, or no screening) ─
 
-      // PR 2.2 — resolve the effective settings + the routing plan
-      // so the legacy path also records WHICH settings drove the
-      // outcome. The plan is currently advisory (the route still
-      // owns DB writes) but the appliedSettings + nextActionReason
-      // get added to the journey-event metadata so QA / audits can
-      // trace settings-driven decisions across PRs.
-      const effectiveBundle = await getEffectiveAdminSettings({
-        facilityId: facilityId ?? null,
-        userId: auditIdentity.actorUserId ?? null,
-      });
-      // Phase 2 hardening — read the prior attempt count from the
-      // resolved execution case (may be null/undefined for legacy
-      // rows without the column populated; treat as 0).
-      const previousAttemptCount = executionCase?.callAttemptCount ?? 0;
-      const attemptPlan = planCallAttempt({
-        currentAttemptCount: previousAttemptCount,
-        outcome: data.callResult,
-        maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
-      });
+      // PR 2.2 — routing plan (advisory; the route still owns DB
+      // writes). effectiveBundle + attemptPlan are resolved earlier
+      // (before the delegation branch) so BOTH the delegation path
+      // and the legacy path apply the identical attempt-count plan.
       const routingPlan = applyCallResultRouting(
         {
           outcome: data.callResult,
@@ -1015,7 +1316,203 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
+
+      // Operational-day navigation (server-side). `date=YYYY-MM-DD` scopes the
+      // call list to cases whose nextActionAt falls on that local day. Backlog
+      // (null nextActionAt) is the "due now" pool with no scheduled day, so it
+      // is included ONLY for today/future dates — never for a strictly-past
+      // date (which would otherwise repeat the whole backlog every day).
+      // NOTE: this filters the mutable nextActionAt pointer for the current/
+      // forward operational day; it is NOT a historical call-list-membership
+      // reconstruction. Faithful past-day membership lives in
+      // scheduler_assignments.asOfDate (a separate table) — see milestone
+      // report. Past dates therefore show "cases whose next action was due
+      // that day", which is honest but not a membership snapshot.
+      const todayLocal = (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      })();
+      const requestedDate =
+        typeof q.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : null;
+      const isHistorical = requestedDate != null && requestedDate < todayLocal;
+
+      // ── HISTORICAL CALL LIST (read-only snapshot) ──────────────────────────
+      // For a PAST date we do NOT filter the mutable nextActionAt (that would
+      // misrepresent membership). Instead we read the immutable per-day
+      // snapshot from scheduler_assignments (asOfDate + schedulerId), enrich
+      // each row with CURRENT canonical patient identity + the HISTORICAL call
+      // outcome recorded that day (outreach_calls.startedAt). scheduler_
+      // assignments is used ONLY as history here — never for current ownership.
+      // schedulerId is the SAME roster-id space as the locked current filter.
+      if (isHistorical) {
+        const histSchedulerId = assignmentScope.locked
+          ? assignmentScope.schedulerId
+          : (q.assignedTeamMemberId ? parseInt(q.assignedTeamMemberId, 10) : null);
+        if (histSchedulerId == null || Number.isNaN(histSchedulerId)) {
+          return res.json([]);
+        }
+        const snapshot = await storage.listSchedulerAssignmentsForSchedulerOnDate(
+          histSchedulerId,
+          requestedDate!,
+        );
+        if (snapshot.length === 0) {
+          // Honest empty — no snapshot recorded for that PCS/day. We do NOT
+          // fabricate membership from current nextActionAt.
+          return res.json([]);
+        }
+        // Day-scope calls by CALENDAR DAY, not a millisecond window.
+        // outreach_calls.startedAt is a naive `timestamp` that the driver
+        // returns re-tagged as UTC; its toISOString() date is the wall-clock
+        // day the row was written (the same frame requestedDate is in).
+        // Building local-parsed millisecond boundaries here instead mixed a
+        // UTC-tagged instant with local boundaries and leaked a call made in
+        // the early-UTC hours into the PRIOR local day — which would let a
+        // TODAY call rewrite YESTERDAY's read-only snapshot. Compare the
+        // startedAt calendar day directly to requestedDate.
+        const callDay = (c: { startedAt: unknown }): string | null => {
+          if (!c.startedAt) return null;
+          const d = new Date(c.startedAt as string);
+          return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+        };
+        const historical = await Promise.all(
+          snapshot.map(async (a) => {
+            const screening = await storage.getPatientScreening(a.patientScreeningId);
+            // Historical outcome: the latest call the PCS logged that day.
+            const dayCalls = (await storage.listOutreachCallsForPatient(a.patientScreeningId))
+              .filter((c) => callDay(c) === requestedDate)
+              .sort((x, y) => new Date(y.startedAt).getTime() - new Date(x.startedAt).getTime());
+            const lastCall = dayCalls[0] ?? null;
+            const ec = await getExecutionCaseByScreeningId(a.patientScreeningId).catch(() => null);
+            return {
+              id: `hist:${a.id}`,
+              patientScreeningId: a.patientScreeningId,
+              // CURRENT canonical patient identity (safe to show current name).
+              patientName: screening?.name ?? ec?.patientName ?? "Patient",
+              patientDob: screening?.dob ?? null,
+              facilityId: screening?.facility ?? ec?.facilityId ?? null,
+              executionCaseId: ec?.id ?? null,
+              // HISTORICAL operational fields (not present-day state):
+              assignedTeamMemberId: a.schedulerId,
+              historical: true,
+              asOfDate: a.asOfDate,
+              assignmentStatus: a.status, // active/released/reassigned/completed
+              // Outcome recorded THAT day, if any.
+              lastCallOutcome: lastCall?.outcome ?? null,
+              historicalCallCount: dayCalls.length,
+              historicalCallbackAt: lastCall?.callbackAt
+                ? new Date(lastCall.callbackAt).toISOString()
+                : null,
+              historicalLastActivityAt: lastCall?.startedAt
+                ? new Date(lastCall.startedAt).toISOString()
+                : null,
+              completed: dayCalls.length > 0,
+              nextActionAt: null,
+              selectedServices: ec?.selectedServices ?? screening?.qualifyingTests ?? [],
+            };
+          }),
+        );
+        return res.json(historical);
+      }
+
+      // ── CURRENT/FUTURE CALL LIST (canonical ownership) ─────────────────────
+      if (requestedDate != null) {
+        const dayStart = new Date(`${requestedDate}T00:00:00.000`);
+        const dayEnd = new Date(`${requestedDate}T23:59:59.999`);
+        if (!Number.isNaN(dayStart.getTime()) && !Number.isNaN(dayEnd.getTime())) {
+          filters.dateStart = dayStart;
+          filters.dateEnd = dayEnd;
+          // Include backlog only when the requested day is today or later.
+          filters.includeBacklog = requestedDate >= todayLocal;
+        }
+      }
       const rows = await listSchedulerPortalCases(filters, limit);
+
+      // Phase 2E final review — attach the EXACT, SERVICE-AWARE ancillary case
+      // id + service per row (see selectAncillaryCaseForRow). ONE batched query
+      // for all visible execution cases (never per row). The batch read returns
+      // an empty map on a known migration-absent/flag-off condition (safeRead),
+      // in which case every row gets null/null — but the keys are ALWAYS
+      // emitted. Unexpected repository failures are NOT swallowed here; they
+      // propagate to the route's controlled 500 handler below.
+      {
+        const { listActiveAncillaryCasesByExecutionCaseIds } = await import(
+          "../repositories/ancillaryCases.repo"
+        );
+        const execIds = rows.map((r) => r.id).filter((n): n is number => typeof n === "number");
+        const byExec = await listActiveAncillaryCasesByExecutionCaseIds(execIds);
+        for (const row of rows) {
+          Object.assign(row, selectAncillaryCaseForRow(row as never, byExec.get(row.id) ?? []));
+        }
+      }
+
+      // Phase 3C — attach open call handoffs + apply the CENTRALIZED queue
+      // ordering (priority handoffs surface above standard work). The execution
+      // case stays the single ownership record; handoffs are display context.
+      {
+        const { annotateAndOrderQueue } = await import(
+          "../services/engagement/callHandoffService"
+        );
+        const annotated = await annotateAndOrderQueue(rows as never[]);
+        rows.length = 0;
+        for (const a of annotated) {
+          const row = a.case as Record<string, unknown>;
+          row.handoffs = a.handoffs;
+          row.isHandoff = a.isHandoff;
+          row.isCarryover = a.isCarryover;
+          rows.push(row as (typeof rows)[number]);
+        }
+      }
+
+      // Phase 2D-C2 — attach the canonical per-service appointment
+      // projection when the flag is ON and the caller opts in
+      // (?withAppointments=true). One active scheduled event per
+      // ancillary case; independent services stay independent; historical
+      // cancelled/no_show/rescheduled events are not active. doctor_visit
+      // is excluded by the projection. Missing migration → controlled 503.
+      if (featureFlags.canonicalAppointment && q.withAppointments === "true" && rows.length > 0) {
+        const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        if (clinicId != null) {
+          try {
+            // Compute Phase 2C eligible services so appointmentByService
+            // keys stay a subset of eligibleServices — same rule as
+            // Engagement/PCS via the shared filter. Sync flag OFF →
+            // eligibleServices undefined → legacy passthrough.
+            const eligibilityByCase = new Map<number, string[]>();
+            if (featureFlags.engagementAdminReviewSync) {
+              const { projectServiceLevelEligibility } = await import(
+                "../services/engagementLists/queueProjection"
+              );
+              const filtered = await projectServiceLevelEligibility({
+                executionCases: rows,
+                requireActiveMembership: featureFlags.engagementMultiListRepository,
+              });
+              for (const f of filtered) eligibilityByCase.set(f.executionCase.id, f.eligibleServices);
+            }
+            for (const row of rows) {
+              // eslint-disable-next-line no-await-in-loop
+              const byService = await getSerializedAppointmentsByService({
+                clinicId, executionCaseId: row.id, includeHistory: false,
+              });
+              const eligible = featureFlags.engagementAdminReviewSync
+                ? (eligibilityByCase.get(row.id) ?? [])
+                : undefined;
+              Object.assign(row, {
+                eligibleServices: eligible,
+                appointmentByService: filterAppointmentsToEligibleServices(byService, eligible),
+              });
+            }
+          } catch (e) {
+            const code = (e as { code?: string })?.code;
+            if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+              return res.status(503).json({
+                error: "canonical appointment schema unavailable — apply migration 0052",
+                code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+              });
+            }
+            throw e;
+          }
+        }
+      }
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

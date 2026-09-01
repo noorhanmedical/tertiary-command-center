@@ -1,0 +1,117 @@
+# Phase 2K — Execution Matrix
+
+Converts every item in `PHASE_2K_HARDENING_BACKLOG.md` into an explicit, classified
+execution row. Phase 2K is **behavior-preserving reliability/hardening** — it makes
+existing canonical truth more reliable, it does not invent business semantics.
+
+Classifications: `MANDATORY_HARDENING` · `PRODUCT_DECISION_REQUIRED` ·
+`UI_REDESIGN_DEFERRED` · `ALREADY_FIXED` · `NO_LONGER_APPLICABLE`.
+
+Source Phase 2J HEAD: `8276cb9bb68d46555df291ddda206551be18edab`. Branch:
+`phase/2k-enterprise-hardening` (stacked on `phase/2j-canonical-claims-invoices-payments`).
+
+| ID | Orig phase | Backlog item (short) | File · symbol | Current behavior | Desired hardened behavior | Risk if unchanged | Classification | Impl? | Migration? | Behavioral test | Verdict |
+|----|-----------|----------------------|--------------|------------------|---------------------------|-------------------|----------------|-------|-----------|-----------------|---------|
+| K1 | 2F | Reference creation on a generated note with no reference | `procedureLifecycle` · `syncProcedureNoteReferenceSignature` / ensure | sync only UPDATEs an existing ref; creation depends on a separate `link_procedure_note` failure | deterministic ensure-or-create: a generated note that should have a canonical ref eventually has exactly one current ref without depending on another failure | recovery depends on an unrelated failure existing | MANDATORY_HARDENING | yes | no | ensure create/reuse/converge/wrong-scope/dup/signed-immutable | VERIFIED |
+| K2 | 2F | Lineage retry service-type re-validation | retry worker · `reconcile_procedure_note_lineage` | worker binds by clinic/case/type; relies on downstream case-scoped ensure for service | explicit `note.serviceType == failure.serviceType` before repair; wrong service → zero mutation | defense-in-depth gap (schema per-case identity already prevents cross-service) | MANDATORY_HARDENING | yes | no | wrong-service → zero mutation | VERIFIED |
+| K3 | 2F | Report-acceptance status set drift (classifier vs eligibility) | backfill classifier · `ACCEPTABLE_REPORT` vs `ACCEPTABLE_REPORT_STATUSES` | classifier set broader than eligibility set → DRY-RUN overstates applicability | classifier + live eligibility share ONE source/helper; DRY-RUN reports exactly what apply considers eligible | misleading operator telemetry (no correctness risk) | MANDATORY_HARDENING | yes (classifier only) | no | table-driven per report status | VERIFIED |
+| K4 | 2F | Deterministic-link apply outcome granularity | backfill · per-action telemetry | coarse `apply_deferred` outcome | finer per-action counts | operator-dashboard telemetry only | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K5 | 2F | Generator `not_yet_eligible` records no generate retry | `procedureNoteGenerator` · `classifyGeneratorOutcome` | TOCTOU: generator re-read `not_yet_eligible` → no durable `generate_procedure_note` retry | record one exact durable generation retry when retryable; converge; later eligible generates + resolves | recovery may need external re-drive | MANDATORY_HARDENING | yes | no | created/reused+not_yet_eligible→retry; no dup; later eligible resolves | VERIFIED |
+| K6 | 2G | Backfill apply skips stale-but-existing readiness | `backfillCanonicalBillingReadiness` | apply only for no-current-row candidates | (whether apply always re-evaluates) | one-time seeding under-report; live hook supersedes | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K7 | 2G | Reference supersession best-effort | `billingLifecycleOrchestration` · `supersedeStaleBillingDocument` | doc row superseded (checked); ref supersede fire-and-forget; `supersede_billing_document` retry never queued (dead) | deterministic durable ref supersession; on miss record exact retry targeting the exact BD/ref lineage; wire or remove the dead action | window where ref not superseded | MANDATORY_HARDENING | yes | no | ref succeeds / ref misses→retry durable / dup fail-closed | VERIFIED |
+| K8 | 2G | `retrySupersede` resolves on 0-row / non-committed re-eval; ignores exact source id | `billingRetryHandlers` · `retrySupersede` | resolves even on transient re-eval; does not require `failure.sourceId`/`sourceTable` match (could resolve doc A from doc B's clean state) | resolve only on an exact source-bound (`sourceId`/`sourceTable`/clinic/case) committed post-condition; wrong source → zero mutation | retry resolves without proving post-condition / cross-document | MANDATORY_HARDENING | yes | no | transient re-eval unresolved / exact-source resolve / wrong-source zero-mutation | VERIFIED |
+| K9 | 2G | Report source-row validation | `loadExactReportEvidence` | re-loads `case_document_readiness`, re-asserts clinic/service/documentType + linkage + status | (met) | — | ALREADY_FIXED | no | no | (exists) | already-fixed |
+| K10 | 2G | `ensureBillingReferenceDurability` doesn't filter superseded refs | `billingLifecycleSupport` · `ensureBillingReferenceDurability` | returns `reference_present` for any owned row incl. superseded | require `supersededAt IS NULL` for a current ref; only-superseded → repair; dup current → conflict | superseded ref counted as durable | MANDATORY_HARDENING | yes | no | current/only-superseded/wrong-src/dup | VERIFIED |
+| K11 | 2G | Report `documentType` rejection untested | report source-validation | guard present, untested | dedicated `documentType !== "report"` test + wrong clinic/service/exec/screening/superseded/status | coverage gap | MANDATORY_HARDENING | no | no | documentType + fail-closed matrix | VERIFIED |
+| K12 | 2H | Finance `evaluated` count assumes one readiness row per case | `clinicianPortal` · `buildFinance` | increments per non-superseded row (double-counts on dup) | dedupe/ conflict on duplicate current readiness per case; no silent newest-wins | double-count on upstream invariant violation | MANDATORY_HARDENING | yes | no | dup readiness / exact one | VERIFIED |
+| K13 | 2H | `counts_truncated` post-filter basis | `clinicianPortal` · `buildFinance` | uses post-filter length inconsistently | RAW fetched row count; SCAN+1 | under-report truncation | MANDATORY_HARDENING | yes | no | raw at limit+1; filter doesn't hide truncation | VERIFIED |
+| K14 | 2H | Admin users cannot use canonical overview | `clinicianPortalGuard` | admin `clinicId=null` → 403 (fail-closed) | admin clinic-scope requires explicit server-controlled selection context (future) | none (fail-closed today) | PRODUCT_DECISION_REQUIRED | no | no | (403 pinned) | deferred |
+| K15 | 2H | Report reference case-linkage best-effort (schema-limited) | `validateReportRef` | binds via `executionCaseId` only (no `ancillary_case_id` col) | fully exact report↔case identity | needs schema redesign | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K16 | 2H | Client migration-vs-generic error uses message inspection | `useCanonicalOverview` · `isMigrationMissingError` | inspects RQ error message string | structured error {status, code, message}; behavior unchanged | fragile string parsing (cosmetic) | MANDATORY_HARDENING | yes | no | migration/forbidden/generic distinguishable | VERIFIED |
+| K17 | 2I | Admin allow-listed but scope-denied PCS/ACS | pcs/acs routes | admin `clinicId=null` → 403 | explicit server-context clinic selection (future) | none (fail-closed) | PRODUCT_DECISION_REQUIRED | no | no | (403 pinned) | deferred |
+| K18 | 2I | PCS identity-display reads not migration-wrapped | `pcsCanonicalView` | display reads outside `loadOrNull`; ordinary failure fails whole request | display-only failure → display unavailable/null (no demographic fallback), verified IDs preserved, PHI-free warning; migration-missing still 503 | ordinary read failure fails canonical request | MANDATORY_HARDENING | yes | no | display fail / migration / wrong-clinic / merged / no-demographic-fallback | VERIFIED |
+| K19 | 2I | `iso()` double-wraps Date | `caseStageVector` · `iso` | harmless `new Date(existingDate)` | (cosmetic) | none | NO_LONGER_APPLICABLE | no | no | — | n/a |
+| K20 | 2I | Billing Document fingerprint null-null equality | `caseStageVector` (+ read-model validator) | `null !== null` passes vacuously when both fingerprints null | null/empty on either side → unverifiable → status null / conflicting; never advance on two absent fingerprints | staleness bypass if BD ever writes null fingerprint | MANDATORY_HARDENING | yes | no | null-null / null-one-side / equal / unequal | VERIFIED |
+| K21 | 2I | Stage-vector identity `available` default loose | `caseStageVector` · `buildOne` identity | `available = ids != null` | `available=false` unless verified by canonical identity validator; PCS overwrites after its verify | flag reads available without proof | MANDATORY_HARDENING | yes | no | ids-present-unverified→false / verified→true / missing / merged-inactive | VERIFIED |
+| K22 | 2I | `isTerminalHalt` lists only `procedure` | `caseStageVector` | implicit appointment halt | (cosmetic; correct+tested) | none | NO_LONGER_APPLICABLE | no | no | — | n/a |
+| K23 | 2I | Appointment blocked/pending_sync coverage | `caseStageVector` | covered by terminal loop | (met) | — | ALREADY_FIXED | no | no | (covered) | already-fixed |
+| K24 | 2I | Verified-window ordering-contingent / covering index | `pcs` · `loadVerifiedStream` | ORDER BY + LIMIT window+1; comment added | covering index makes ordering cheap (0057 candidate) | none (correct today) | MANDATORY_HARDENING | maybe (0057) | maybe | schema↔migration parity if 0057 | VERIFIED |
+| K25 | 2I | `loadUnresolvedStream` membership bound | `pcs` | `.limit(MAX*2)` safe under ≤1-membership invariant | (met) | — | NO_LONGER_APPLICABLE | no | no | — | n/a |
+| K26 | 2J | Refund does not free receipt capacity | `paymentCommands` · `receiptApplied` | apply-only sum; refund doesn't add back | (return refunded capacity) — changes accepted semantics | conservative (under-allocates only) | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K27 | 2J | `adjustment` allocation event type has no command path | `allocationLineage` | schema allows; fail-closed | new approved adjustment command | none (fail-closed) | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K28 | 2J | DB-level provenance CHECKs on entity tables | schema/migrations | only transitions has `ck_cft_command_provenance` | additive CHECKs on claim/invoice/payment/allocation IF all command paths + fixtures satisfy them | defense-in-depth gap | MANDATORY_HARDENING | maybe | maybe (0057) | schema↔migration parity | VERIFIED |
+| K29 | 2J | Explicit overpayment / credit ledger | financial | `is_overpayment` flag only | first-class overpayment surface | none | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K30 | 2J | Exhaustive N+1 matrix at 1/25/100 | tests | batched (proven by count test) | explicit 1/25/100 matrix across all read models | none (already batched) | MANDATORY_HARDENING | no (test) | no | phase2KQueryBoundaries | VERIFIED |
+| K31 | 2J | Dedicated overflow test for stage identity/parent-claim loads | tests | SCAN+1 folds into truncation | targeted overflow matrix | none (page-bounded) | MANDATORY_HARDENING | no (test) | no | phase2KOverflowTruth | VERIFIED |
+| K32 | 2J | Unified canonical Finance surface | client Finance | appended read-only panel + legacy behind flag | unify (visual/product) | none | UI_REDESIGN_DEFERRED | no | no | — | deferred |
+| K33 | 2J | Replay response reports `from: ""` | `commandSupport`/`claim`+`invoice`Commands | idempotent replay returns empty `from` | `resolveFinancialCommandRace` returns exact prior from/to from the audit row; later advancement doesn't change replay | inaccurate response contract | MANDATORY_HARDENING | yes | no | claim/invoice replay exact from/to; advancement-stable; diff-intent conflict | VERIFIED |
+| K34 | 2J | Refunded-then-repaid `paid` masks residual refund | `caseStageVector` | `paid` when net==total | (accepted rule; balance exposes refundedAmount) | none | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K35 | 2J | No distinct `imported` receipt path | `paymentCommands` · `recordCanonicalPayment` | imports → `posted` | map imports → `imported` (changes lifecycle) | none | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K36 | 2J | Full refund reopens claim to `submitted` | `paymentCommands` · `negateAllocation` | reopen → `submitted` | reopen to pre-payment status (changes semantics) | adjudication-state downgrade (no false money) | PRODUCT_DECISION_REQUIRED | no | no | — | deferred |
+| K37 | 2J | Stage vector assembles lineage inline vs shared builder | `caseStageVector` · `claimLineageCtx`/`invoiceLineageCtx` | invoice ctx already uses the shared loader (2J parity fix); claim ctx still inline | ONE canonical builder set owns lineage assembly for read model + stage + write-path | duplication could drift | MANDATORY_HARDENING | yes | no | 3-consumer parity test | VERIFIED |
+
+## Additional Phase 2K mandatory items (from the task, not pre-existing backlog rows)
+
+| ID | Area | Requirement | Classification | Verdict |
+|----|------|-------------|----------------|---------|
+| K38 | tests | Failure-injection matrix (read/write/post-insert/retry-record failures fail closed) — 8 explicit paths | MANDATORY_HARDENING | VERIFIED |
+| K39 | tests | Concurrency hardening matrix (ensure/retry/correction/allocation/negation converge, no dup, exact replay) — 7 explicit areas incl. claim+invoice CORRECTION | MANDATORY_HARDENING | VERIFIED |
+| K40 | security | Tenancy/identity regression across all 2K-touched paths (server/session scope only; never name/DOB/MRN/fuzzy) | MANDATORY_HARDENING | VERIFIED |
+| K41 | retries | System-wide retry inventory (`PHASE_2K_RETRY_INVENTORY.md`) rebuilt from `ANCILLARY_DOCUMENT_FAILURE_ACTIONS` (19 values) + enum coverage test; no dead/queued-unhandled/handled-unqueued/resolve-without-postcondition | MANDATORY_HARDENING | VERIFIED |
+| K42 | migrations | 0057 policy — create ONLY if genuinely needed for safe additive defense-in-depth (indexes/CHECKs); else "No Phase 2K migration required" | MANDATORY_HARDENING | VERIFIED |
+
+## Totals (recounted from the actual rows above)
+Mechanically counted from the table rows (`| Kn |`), not from prose:
+- **MANDATORY_HARDENING: 25** — K1,K2,K3,K5,K7,K8,K10,K11,K12,K13,K16,K18,K20,K21,K24,K28,K30,K31,K33,K37 (20 in the main table) + K38,K39,K40,K41,K42 (5 additional).
+- **PRODUCT_DECISION_REQUIRED: 11** — K4,K6,K14,K15,K17,K26,K27,K29,K34,K35,K36 → `POST_2K_PRODUCT_DECISIONS.md`.
+- **UI_REDESIGN_DEFERRED: 1** — K32.
+- **ALREADY_FIXED: 2** — K9,K23.
+- **NO_LONGER_APPLICABLE: 3** — K19,K22,K25.
+- Total rows: 42 (K1–K42, all present).
+
+## Consolidated-closeout status (post-fix)
+The initial Phase 2K PASS overstated completion (it claimed 22/22 while the true mandatory
+total is **25**, several matrix rows were missing/duplicated, and the `canonicalUiManifest`
+was actually failing at `858ab0bc` because the K16 `queryClient.ts` change was not recorded).
+This closeout re-opened **9 MANDATORY rows** found incomplete on re-audit; each was then
+implemented with real behavioral proof and is now **VERIFIED** (25/25 mandatory; 0 PARTIAL).
+Coverage: **K31 12/12** overflow windows · **K38 8/8** failure-injection paths · **K39 7/7**
+concurrency areas (incl. claim+invoice corrections) · **K41 19/19** retry enum coverage.
+
+**Evidence-correction pass (second re-audit):** a follow-up review found FIVE false-positive
+proofs in the first closeout; all fixed and re-verified with real production paths:
+- **K8** — `billingReferenceSupersessionDurableForDocument` checked truncation AFTER the case
+  filter (a truncated raw set that filtered to zero failed OPEN). Now checks RAW truncation
+  FIRST and treats any wrong-case current exact reference as an integrity conflict; the
+  `supersedeStaleBillingDocument` reference UPDATE is now `ancillaryCaseId`-scoped (a foreign-case
+  same-source reference is never mutated). Tests K8-A/B/C/D.
+- **K38 P8** — previously called the generator directly, never reaching `resolveAncillaryDocumentFailureById`.
+  Now calls the real worker (`retryAncillaryDocumentFailure`) and proves `resolutionAttempted===true`
+  with no false `resolved`.
+- **K39 A1/A3/A4/A5** — previously used `recordAncillaryDocumentFailure` stand-ins / entry-gate replay.
+  Now each invokes the real production flow: `ensureProcedureNoteReferenceForNote`,
+  `supersedeStaleBillingDocument` retry race, and POST-START `createCanonicalClaimCorrection` /
+  `createCanonicalInvoiceCorrection` race recovery.
+- **K41** — inventory rebuilt from repository truth (the fictional `legacyProjection.ts` ancillary
+  writer removed; `refresh_projection`/`create_reference`/`supersede_reference` are writer=null/
+  worker=null in the ancillary ledger — `legacyProjection` records into the SEPARATE appointment
+  ledger). Coverage test now verifies file/symbol existence via `fs`.
+- **K31 W8** — previously a synthetic missing-parent case (not overflow). Now exercises the real
+  `loadInvoiceLineageContextsWithDb` parent bound (SCAN+1 distinct parents → over-bound parent
+  omitted → `invoice_parent_not_found` fail-closed).
+
+The 9 re-opened rows and their fixes:
+- **K5** — generator records a retry for ALL non-eligible reasons (incl. migration_missing / cross_clinic / case_not_found); must classify and retry ONLY genuinely retryable deferrals.
+- **K7** — `supersedeStaleBillingDocument` returns a bare boolean; when the retry-record itself fails it still reports success (overstates durability); must return a structured result and surface `reconciliation_not_recorded`.
+- **K8** — `retrySupersede` ignores `failure.sourceId`/`sourceTable` (could resolve document A from document B) and resolves on transient re-eval; must be exact source-bound + prove the post-condition.
+- **K13** — `.limit(SCAN_LIMIT)` + `length >= SCAN_LIMIT` cannot distinguish a full page from truncation; must use SCAN_LIMIT+1.
+- **K18** — `loadGpps` couples canonical identity verification with optional display; an ordinary display read failure changes canonical classification (verified→unresolved, IDs null); must separate a REQUIRED identity loader from an OPTIONAL display loader.
+- **K31** — overflow matrix needs 12 explicit production windows (currently 5).
+- **K38** — failure-injection needs 8 explicit critical paths (currently 4).
+- **K39** — concurrency needs 7 areas incl. claim + invoice CORRECTION (currently transitions only).
+- **K41** — retry inventory must be rebuilt from the actual `ANCILLARY_DOCUMENT_FAILURE_ACTIONS` enum (19 values) + an executable enum-coverage test.
+- **Migration 0057: not required** — provenance/idempotency/positive-amount CHECKs on entity tables would reject valid correction/backfill/draft rows (nullable `idempotency_key`/`charge_amount`); current-row uniqueness already in 0056; indexes not a correctness requirement given proven query bounds (K30).
+
+Rows return to VERIFIED only after implementation + real behavioral tests land and BOTH
+independent reviewers (adversarial + accounting) return 0 BLOCKER / 0 MAJOR. The
+post-fix outcome is recorded here once complete.

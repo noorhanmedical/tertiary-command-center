@@ -11,6 +11,10 @@ export interface ISchedulerAssignmentsRepository {
   bulkCreate(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]>;
   applyDiff(releaseIds: number[], drafts: InsertSchedulerAssignment[], reason: string): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }>;
   listActive(filters?: { schedulerId?: number; asOfDate?: string }): Promise<SchedulerAssignment[]>;
+  /** READ-ONLY HISTORY. All assignment rows for a (scheduler, date) regardless
+   *  of status — the immutable per-day snapshot of "who was on this PCS's list
+   *  that day". Never used for current ownership. */
+  listForSchedulerOnDate(schedulerId: number, asOfDate: string): Promise<SchedulerAssignment[]>;
   getActiveForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined>;
   getActiveForPatientOnDate(patientScreeningId: number, asOfDate: string): Promise<SchedulerAssignment | undefined>;
   releaseForScheduler(schedulerId: number, asOfDate: string, reason: string): Promise<SchedulerAssignment[]>;
@@ -59,6 +63,17 @@ export class DbSchedulerAssignmentsRepository implements ISchedulerAssignmentsRe
     if (filters.asOfDate) conds.push(eq(schedulerAssignments.asOfDate, filters.asOfDate));
     return db.select().from(schedulerAssignments)
       .where(and(...conds))
+      .orderBy(asc(schedulerAssignments.assignedAt));
+  }
+
+  async listForSchedulerOnDate(schedulerId: number, asOfDate: string): Promise<SchedulerAssignment[]> {
+    // All statuses (active/released/reassigned/completed) — the historical
+    // record of who was on this scheduler's list that day. Read-only.
+    return db.select().from(schedulerAssignments)
+      .where(and(
+        eq(schedulerAssignments.schedulerId, schedulerId),
+        eq(schedulerAssignments.asOfDate, asOfDate),
+      ))
       .orderBy(asc(schedulerAssignments.assignedAt));
   }
 

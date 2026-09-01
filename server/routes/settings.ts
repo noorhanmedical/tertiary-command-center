@@ -10,6 +10,12 @@ import {
   getReminderThresholdDays,
   sendRemindersNow,
 } from "../services/invoiceReminderService";
+import {
+  getPhoneProviderPreferences,
+  savePhoneProviderDefault,
+  clearPhoneProviderDefault,
+} from "../repositories/adminSettings.repo";
+import { SELECTABLE_PHONE_PROVIDER_IDS } from "@shared/phoneProvider";
 
 const VALID_QUAL_MODES = ["permissive", "standard", "conservative"] as const;
 const qualModeSchema = z.object({
@@ -63,7 +69,102 @@ function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+// Phone-provider default persistence. Org/facility scopes are admin-only;
+// team-member scope is the logged-in user's own preference.
+const phoneProviderSaveSchema = z.object({
+  scope: z.enum(["organization", "facility", "team_member"]),
+  providerId: z.enum(SELECTABLE_PHONE_PROVIDER_IDS),
+  facilityId: z.string().trim().min(1).optional(),
+});
+const phoneProviderClearSchema = z.object({
+  scope: z.enum(["organization", "facility", "team_member"]),
+  facilityId: z.string().trim().min(1).optional(),
+});
+
 export function registerSettingsRoutes(app: Express) {
+  // ─── Phone provider defaults ─────────────────────────────────────
+  // GET resolves persisted org/facility/team-member defaults for an
+  // optional facility scope + the logged-in user. Each layer is the
+  // EXACT persisted value; the client resolver applies precedence
+  // (team-member → facility → org → manual). localStorage / env are
+  // client-side FALLBACK only, never returned here.
+  app.get("/api/settings/phone-provider", async (req, res) => {
+    try {
+      const userId = req.session?.userId ?? null;
+      const facilityId =
+        typeof req.query.facilityId === "string" && req.query.facilityId.trim().length > 0
+          ? req.query.facilityId.trim()
+          : null;
+      const prefs = await getPhoneProviderPreferences({ facilityId, userId });
+      res.json(prefs);
+    } catch (e: unknown) {
+      res.status(500).json({ error: e instanceof Error ? e.message : "Failed to read phone provider settings" });
+    }
+  });
+
+  // PUT persists a default at a scope level. organization/facility are
+  // admin-only; team_member writes the logged-in user's own preference.
+  app.put("/api/settings/phone-provider", async (req, res) => {
+    try {
+      const parsed = phoneProviderSaveSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      const { scope, providerId } = parsed.data;
+      const role = req.session?.role;
+      const userId = req.session?.userId ?? null;
+
+      if (scope === "organization" || scope === "facility") {
+        if (role !== "admin") {
+          return res.status(403).json({ error: "Forbidden — organization/facility defaults require admin role" });
+        }
+        if (scope === "facility" && !parsed.data.facilityId) {
+          return res.status(400).json({ error: "facilityId is required for facility scope" });
+        }
+        const saved = await savePhoneProviderDefault({
+          scope,
+          providerId,
+          facilityId: parsed.data.facilityId ?? null,
+        });
+        return res.json({ ok: true, setting: saved });
+      }
+
+      // team_member — must be authenticated; writes the caller's own row.
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const saved = await savePhoneProviderDefault({ scope: "team_member", providerId, userId });
+      return res.json({ ok: true, setting: saved });
+    } catch (e: unknown) {
+      res.status(500).json({ error: e instanceof Error ? e.message : "Failed to save phone provider setting" });
+    }
+  });
+
+  // DELETE clears a persisted default at a scope level (falls through to
+  // the next precedence layer). Same authz as PUT.
+  app.delete("/api/settings/phone-provider", async (req, res) => {
+    try {
+      const parsed = phoneProviderClearSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      const { scope } = parsed.data;
+      const role = req.session?.role;
+      const userId = req.session?.userId ?? null;
+
+      if (scope === "organization" || scope === "facility") {
+        if (role !== "admin") {
+          return res.status(403).json({ error: "Forbidden — organization/facility defaults require admin role" });
+        }
+        const cleared = await clearPhoneProviderDefault({ scope, facilityId: parsed.data.facilityId ?? null });
+        return res.json({ ok: true, cleared });
+      }
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const cleared = await clearPhoneProviderDefault({ scope: "team_member", userId });
+      return res.json({ ok: true, cleared });
+    } catch (e: unknown) {
+      res.status(500).json({ error: e instanceof Error ? e.message : "Failed to clear phone provider setting" });
+    }
+  });
+
   app.get("/api/settings/platform", async (_req, res) => {
     try {
       res.json(getPlatformSettingsSnapshot());

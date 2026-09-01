@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ClipboardCopy, Mail, Phone, FileText, BookOpen, Sparkles } from "lucide-react";
+import { SketchSurface, SketchButton } from "@/components/playground/sketch/SketchPrimitives";
 import {
   STAFF_RESOURCES,
   type StaffResource,
@@ -87,10 +86,10 @@ export function PortalTemplatesResourcesTab({
 
   return (
     <div
-      className="flex h-full w-full flex-col gap-3 overflow-hidden p-4"
+      className="flex h-full w-full flex-col gap-3 overflow-hidden bg-transparent p-4"
       data-testid="portal-templates-resources"
     >
-      <Card className="p-3 bg-white">
+      <SketchSurface seedId="scripts-header">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <BookOpen className="h-4 w-4 text-slate-500" />
           Templates &amp; Staff Resources
@@ -99,9 +98,9 @@ export function PortalTemplatesResourcesTab({
           Internal helpers for scheduling / coordination. Patient-facing
           marketing brochures live in the separate Marketing tool.
         </div>
-      </Card>
+      </SketchSurface>
 
-      <Card className="flex-1 min-h-0 bg-white p-3 overflow-hidden">
+      <SketchSurface seedId="scripts-body" className="flex-1 min-h-0 overflow-hidden">
         <Tabs
           value={activeKind}
           onValueChange={(v) => setActiveKind(v as StaffResourceKind)}
@@ -142,7 +141,8 @@ export function PortalTemplatesResourcesTab({
                 {grouped[kind].map((r) => (
                   <li
                     key={r.id}
-                    className="rounded border border-slate-100 bg-slate-50/40 p-3"
+                    className="rounded border p-3"
+                    style={{ borderColor: "rgba(148,163,184,0.35)", backgroundColor: "rgba(148,163,184,0.06)" }}
                     data-testid={`portal-templates-resources-item-${r.id}`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -155,22 +155,23 @@ export function PortalTemplatesResourcesTab({
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
-                        <Button
+                        <SketchButton
                           type="button"
-                          variant="outline"
+                          variant="secondary"
                           size="sm"
-                          className="h-7 gap-1 px-2 text-[10px]"
+                          seedId={`scripts-copy-${r.id}`}
                           onClick={() => copyToClipboard(r.body)}
                           data-testid={`portal-templates-resources-copy-${r.id}`}
                         >
                           <ClipboardCopy className="h-3 w-3" />
                           Copy
-                        </Button>
+                        </SketchButton>
                         {r.kind === "email-template" && onInsertIntoComposer && (
-                          <Button
+                          <SketchButton
                             type="button"
+                            variant="primary"
                             size="sm"
-                            className="h-7 gap-1 px-2 text-[10px]"
+                            seedId={`scripts-insert-${r.id}`}
                             onClick={() =>
                               onInsertIntoComposer({
                                 subject: r.title,
@@ -181,7 +182,7 @@ export function PortalTemplatesResourcesTab({
                           >
                             <Mail className="h-3 w-3" />
                             Insert into composer
-                          </Button>
+                          </SketchButton>
                         )}
                       </div>
                     </div>
@@ -194,7 +195,7 @@ export function PortalTemplatesResourcesTab({
             </TabsContent>
           ))}
         </Tabs>
-      </Card>
+      </SketchSurface>
     </div>
   );
 }

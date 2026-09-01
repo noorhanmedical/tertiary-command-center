@@ -12,6 +12,7 @@ import {
   CALENDAR_FILTERS,
   type CalendarFilterId,
 } from "./calendarFilters";
+import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
 
 // Loose row shapes — kept as Record<string, unknown> projections so callers
 // can pass either Drizzle-inferred row types or already-serialized JSON
@@ -83,10 +84,23 @@ export function mapGlobalScheduleEventToCalendarEvent(
 
   const patientName = s(r, "patientName");
 
+  // Phase 2D-D1 — for canonical ancillary events (server-tagged
+  // canonicalAncillary), title by service using existing conventions and
+  // carry ancillaryCaseId/parentEventId. doctor_visit and general events
+  // keep their existing title/appearance. Flag OFF preserves the mapper.
+  const serviceType = s(r, "serviceType");
+  const isCanonicalAncillary = r.canonicalAncillary === true;
+  const canonicalTitle =
+    isCanonicalAppointmentUiEnabled() && isCanonicalAncillary && serviceType
+      ? patientName
+        ? `${serviceType} – ${patientName}`
+        : serviceType
+      : (patientName ?? eventType ?? "Event");
+
   return {
     id: `global_schedule_events:${sourceId}`,
     kind,
-    title: patientName ?? eventType ?? "Event",
+    title: canonicalTitle,
     startsAt,
     endsAt: isoFromUnknown(r.endsAt) ?? null,
     facilityId: s(r, "facilityId"),
@@ -100,13 +114,16 @@ export function mapGlobalScheduleEventToCalendarEvent(
     executionCaseId: n(r, "executionCaseId"),
     globalScheduleEventId: typeof sourceId === "number" ? sourceId : null,
     procedureEventId: null,
-    serviceType: s(r, "serviceType"),
+    serviceType,
     status,
     sourceTable: "global_schedule_events",
     sourceId,
     metadata: {
       eventType,
       assignedRole: s(r, "assignedRole"),
+      canonicalAncillary: isCanonicalAncillary,
+      ancillaryCaseId: n(r, "ancillaryCaseId"),
+      parentEventId: n(r, "parentEventId"),
     },
   };
 }

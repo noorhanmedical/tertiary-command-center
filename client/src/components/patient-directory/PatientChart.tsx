@@ -1,26 +1,39 @@
+/**
+ * PatientChart — the patient workspace shell.
+ *
+ * Architecture:
+ *   PATIENT HEADER (sticky)
+ *   INTELLIGENCE STRIP (sticky below header)
+ *   LEFT CHART NAV (grouped, scroll-spy) + CONTINUOUS SCROLLABLE CONTENT
+ *
+ * All permitted sections render in one continuous scroll.
+ * Nav click = smooth scroll to section anchor.
+ * Scroll = spy updates active nav item.
+ * Data Signals is always LAST.
+ */
+
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
-  Phone, CalendarPlus, Sparkles, Building2, ShieldCheck, ChevronLeft, Clock, Stethoscope,
-  PanelLeftClose, PanelLeftOpen,
+  Phone, CalendarPlus, Building2, ShieldCheck, ChevronLeft, ChevronRight,
+  Stethoscope, MessageSquare, User as UserIcon,
 } from "lucide-react";
-import { initials } from "./profileTypes";
 import {
   CHART_SECTIONS, SectionSkeleton, SectionSummaryCard, AccessDeniedSection,
-  sectionSummaryLine,
+  sectionSummaryLine, EcwSyncContext, EpisodeDocsProvider,
 } from "./PatientChartSections";
-import { type EmrChart, COOLDOWN_STATE_TONES } from "@/types/emr";
+import { type EmrChart } from "@/types/emr";
 import { usePatientDirectorySectionAccess } from "@/hooks/usePatientDirectorySectionAccess";
 
-const NAV_COLLAPSE_KEY = "pd-chart-nav-collapsed";
-
-const TONE_PILL: Record<string, string> = {
-  green: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  amber: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  red: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  blue: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  slate: "bg-slate-100 text-slate-700 dark:bg-muted dark:text-foreground",
+// ─── Nav group labels ─────────────────────────────────────────────────────
+const GROUP_LABELS: Record<string, string> = {
+  identity: "PATIENT",
+  overview: "PATIENT OVERVIEW",
+  intelligence: "PLEXUS INTELLIGENCE",
+  clinical: "SOURCE CLINICAL DATA",
+  operations: "OPERATIONS & PLEXUS CLINICAL WORKFLOW",
+  deep: "PLEXUS DEEP INTELLIGENCE",
 };
 
 export function PatientChart({
@@ -29,92 +42,68 @@ export function PatientChart({
   onSchedule,
   loadingSections,
   onVisibleSectionsChange,
+  focusSection,
+  focusToken,
 }: {
   chart: EmrChart;
   onBack?: () => void;
-  /** When provided, the Schedule button opens this in-portal calendar popup
-   *  instead of navigating to /appointments. */
   onSchedule?: () => void;
-  /** Section ids whose backing query is still loading → render a skeleton. */
   loadingSections?: Set<string>;
-  /** Reports the section ids currently intersecting the scroll viewport so the
-   *  parent can lazily enable heavy per-section queries (no upfront waterfall). */
   onVisibleSectionsChange?: (ids: string[]) => void;
+  /** Section id to scroll/highlight when the workspace requests service focus. */
+  focusSection?: string | null;
+  /** One-shot token; a new value triggers the focus once (not on every render). */
+  focusToken?: number;
 }) {
   const d = chart.demographics;
   const { getSectionAccess } = usePatientDirectorySectionAccess();
+  const [navCollapsed, setNavCollapsed] = useState(false);
 
-  // Sections the current role may see in the nav (anything not fully hidden).
   const navSections = CHART_SECTIONS.filter((s) => getSectionAccess(s.id) !== "hidden");
+  const [activeSection, setActiveSection] = useState<string>(navSections[0]?.id ?? "overview");
 
-  // Track the current deep-link hash so a hidden section deep-linked directly
-  // (`#section-labs`) renders an "access denied" state instead of nothing.
-  const [deepLinkId, setDeepLinkId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    const m = window.location.hash.match(/^#section-(.+)$/);
-    return m ? m[1] : null;
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onHash = () => {
-      const m = window.location.hash.match(/^#section-(.+)$/);
-      setDeepLinkId(m ? m[1] : null);
-    };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-
-  const [activeSection, setActiveSection] = useState<string>(navSections[0]?.id ?? CHART_SECTIONS[0].id);
-  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(NAV_COLLAPSE_KEY) === "1";
-  });
-  const toggleNav = useCallback(() => {
-    setNavCollapsed((prev) => {
-      const next = !prev;
-      try { window.localStorage.setItem(NAV_COLLAPSE_KEY, next ? "1" : "0"); } catch { /* ignore */ }
-      return next;
-    });
-  }, []);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const manualScrollUntil = useRef<number>(0);
-  const visibleSignature = useRef<string>("");
+  const visibleSig = useRef<string>("");
 
-  // Active-section tracking + visible-section reporting via scroll position.
+  // Service-focus: transiently highlight a section when the workspace requests
+  // focus (e.g. clicking a service row in the right-rail Ancillary queue).
+  const [highlightedSection, setHighlightedSection] = useState<string | null>(null);
+  const consumedFocusToken = useRef<number | undefined>(undefined);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Scroll-spy ─────────────────────────────────────────────────────────
   const handleScroll = useCallback(() => {
     const container = scrollRef.current;
     if (!container) return;
     const cRect = container.getBoundingClientRect();
-    const top = cRect.top;
 
-    // Report which sections currently intersect the viewport (for lazy loads).
+    // Report visible sections for lazy loading
     if (onVisibleSectionsChange) {
       const visible: string[] = [];
       for (const s of CHART_SECTIONS) {
         const el = document.getElementById(`section-${s.id}`);
         if (!el) continue;
         const r = el.getBoundingClientRect();
-        // Intersects the container viewport (with a small prefetch margin).
         if (r.bottom >= cRect.top - 200 && r.top <= cRect.bottom + 200) visible.push(s.id);
       }
       const sig = visible.join(",");
-      if (sig !== visibleSignature.current) {
-        visibleSignature.current = sig;
+      if (sig !== visibleSig.current) {
+        visibleSig.current = sig;
         onVisibleSectionsChange(visible);
       }
     }
 
     if (Date.now() < manualScrollUntil.current) return;
-    let current = CHART_SECTIONS[0].id;
+    let current = navSections[0]?.id ?? "overview";
     for (const s of CHART_SECTIONS) {
       const el = document.getElementById(`section-${s.id}`);
       if (!el) continue;
-      // The first section whose top is at/above the 120px marker wins.
-      if (el.getBoundingClientRect().top - top <= 120) current = s.id;
+      if (el.getBoundingClientRect().top - cRect.top <= 140) current = s.id;
       else break;
     }
     setActiveSection(current);
-  }, [onVisibleSectionsChange]);
+  }, [onVisibleSectionsChange, navSections]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -130,196 +119,271 @@ export function PatientChart({
     if (!el || !container) return;
     manualScrollUntil.current = Date.now() + 700;
     setActiveSection(id);
-    const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
+    const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 16;
     container.scrollTo({ top, behavior: "smooth" });
   }, []);
 
+  // One-shot service focus. Runs only when focusToken changes to a new value,
+  // so it does not retrigger on unrelated re-renders. Scrolls to the requested
+  // section and applies a transient highlight. Retries briefly because the
+  // target section may still be hydrating (per-section skeletons).
+  useEffect(() => {
+    if (focusToken == null || focusToken === 0) return;
+    if (consumedFocusToken.current === focusToken) return;
+    if (!focusSection) return;
+
+    let attempts = 0;
+    let raf = 0;
+    const tryFocus = () => {
+      const el = document.getElementById(`section-${focusSection}`);
+      if (el) {
+        consumedFocusToken.current = focusToken;
+        scrollToSection(focusSection);
+        setHighlightedSection(focusSection);
+        if (highlightTimer.current) clearTimeout(highlightTimer.current);
+        highlightTimer.current = setTimeout(() => setHighlightedSection(null), 2200);
+        return;
+      }
+      if (attempts++ < 40) {
+        raf = window.setTimeout(tryFocus, 100); // up to ~4s while sections hydrate
+      }
+    };
+    tryFocus();
+
+    return () => {
+      if (raf) clearTimeout(raf);
+    };
+  }, [focusToken, focusSection, scrollToSection]);
+
+  useEffect(() => () => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+  }, []);
+
   const phoneHref = d.phoneNumber ? `tel:${d.phoneNumber.replace(/[^\d+]/g, "")}` : null;
-  const csTone = chart.caseStatus.tone ?? "slate";
-  const cdTone = COOLDOWN_STATE_TONES[chart.cooldown.state ?? "clear"];
 
   return (
-    <div className="flex flex-col h-full" data-testid="patient-chart">
-      {/* ── Sticky patient header ── */}
-      <header className="border-b border-slate-200/80 dark:border-border/60 bg-white/85 dark:bg-card/80 backdrop-blur px-4 py-2.5 shrink-0" data-testid="chart-header">
-        <div className="flex items-center gap-2.5">
+    <div className="flex flex-col h-full" data-testid="patient-chart" style={{ background: "#F3F6FA" }}>
+      {/* ═══════════════════════════════════════════════════════════════════
+          PATIENT HEADER — sticky, ~88px, gradient background
+          ═══════════════════════════════════════════════════════════════════ */}
+      <header
+        className="sticky top-0 z-20 shrink-0 border-b"
+        style={{ background: "linear-gradient(90deg, #FFFFFF 0%, #F5F8FF 55%, #EEF4FF 100%)", borderColor: "#E2E8F0", padding: "12px 18px" }}
+        data-testid="chart-header"
+      >
+        <div className="flex items-center gap-4">
           {onBack && (
-            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 lg:hidden" onClick={onBack} data-testid="button-chart-back">
+            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 lg:hidden" onClick={onBack}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
           )}
-          <div className="w-9 h-9 rounded-full bg-plexus-navy-800 text-white dark:bg-plexus-blue-500/30 dark:text-plexus-blue-200 flex items-center justify-center text-xs font-semibold shrink-0">
-            {initials(d.name || "?")}
+          {/* Silhouette avatar */}
+          <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: "#E8EEF7" }}>
+            <UserIcon className="w-6 h-6" style={{ color: "#5D6B82" }} />
           </div>
+          {/* Identity */}
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <h1 className="text-base font-bold leading-tight truncate" data-testid="text-chart-name">{d.name || "Unknown patient"}</h1>
-              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${TONE_PILL[csTone]}`} data-testid="badge-case-status">
-                {chart.caseStatus.label}
-              </span>
-              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${TONE_PILL[cdTone]}`} data-testid="badge-header-cooldown">
-                <Clock className="w-3 h-3" />{chart.cooldown.stateLabel}
-              </span>
-            </div>
-            <div className="mt-0.5 text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2.5 gap-y-0" data-testid="text-chart-demographics">
+            <h1 className="text-2xl font-bold leading-tight" style={{ color: "#0F172A" }} data-testid="text-chart-name">
+              {d.name || "Unknown patient"}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-2 text-xs mt-0.5" style={{ color: "#667085" }}>
+              <span>{chart.plexusId || "PLX-—"}</span>
+              <span>·</span>
               <span>{d.mrn ? `MRN ${d.mrn}` : "MRN —"}</span>
-              <span>{d.dob ? `DOB ${d.dob}` : "DOB —"}</span>
-              <span>{[d.age ? `${d.age}yo` : null, d.gender].filter(Boolean).join(" · ") || "Age/Gender —"}</span>
-              <span className="flex items-center gap-1"><Building2 className="w-3 h-3" />{d.clinic || "—"}</span>
-              <span className="flex items-center gap-1" data-testid="text-chart-provider"><Stethoscope className="w-3 h-3" />{d.provider || "Provider —"}</span>
-              <span className="flex items-center gap-1"><ShieldCheck className="w-3 h-3" />{chart.insurance.primary || "Insurance —"}</span>
-              {d.phoneNumber && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{d.phoneNumber}</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 text-xs mt-0.5" style={{ color: "#667085" }}>
+              <span>{d.dob ? `DOB ${d.dob}` : "DOB —"}{d.age ? ` (${d.age})` : ""}</span>
+              <span>{d.gender || "—"}</span>
+              <span className="flex items-center gap-0.5"><Building2 className="w-3 h-3" />{d.clinic || "—"}</span>
+              <span className="flex items-center gap-0.5"><Stethoscope className="w-3 h-3" />{d.provider || "—"}</span>
+              <span className="flex items-center gap-0.5"><ShieldCheck className="w-3 h-3" />{chart.insurance.primary || "—"}</span>
+              {d.phoneNumber && <span className="flex items-center gap-0.5"><Phone className="w-3 h-3" />{d.phoneNumber}</span>}
             </div>
           </div>
-          <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+          {/* Actions */}
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
             {phoneHref ? (
-              <a href={phoneHref} data-testid="button-chart-call"><Button size="sm" variant="outline" className="h-7 gap-1.5"><Phone className="w-3.5 h-3.5" />Call</Button></a>
+              <a href={phoneHref}><Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg"><Phone className="w-3.5 h-3.5" />Call</Button></a>
             ) : (
-              <Button size="sm" variant="outline" className="h-7 gap-1.5" disabled data-testid="button-chart-call"><Phone className="w-3.5 h-3.5" />Call</Button>
+              <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" disabled><Phone className="w-3.5 h-3.5" />Call</Button>
             )}
             {onSchedule ? (
-              <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={onSchedule} data-testid="button-chart-schedule"><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button>
+              <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" onClick={onSchedule}><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button>
             ) : (
-              <Link href="/appointments" data-testid="button-chart-schedule"><Button size="sm" variant="outline" className="h-7 gap-1.5"><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button></Link>
+              <Link href="/appointments"><Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg"><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button></Link>
             )}
-            <Link href="/plexus-iq" data-testid="button-chart-plexus"><Button size="sm" className="h-7 gap-1.5"><Sparkles className="w-3.5 h-3.5" />Plexus IQ</Button></Link>
+            {d.email ? (
+              <a href={`mailto:${d.email}`}><Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" data-testid="button-message"><MessageSquare className="w-3.5 h-3.5" />Message</Button></a>
+            ) : (
+              <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" disabled title="No email on file"><MessageSquare className="w-3.5 h-3.5" />Message</Button>
+            )}
           </div>
         </div>
       </header>
 
-      <div className="flex flex-1 min-h-0">
-        {/* ── Left-rail section nav ── */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          MAIN: CHART NAV + SCROLLABLE CONTENT
+          ═══════════════════════════════════════════════════════════════════ */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* ─── Chart Navigation (220px, collapsible) ─── */}
+        {navCollapsed ? (
+          <div
+            className="hidden lg:flex flex-col items-center shrink-0 pt-3"
+            style={{ width: "40px", background: "#F7F9FC", borderRight: "1px solid #E2E8F0" }}
+            data-testid="chart-section-nav-collapsed"
+          >
+            <button
+              onClick={() => setNavCollapsed(false)}
+              title="Expand navigation"
+              className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-slate-200/60"
+              data-testid="button-nav-expand"
+            >
+              <ChevronRight className="w-4 h-4" style={{ color: "#667085" }} />
+            </button>
+          </div>
+        ) : (
         <nav
-          className={`hidden xl:flex flex-col shrink-0 border-r border-slate-200/70 dark:border-border/50 overflow-y-auto py-3 px-2 bg-plexus-navy-950/[0.03] dark:bg-plexus-navy-950/40 transition-[width] duration-200 ${navCollapsed ? "w-14 items-center" : "w-56"}`}
+          className="hidden lg:flex flex-col shrink-0 overflow-y-auto"
+          style={{ width: "220px", background: "#F7F9FC", borderRight: "1px solid #E2E8F0", padding: "14px 10px" }}
           data-testid="chart-section-nav"
         >
-          <button
-            onClick={toggleNav}
-            className="flex items-center justify-center h-8 w-8 mb-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-plexus-navy-800/10 dark:hover:bg-white/5 transition-colors self-end"
-            title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-            aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-            data-testid="button-toggle-nav"
-          >
-            {navCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-          </button>
-          {navSections.map((s) => {
-            const active = activeSection === s.id;
-            return (
-              <button
-                key={s.id}
-                onClick={() => scrollToSection(s.id)}
-                title={navCollapsed ? s.label : undefined}
-                className={`flex items-center gap-2.5 rounded-lg text-left text-[13px] transition-colors ${navCollapsed ? "justify-center w-10 h-10 px-0 py-0" : "px-3 py-2"} ${active ? "bg-plexus-navy-800/[0.10] dark:bg-plexus-blue-500/20 text-plexus-navy-800 dark:text-plexus-blue-300 font-semibold" : "text-slate-600 dark:text-slate-300 hover:bg-plexus-navy-800/[0.06] dark:hover:bg-white/5"}`}
-                data-testid={`nav-section-${s.id}`}
-              >
-                <span className={active ? "text-plexus-blue-600 dark:text-plexus-blue-300" : "text-slate-400"}>{s.icon}</span>
-                {!navCollapsed && <span className="truncate">{s.label}</span>}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* ── Scrollable section content ── */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto" data-testid="chart-scroll">
-          {/* Mobile/tablet horizontal section nav */}
-          <div className="xl:hidden sticky top-0 z-10 bg-finance-bg/95 backdrop-blur border-b border-slate-200/70 dark:border-border/50 px-3 py-2 overflow-x-auto">
-            <div className="flex items-center gap-1.5 w-max">
-              {navSections.map((s) => {
-                const active = activeSection === s.id;
-                return (
+          <div className="flex items-center justify-between px-2.5 mb-2">
+            <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#98A2B3" }}>Chart</span>
+            <button
+              onClick={() => setNavCollapsed(true)}
+              title="Collapse navigation"
+              className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-slate-200/60"
+              data-testid="button-nav-collapse"
+            >
+              <ChevronLeft className="w-4 h-4" style={{ color: "#667085" }} />
+            </button>
+          </div>
+          {(() => {
+            let lastGroup = "";
+            return navSections.map((s) => {
+              const active = activeSection === s.id;
+              const group = (s as any).group ?? "";
+              const showHeader = group && group !== lastGroup;
+              lastGroup = group;
+              return (
+                <div key={s.id}>
+                  {showHeader && (
+                    <div className="mt-3 mb-1 px-2.5" style={{ fontSize: "10px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#98A2B3" }}>
+                      {GROUP_LABELS[group] ?? group}
+                    </div>
+                  )}
                   <button
-                    key={s.id}
                     onClick={() => scrollToSection(s.id)}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors ${active ? "bg-plexus-navy-800 text-white" : "bg-slate-100 dark:bg-muted text-slate-600 dark:text-slate-300"}`}
-                    data-testid={`nav-pill-${s.id}`}
+                    className="flex items-center gap-2 w-full text-left transition-colors"
+                    style={{
+                      height: "34px",
+                      padding: "0 10px",
+                      borderRadius: "7px",
+                      fontSize: "13px",
+                      fontWeight: active ? 600 : 500,
+                      color: active ? "#263B63" : "#667085",
+                      background: active ? "#E8EEF8" : "transparent",
+                      borderLeft: active ? "2px solid #3169E8" : "2px solid transparent",
+                    }}
+                    data-testid={`nav-section-${s.id}`}
                   >
-                    {s.label}
+                    <span style={{ color: active ? "#3169E8" : "#98A2B3" }}>{s.icon}</span>
+                    <span className="truncate">{s.label}</span>
                   </button>
-                );
-              })}
+                </div>
+              );
+            });
+          })()}
+        </nav>
+        )}
+
+        {/* ─── Scrollable Content ─── */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto" data-testid="chart-scroll">
+          {/* Mobile pill nav */}
+          <div className="lg:hidden sticky top-0 z-10 border-b px-3 py-2 overflow-x-auto" style={{ background: "#F3F6FA", borderColor: "#E2E8F0" }}>
+            <div className="flex items-center gap-1.5 w-max">
+              {navSections.slice(0, 10).map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => scrollToSection(s.id)}
+                  className="px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap"
+                  style={{
+                    background: activeSection === s.id ? "#0F172A" : "#E2E8F0",
+                    color: activeSection === s.id ? "#FFFFFF" : "#667085",
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className={`mx-auto px-4 sm:px-6 py-5 space-y-5 transition-[max-width] duration-200 ${navCollapsed ? "max-w-6xl" : "max-w-4xl"}`}>
-            {CHART_SECTIONS.map((s) => {
-              const access = getSectionAccess(s.id);
-              if (access === "hidden") {
-                // Only materialize an "access denied" anchor when the user
-                // deep-links directly to a hidden section — otherwise omit it.
-                return deepLinkId === s.id
-                  ? <AccessDeniedSection key={s.id} id={s.id} title={s.label} icon={s.icon} />
-                  : null;
-              }
-              if (loadingSections?.has(s.id)) {
-                return <SectionSkeleton key={s.id} id={s.id} title={s.label} icon={s.icon} />;
-              }
-              if (access === "summary") {
+          {/* Continuous sections */}
+          <EcwSyncContext.Provider value={chart.ecwSynced ?? false}>
+           <EpisodeDocsProvider
+             screeningId={chart.patientScreeningId ?? null}
+             enabled={getSectionAccess("documents") === "full"}
+           >
+            <div className="px-5 py-4 max-w-5xl" style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+              {CHART_SECTIONS.map((s) => {
+                const access = getSectionAccess(s.id);
+                if (access === "hidden") return null;
+                if (loadingSections?.has(s.id)) {
+                  return <SectionSkeleton key={s.id} id={s.id} title={s.label} icon={s.icon} />;
+                }
+                if (access === "summary") {
+                  return (
+                    <SectionSummaryCard
+                      key={s.id}
+                      id={s.id}
+                      title={s.label}
+                      icon={s.icon}
+                      summary={sectionSummaryLine(chart, s.id)}
+                    />
+                  );
+                }
+                const Comp = s.Component;
+                const focused = highlightedSection === s.id;
                 return (
-                  <SectionSummaryCard
+                  <div
                     key={s.id}
-                    id={s.id}
-                    title={s.label}
-                    icon={s.icon}
-                    summary={sectionSummaryLine(chart, s.id)}
-                  />
+                    className={focused ? "rounded-2xl ring-2 ring-[#3169E8] ring-offset-2 transition-shadow duration-500" : "transition-shadow duration-500"}
+                    data-focused={focused ? "true" : undefined}
+                  >
+                    <Comp chart={chart} />
+                  </div>
                 );
-              }
-              const Comp = s.Component;
-              return <Comp key={s.id} chart={chart} />;
-            })}
-            <div className="h-32" aria-hidden />
-          </div>
+              })}
+              <div className="h-32" aria-hidden />
+            </div>
+           </EpisodeDocsProvider>
+          </EcwSyncContext.Provider>
         </div>
       </div>
     </div>
   );
 }
 
-// Instant chart frame painted while the patient's summary (profile) query is
-// still in flight. Shows the seeded name from the call-list/roster context so
-// the chart never blanks to a full-page spinner.
+// ─── Skeleton (shown while profile loads) ─────────────────────────────────
 export function PatientChartSkeleton({ seedName, onBack }: { seedName?: string | null; onBack?: () => void }) {
   return (
-    <div className="flex flex-col h-full" data-testid="patient-chart-skeleton">
-      <header className="border-b border-slate-200/80 dark:border-border/60 bg-white/85 dark:bg-card/80 backdrop-blur px-5 py-4 shrink-0" data-testid="chart-header-skeleton">
-        <div className="flex items-start gap-3">
+    <div className="flex flex-col h-full" style={{ background: "#F3F6FA" }}>
+      <header className="border-b px-5 py-3 shrink-0" style={{ background: "#FFFFFF", borderColor: "#E2E8F0" }}>
+        <div className="flex items-center gap-4">
           {onBack && (
-            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 lg:hidden" onClick={onBack} data-testid="button-chart-back">
+            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 lg:hidden" onClick={onBack}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
           )}
-          <div className="w-12 h-12 rounded-full bg-plexus-navy-800 text-white dark:bg-plexus-blue-500/30 dark:text-plexus-blue-200 flex items-center justify-center text-sm font-semibold shrink-0">
-            {initials(seedName || "?")}
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-bold leading-tight truncate" data-testid="text-chart-name">
-              {seedName || "Loading patient…"}
-            </h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2 animate-pulse">
-              <div className="h-3 w-24 rounded bg-slate-200/80 dark:bg-muted" />
-              <div className="h-3 w-20 rounded bg-slate-200/70 dark:bg-muted/80" />
-              <div className="h-3 w-28 rounded bg-slate-200/60 dark:bg-muted/70" />
-            </div>
+          <div className="w-11 h-11 rounded-full animate-pulse" style={{ background: "#E8EEF7" }} />
+          <div className="space-y-2 flex-1">
+            <div className="h-5 w-40 rounded animate-pulse" style={{ background: "#E2E8F0" }} />
+            <div className="h-3 w-64 rounded animate-pulse" style={{ background: "#EDF1F5" }} />
           </div>
         </div>
       </header>
-
-      <div className="flex flex-1 min-h-0">
-        <nav className="hidden xl:flex flex-col w-56 shrink-0 border-r border-slate-200/70 dark:border-border/50 overflow-y-auto py-3 px-2 bg-plexus-navy-950/[0.03] dark:bg-plexus-navy-950/40">
-          {CHART_SECTIONS.map((s) => (
-            <div key={s.id} className="flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-500 dark:text-slate-400">
-              <span className="text-slate-400">{s.icon}</span>
-              <span className="truncate">{s.label}</span>
-            </div>
-          ))}
-        </nav>
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 space-y-5">
-            {CHART_SECTIONS.slice(0, 6).map((s) => (
-              <SectionSkeleton key={s.id} id={s.id} title={s.label} icon={s.icon} />
-            ))}
-          </div>
-        </div>
+      <div className="flex-1 flex items-center justify-center text-sm" style={{ color: "#98A2B3" }}>
+        {seedName ? `Loading ${seedName}...` : "Loading patient..."}
       </div>
     </div>
   );

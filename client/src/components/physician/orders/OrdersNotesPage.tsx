@@ -19,6 +19,8 @@ import {
   type EncounterNote, type Order, type NoteStatus, type LinkedDocument, type AuditEvent,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+import { isClinicianPortalCanonicalDataEnabled } from "@/lib/clinicianPortalCanonicalFlag";
+import { CanonicalOrdersNotesPage } from "../canonical/CanonicalOrdersNotesPage";
 
 type NoteOverlay = { status: NoteStatus; version: number; soap: EncounterNote["soap"] | null };
 type PersistedAudit = { id: string; recordId: string; type: string; actor: string; timestamp: string };
@@ -34,7 +36,54 @@ const NOTE_TONE: Record<NoteStatus, "amber" | "gray" | "green"> = {
 const TABS = ["All", "Needs Signature", "Draft", "Pending Order Review", "Completed Study", "Signed"] as const;
 type Tab = typeof TABS[number];
 
+// Banner shown when the physician arrived via an EHR chart "Review & Sign"
+// deep link. Confirms the EXACT patient-chart note that routed them here so the
+// landing is note-specific, never a generic Orders & Notes dump.
+function SignFocusBanner() {
+  const { signFocus, clearSignFocus } = usePortal();
+  if (!signFocus || (signFocus.noteId == null && !signFocus.serviceType)) return null;
+  const noteLabel = signFocus.noteType === "post_procedure_note" ? "Procedure Note"
+    : signFocus.noteType === "order_note" ? "Order Note" : "Note";
+  const detail = [signFocus.serviceType, noteLabel].filter(Boolean).join(" · ");
+  return (
+    <div
+      className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3"
+      data-testid="sign-focus-banner"
+    >
+      <div className="flex items-start gap-2.5">
+        <PenLine className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+        <div className="text-sm">
+          <div className="font-semibold text-amber-900">Review &amp; Sign requested from the patient chart</div>
+          <div className="text-amber-800">
+            {detail}{signFocus.noteId != null ? ` · Note #${signFocus.noteId}` : ""}. Locate it in the signature worklist below to review and sign.
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={clearSignFocus}
+        className="text-xs font-medium text-amber-700 hover:underline"
+        data-testid="sign-focus-dismiss"
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
 export function OrdersNotesPage() {
+  // Phase 2H — flag ON replaces the entire mock-backed body with canonical
+  // document rows (no mock orders/notes; no second signing workflow). Flag OFF
+  // renders the exact pre-Phase-2H legacy body below (real endpoints unchanged).
+  return (
+    <>
+      <SignFocusBanner />
+      {isClinicianPortalCanonicalDataEnabled() ? <CanonicalOrdersNotesPage /> : <LegacyOrdersNotesPage />}
+    </>
+  );
+}
+
+function LegacyOrdersNotesPage() {
   const { incrementSignedToday } = usePortal();
   const { toast } = useToast();
   const { data, isLoading } = usePortalData();

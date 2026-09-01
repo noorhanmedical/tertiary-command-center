@@ -1,14 +1,18 @@
 // Floating Mac/iMessage-style Messages window for the Team Portal (Task #740).
 //
-// FRONTEND MOCK ONLY. Floats over the Playground (no dimming backdrop — the
-// workspace stays visible behind it). Left sidebar = conversation list, right
+// PRESENTATION component. Backed by REAL messaging data since Phase 1: the
+// Team Portal shell feeds it conversations from useTeamMessages (canonical
+// /api/messaging/*), and onSend posts to the real backend. (The original
+// mockPortalMessages local state was replaced; this is not a mock.) Floats over
+// the Playground (no dimming backdrop — the workspace stays visible behind it).
+// Left sidebar = conversation list, right
 // = the active thread with a header (name + type + patient/facility chip),
 // bubbles (outgoing purple/white, incoming light-gray), and an input bar with
-// a plus + send. Team threads label the sender above each incoming bubble;
+// a send control. Team threads label the sender above each incoming bubble;
 // patient threads surface a context chip in the header.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare, Users, Smartphone, Plus, Send, X, Search } from "lucide-react";
+import { MessageSquare, Users, Smartphone, Send, X, Search } from "lucide-react";
 import {
   type Conversation,
   type ConversationType,
@@ -29,6 +33,7 @@ export function PortalMessagesWindow({
   onSelectConversation,
   onSend,
   onClose,
+  sendPending = false,
 }: {
   open: boolean;
   conversations: Conversation[];
@@ -36,6 +41,9 @@ export function PortalMessagesWindow({
   onSelectConversation: (id: string) => void;
   onSend: (id: string, body: string) => void;
   onClose: () => void;
+  /** True while a send is in flight — disables the send affordance so a fast
+   *  double-click can't fire a duplicate message (§13 acceptance). */
+  sendPending?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
@@ -61,7 +69,9 @@ export function PortalMessagesWindow({
   if (!open) return null;
 
   const submit = () => {
-    if (!active || !draft.trim()) return;
+    // §13 — ignore submits while a send is in flight so a fast double-click
+    // (or Enter-mash) cannot POST the same message twice.
+    if (!active || !draft.trim() || sendPending) return;
     onSend(active.id, draft.trim());
     setDraft("");
   };
@@ -75,12 +85,8 @@ export function PortalMessagesWindow({
         {/* Sidebar */}
         <div className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-50">
           <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2.5">
-            <div className="flex gap-1.5">
-              <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-              <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
-              <span className="h-3 w-3 rounded-full bg-[#28c840]" />
-            </div>
-            <span className="ml-1 text-xs font-semibold text-slate-700">Messages</span>
+            <MessageSquare className="h-4 w-4 text-purple-600" />
+            <span className="text-xs font-semibold text-slate-700">Messages</span>
           </div>
           <div className="p-2">
             <div className="relative">
@@ -223,15 +229,6 @@ export function PortalMessagesWindow({
           {/* Input bar */}
           <div className="border-t border-slate-200 bg-white p-2.5">
             <div className="flex items-end gap-2">
-              <button
-                type="button"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50"
-                data-testid="messages-window-plus"
-                title="Add attachment"
-                disabled={!active}
-              >
-                <Plus className="h-4 w-4" />
-              </button>
               <textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -250,7 +247,7 @@ export function PortalMessagesWindow({
               <button
                 type="button"
                 onClick={submit}
-                disabled={!active || !draft.trim()}
+                disabled={!active || !draft.trim() || sendPending}
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-600 text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
                 data-testid="messages-window-send"
               >

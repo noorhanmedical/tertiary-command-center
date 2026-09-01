@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { and, asc, desc, eq, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import {
   plexusProjects,
   plexusTasks,
@@ -19,6 +19,15 @@ import {
   type InsertPlexusTaskEvent,
 } from "@shared/schema/plexus";
 
+export type ManagerTaskFilters = {
+  status?: string;
+  assignedToUserId?: string;
+  facilityId?: string;
+  priorityLevel?: string;
+  /** When true, only tasks past their dueDate and not terminal. */
+  overdueOnly?: boolean;
+};
+
 export interface IPlexusRepository {
   // Projects
   createProject(record: InsertPlexusProject): Promise<PlexusProject>;
@@ -33,12 +42,18 @@ export interface IPlexusRepository {
   getTask(id: number): Promise<PlexusTask | undefined>;
   listTasksByProject(projectId: number): Promise<PlexusTask[]>;
   listTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  listOpenTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  releaseTeamTasksForUser(userId: string): Promise<PlexusTask[]>;
   listTasksByCreator(userId: string): Promise<PlexusTask[]>;
   listTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   listTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
+  listTasksForManager(filters?: ManagerTaskFilters, limit?: number): Promise<PlexusTask[]>;
+  listTeamPoolTasks(teamIds: number[], includeClaimed?: boolean): Promise<PlexusTask[]>;
   listUrgentTasks(): Promise<PlexusTask[]>;
   listOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
+  claimTeamTask(id: number, teamId: number, userId: string): Promise<PlexusTask | undefined>;
+  transitionTaskStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
   deleteTask(id: number): Promise<void>;
 
   // Collaborators
@@ -137,9 +152,81 @@ export class DbPlexusRepository implements IPlexusRepository {
       .orderBy(desc(plexusTasks.createdAt));
   }
 
+  /** Phase 6C — NON-terminal (open/in_progress) tasks currently assigned to a
+   *  user. Used by deactivation recovery to surface/release their live work. */
+  async listOpenTasksByAssignee(userId: string): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(and(
+        eq(plexusTasks.assignedToUserId, userId),
+        ne(plexusTasks.status, "closed"),
+        ne(plexusTasks.status, "done"),
+      ))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  /** Phase 6C — release a deactivated user's open TEAM tasks back to their team
+   *  pool (clear assignee, keep assignedTeamId). Only tasks that HAVE an
+   *  assignedTeamId are returned to the pool; personal (team-less) tasks are
+   *  left assigned but surfaced to managers by the caller. Atomic single UPDATE
+   *  guarded so it can't touch terminal rows. Returns the released rows. */
+  async releaseTeamTasksForUser(userId: string): Promise<PlexusTask[]> {
+    return db.update(plexusTasks)
+      .set({ assignedToUserId: null, updatedAt: new Date() })
+      .where(and(
+        eq(plexusTasks.assignedToUserId, userId),
+        sql`${plexusTasks.assignedTeamId} IS NOT NULL`,
+        ne(plexusTasks.status, "closed"),
+        ne(plexusTasks.status, "done"),
+      ))
+      .returning();
+  }
+
+  async listTasksForManager(filters: ManagerTaskFilters = {}, limit = 200): Promise<PlexusTask[]> {
+    const safeLimit = Math.min(Math.max(1, limit), 500);
+    const conds = [];
+    if (filters.status) conds.push(eq(plexusTasks.status, filters.status));
+    if (filters.assignedToUserId) conds.push(eq(plexusTasks.assignedToUserId, filters.assignedToUserId));
+    if (filters.facilityId) conds.push(eq(plexusTasks.facilityId, filters.facilityId));
+    if (filters.priorityLevel) conds.push(eq(plexusTasks.priorityLevel, filters.priorityLevel));
+    if (filters.overdueOnly) {
+      // Phase 6B — CANONICAL time-aware overdue: prefer the dueAt timestamp
+      // (compared against the DB clock, tz-correct). Fall back to the legacy
+      // dueDate TEXT (end-of-day string compare) only for rows that predate
+      // the dueAt backfill / were created without one.
+      const today = new Date().toISOString().slice(0, 10);
+      conds.push(sql`(
+        (${plexusTasks.dueAt} IS NOT NULL AND ${plexusTasks.dueAt} < now())
+        OR (${plexusTasks.dueAt} IS NULL AND ${plexusTasks.dueDate} IS NOT NULL AND ${plexusTasks.dueDate} < ${today})
+      )`);
+      conds.push(ne(plexusTasks.status, "done"));
+      conds.push(ne(plexusTasks.status, "closed"));
+    }
+    const query = db.select().from(plexusTasks).$dynamic();
+    const rows = conds.length > 0
+      ? await query.where(and(...conds)).orderBy(desc(plexusTasks.createdAt)).limit(safeLimit)
+      : await query.orderBy(desc(plexusTasks.createdAt)).limit(safeLimit);
+    return rows;
+  }
+
   async listTasksByCreator(userId: string): Promise<PlexusTask[]> {
     return db.select().from(plexusTasks)
       .where(eq(plexusTasks.createdByUserId, userId))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  /** Team work pool: tasks assigned to any of `teamIds`. By default only
+   *  UNCLAIMED (assignedToUserId IS NULL) non-terminal tasks — the pool an
+   *  authorized member can claim. Pass includeClaimed to also see claimed ones. */
+  async listTeamPoolTasks(teamIds: number[], includeClaimed = false): Promise<PlexusTask[]> {
+    if (teamIds.length === 0) return [];
+    const conds = [
+      inArray(plexusTasks.assignedTeamId, teamIds),
+      ne(plexusTasks.status, "done"),
+      ne(plexusTasks.status, "closed"),
+    ];
+    if (!includeClaimed) conds.push(isNull(plexusTasks.assignedToUserId));
+    return db.select().from(plexusTasks)
+      .where(and(...conds))
       .orderBy(desc(plexusTasks.createdAt));
   }
 
@@ -180,6 +267,10 @@ export class DbPlexusRepository implements IPlexusRepository {
   }
 
   async listOverdueTasksForUser(userId: string): Promise<PlexusTask[]> {
+    // Phase 6B — returns tasks due up to and including TODAY (the route splits
+    // strictly-overdue vs due-today). Prefer the canonical dueAt timestamp
+    // (due at/before end of today), falling back to legacy dueDate text for
+    // rows without a dueAt.
     const today = new Date().toISOString().slice(0, 10);
     return db.select().from(plexusTasks)
       .where(and(
@@ -189,16 +280,59 @@ export class DbPlexusRepository implements IPlexusRepository {
         ),
         ne(plexusTasks.status, "closed"),
         ne(plexusTasks.status, "done"),
-        sql`${plexusTasks.dueDate} IS NOT NULL`,
-        lte(plexusTasks.dueDate, today),
+        sql`(
+          (${plexusTasks.dueAt} IS NOT NULL AND ${plexusTasks.dueAt} <= (date_trunc('day', now()) + interval '1 day' - interval '1 millisecond'))
+          OR (${plexusTasks.dueAt} IS NULL AND ${plexusTasks.dueDate} IS NOT NULL AND ${plexusTasks.dueDate} <= ${today})
+        )`,
       ))
-      .orderBy(asc(plexusTasks.dueDate));
+      .orderBy(asc(sql`COALESCE(${plexusTasks.dueAt}::text, ${plexusTasks.dueDate})`));
   }
 
   async updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined> {
     const [result] = await db.update(plexusTasks)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(plexusTasks.id, id))
+      .returning();
+    return result;
+  }
+
+  /** Atomically transition a task's status only when it is still in the
+   *  expected `fromStatus` (Phase 6B, req 19). The `status = fromStatus` guard
+   *  is part of the UPDATE's WHERE so two concurrent status changes are
+   *  serialized: exactly one observes the expected prior status and wins
+   *  (returns the row), the other gets `undefined` (→ 409, status moved). The
+   *  winning transition's completion provenance (completedAt/By) is set/cleared
+   *  atomically in the same statement, plus any extra coherent fields. */
+  async transitionTaskStatus(
+    id: number,
+    fromStatus: string,
+    toStatus: string,
+    extra: Partial<InsertPlexusTask> = {},
+  ): Promise<PlexusTask | undefined> {
+    const [result] = await db.update(plexusTasks)
+      .set({ ...extra, status: toStatus, updatedAt: new Date() })
+      .where(and(
+        eq(plexusTasks.id, id),
+        eq(plexusTasks.status, fromStatus),
+      ))
+      .returning();
+    return result;
+  }
+
+  /** Atomically claim an UNCLAIMED team task for a user (Phase 6B, req 18).
+   *  The `assigned_to_user_id IS NULL` guard is part of the UPDATE's WHERE, so
+   *  two concurrent claims are serialized by the row write — exactly one wins
+   *  (returns the row) and the loser gets `undefined` (→ 409 already claimed).
+   *  Also requires the task still belong to `teamId` so a task that changed
+   *  teams between read and write is not silently claimed. */
+  async claimTeamTask(id: number, teamId: number, userId: string): Promise<PlexusTask | undefined> {
+    const [result] = await db.update(plexusTasks)
+      .set({ assignedToUserId: userId, updatedAt: new Date() })
+      .where(and(
+        eq(plexusTasks.id, id),
+        eq(plexusTasks.assignedTeamId, teamId),
+        isNull(plexusTasks.assignedToUserId),
+      ))
       .returning();
     return result;
   }

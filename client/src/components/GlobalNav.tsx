@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   CalendarDays,
   Home as HomeIcon,
-  Phone,
   FileText,
   CreditCard,
   Receipt,
@@ -38,21 +37,19 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/mission-control",  label: "Mission Control",  Icon: Radar,        roles: ["admin"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
   { href: "/imaging-central",  label: "Imaging Central",  Icon: ScanLine,     roles: ["admin", "clinician", "technician", "liaison"] },
-  // Phase-1 team-portal correction: there is no standalone Scheduler
-  // Portal product. The legacy /scheduler-portal route mounts the
-  // OutreachPage (marketing / scheduler-coverage metrics) and is
-  // relabeled here as "Outreach Center" so users find the correct
-  // surface. Patient call execution lives in PCS Workspace; ancillary
-  // execution lives in ACS Workspace. The route path stays
-  // /scheduler-portal for back-compat with deep links.
-  { href: "/scheduler-portal",         label: "Outreach Center",   Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
+  // The legacy "Outreach Center" nav item (→ /scheduler-portal → OutreachPage,
+  // a mostly-placeholder dashboard) has been removed. The active canonical
+  // outreach surface is the Engagement Center, reached from the Home
+  // "Outreach / Engagement Center" tile and the tool dock. The /scheduler-portal
+  // route now redirects to /engagement-center (see App.tsx). OutreachPage and
+  // the per-scheduler call console remain on disk pending a dead-code audit.
   { href: "/ancillary-documents",        label: "Ancillary Documents",   Icon: FileText,     roles: ["admin", "clinician"] },
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
   { href: "/clinic-analytics", label: "Clinic Analytics", Icon: BarChart3,      roles: ["admin"] },
   { href: "/clinic-onboarding", label: "Clinic Onboarding", Icon: ClipboardCheck, roles: ["admin"] },
-  { href: "/patient-directory", label: "Patient EHR", Icon: Database,     roles: ["admin", "clinician", "biller"] },
+  { href: "/patient-directory", label: "Plexus EHR", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   // Slice 1.5: legacy duplicate Patient-Directory-live nav item
   // removed. The /patient-directory/live URL still redirects to
   // /patient-directory for back-compat with existing bookmarks.
@@ -60,8 +57,12 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },
-  { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
-  { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  // Consolidated team-member entry point. Replaces the legacy standalone
+  // "Technician Portal" and "Liaison Technician Portal" nav items (which
+  // mounted the old PortalShell directly). This routes to the canonical
+  // Team Portals hub (/team-member-portals), from which users enter the
+  // PCS or ACS workspace per their role/capability.
+  { href: "/team-member-portals", label: "Team Portals", Icon: HeartHandshake, roles: ["admin", "clinician", "technician", "liaison"] },
   { href: "/admin/settings",   label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 
@@ -91,6 +92,8 @@ function UnreadBadge({ count, overdue }: { count: number; overdue: boolean }) {
 
 export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) {
   const [location] = useLocation();
+  // Winter shell is scoped to the staged Home redesign only (§9).
+  const winter = location === "/home-preview";
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
   const [manualOverride, setManualOverride] = useState(false);
   const userRole = user?.role ?? "clinician";
@@ -150,7 +153,10 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
 
   return (
     <nav
-      className={`flex flex-col h-full bg-finance-dark border-r border-finance-dark-3 transition-all duration-200 shrink-0 ${collapsed ? "w-14" : "w-52"}`}
+      className={`flex flex-col h-full border-r transition-all duration-200 shrink-0 ${
+        winter ? "border-white/10" : "bg-finance-dark border-finance-dark-3"
+      } ${collapsed ? "w-14" : winter ? "w-[244px]" : "w-52"}`}
+      style={winter ? { background: "#0b0f17" } : undefined}
       data-testid="global-nav"
       aria-label="Global navigation"
     >
@@ -181,13 +187,26 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
               <div
                 className={`relative flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
                   active
-                    ? "bg-white text-finance-text shadow-sm"
-                    : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
+                    ? winter
+                      ? "winter-nav-active shadow-sm"
+                      : "bg-white text-finance-text shadow-sm"
+                    : winter
+                      ? "text-slate-300 hover:bg-white/5 hover:text-white"
+                      : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid={`nav-item-${label.toLowerCase().replace(/\s+/g, "-")}`}
                 title={collapsed ? label : undefined}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-finance-text" : "text-slate-400 group-hover:text-white"}`} strokeWidth={1.75} />
+                <Icon
+                  className={`w-4 h-4 shrink-0 ${
+                    active
+                      ? winter
+                        ? "text-white"
+                        : "text-finance-text"
+                      : "text-slate-400 group-hover:text-white"
+                  }`}
+                  strokeWidth={1.75}
+                />
                 {!collapsed && (
                   <>
                     <span className="text-[14px] font-medium truncate flex-1">{label}</span>

@@ -56,6 +56,65 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
   const roleLabel = isAdmin ? "" : (ROLE_LABELS[role] ?? role);
   const [location] = useLocation();
   const onHome = location === "/home" || location === "/";
+  // Winter shell is scoped to the staged Home redesign only (§8).
+  const winter = location === "/home-preview";
+
+  if (winter) {
+    return (
+      <header
+        className="shrink-0 winter-topbar text-white border-b border-white/10 relative overflow-hidden"
+        data-testid="top-banner"
+      >
+        <div className="relative h-full px-7 flex items-center justify-between">
+          <div className="flex items-center">
+            <img
+              src="/plexus-logo.png"
+              alt="Plexus Clinical"
+              className="h-9 w-auto object-contain"
+              data-testid="img-banner-logo"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            {user && !onHome && (
+              <Link
+                href="/home"
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-white/15 border border-white/15 hover:border-white/25 px-3 py-1 text-[12px] font-medium text-white transition-colors"
+                data-testid="link-banner-home"
+                aria-label="Back to Home"
+                title="Back to Home"
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>Home</span>
+              </Link>
+            )}
+            {user && (
+              <>
+                <span
+                  className="hidden md:inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-slate-300"
+                  data-testid="badge-banner-user"
+                  title={`Signed in as ${user.username}${roleLabel ? ` (${roleLabel})` : ""}`}
+                >
+                  <span className="font-medium text-white">{user.username}</span>
+                  {roleLabel && <span className="text-slate-400">· {roleLabel}</span>}
+                </span>
+                {onLogout && (
+                  <button
+                    onClick={onLogout}
+                    className="p-1.5 rounded-full text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                    title="Sign out"
+                    aria-label="Sign out"
+                    data-testid="button-banner-logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </header>
+    );
+  }
 
   return (
     <header

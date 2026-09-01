@@ -20,6 +20,8 @@ export interface IOutreachRepository {
   // Calls
   createCall(record: InsertOutreachCall): Promise<OutreachCall>;
   createCallAtomic(record: InsertOutreachCall, desiredStatus: string): Promise<OutreachCall>;
+  /** Find an existing call by its idempotency key (external_call_id). */
+  findCallByExternalId(externalCallId: string): Promise<OutreachCall | undefined>;
   listCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
@@ -57,6 +59,15 @@ export class DbOutreachRepository implements IOutreachRepository {
       durationSeconds: record.durationSeconds ?? null,
     }).returning();
     return result;
+  }
+
+  async findCallByExternalId(externalCallId: string): Promise<OutreachCall | undefined> {
+    const [row] = await db
+      .select()
+      .from(outreachCalls)
+      .where(eq(outreachCalls.externalCallId, externalCallId))
+      .limit(1);
+    return row;
   }
 
   async createCallAtomic(record: InsertOutreachCall, desiredStatus: string): Promise<OutreachCall> {

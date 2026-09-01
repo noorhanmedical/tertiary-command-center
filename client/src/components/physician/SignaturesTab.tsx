@@ -16,7 +16,8 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { PenLine, Undo2, AlertTriangle, FileWarning, Loader2 } from "lucide-react";
+import { PenLine, Undo2, AlertTriangle, FileWarning, Loader2, Eye } from "lucide-react";
+import { CANONICAL_OVERVIEW_QUERY_KEY } from "./useCanonicalOverview";
 
 interface SignatureItem {
   id: number;
@@ -36,7 +37,20 @@ interface SignatureItem {
   signable: boolean;
   returnReason: string | null;
   flags: { missingReport: boolean; notSignable: boolean; billingBlocked: boolean };
+  // Slice B-minimal / C — Order Note lifecycle state + version tokens.
+  orderNotePortalState: string | null;
+  screeningComplete: boolean | null;
+  expectedEvidenceFingerprint: string | null;
+  expectedScreeningVersion: string | null;
 }
+
+const ORDER_NOTE_STATE_LABELS: Record<string, string> = {
+  awaiting_screening: "Awaiting Screening",
+  ready_for_review: "Ready for Review",
+  updated_review_required: "Updated — Review Required",
+  signed: "Signed",
+  pending: "Pending",
+};
 
 const SERVICE_TYPES = ["BrainWave", "VitalWave", "Ultrasound", "PGx"];
 const STATUS_LABELS: Record<string, string> = {
@@ -61,6 +75,11 @@ export function SignaturesTab() {
   const [returnTarget, setReturnTarget] = useState<SignatureItem | null>(null);
   const [returnReason, setReturnReason] = useState("");
   const [busy, setBusy] = useState(false);
+  // Read-only "View Order Note" — fetches the current note body so the clinician
+  // reviews the patient-specific note before signing. No signature state here.
+  const [viewTarget, setViewTarget] = useState<SignatureItem | null>(null);
+  const [viewBody, setViewBody] = useState<string | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
 
   const queryParams = new URLSearchParams();
   if (serviceFilter !== "all") queryParams.set("serviceType", serviceFilter);
@@ -87,21 +106,57 @@ export function SignaturesTab() {
     queryClient.invalidateQueries({ queryKey: ["/api/physician-portal/signature-items"] });
     queryClient.invalidateQueries({ queryKey: ["/api/physician-portal/summary"] });
     queryClient.invalidateQueries({ queryKey: ["/api/physician-portal/financial-health"] });
+    // Keep the read-only canonical Orders & Notes overview in sync so a signed
+    // note flips to Signed there too (server remains the source of truth).
+    queryClient.invalidateQueries({ queryKey: CANONICAL_OVERVIEW_QUERY_KEY });
+  }
+
+  async function openView(item: SignatureItem) {
+    setViewTarget(item);
+    setViewBody(null);
+    setViewLoading(true);
+    try {
+      const res = await fetch(`/api/procedure-notes/${item.id}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load note");
+      const note = await res.json();
+      setViewBody(note.generatedText ?? note.generated_text ?? "(no note body generated yet)");
+    } catch (e: any) {
+      setViewBody(null);
+      toast({ title: "Could not load note", description: e?.message ?? "", variant: "destructive" });
+    } finally {
+      setViewLoading(false);
+    }
   }
 
   async function signOne(item: SignatureItem) {
     setBusy(true);
     try {
-      const res = await apiRequest("POST", `/api/physician-portal/signature-items/${item.id}/sign`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to sign");
-      }
+      // Slice C — echo the current document/version tokens so a stale client
+      // copy is rejected server-side.
+      await apiRequest("POST", `/api/physician-portal/signature-items/${item.id}/sign`, {
+        expectedEvidenceFingerprint: item.expectedEvidenceFingerprint,
+        expectedScreeningVersion: item.expectedScreeningVersion,
+      });
       toast({ title: "Note signed", description: `${item.patientName ?? "Patient"} · ${item.serviceType}` });
       setSelected((s) => { const n = new Set(s); n.delete(item.id); return n; });
       invalidate();
     } catch (e: any) {
-      toast({ title: "Sign failed", description: e.message, variant: "destructive" });
+      let reason: string | undefined;
+      let msg: string = e?.message ?? "Failed to sign";
+      try {
+        const body = JSON.parse(e?.body ?? "{}");
+        reason = body?.reason;
+        if (body?.error) msg = body.error;
+      } catch { /* non-JSON error body */ }
+      if (reason === "ORDER_NOTE_STALE") {
+        toast({ title: "Order Note updated", description: "Clinical information has changed. Please review the current Order Note before signing.", variant: "destructive" });
+        invalidate();
+      } else if (reason === "REQUIRED_SCREENING_INCOMPLETE") {
+        toast({ title: "Screening incomplete", description: "Required screening must be completed before this Order Note can be signed.", variant: "destructive" });
+        invalidate();
+      } else {
+        toast({ title: "Sign failed", description: msg, variant: "destructive" });
+      }
     } finally {
       setBusy(false);
     }
@@ -257,6 +312,15 @@ export function SignaturesTab() {
                   <div className="flex justify-end gap-2">
                     <Button
                       size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => openView(item)}
+                      data-testid={`button-view-${item.id}`}
+                    >
+                      <Eye className="w-3.5 h-3.5 mr-1" />View
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="outline"
                       disabled={busy}
                       onClick={() => { setReturnTarget(item); setReturnReason(""); }}
@@ -300,6 +364,34 @@ export function SignaturesTab() {
             <Button onClick={submitReturn} disabled={busy || !returnReason.trim()} data-testid="button-confirm-return">
               Return note
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewTarget} onOpenChange={(o) => { if (!o) { setViewTarget(null); setViewBody(null); } }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Order Note — {viewTarget?.patientName ?? "Patient"} · {viewTarget?.serviceType}</DialogTitle>
+          </DialogHeader>
+          <div className="text-xs text-muted-foreground" data-testid="view-note-state">
+            Status: {ORDER_NOTE_STATE_LABELS[viewTarget?.orderNotePortalState ?? ""] ?? viewTarget?.orderNotePortalState ?? "—"}
+          </div>
+          {viewLoading ? (
+            <div className="py-8 text-center text-muted-foreground"><Loader2 className="w-4 h-4 mr-2 inline animate-spin" />Loading…</div>
+          ) : (
+            <pre data-testid="view-note-body" className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md border bg-slate-50 p-3 text-sm text-slate-800">{viewBody ?? "(no note body)"}</pre>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setViewTarget(null); setViewBody(null); }} data-testid="button-close-view">Close</Button>
+            {viewTarget?.signable && (
+              <Button
+                disabled={busy}
+                onClick={() => { const t = viewTarget; setViewTarget(null); setViewBody(null); if (t) void signOne(t); }}
+                data-testid="button-view-sign"
+              >
+                <PenLine className="w-3.5 h-3.5 mr-1" />Sign
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

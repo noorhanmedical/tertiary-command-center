@@ -40,8 +40,10 @@ requireText(shell, [
   "PortalDocumentLibraryTab",
   '<PortalDocumentLibraryTab',
   'data-testid="playground-document-library"',
-  // Left-rail button.
-  'testId="left-rail-tool-document-library"',
+  // Left-rail Document Library tile — object-form dock entry after the
+  // ToolDock refactor (rendered by LeftRailToolsButton as a real data-testid),
+  // NOT the obsolete pre-refactor JSX-literal testId="..." form.
+  'testId: "left-rail-tool-document-library"',
 ]);
 
 requireText(hook, [

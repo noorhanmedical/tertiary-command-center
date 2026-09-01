@@ -1,4 +1,5 @@
 import { requestJson } from "@/lib/workflow/safeFetch";
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
 
 export type SchedulerPortalCase = {
   id: number;
@@ -18,6 +19,10 @@ export type SchedulerPortalCase = {
   nextActionAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // Phase 2D-D1 — canonical per-service appointment projection. Present
+  // only when the server flag is ON and ?withAppointments=true was
+  // requested. Keyed by serviceType.
+  appointmentByService?: Record<string, AncillaryAppointmentProjection>;
 };
 
 export type SchedulerPortalCasesFilters = {
@@ -28,6 +33,8 @@ export type SchedulerPortalCasesFilters = {
   engagementStatus?: string;
   qualificationStatus?: string;
   limit?: number;
+  /** Phase 2D-D1 — request the canonical per-service appointment projection. */
+  withAppointments?: boolean;
 };
 
 function buildQuery(filters: SchedulerPortalCasesFilters): string {
@@ -39,6 +46,7 @@ function buildQuery(filters: SchedulerPortalCasesFilters): string {
   if (filters.engagementStatus) params.set("engagementStatus", filters.engagementStatus);
   if (filters.qualificationStatus) params.set("qualificationStatus", filters.qualificationStatus);
   if (filters.limit != null) params.set("limit", String(filters.limit));
+  if (filters.withAppointments) params.set("withAppointments", "true");
   return params.toString();
 }
 

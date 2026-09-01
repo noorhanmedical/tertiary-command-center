@@ -20,8 +20,13 @@ import {
   Flame,
   ScrollText,
   Sparkles,
+  Building2,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
+import { OrganizationSettingsSection } from "@/components/settings/OrganizationSettingsSection";
+import { SchedulingCapacitySection } from "@/components/settings/SchedulingCapacitySection";
+import { TeamOperationsSettings } from "@/components/settings/TeamOperationsSettings";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -315,6 +320,13 @@ export default function AdminSettingsPage() {
               {/* Team */}
               {activeSection === "team" && (
                 <div className="divide-y divide-slate-200/80" data-testid="panel-team">
+                  <Group
+                    title="Team Operations"
+                    desc="Canonical teams, memberships, managers, and coverage. Engagement, messaging, and tasks consume these."
+                    Icon={Users}
+                  >
+                    <TeamOperationsSettings />
+                  </Group>
                   <Group>
                     <SchedulerTeamSection />
                   </Group>
@@ -337,6 +349,20 @@ export default function AdminSettingsPage() {
               {/* Facility */}
               {activeSection === "facility" && (
                 <div data-testid="panel-facility">
+                  <Group
+                    title="Facilities & Clinicians"
+                    desc="Manage facilities and the clinicians associated with them. This is the source for Plexus IQ batch dropdowns."
+                    Icon={Building2}
+                  >
+                    <OrganizationSettingsSection />
+                  </Group>
+                  <Group
+                    title="Scheduling / Equipment Capacity"
+                    desc="Per-facility machine counts, service durations, ultrasound turnover, and temporary outage overrides that drive the capacity-aware scheduler."
+                    Icon={CalendarClock}
+                  >
+                    <SchedulingCapacitySection />
+                  </Group>
                   <EmbeddedGroup>
                     <StovetopHeatSettingsPage embedded />
                   </EmbeddedGroup>

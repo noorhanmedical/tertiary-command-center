@@ -50,6 +50,14 @@ export const patientExecutionCases = pgTable("patient_execution_cases", {
   lastAttemptAt: timestamp("last_attempt_at"),
   lastCallOutcome: text("last_call_outcome"),
   unableToReachAt: timestamp("unable_to_reach_at"),
+  // Phase 2C — authoritative "list became available in Engagement"
+  // timestamp. Server-owned; NEVER accepted from client. Never copied
+  // from serviceDate. Never a future/backdated timestamp. Populated
+  // exactly at the moment a real Send-to-Engagement completes (see
+  // server/services/engagementLists/sendToEngagement.ts). Nullable so
+  // legacy pre-Phase-2C rows continue to compile; the backfill script
+  // will populate from committed_at where necessary.
+  sentToEngagementAt: timestamp("sent_to_engagement_at"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -59,12 +67,16 @@ export const patientExecutionCases = pgTable("patient_execution_cases", {
   index("idx_execution_cases_engagement_bucket").on(table.engagementBucket),
   index("idx_execution_cases_call_attempt_count").on(table.callAttemptCount),
   index("idx_execution_cases_unable_to_reach_at").on(table.unableToReachAt),
+  index("idx_pec_sent_to_engagement_at").on(table.sentToEngagementAt),
 ]);
 
 export const insertPatientExecutionCaseSchema = createInsertSchema(patientExecutionCases).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  // Phase 2C — server-owned. Only the Send-to-Engagement service
+  // writes this field; never accepted from client input.
+  sentToEngagementAt: true,
 });
 
 export type PatientExecutionCase = typeof patientExecutionCases.$inferSelect;

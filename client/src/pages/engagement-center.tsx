@@ -21,8 +21,15 @@
 //   /scheduler-portal → OutreachPage (unchanged)
 //   /engagement-center → this page (assignment manager view)
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  resolveEngagementTab,
+  buildEngagementTabSearchString,
+  ENGAGEMENT_TAB_REPOSITORY,
+  type EngagementTab,
+} from "@/lib/engagementRepositoryTab";
+import { EngagementRepository } from "@/components/engagement/EngagementRepository";
 import { Search, Shuffle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -49,6 +56,8 @@ import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
+import { ManagerWorkloadPanel, NeedsCoveragePanel, ManagerExceptionsPanel } from "@/components/portal/handoff/ManagerWorkforcePanel";
+import { EngagementCallResults } from "@/components/engagement/EngagementCallResults";
 import {
   type BoardResponse,
   type BoardRow,
@@ -94,6 +103,17 @@ function HeaderMetric({
 }
 
 export default function EngagementCenterPage() {
+  // Phase 5C — admin flag for manager-panel controls (assign/preview). The
+  // panels themselves are backend-scoped; this only toggles admin-only actions.
+  const { data: meUser } = useQuery<{ role?: string | null } | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      return res.ok ? res.json() : null;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const isAdmin = (meUser?.role ?? "") === "admin";
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -106,9 +126,56 @@ export default function EngagementCenterPage() {
   // Exactly three tabs. Distribution is an ACTION inside Assignment Pool
   // (the Auto-Distribute dialog + the per-selection round-robin in the
   // worklist toolbar), never its own tab.
-  const [view, setView] = useState<"pool" | "callResults" | "callSettings">(
-    "pool",
-  );
+  // Phase 2C — Repository tab wiring. When
+  // FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY is ON, the default tab
+  // is Repository AND the URL ?tab= param is honored. When OFF, the
+  // legacy default ("pool") + existing three tabs are preserved
+  // exactly. Stale localStorage referring to "repository" is REJECTED
+  // by the resolver while the flag is OFF.
+  const multiListFlagOn = (() => {
+    try {
+      return (import.meta as { env?: Record<string, string | undefined> })?.env
+        ?.VITE_FEATURE_ENGAGEMENT_MULTI_LIST_REPOSITORY === "true";
+    } catch {
+      return false;
+    }
+  })();
+  const recentListsFlagOn = (() => {
+    try {
+      return (import.meta as { env?: Record<string, string | undefined> })?.env
+        ?.VITE_FEATURE_ENGAGEMENT_RECENT_LISTS === "true";
+    } catch {
+      return false;
+    }
+  })();
+  const initialTab = (): EngagementTab => {
+    if (typeof window === "undefined") return multiListFlagOn ? ENGAGEMENT_TAB_REPOSITORY : "pool";
+    // Saved preference is intentionally NOT read from localStorage
+    // here — the spec forbids stale saved tabs from overriding the
+    // Repository fallback.
+    return resolveEngagementTab(window.location.search, multiListFlagOn);
+  };
+  const [view, setView] = useState<EngagementTab>(initialTab);
+
+  // URL sync (bidirectional): when `setView` is called, mirror to the
+  // URL; when the browser back/forward changes the URL, mirror back
+  // to state. Only active when the multi-list flag is ON; otherwise
+  // legacy behavior is preserved.
+  useEffect(() => {
+    if (!multiListFlagOn || typeof window === "undefined") return;
+    const newSearch = buildEngagementTabSearchString(window.location.search, view);
+    if (newSearch !== window.location.search) {
+      window.history.replaceState({}, "", `${window.location.pathname}${newSearch}${window.location.hash}`);
+    }
+  }, [view, multiListFlagOn]);
+  useEffect(() => {
+    if (!multiListFlagOn || typeof window === "undefined") return;
+    const onPop = () => {
+      setView(resolveEngagementTab(window.location.search, multiListFlagOn));
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [multiListFlagOn]);
   const [distributeOpen, setDistributeOpen] = useState(false);
 
   const board = useQuery<BoardResponse>({
@@ -301,6 +368,20 @@ export default function EngagementCenterPage() {
             className="ml-auto inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-800 dark:bg-slate-800"
             data-testid="engagement-view-switcher"
           >
+            {multiListFlagOn ? (
+              <button
+                type="button"
+                onClick={() => setView("repository")}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  view === "repository"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                }`}
+                data-testid="button-view-repository"
+              >
+                Repository
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setView("pool")}
@@ -425,16 +506,36 @@ export default function EngagementCenterPage() {
         ) : null}
       </header>
 
-      {view === "callSettings" ? (
+      {view === "repository" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
+            <EngagementRepository
+              multiListFlagOn={multiListFlagOn}
+              recentListsFlagOn={recentListsFlagOn}
+            />
+          </div>
+        </main>
+      ) : view === "callSettings" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-6xl space-y-4">
+            {/* Phase 6D — consolidated operational exceptions (self-hides for
+                non-managers via backend 403). One at-a-glance summary of
+                everything in scope needing attention, from canonical data. */}
+            <ManagerExceptionsPanel />
+            {/* Phase 5C — manager-scoped workforce panels (self-hide for
+                non-managers via backend 403). Canonical capacity + structured
+                needs-coverage; distribution preview from the same engine. */}
+            <ManagerWorkloadPanel />
+            <NeedsCoveragePanel isAdmin={isAdmin} />
             <EngagementCallSettings />
           </div>
         </main>
       ) : view === "callResults" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
+            {/* KPI summary (retained) + the operational record list beneath it. */}
             <EngagementTeamMetrics />
+            <EngagementCallResults />
           </div>
         </main>
       ) : (

@@ -51,6 +51,8 @@ import { useEffect, useMemo, useState } from "react";
     schedulerPortalCasesQueryKey,
     type SchedulerPortalCase,
   } from "@/lib/workflow/schedulerPortalApi";
+  import { CanonicalAppointmentSummary } from "@/components/canonical/CanonicalAppointmentSummary";
+  import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
   
 export default function OutreachSchedulerPortalPage() {
   const params = useParams<{ id: string }>();
@@ -132,8 +134,8 @@ export default function OutreachSchedulerPortalPage() {
   //    canonical-only subset (deduped by patientScreeningId) as a sibling
   //    section so nothing is hidden or replaced.
   const { data: canonicalCases = [] } = useQuery<SchedulerPortalCase[]>({
-    queryKey: schedulerPortalCasesQueryKey({ facilityId: facility, limit: 100 }),
-    queryFn: () => fetchSchedulerPortalCases({ facilityId: facility, limit: 100 }),
+    queryKey: schedulerPortalCasesQueryKey({ facilityId: facility, limit: 100, withAppointments: isCanonicalAppointmentUiEnabled() }),
+    queryFn: () => fetchSchedulerPortalCases({ facilityId: facility, limit: 100, withAppointments: isCanonicalAppointmentUiEnabled() }),
     enabled: !!facility,
     staleTime: 30_000,
   });
@@ -890,6 +892,20 @@ export default function OutreachSchedulerPortalPage() {
                                 {c.engagementBucket} · {c.qualificationStatus}
                                 {c.facilityId ? ` · ${c.facilityId}` : ""}
                               </div>
+                              {/* Phase 2D-D1 — canonical per-service appointment.
+                                  Each eligible service keeps its own event; a
+                                  cancelled/no_show/rescheduled prior never shows
+                                  active; doctor_visit is excluded server-side. */}
+                              {isCanonicalAppointmentUiEnabled() && c.appointmentByService
+                                ? Object.entries(c.appointmentByService).map(([serviceType, projection]) => (
+                                    <CanonicalAppointmentSummary
+                                      key={`${serviceType}-${projection.activeAppointment?.globalScheduleEventId ?? "none"}`}
+                                      projection={projection}
+                                      serviceType={serviceType}
+                                      data-testid={`canonical-case-appointment-${c.id}-${serviceType}`}
+                                    />
+                                  ))
+                                : null}
                             </div>
                           </button>
                           <span

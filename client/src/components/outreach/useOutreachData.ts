@@ -8,7 +8,6 @@ import {
   useUrgentTasks,
   useUnreadPerTask,
 } from "@/hooks/api/plexus";
-import { useSchedulerAssignments } from "@/hooks/api/scheduler-assignments";
 import {
   useMyOperationalQueue,
   type OperationalQueueItem,
@@ -71,14 +70,16 @@ export function useOutreachData(schedulerId: string) {
 
   const patientIds = useMemo(() => (card?.callList ?? []).map((p) => p.patientId), [card]);
 
-  const { data: assignmentRows = [] } = useSchedulerAssignments() as {
-    data: AssignmentRow[];
-  };
+  // Phase 1 convergence: assignment ownership now comes exclusively from
+  // patient_execution_cases.assignedTeamMemberId (via the operational queue),
+  // NOT from the legacy scheduler_assignments table. The assignmentByPatient
+  // map is kept as an empty structure for API compatibility with components
+  // that display lineage info (those will read from canonical sources).
+  const assignmentRows: AssignmentRow[] = [];
   const assignmentByPatient = useMemo(() => {
     const m = new Map<number, AssignmentRow>();
-    for (const a of assignmentRows) m.set(a.patientScreeningId, a);
     return m;
-  }, [assignmentRows]);
+  }, []);
 
   const { data: allSchedulerCards = [] } =
     useOutreachSchedulers<{
@@ -201,10 +202,13 @@ export function useOutreachData(schedulerId: string) {
   }, [engagementItems]);
 
   const myEngineAssignedIds = useMemo(() => {
-    const s = new Set(assignmentRows.map((a) => a.patientScreeningId));
+    // Phase 1 convergence: ownership is derived solely from canonical
+    // execution-case assignments via the operational queue. Legacy
+    // scheduler_assignments no longer participates in live ownership.
+    const s = new Set<number>();
     for (const id of engagementByScreeningId.keys()) s.add(id);
     return s;
-  }, [assignmentRows, engagementByScreeningId]);
+  }, [engagementByScreeningId]);
 
   const sortedCallList = useMemo<SortedCallEntry[]>(() => {
     const list = card?.callList ?? [];

@@ -10,23 +10,17 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  SketchDialog as Dialog,
+  SketchDialogContent as DialogContent,
+  SketchDialogHeader as DialogHeader,
+  SketchDialogTitle as DialogTitle,
+  SketchDialogFooter as DialogFooter,
+} from "@/components/playground/sketch/SketchOverlays";
+import { SketchButton } from "@/components/playground/sketch/SketchPrimitives";
+import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import {
   SERVICE_OPTIONS,
   TIME_SLOTS,
@@ -50,6 +44,9 @@ export type QuickSchedulePatientHit = {
   name: string;
   dob: string | null;
   insurance: string | null;
+  /** The patient's canonical Plexus IQ–qualified services. Drives the
+   *  quick-schedule service list so only eligible tests are offered. */
+  qualifyingTests: string[];
 };
 
 async function searchPatientsByName(
@@ -75,12 +72,14 @@ async function searchPatientsByName(
     name: string;
     dob: string | null;
     insurance: string | null;
+    qualifyingTests?: string[] | null;
   }>;
   return rows.map((r) => ({
     patientScreeningId: r.id,
     name: r.name,
     dob: r.dob ?? null,
     insurance: r.insurance ?? null,
+    qualifyingTests: Array.isArray(r.qualifyingTests) ? r.qualifyingTests : [],
   }));
 }
 
@@ -209,6 +208,36 @@ export function CalendarQuickScheduleDialog({
     resolvedPatient,
   };
 
+  // Service options: when a real patient is resolved and carries canonical
+  // Plexus IQ qualified services, offer ONLY those (so a PCS can't schedule a
+  // test the patient isn't qualified for). Otherwise fall back to the generic
+  // SERVICE_OPTIONS list (free-text/new-patient path). `patientQualified` lets
+  // the UI label the source honestly.
+  const patientQualifiedServices = useMemo(
+    () => (resolvedPatient?.qualifyingTests ?? []).filter(Boolean),
+    [resolvedPatient],
+  );
+  const serviceOptions = useMemo(
+    () =>
+      patientQualifiedServices.length > 0
+        ? patientQualifiedServices
+        : [...SERVICE_OPTIONS],
+    [patientQualifiedServices],
+  );
+  const serviceListIsPatientQualified = patientQualifiedServices.length > 0;
+
+  // If the currently-selected service is not in the resolved patient's
+  // qualified set, clear it so a stale selection can't be booked.
+  useEffect(() => {
+    if (
+      serviceListIsPatientQualified &&
+      service &&
+      !patientQualifiedServices.includes(service)
+    ) {
+      setService("");
+    }
+  }, [serviceListIsPatientQualified, patientQualifiedServices, service]);
+
   const canProceed = !!selectedDate;
   const startsAtIso = combineLocalDateAndTimeToIso(selectedDate, time);
   // Direct booking is possible only with a resolved real patient plus a
@@ -298,34 +327,55 @@ export function CalendarQuickScheduleDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="quick-schedule-time">Time</Label>
-            <Select value={time} onValueChange={setTime}>
-              <SelectTrigger id="quick-schedule-time" data-testid="select-quick-schedule-time">
-                <SelectValue placeholder="Select a time" />
-              </SelectTrigger>
-              <SelectContent className="z-[95]">
-                {TIME_SLOTS.map((slot) => (
-                  <SelectItem key={slot} value={slot}>
-                    {prettyTime(slot)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SketchSelect
+              id="quick-schedule-time"
+              seedId="quick-schedule-time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="w-full"
+              containerClassName="w-full"
+              data-testid="select-quick-schedule-time"
+            >
+              <option value="" disabled>Select a time</option>
+              {TIME_SLOTS.map((slot) => (
+                <option key={slot} value={slot}>{prettyTime(slot)}</option>
+              ))}
+            </SketchSelect>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="quick-schedule-service">Service</Label>
-            <Select value={service} onValueChange={setService}>
-              <SelectTrigger id="quick-schedule-service" data-testid="select-quick-schedule-service">
-                <SelectValue placeholder="Select a service" />
-              </SelectTrigger>
-              <SelectContent className="z-[95]">
-                {SERVICE_OPTIONS.map((opt) => (
-                  <SelectItem key={opt} value={opt}>
-                    {opt}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor="quick-schedule-service">
+              Service
+              {serviceListIsPatientQualified && (
+                <span className="ml-1.5 text-[10px] font-normal text-slate-400">
+                  · qualified services only
+                </span>
+              )}
+            </Label>
+            <SketchSelect
+              id="quick-schedule-service"
+              seedId="quick-schedule-service"
+              value={service}
+              onChange={(e) => setService(e.target.value)}
+              className="w-full"
+              containerClassName="w-full"
+              data-testid="select-quick-schedule-service"
+            >
+              <option value="" disabled>
+                {serviceListIsPatientQualified
+                  ? "Select a qualified service"
+                  : "Select a service"}
+              </option>
+              {serviceOptions.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </SketchSelect>
+            {resolvedPatient && !serviceListIsPatientQualified && (
+              <p className="text-[10px] text-amber-600" data-testid="text-quick-schedule-no-qualified">
+                No qualified services on record for {resolvedPatient.name}. Showing
+                the general list — confirm eligibility before booking.
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -511,17 +561,20 @@ export function CalendarQuickScheduleDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button
+          <SketchButton
             type="button"
-            variant="outline"
+            variant="secondary"
+            seedId="quick-schedule-playground"
             disabled={!canProceed || bookMutation.isPending}
             onClick={() => onOpenInPlayground(payload)}
             data-testid="button-quick-schedule-playground"
           >
             Open in Playground
-          </Button>
-          <Button
+          </SketchButton>
+          <SketchButton
             type="button"
+            variant="primary"
+            seedId="quick-schedule-submit"
             disabled={!canProceed || bookMutation.isPending}
             onClick={handleSchedule}
             data-testid="button-quick-schedule-submit"
@@ -536,7 +589,7 @@ export function CalendarQuickScheduleDialog({
             ) : (
               "Schedule"
             )}
-          </Button>
+          </SketchButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

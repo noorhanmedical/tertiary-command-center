@@ -128,19 +128,27 @@ export function registerPtoRoutes(app: Express) {
             const schedulers = await storage.getOutreachSchedulers();
             const sched = schedulers.find((s) => s.userId === updated.userId);
             if (sched) {
-              const { releaseAndRedistribute } = await import("../services/callListEngine");
-              const summary = await releaseAndRedistribute(
-                storage, sched.id, today, `pto_approved:${updated.id}`,
+              // CANONICAL ownership path: releases patient_execution_cases.assignedTeamMemberId
+              // and redistributes via applyDistribution — the SAME spine used by
+              // absenceWatcher and manager redistribution. Never writes scheduler_assignments
+              // as live ownership (that table is history/audit only per K1).
+              const { releaseAndRedistributeCanonical } = await import(
+                "../services/engagement/absenceRedistribution"
+              );
+              const summary = await releaseAndRedistributeCanonical(
+                sched.id,
+                `pto_approved:${updated.id}`,
+                req.session.userId ?? null,
               );
               if (summary.released > 0) {
                 await storage.createTask({
                   title: `PTO redistribute: ${sched.name}`,
                   description:
                     `${summary.released} call(s) released from ${sched.name}; ` +
-                    `${summary.reassigned} reassigned to teammates; ` +
-                    `${summary.unassigned} could not be placed (no remaining capacity).`,
+                    `${summary.redistributed} reassigned to teammates; ` +
+                    `${summary.unplaced} could not be placed (no remaining capacity).`,
                   taskType: "task",
-                  urgency: summary.unassigned > 0 ? "within 1 hour" : "within 3 hours",
+                  urgency: summary.unplaced > 0 ? "within 1 hour" : "within 3 hours",
                   priority: "high",
                   status: "open",
                   createdByUserId: req.session.userId!,

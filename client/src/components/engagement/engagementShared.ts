@@ -500,12 +500,30 @@ export async function openSinglePatientPacket(
       return { ok: false, error: `Could not load patient (HTTP ${res.status}).` };
     }
     const patient = (await res.json()) as PatientScreening;
+    // Resolve the patient's originating batch so the Atlas header shows the
+    // SAME clinician snapshot as everywhere else (single source of truth =
+    // screening_batches). Best-effort: if the batch can't be loaded, the
+    // header simply omits clinician/facility rather than inventing one.
+    let attribution: { clinicianName: string | null; facilityName: string | null } | undefined;
+    const batchId = (patient as unknown as { batchId?: number }).batchId;
+    if (typeof batchId === "number") {
+      try {
+        const bRes = await fetch(`/api/screening-batches/${batchId}`, { credentials: "include" });
+        if (bRes.ok) {
+          const batch = (await bRes.json()) as { clinicianName?: string | null; facility?: string | null };
+          attribution = { clinicianName: batch.clinicianName ?? null, facilityName: batch.facility ?? patient.facility ?? null };
+        }
+      } catch {
+        /* best-effort; header omits attribution on failure */
+      }
+    }
     const result = openPatientPacketPrintPreview({
       mode,
       batchName: `${patient.facility ?? "Patient"} · ${patientName}`,
       patients: [patient],
       scheduleDate,
       createdAt: null,
+      attribution,
     });
     if (!result.ok) {
       return {

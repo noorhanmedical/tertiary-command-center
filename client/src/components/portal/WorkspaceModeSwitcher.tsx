@@ -44,39 +44,30 @@ type ModeMeta = {
   // Short label shown on the active tab to keep the strip compact.
   shortLabel: string;
   subtitle: string;
-  activeBg: string;
-  accentBorder: string;
-  accentIcon: string;
-  chipActive: string;
+  /** Muted colored-pencil accent (CSS color) for the active tab. */
+  accent: string;
 };
 
+// SketchUI paper tabs. `accent` is the muted colored-pencil hue for the active
+// tab (icon + underline + count chip); inactive tabs are quiet graphite on paper.
 const MODE_META: Record<TeamMemberWorkspaceMode, ModeMeta> = {
   clinicSchedule: {
     icon: CalendarDays,
     shortLabel: "Clinic",
     subtitle: "Today's visits & consent readiness",
-    activeBg: "bg-sky-500/20",
-    accentBorder: "border-l-sky-400",
-    accentIcon: "text-sky-300",
-    chipActive: "bg-sky-400 text-slate-900",
+    accent: "var(--sketch-blue)",
   },
   ancillarySchedule: {
     icon: Activity,
     shortLabel: "Ancillary",
     subtitle: "Procedures & diagnostic tests",
-    activeBg: "bg-violet-500/20",
-    accentBorder: "border-l-violet-400",
-    accentIcon: "text-violet-300",
-    chipActive: "bg-violet-400 text-slate-900",
+    accent: "var(--sketch-violet)",
   },
   callList: {
     icon: PhoneCall,
     shortLabel: "Calls",
     subtitle: "Outreach & follow-up queue",
-    activeBg: "bg-emerald-500/20",
-    accentBorder: "border-l-emerald-400",
-    accentIcon: "text-emerald-300",
-    chipActive: "bg-emerald-400 text-slate-900",
+    accent: "var(--sketch-green)",
   },
 };
 
@@ -100,7 +91,7 @@ export function WorkspaceModeSwitcher({
   return (
     <div>
       <div
-        className="flex items-center gap-1 rounded-xl bg-white/5 p-1"
+        className="flex items-center gap-1"
         role="tablist"
         data-testid="workspace-mode-switcher"
       >
@@ -118,18 +109,21 @@ export function WorkspaceModeSwitcher({
               aria-selected={isActive}
               title={`${label} — ${meta.subtitle}`}
               onClick={() => onModeChange(mode)}
-              className={`group flex flex-1 items-center justify-center gap-1.5 rounded-lg border-l-2 ${
+              className={`group flex flex-1 items-center justify-center gap-1.5 rounded-md ${
                 compact ? "px-1.5 py-1" : "px-2 py-1.5"
-              } transition-all duration-200 ${
-                isActive
-                  ? `${meta.activeBg} ${meta.accentBorder} text-white shadow-sm`
-                  : "border-transparent text-white/55 hover:bg-white/5 hover:text-white/85"
+              } transition-colors ${
+                isActive ? "text-slate-900" : "text-slate-500 hover:text-slate-700"
               }`}
+              style={
+                isActive
+                  ? { backgroundColor: "#FAFBF8", boxShadow: `inset 0 -2px 0 ${meta.accent}` }
+                  : undefined
+              }
               data-testid={`workspace-mode-switcher-${mode}`}
             >
-              <Icon
-                className={`h-4 w-4 shrink-0 ${isActive ? meta.accentIcon : "text-white/60"}`}
-              />
+              <span className="inline-flex shrink-0" style={{ color: isActive ? meta.accent : "#94A3B8" }}>
+                <Icon className="h-4 w-4" />
+              </span>
               <span
                 className={`truncate font-semibold leading-tight ${
                   compact ? "text-[10px]" : "text-[11px]"
@@ -139,9 +133,12 @@ export function WorkspaceModeSwitcher({
               </span>
               {count != null && (
                 <span
-                  className={`inline-flex h-4 min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums ${
-                    isActive ? meta.chipActive : "bg-white/10 text-white/60"
-                  }`}
+                  className="inline-flex h-4 min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums"
+                  style={
+                    isActive
+                      ? { color: meta.accent, backgroundColor: "rgba(31,41,55,0.06)" }
+                      : { color: "#64748B", backgroundColor: "rgba(148,163,184,0.16)" }
+                  }
                 >
                   {count}
                 </span>
@@ -152,7 +149,7 @@ export function WorkspaceModeSwitcher({
       </div>
       {/* One-line caption describing the data the active mode surfaces. */}
       <p
-        className="mt-1 truncate px-1 text-[10px] leading-tight text-white/50"
+        className="mt-1 truncate px-1 text-[10px] leading-tight text-slate-500"
         data-testid="workspace-mode-subtitle"
       >
         {activeMeta.subtitle}

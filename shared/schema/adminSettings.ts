@@ -26,6 +26,7 @@ export const ADMIN_SETTING_DOMAINS = [
   "ai",
   "audit",
   "patient_directory",
+  "phone_provider",
 ] as const;
 export type AdminSettingDomain = typeof ADMIN_SETTING_DOMAINS[number];
 

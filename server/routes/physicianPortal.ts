@@ -20,13 +20,14 @@
 //   • Auth: global requireAuth is already applied at /api. This file
 //     enforces the additional clinician/admin role gate.
 
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response } from "express";
 import { logAudit } from "../services/auditService";
+import { requireClinicianOrAdmin, requireClinicScope } from "./clinicianPortalGuard";
 import {
   listSignatureItems,
-  signNote,
+  signProcedureNote,
   bulkSignNotes,
-  returnNoteForCorrection,
+  returnProcedureNoteForCorrection,
 } from "../services/physicianPortal/signatureWorkflow";
 import {
   getPhysicianPortalSummary,
@@ -37,20 +38,9 @@ import {
   ancillaryMetrics,
 } from "../services/physicianPortal/reportsService";
 
-function requireClinicianOrAdmin(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) {
-  if (!req.session?.userId) {
-    return res.status(401).json({ error: "Not authenticated" });
-  }
-  const role = req.session.role ?? "clinician";
-  if (role !== "clinician" && role !== "admin") {
-    return res.status(403).json({ error: "Forbidden — clinician role required" });
-  }
-  return next();
-}
+// Auth boundary (role gate + clinic scope) is the SHARED Clinician Portal
+// guard — see server/routes/clinicianPortalGuard.ts. A missing/unknown role
+// now fails closed (403) rather than defaulting to clinician.
 
 function parseIntSafe(v: unknown): number | null {
   const n = parseInt(String(v ?? ""), 10);
@@ -67,8 +57,11 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const q = req.query as Record<string, string | undefined>;
         const items = await listSignatureItems({
+          clinicId,
           limit: q.limit ? parseInt(q.limit, 10) || undefined : undefined,
           serviceType: q.serviceType,
           signatureStatus: q.signatureStatus,
@@ -88,10 +81,21 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const id = parseIntSafe(req.params.id);
         if (id == null) return res.status(400).json({ error: "Invalid id" });
-        const outcome = await signNote(id, req.session.userId ?? null);
-        if (!outcome.ok) return res.status(outcome.code).json({ error: outcome.error });
+        const outcome = await signProcedureNote({
+          id,
+          clinicId,
+          authenticatedSignerUserId: req.session.userId ?? null,
+          // Slice C — optional stale-client protection tokens.
+          expectedEvidenceFingerprint:
+            typeof req.body?.expectedEvidenceFingerprint === "string" ? req.body.expectedEvidenceFingerprint : null,
+          expectedScreeningVersion:
+            typeof req.body?.expectedScreeningVersion === "string" ? req.body.expectedScreeningVersion : null,
+        });
+        if (!outcome.ok) return res.status(outcome.code).json({ error: outcome.error, reason: outcome.reason });
         void logAudit(req, "sign", "procedure_note", id, {
           serviceType: outcome.note.serviceType,
           noteType: outcome.note.noteType,
@@ -110,6 +114,8 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const raw: unknown = req.body?.ids;
         if (!Array.isArray(raw) || raw.length === 0) {
           return res.status(400).json({ error: "ids[] is required" });
@@ -120,7 +126,7 @@ export function registerPhysicianPortalRoutes(app: Express) {
         if (ids.length === 0) {
           return res.status(400).json({ error: "No valid ids supplied" });
         }
-        const results = await bulkSignNotes(ids, req.session.userId ?? null);
+        const results = await bulkSignNotes(ids, clinicId, req.session.userId ?? null);
         if (results.signed.length > 0) {
           void logAudit(req, "bulk_sign", "procedure_note", 0, {
             signed: results.signed,
@@ -141,10 +147,12 @@ export function registerPhysicianPortalRoutes(app: Express) {
     requireClinicianOrAdmin,
     async (req, res) => {
       try {
+        const clinicId = requireClinicScope(req, res);
+        if (clinicId == null) return;
         const id = parseIntSafe(req.params.id);
         if (id == null) return res.status(400).json({ error: "Invalid id" });
         const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
-        const outcome = await returnNoteForCorrection(id, reason);
+        const outcome = await returnProcedureNoteForCorrection({ id, clinicId, reason });
         if (!outcome.ok) return res.status(outcome.code).json({ error: outcome.error });
         void logAudit(req, "return_for_correction", "procedure_note", id, {
           reason: reason.trim(),

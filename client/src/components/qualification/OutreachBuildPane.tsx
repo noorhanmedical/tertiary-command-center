@@ -92,10 +92,10 @@ export default function OutreachBuildPane({
               </h2>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" data-testid="button-outreach-clinician-pdf">
-                  <FileBarChart className="w-4 h-4 mr-1" /> Clinician PDF
+                  <FileBarChart className="w-4 h-4 mr-1" /> Clinician Atlas
                 </Button>
                 <Button variant="outline" size="sm" data-testid="button-outreach-plexus-pdf">
-                  <FileText className="w-4 h-4 mr-1" /> Plexus PDF
+                  <FileText className="w-4 h-4 mr-1" /> Plexus Atlas
                 </Button>
                 <Button variant="outline" size="sm" data-testid="button-outreach-share">
                   <Share2 className="w-4 h-4 mr-1" /> Share
