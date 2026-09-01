@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { orderNoteServiceConfig, orderNoteServiceLabel } from "../../server/services/ancillaryDocuments/orderNoteServiceConfig";
 import { validateOrderNoteNarrative } from "../../server/services/ancillaryDocuments/orderNoteComplianceValidator";
 import { renderAiOrderNoteBody, renderDeterministicOrderNoteBody } from "../../server/services/ancillaryDocuments/orderNoteBody";
-import { orderNoteRequiresStructuredScreening } from "../../server/services/ancillaryDocuments/orderNoteServiceConfig";
+import { orderNoteRequiresStructuredScreening, procedureRequiresSignedOrderNote } from "../../server/services/ancillaryDocuments/orderNoteServiceConfig";
 import type { OrderNoteEvidenceBundle } from "../../server/services/ancillaryDocuments/orderNoteEvidenceBundle";
 import type { OrderNoteNarrative } from "../../server/services/ancillaryDocuments/orderNoteNarrativeAi";
 
@@ -236,6 +236,27 @@ test("vascular/ultrasound services do NOT require structured screening (it is op
 test("BrainWave/VitalWave DO require structured screening — declared by config, not name inference", () => {
   assert.equal(orderNoteRequiresStructuredScreening("BrainWave"), true);
   assert.equal(orderNoteRequiresStructuredScreening("VitalWave"), true);
+});
+
+// ── Procedure signed-order prerequisite (separate concept, config-driven) ──
+test("BrainWave/VitalWave require a signed Order Note for the Procedure Note — by config", () => {
+  assert.equal(procedureRequiresSignedOrderNote("BrainWave"), true);
+  assert.equal(procedureRequiresSignedOrderNote("VitalWave"), true);
+});
+test("vascular/ultrasound services do NOT require a signed Order Note for the Procedure Note", () => {
+  for (const s of ["Bilateral Carotid Duplex", "Echocardiogram TTE", "Renal Artery Doppler", "Lower Extremity Arterial Doppler", "Lower Extremity Venous Duplex", "Some Unknown Study"]) {
+    assert.equal(procedureRequiresSignedOrderNote(s), false, `${s} must not require a signed order for the procedure note`);
+  }
+});
+test("structured-screening and signed-order prerequisites are SEPARATE concepts", () => {
+  // A hypothetical service could require one without the other; the two helpers
+  // read independent config fields.
+  const bw = orderNoteServiceConfig("BrainWave").requiredEvidence ?? {};
+  assert.equal(bw.structuredScreening, true);
+  assert.equal(bw.signedOrderNoteForProcedure, true);
+  const carotid = orderNoteServiceConfig("Bilateral Carotid Duplex").requiredEvidence ?? {};
+  assert.notEqual(carotid.structuredScreening, true);
+  assert.notEqual(carotid.signedOrderNoteForProcedure, true);
 });
 
 let failed = 0;

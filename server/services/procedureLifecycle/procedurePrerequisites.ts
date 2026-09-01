@@ -23,6 +23,7 @@ import { listActivePrerequisiteConfigs } from "../../repositories/procedurePrere
 import { isOrderNoteAppointmentEligible } from "../canonicalAppointments/canonicalAppointmentService";
 import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
 import { getActiveOrderNoteForCase } from "../../repositories/orderNoteLifecycle.repo";
+import { orderNoteRequiresStructuredScreening } from "../ancillaryDocuments/orderNoteServiceConfig";
 import { applySemanticPrerequisites } from "./procedurePrerequisiteRules";
 export { applySemanticPrerequisites, type SemanticPrereqContext } from "./procedurePrerequisiteRules";
 
@@ -121,8 +122,11 @@ export async function evaluateProcedurePrerequisites(
       // reads run ONLY when the corresponding requirement is configured, so
       // unrelated services/tests incur no new DB access and no behavior change.
       const codes = new Set(configs.map((c) => c.requirementCode));
-      const svc = (acase.serviceType || "").toLowerCase();
-      const requiresStructuredScreening = (svc.includes("brain") || svc.includes("vital")) && codes.has("screening_form");
+      // Config-driven (never service-name inference): a service requires a
+      // completed structured (A0) screening only when it declares it AND a
+      // screening_form requirement is configured for this stage.
+      const requiresStructuredScreening =
+        orderNoteRequiresStructuredScreening(acase.serviceType) && codes.has("screening_form");
       let structuredScreeningComplete = false;
       if (requiresStructuredScreening) {
         const structured = await getCurrentScreeningEvidence({

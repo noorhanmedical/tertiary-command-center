@@ -35,6 +35,7 @@ import { syncProcedureNoteReferenceSignature } from "./procedureNoteService";
 // Slice F — canonical component-aware body + exact signed Order Note association.
 import { renderProcedureNoteBody } from "./procedureNoteBody";
 import { resolveProcedureNoteContext, loadProcedureComponents, procedureServiceLabel } from "./procedureNoteContext";
+import { procedureRequiresSignedOrderNote } from "../ancillaryDocuments/orderNoteServiceConfig";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
@@ -340,10 +341,14 @@ async function buildCanonicalProcedureNoteBody(
   const ctx = await resolveProcedureNoteContext(clinicId, ancillaryCaseId);
   if (!ctx) return { ok: false, code: "procedure_note_context_unresolved" };
 
-  const requiresSignedOrder = /brain|vital/i.test(note.serviceType ?? "");
-  // Exact current SIGNED Order Note relationship is REQUIRED for BW/VW.
+  // Config-driven (never service-name inference): whether this service requires
+  // an exact current SIGNED Order Note + validated component evidence before a
+  // Procedure Note may be generated. Declared per service in
+  // orderNoteServiceConfig.requiredEvidence.signedOrderNoteForProcedure.
+  const requiresSignedOrder = procedureRequiresSignedOrderNote(note.serviceType ?? "");
+  // Exact current SIGNED Order Note relationship is REQUIRED when configured.
   if (requiresSignedOrder && !ctx.associatedOrder) return { ok: false, code: "missing_signed_order_note" };
-  // Validated component evidence is REQUIRED for BW/VW (invalid/missing → fail-closed).
+  // Validated component evidence is REQUIRED when configured (invalid/missing → fail-closed).
   const components = await loadProcedureComponents(pe.id, note.serviceType);
   if (requiresSignedOrder && !components) return { ok: false, code: "invalid_or_missing_component_evidence" };
 

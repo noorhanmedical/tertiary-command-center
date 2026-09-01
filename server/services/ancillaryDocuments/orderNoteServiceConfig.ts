@@ -30,8 +30,14 @@ export type OrderNoteServiceConfig = {
   // required, so missing optional evidence never blocks order-note generation.
   requiredEvidence?: {
     // When true, a completed structured (A0) screening MUST exist before the
-    // deterministic/AI order-note body can be generated.
+    // deterministic/AI order-note body can be SIGNED. This is an ORDER-NOTE
+    // prerequisite. Consumed by orderNoteRequiresStructuredScreening().
     structuredScreening?: boolean;
+    // When true, an exact CURRENT SIGNED Order Note (and validated component
+    // evidence) MUST exist before the canonical Procedure Note can be
+    // generated. This is a PROCEDURE prerequisite — a SEPARATE concept from
+    // structuredScreening. Consumed by procedureRequiresSignedOrderNote().
+    signedOrderNoteForProcedure?: boolean;
   };
 };
 
@@ -45,8 +51,10 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
       serviceLabel: "BrainWave – Comprehensive Assessment",
       // BrainWave is a structured-screening (A0) service: the completed
       // questionnaire is a true clinical prerequisite for signing its Order
-      // Note. Declared explicitly here (not inferred from the service name).
-      requiredEvidence: { structuredScreening: true },
+      // Note, and its Procedure Note requires an exact signed Order Note +
+      // validated component evidence. Both declared explicitly here (never
+      // inferred from the service name).
+      requiredEvidence: { structuredScreening: true, signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "neuropsychologicalTesting", label: "Neuropsychological testing", clinicalPurpose: "objective assessment of memory, attention, processing, and executive function" },
         { key: "eeg", label: "EEG acquisition", clinicalPurpose: "objective recording of cerebral electrical activity" },
@@ -63,8 +71,10 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
       serviceLabel: "VitalWave – Comprehensive Autonomic & Vascular Assessment",
       // VitalWave is a structured-screening (A0) service: the completed
       // questionnaire is a true clinical prerequisite for signing its Order
-      // Note. Declared explicitly here (not inferred from the service name).
-      requiredEvidence: { structuredScreening: true },
+      // Note, and its Procedure Note requires an exact signed Order Note +
+      // validated component evidence. Both declared explicitly here (never
+      // inferred from the service name).
+      requiredEvidence: { structuredScreening: true, signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "autonomicTesting", label: "Autonomic nervous system testing (parasympathetic & sympathetic)", clinicalPurpose: "objective assessment of autonomic cardiovascular regulation" },
         { key: "tiltTable", label: "Tilt-table / positional evaluation", clinicalPurpose: "assessment of physiologic responses to positional change" },
@@ -166,9 +176,20 @@ export function orderNoteServiceLabel(serviceType: string): string {
 
 /**
  * Whether this service REQUIRES a completed structured (A0) screening as a true
- * prerequisite for order-note generation. Config-driven only — never inferred
- * from the service name. Defaults to false (screening is optional evidence).
+ * prerequisite for order-note signing. Config-driven only — never inferred from
+ * the service name. Defaults to false (screening is optional evidence).
  */
 export function orderNoteRequiresStructuredScreening(serviceType: string): boolean {
   return orderNoteServiceConfig(serviceType).requiredEvidence?.structuredScreening === true;
+}
+
+/**
+ * Whether this service REQUIRES an exact CURRENT SIGNED Order Note (and
+ * validated component evidence) as a prerequisite for generating its canonical
+ * Procedure Note. Config-driven only — never inferred from the service name.
+ * This is a SEPARATE concept from the structured-screening requirement.
+ * Defaults to false (no signed-order gate unless the service declares one).
+ */
+export function procedureRequiresSignedOrderNote(serviceType: string): boolean {
+  return orderNoteServiceConfig(serviceType).requiredEvidence?.signedOrderNoteForProcedure === true;
 }
