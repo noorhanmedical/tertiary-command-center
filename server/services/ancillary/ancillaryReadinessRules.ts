@@ -30,6 +30,37 @@ export function isComplete(status: string | null | undefined): boolean {
   return status != null && COMPLETE_STATUSES.has(status.toLowerCase());
 }
 
+/**
+ * Dated consent/readiness guard — mirrors the clinic-portal `consentForTest`
+ * rule (server/routes/portal.ts): a completed readiness item counts for a
+ * given appointment only when it was completed ON/AFTER that appointment's
+ * scheduled date. This is NOT an expiry period — there is no upper bound,
+ * only the same on/after-scheduledDate lower bound the clinic path enforces.
+ *
+ * @param documentStatus the readiness row's documentStatus
+ * @param completedAtIso the readiness row's completedAt as ISO (or null)
+ * @param scheduledDate  the appointment's scheduled date (YYYY-MM-DD) or null
+ *
+ * Semantics:
+ *   - not a complete status            → false
+ *   - complete + no scheduledDate      → true  (guard skipped, back-compat)
+ *   - complete + no completedAt        → true  (pre-provenance rows not failed
+ *                                               retroactively; episode/service
+ *                                               keying still isolates them)
+ *   - complete + completedAt >= sched  → true
+ *   - complete + completedAt <  sched  → false (stale — must not mark ready)
+ */
+export function readinessCountsForSchedule(
+  documentStatus: string | null | undefined,
+  completedAtIso: string | null | undefined,
+  scheduledDate: string | null | undefined,
+): boolean {
+  if (!isComplete(documentStatus)) return false;
+  if (!scheduledDate) return true;
+  if (!completedAtIso) return true;
+  return completedAtIso.slice(0, 10) >= scheduledDate;
+}
+
 // ─── Per-service requirement flags ─────────────────────────────────────────
 
 /**

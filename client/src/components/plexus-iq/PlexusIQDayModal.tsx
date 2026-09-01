@@ -22,7 +22,7 @@ import type { ReasoningValue } from "@/lib/pdfGeneration";
 // date. If multiple batches exist for that date across facilities, a tab
 // strip switches between them. ResultsView is rendered with chromeless
 // (no StepTimeline / sidebar trigger / page title) so it sits cleanly
-// inside the modal; all of its actions (Plexus PDF, Clinician PDF, Share,
+// inside the modal; all of its actions (Plexus Atlas, Clinician Atlas, Share,
 // Export CSV, Send All to Scheduler, per-row schedule + send + status)
 // continue to work via the existing wiring.
 

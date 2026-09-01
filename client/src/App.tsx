@@ -39,7 +39,9 @@ import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
 import { TopBanner } from "@/components/TopBanner";
-import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
+// @deprecated — replaced by GlobalDock. Preserved for reference only.
+// import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
+import { GlobalDock } from "@/components/dock";
 import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
@@ -49,6 +51,9 @@ import ClinicalIntelligencePage from "@/pages/clinical-intelligence";
 // Temporary design-prototype route — mock data only, not production.
 import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
+// Preview-only route — real Team Portal with iOS-frosted rails scoped under
+// .rail-glass-preview. Live portals unchanged. Not production.
+import TeamPortalGlassPreviewPage from "@/pages/team-portal-glass-preview";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
 import EngagementCenterPage from "@/pages/engagement-center";
@@ -85,7 +90,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
       <Route>
         <div className="flex flex-col h-screen w-full overflow-hidden">
           <TopBanner user={user} onLogout={onLogout} />
-          <GlobalFloatingDock />
+          <GlobalDock />
+          {/* Legacy GlobalFloatingDock preserved for feature-parity transition */}
+          {/* <GlobalFloatingDock /> */}
           <div className="flex flex-1 min-h-0 min-w-0">
             {showGlobalNav && <GlobalNav user={user} onLogout={onLogout} />}
             <div className="flex flex-col flex-1 min-w-0 min-h-0">
@@ -110,6 +117,8 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                     <HomePreview />
                   </SidebarProvider>
                 </Route>
+                {/* iOS-frosted rails preview on the real Team Portal (not production). */}
+                <Route path="/team-portal-glass-preview" component={TeamPortalGlassPreviewPage} />
                 <Route path="/mission-control">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <MissionControlPage />

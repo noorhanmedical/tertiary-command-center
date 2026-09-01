@@ -1,141 +1,45 @@
-// Preview copy of HomeDashboard (Task #622). Visual-layer-only redesign for
-// /home-preview: the Plexus IQ starfield/black-gradient card and assorted
-// accent icon colors become uniform flat navy tiles, the solid-black calendar
-// header becomes a navy-glow header, and indigo accents / "View schedule"
-// links move to the navy/slate system. All hrefs, data-testids, labels, role
-// logic, data fetching, calendar wiring, filters, and popover behavior are
-// identical to the original — only presentation changes.
-import { useEffect, useMemo, useState } from "react";
+// Winter / Alpine Home (spec redesign) — staged at /home-preview.
+//
+// Presentation-only redesign of the Home surface into the premium winter system:
+// icy canvas + drifting snow, a page header, the six-KPI Practice Pulse panel,
+// a dark Plexus IQ feature card, a frosted Global Clocks panel, a Today's Summary
+// card, and three grouped shortcut sections (Clinical / Operations /
+// Finance & Admin). The month calendar is intentionally not part of this layout.
+//
+// No routes, hrefs, module names, or data behavior change. All shortcut hrefs and
+// data-testids are preserved; new tiles only point at routes that already exist
+// (verified against GlobalNav's NAV_ITEMS). Winter styling tokens live under the
+// `.winter-home` scope in index.css.
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuCheckboxItem,
-} from "@/components/ui/dropdown-menu";
-import {
   ArrowRight,
-  Building2,
+  BarChart3,
   Clock,
+  CreditCard,
+  CheckSquare,
+  ClipboardCheck,
+  FileSignature,
   FileText,
-  Filter,
+  Landmark,
+  Library,
   Phone,
   Radar,
+  Receipt,
+  ScanLine,
+  Shield,
   Sparkles,
   Stethoscope,
   Upload,
   Users,
   Users2,
-  CheckSquare,
-  ScanLine,
-  BarChart3,
-  ClipboardCheck,
-  FileSignature,
 } from "lucide-react";
-import {
-  CALENDAR_FILTERS,
-  type CalendarFilterId,
-} from "@/calendar/calendarFilters";
 import { HomeLiveDashboardPreview } from "./HomeLiveDashboardPreview";
 import { HomeWorldClocks } from "./HomeWorldClocks";
-import { CanonicalMonthCalendar } from "@/calendar";
-import {
-  buildCommandCalendarCells,
-  defaultCommandCalendarEventWindow,
-  ANCILLARY_DOT_CLASS,
-} from "@/lib/calendar/commandCalendarViewModel";
-import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
-import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
+import { useHomeStats } from "@/hooks/api/home-stats";
 
-const ANCILLARY_CATEGORY_KEYS = ["brainwave", "vitalwave", "ultrasound"] as const;
-
-// Filter options exposed in the home calendar header dropdown. Drawn from the
-// canonical filter definitions in calendarFilters.ts.
-const HOME_CALENDAR_FILTER_IDS: CalendarFilterId[] = [
-  "clinicVisits",
-  "qualifiedVisitPatients",
-  "ancillaryScheduled",
-  "dailyCallList",
-  "completedCalls",
-  "procedureCompleted",
-  "teamAvailability",
-];
-
-function DayPopoverContent({
-  isoDate,
-  rows,
-  today,
-  onOpenSchedule,
-}: {
-  isoDate: string;
-  rows: CalendarSummaryRow[];
-  today: string;
-  onOpenSchedule: (batchId: number) => void;
-}) {
-  const totalPatients = rows.reduce((sum, r) => sum + r.patientCount, 0);
-  return (
-    <div className="preview-glass-overlay rounded-md" data-testid={`home-calendar-day-popover-${isoDate}`}>
-      <div className="px-4 py-3 border-b border-slate-200/70 dark:border-border">
-        <div className="text-sm font-semibold text-slate-900 dark:text-foreground" data-testid="text-home-popover-date">
-          {formatDayHeader(isoDate, today)}
-        </div>
-        <div className="text-[11px] text-slate-500 dark:text-muted-foreground mt-0.5">
-          {totalPatients} {totalPatients === 1 ? "patient" : "patients"} ·{" "}
-          {rows.length} {rows.length === 1 ? "schedule" : "schedules"}
-        </div>
-      </div>
-      <ul className="max-h-72 overflow-auto divide-y divide-slate-200/60 dark:divide-border">
-        {rows.map((row) => (
-          <li key={row.id} className="px-4 py-2.5" data-testid={`home-popover-batch-${row.id}`}>
-            <div className="flex items-start gap-2">
-              <Building2 className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div
-                  className="text-sm font-medium text-slate-900 dark:text-foreground truncate"
-                  title={row.facility ?? row.name}
-                >
-                  {row.facility ?? row.name}
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-muted-foreground">
-                  {row.patientCount} {row.patientCount === 1 ? "patient" : "patients"}
-                </div>
-                {ANCILLARY_CATEGORY_KEYS.some((c) => (row.byCategory?.[c] ?? 0) > 0) && (
-                  <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
-                    {ANCILLARY_CATEGORY_KEYS.map((cat) =>
-                      (row.byCategory?.[cat] ?? 0) > 0 ? (
-                        <span
-                          key={cat}
-                          className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 dark:text-muted-foreground"
-                        >
-                          <span className={`inline-block h-1.5 w-1.5 rounded-full ${ANCILLARY_DOT_CLASS[cat].className}`} />
-                          {ANCILLARY_DOT_CLASS[cat].title} {row.byCategory[cat]}
-                        </span>
-                      ) : null,
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onOpenSchedule(row.id)}
-              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-plexus-navy-800 dark:text-slate-300 hover:underline"
-              data-testid={`button-home-popover-view-schedule-${row.id}`}
-            >
-              View schedule <ArrowRight className="w-3 h-3" />
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
+// ── Public types (kept so home-preview.tsx's `type` import stays valid) ────────
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
 type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
 type ClinicTab = {
@@ -165,61 +69,57 @@ interface HomeDashboardPreviewProps {
   onOpenSchedule: (batchId: number) => void;
 }
 
-function formatDayHeader(iso: string, today: string): string {
-  const d = new Date(iso + "T00:00:00");
-  const label = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-  if (iso === today) return `Today — ${label}`;
-  return label;
-}
+// ── Shortcut tiles (§18) ───────────────────────────────────────────────────────
+const TILE_ICON = "w-5 h-5 shrink-0";
+const TILE_ICON_STYLE = { color: "var(--w-navy-light)" } as const;
 
-function countAncillaryLike(breakdown: Record<string, number>, patterns: string[]) {
-  return Object.entries(breakdown).reduce((sum, [name, count]) => {
-    const normalized = name.toLowerCase();
-    return patterns.some((pattern) => normalized.includes(pattern)) ? sum + count : sum;
-  }, 0);
-}
+type Shortcut = { href: string; label: string; icon: React.ReactNode; testId: string };
 
-function buildBreakdownFromPatients(patients: DayPatient[]) {
-  const map: Record<string, number> = {};
-  for (const patient of patients) {
-    for (const ancillary of patient.ancillaries ?? []) {
-      map[ancillary] = (map[ancillary] || 0) + 1;
-    }
-  }
-  return map;
-}
+const CLINICAL_SHORTCUTS: Shortcut[] = [
+  { href: "/mission-control", label: "Mission Control", testId: "tile-mission-control", icon: <Radar className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/patient-directory", label: "Plexus EHR", testId: "tile-patient-directory", icon: <Users className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/imaging-central", label: "Imaging Central", testId: "tile-imaging-central", icon: <ScanLine className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/engagement-center", label: "Engagement Center", testId: "tile-engagement-center", icon: <Phone className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/clinic-analytics", label: "Clinic Analytics", testId: "tile-clinic-analytics", icon: <BarChart3 className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/team-ops", label: "Team Ops", testId: "tile-team-ops", icon: <Stethoscope className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+];
 
-// Uniform flat navy tile. Every tile in the preview grid (secondary tiles,
-// Plexus IQ, Clinician Portal) shares this exact icon + typography treatment.
-function SecondaryTile({
-  href,
-  icon,
-  label,
-  testId,
-  className,
-}: {
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  testId: string;
-  className?: string;
-}) {
+const OPERATIONS_SHORTCUTS: Shortcut[] = [
+  { href: "/ancillary-documents", label: "Ancillary Documents", testId: "tile-documents", icon: <FileText className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/clinic-onboarding", label: "Clinic Onboarding", testId: "tile-clinic-onboarding", icon: <ClipboardCheck className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/plexus-tasks", label: "Plexus Tasks", testId: "tile-plexus-tasks", icon: <CheckSquare className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/document-library", label: "Document Library", testId: "tile-document-library", icon: <Library className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/team-member-portals", label: "Team Portals", testId: "tile-team-member-portals", icon: <Users2 className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/document-upload", label: "Document Upload", testId: "tile-document-upload", icon: <Upload className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+];
+
+const FINANCE_SHORTCUTS: Shortcut[] = [
+  { href: "/billing", label: "Billing", testId: "tile-billing", icon: <CreditCard className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/invoices", label: "Invoices", testId: "tile-invoices", icon: <Receipt className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/plexus-bank", label: "Plexus Bank", testId: "tile-plexus-bank", icon: <Landmark className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  { href: "/admin/settings", label: "Admin", testId: "tile-admin", icon: <Shield className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+];
+
+function ShortcutTile({ href, icon, label, testId }: Shortcut) {
   return (
-    <Link href={href} className={className}>
-      <Card className="preview-glass-tile preview-glass-tile-interactive group h-full" data-testid={testId}>
-        <div className="h-[122px] flex items-center gap-4 px-5">
-          <div className="shrink-0">{icon}</div>
-          <div className="min-w-0">
-            <div className="text-[14px] font-semibold text-slate-900 dark:text-foreground leading-tight">
-              {label}
-            </div>
-          </div>
-        </div>
-      </Card>
+    <Link href={href}>
+      <div
+        className="winter-tile flex items-center gap-3 px-4 py-3.5 min-h-[58px] cursor-pointer"
+        data-testid={testId}
+      >
+        {icon}
+        <span
+          className="text-[13px] font-medium leading-tight"
+          style={{ color: "var(--w-text)" }}
+        >
+          {label}
+        </span>
+      </div>
     </Link>
   );
 }
 
+// Clinician Portal keeps its role gate + signature badge (§19 · Clinical).
 function ClinicianPortalTile() {
   const { data: me } = useQuery<{ role?: string }>({ queryKey: ["/api/auth/me"] });
   const role = me?.role;
@@ -231,346 +131,193 @@ function ClinicianPortalTile() {
   if (!enabled) return null;
   const needs = summary?.needsSignature ?? 0;
   return (
-    <Link href="/clinician-portal" className="xl:col-start-1">
-      <Card className="preview-glass-tile preview-glass-tile-interactive group h-full" data-testid="tile-clinician-portal">
-        <div className="h-[122px] flex items-center gap-4 px-5">
-          <div className="shrink-0 relative">
-            <FileSignature className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />
-            {needs > 0 && (
-              <span className="absolute -top-1 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full bg-plexus-navy-800 text-white text-[10px] font-semibold flex items-center justify-center tabular-nums" data-testid="badge-clinician-needs-signature">
-                {needs}
-              </span>
-            )}
-          </div>
-          <div className="min-w-0">
-            <div className="text-[14px] font-semibold text-slate-900 dark:text-foreground leading-tight">
-              Clinician Portal
-            </div>
-          </div>
-        </div>
-      </Card>
+    <Link href="/clinician-portal">
+      <div
+        className="winter-tile flex items-center gap-3 px-4 py-3.5 min-h-[58px] cursor-pointer"
+        data-testid="tile-clinician-portal"
+      >
+        <span className="relative shrink-0">
+          <FileSignature className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} />
+          {needs > 0 && (
+            <span
+              className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full text-white text-[10px] font-semibold flex items-center justify-center tabular-nums"
+              style={{ background: "var(--w-blue)" }}
+              data-testid="badge-clinician-needs-signature"
+            >
+              {needs}
+            </span>
+          )}
+        </span>
+        <span className="text-[13px] font-medium leading-tight" style={{ color: "var(--w-text)" }}>
+          Clinician Portal
+        </span>
+      </div>
     </Link>
   );
 }
 
-export function HomeDashboardPreview({
-  batches,
-  dashboardData,
-  dashboardLoading,
-  dashboardWeekOverride,
-  setDashboardWeekOverride,
-  dashboardClinicKey,
-  setDashboardClinicKey,
-  onOpenSidebar,
-  onOpenSchedule,
-}: HomeDashboardPreviewProps) {
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [activeCalendarFilters, setActiveCalendarFilters] = useState<CalendarFilterId[]>([]);
-
-  function toggleCalendarFilter(id: CalendarFilterId) {
-    setActiveCalendarFilters((prev) =>
-      prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id],
-    );
-  }
-
-  const dashboardClinicTabs = dashboardData?.clinicTabs || [];
-  const activeDashboardClinic =
-    dashboardClinicTabs.find((t) => t.clinicKey === dashboardClinicKey) ||
-    dashboardClinicTabs[0] || null;
-
-  const today = dashboardData?.today ?? "";
-  const effectiveSelectedDate = selectedDate ?? today;
-
-  useEffect(() => {
-    if (!selectedDate && today) setSelectedDate(today);
-  }, [today, selectedDate]);
-
-  const selectedMonthCell = useMemo<ClinicMonthCell | null>(() => {
-    if (!effectiveSelectedDate || !activeDashboardClinic) return null;
-    return activeDashboardClinic.monthCells.find((c) => c.isoDate === effectiveSelectedDate) || null;
-  }, [effectiveSelectedDate, activeDashboardClinic]);
-
-  const selectedDayPatients = useMemo<DayPatient[]>(() => selectedMonthCell?.patients ?? [], [selectedMonthCell]);
-
-  const selectedDayAncillaryBreakdown = useMemo<Record<string, number>>(() => {
-    const map: Record<string, number> = {};
-    for (const p of selectedDayPatients) {
-      for (const a of p.ancillaries) map[a] = (map[a] || 0) + 1;
-    }
-    return map;
-  }, [selectedDayPatients]);
-
-  const clinicDaySummaries = useMemo(() => {
-    return dashboardClinicTabs.map((tab) => {
-      const cell = tab.monthCells.find((c) => c.isoDate === effectiveSelectedDate) || null;
-      const patients = cell?.patients ?? [];
-      const breakdown = buildBreakdownFromPatients(patients);
-      return {
-        clinicKey: tab.clinicKey,
-        clinicLabel: tab.clinicLabel,
-        patientCount: cell?.patientCount ?? 0,
-        ancillaryCount: Object.values(breakdown).reduce((sum, count) => sum + count, 0),
-        brainWaveCount: countAncillaryLike(breakdown, ["brainwave", "brain wave", "brain"]),
-        vitalWaveCount: countAncillaryLike(breakdown, ["vitalwave", "vital wave", "vital"]),
-        ultrasoundCount: countAncillaryLike(breakdown, ["ultrasound", "ultra sound", "us"]),
-      };
-    });
-  }, [dashboardClinicTabs, effectiveSelectedDate]);
-
-  // Retained (parity with original) — kept so the data wiring is identical.
-  void clinicDaySummaries;
-
-  const { data: calendarSummary = [] } = useQuery<CalendarSummaryRow[]>({
-    queryKey: ["/api/screening-batches/calendar-summary"],
-    queryFn: async () => {
-      const res = await fetch("/api/screening-batches/calendar-summary", {
-        credentials: "include",
-      });
-      if (!res.ok)
-        throw new Error(`Calendar summary fetch failed (${res.status})`);
-      return res.json();
-    },
-    staleTime: 15_000,
-  });
-
-  const completedEventRange = useMemo(
-    () => defaultCommandCalendarEventWindow(),
-    [],
-  );
-  const { data: completedEvents = [] } = useQuery<GlobalScheduleEvent[]>({
-    queryKey: [
-      "/api/global-schedule-events",
-      {
-        eventType: "procedure_complete",
-        startDate: completedEventRange.start,
-        endDate: completedEventRange.end,
-      },
-    ],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.set("eventType", "procedure_complete");
-      params.set("startDate", completedEventRange.start);
-      params.set("endDate", completedEventRange.end);
-      params.set("limit", "500");
-      const res = await fetch(
-        `/api/global-schedule-events?${params.toString()}`,
-        { credentials: "include" },
-      );
-      if (!res.ok)
-        throw new Error(`Calendar events fetch failed (${res.status})`);
-      return res.json();
-    },
-    staleTime: 30_000,
-  });
-
-  const calendarCells = useMemo(
-    () =>
-      buildCommandCalendarCells({
-        summary: calendarSummary,
-        completedEvents,
-        activeFilters: activeCalendarFilters,
-      }),
-    [calendarSummary, completedEvents, activeCalendarFilters],
-  );
-
-  const batchesByDate = useMemo(() => {
-    const map: Record<string, CalendarSummaryRow[]> = {};
-    for (const row of calendarSummary) {
-      if (!row.scheduleDate || row.patientCount === 0) continue;
-      (map[row.scheduleDate] ??= []).push(row);
-    }
-    for (const dateKey of Object.keys(map)) {
-      map[dateKey].sort((a, b) => (a.facility ?? "").localeCompare(b.facility ?? ""));
-    }
-    return map;
-  }, [calendarSummary]);
-
+function ShortcutGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex flex-col h-full preview-surface">
-      <main className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
-          <div className="max-w-5xl mx-auto">
-            <div className="space-y-6">
-              <HomeLiveDashboardPreview />
+    <div className="winter-panel-soft p-3.5">
+      <div
+        className="text-[10px] font-semibold uppercase tracking-[0.12em] px-1 pb-3"
+        style={{ color: "var(--w-text-2)" }}
+      >
+        {label}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{children}</div>
+    </div>
+  );
+}
 
-              <HomeWorldClocks />
+// ── Plexus IQ dark feature card (§14) ─────────────────────────────────────────
+function PlexusIqCard() {
+  return (
+    <Link href="/plexus-iq" data-testid="tile-plexus-iq" className="block h-full">
+      <div className="winter-feature-dark group h-full p-6 md:p-7 flex flex-col sm:flex-row sm:items-center gap-5">
+        <span className="w-12 h-12 rounded-xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center shrink-0">
+          <Sparkles className="w-6 h-6 text-white" strokeWidth={1.75} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[22px] font-medium text-white leading-tight tracking-tight">
+            Plexus IQ
+          </div>
+          <p className="mt-1 text-[13px] leading-5" style={{ color: "rgba(255,255,255,0.68)" }}>
+            Build, qualify, and review schedules.
+          </p>
+        </div>
+        <span
+          className="inline-flex items-center gap-1.5 h-10 px-4 rounded-[10px] bg-white text-[13px] font-semibold self-start sm:self-center shrink-0 transition-colors group-hover:bg-[#F4F8FC]"
+          style={{ color: "var(--w-text)" }}
+        >
+          Open Plexus IQ
+          <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" strokeWidth={2} />
+        </span>
+      </div>
+    </Link>
+  );
+}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
-                {/* Row 1: Mission Control | Patient EHR | Plexus IQ | Outreach / Engagement Center */}
-                <SecondaryTile
-                  href="/mission-control"
-                  testId="tile-mission-control"
-                  label="Mission Control"
-                  icon={<Radar className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/patient-directory"
-                  testId="tile-patient-directory"
-                  label="Patient EHR"
-                  icon={<Users className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/plexus-iq"
-                  testId="tile-plexus-iq"
-                  label="Plexus IQ"
-                  icon={<Sparkles className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/engagement-center"
-                  testId="tile-engagement-center"
-                  label="Outreach / Engagement Center"
-                  icon={<Phone className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
+// ── Today's Summary (§16) — real today-window values from useHomeStats ─────────
+function TodaySummary() {
+  const { data } = useHomeStats();
+  const t = data?.windows.today;
+  const rows: { label: string; value: number; key: string }[] = [
+    { label: "Patients", value: t?.patients ?? 0, key: "patients" },
+    { label: "Ancillaries", value: t?.ancillaries ?? 0, key: "ancillaries" },
+    { label: "Calls", value: t?.callsPlanned ?? 0, key: "calls" },
+  ];
+  return (
+    <div className="winter-panel-soft p-[18px]" data-testid="today-summary">
+      <div
+        className="text-[13px] font-semibold uppercase tracking-[0.08em] pb-3"
+        style={{ color: "var(--w-text)" }}
+      >
+        Today's Summary
+      </div>
+      <div className="space-y-2">
+        {rows.map((r) => (
+          <div
+            key={r.key}
+            className="flex items-center justify-between rounded-[10px] px-3 h-[40px]"
+            style={{ background: "#F7FAFD" }}
+          >
+            <span className="text-[13px]" style={{ color: "var(--w-text-2)" }}>
+              {r.label}
+            </span>
+            <span
+              className="text-[15px] font-semibold tabular-nums"
+              style={{ color: "var(--w-blue)" }}
+              data-testid={`today-summary-${r.key}`}
+            >
+              {r.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-                {/* Row 2: Team Member Portals | Team Ops | Plexus Tasks */}
-                <SecondaryTile
-                  href="/team-member-portals"
-                  testId="tile-team-member-portals"
-                  label="Team Member Portals"
-                  icon={<Users2 className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/team-ops"
-                  testId="tile-team-ops"
-                  label="Team Ops"
-                  icon={<Stethoscope className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/plexus-tasks"
-                  testId="tile-plexus-tasks"
-                  label="Plexus Tasks"
-                  icon={<CheckSquare className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                {/* Row 3: Imaging Central | Document Upload | Ancillary Documents */}
-                <SecondaryTile
-                  href="/imaging-central"
-                  testId="tile-imaging-central"
-                  label="Imaging Central"
-                  icon={<ScanLine className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/document-upload"
-                  testId="tile-document-upload"
-                  label="Document Upload"
-                  icon={<Upload className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/ancillary-documents"
-                  testId="tile-documents"
-                  label="Ancillary Documents"
-                  icon={<FileText className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
+export function HomeDashboardPreview({ batches, onOpenSidebar }: HomeDashboardPreviewProps) {
+  return (
+    <div className="winter-home winter-canvas flex flex-col h-full" data-testid="home-dashboard">
+      <main className="relative z-[1] flex-1 overflow-auto">
+        <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8 pt-7 pb-16">
+          <div className="space-y-6">
+            {/* Page header (§11) — sits directly on the icy canvas */}
+            <div className="mt-2">
+              <h1
+                className="text-[34px] font-normal leading-[42px] tracking-tight"
+                style={{ color: "var(--w-text)" }}
+                data-testid="text-home-title"
+              >
+                Home
+              </h1>
+              <p className="mt-1 text-[13px] leading-5" style={{ color: "var(--w-text-muted)" }}>
+                Taylor Family Practice
+              </p>
+            </div>
 
-                {/* Row 4: Clinician Portal | Clinic Onboarding | Clinic Analytics */}
-                <ClinicianPortalTile />
-                <SecondaryTile
-                  href="/clinic-onboarding"
-                  testId="tile-clinic-onboarding"
-                  label="Clinic Onboarding"
-                  icon={<ClipboardCheck className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/clinic-analytics"
-                  testId="tile-clinic-analytics"
-                  label="Clinic Analytics"
-                  icon={<BarChart3 className="w-9 h-9 text-plexus-navy-800 dark:text-slate-200" strokeWidth={1.5} />}
-                />
+            {/* Priority 1 — Practice Pulse: largest frosted surface (§12) */}
+            <HomeLiveDashboardPreview />
+
+            {/* Priority 2 + 3 — Plexus IQ feature banner (~2/3) beside the
+                compact Today's Summary (~1/3). Plexus IQ is the only dark card
+                and reads as second only to Practice Pulse. */}
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-stretch">
+              <PlexusIqCard />
+              <TodaySummary />
+            </div>
+
+            {/* Priority 4 — Global Clocks: quiet full-width utility strip */}
+            <div className="winter-panel-soft px-5 py-4" data-testid="home-world-clocks">
+              <div className="flex items-center gap-2 pb-3">
+                <Clock className="w-3.5 h-3.5" style={{ color: "var(--w-text-muted)" }} strokeWidth={2} />
+                <span
+                  className="text-[11px] font-semibold uppercase tracking-[0.12em]"
+                  style={{ color: "var(--w-text-2)" }}
+                >
+                  Global Clocks
+                </span>
               </div>
+              <HomeWorldClocks variant="winter" />
+            </div>
 
-              <Card className="preview-glass-tile overflow-hidden" data-testid="tile-calendar-bottom">
-                <div className="preview-calendar-header relative flex items-center justify-center px-6 py-4">
-                  <span
-                    className="preview-header-glow text-[18px] font-semibold tracking-tight"
-                    data-testid="text-calendar-header"
-                  >
-                    Calendar
-                  </span>
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 gap-1.5 px-2.5 text-plexus-navy-800 hover:bg-plexus-navy-800/10 hover:text-plexus-navy-800 dark:text-slate-200"
-                          data-testid="button-calendar-filter"
-                        >
-                          <Filter className="h-4 w-4" strokeWidth={1.75} />
-                          <span className="text-[12px] font-medium">
-                            Filter
-                            {activeCalendarFilters.length > 0
-                              ? ` (${activeCalendarFilters.length})`
-                              : ""}
-                          </span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        className="w-60 preview-glass-overlay"
-                        data-testid="menu-calendar-filter"
-                      >
-                        <DropdownMenuLabel>Show on calendar</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        {HOME_CALENDAR_FILTER_IDS.map((id) => {
-                          const def = CALENDAR_FILTERS[id];
-                          if (!def) return null;
-                          return (
-                            <DropdownMenuCheckboxItem
-                              key={id}
-                              checked={activeCalendarFilters.includes(id)}
-                              onCheckedChange={() => toggleCalendarFilter(id)}
-                              onSelect={(e) => e.preventDefault()}
-                              data-testid={`filter-option-${id}`}
-                            >
-                              {def.label}
-                            </DropdownMenuCheckboxItem>
-                          );
-                        })}
-                        {activeCalendarFilters.length > 0 && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <button
-                              type="button"
-                              onClick={() => setActiveCalendarFilters([])}
-                              className="w-full px-2 py-1.5 text-left text-[12px] font-medium text-slate-600 hover:bg-slate-100/70 rounded-sm dark:text-muted-foreground dark:hover:bg-muted"
-                              data-testid="button-clear-calendar-filters"
-                            >
-                              Clear filters
-                            </button>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-                <div className="p-6 lg:p-8">
-                  <CanonicalMonthCalendar
-                    cells={calendarCells}
-                    onSelectDate={(date) => setSelectedDate(date)}
-                    renderDayPopoverContent={(date) => {
-                      const rows = batchesByDate[date];
-                      if (!rows || rows.length === 0) return null;
-                      return (
-                        <DayPopoverContent
-                          isoDate={date}
-                          rows={rows}
-                          today={today}
-                          onOpenSchedule={onOpenSchedule}
-                        />
-                      );
-                    }}
-                  />
-                </div>
-              </Card>
+            {/* Priority 5 — Grouped shortcuts (§17–§19) */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              <ShortcutGroup label="Clinical">
+                <ClinicianPortalTile />
+                {CLINICAL_SHORTCUTS.map((s) => (
+                  <ShortcutTile key={s.href} {...s} />
+                ))}
+              </ShortcutGroup>
+              <ShortcutGroup label="Operations">
+                {OPERATIONS_SHORTCUTS.map((s) => (
+                  <ShortcutTile key={s.href} {...s} />
+                ))}
+              </ShortcutGroup>
+              <ShortcutGroup label="Finance & Admin">
+                {FINANCE_SHORTCUTS.map((s) => (
+                  <ShortcutTile key={s.href} {...s} />
+                ))}
+              </ShortcutGroup>
             </div>
           </div>
 
           {batches.length > 0 && (
-            <div className="max-w-5xl mx-auto mt-10">
+            <div className="mt-8">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={onOpenSidebar}
-                className="gap-2 text-sm"
+                className="gap-2 text-sm bg-white/70 hover:bg-white/90"
                 data-testid="button-view-history"
               >
                 <Clock className="w-4 h-4" />

@@ -82,3 +82,42 @@ export async function fetchAllTeamMemberProfileSettings(): Promise<AdminSettingR
   const body = (await res.json()) as AdminSettingRowLike[];
   return Array.isArray(body) ? body : [];
 }
+
+
+// ─── Canonical coherent member profile (Phase 4C/5A) ─────────────────────────
+// The full operational profile from the canonical endpoint. `/me` is the
+// self-serve variant any authenticated user may read for THEIR OWN profile;
+// `/:userId` is admin-gated (view-as / admin editing).
+export interface CoherentMemberProfile {
+  identity: { userId: string; username: string; role: string | null; active: boolean };
+  teams: Array<{ id: number; teamId: number; membershipRole: string; primaryTeam: boolean; active: boolean }>;
+  facilities: { coverage: Array<{ facilityId: string; coverageType: string; primaryCoverage: boolean }> };
+  portal: {
+    workspaceType: TeamMemberWorkspaceType;
+    defaultMode: "clinicSchedule" | "ancillarySchedule" | "callList";
+    defaultLeftTab: "tools" | "messaging";
+    assignedFacilityIds: string[];
+  };
+  capabilities: {
+    canPerformPCSWork: boolean;
+    canPerformACSWork: boolean;
+    canHandleCalls: boolean;
+    canReceiveHandoffs: boolean;
+    canManageTeam: boolean;
+  };
+  callWork: Record<string, unknown> | null;
+  phone: Record<string, unknown> | null;
+  management: { isManager: boolean; relationships: Array<Record<string, unknown>> };
+}
+
+export async function fetchMyMemberProfile(): Promise<CoherentMemberProfile> {
+  const res = await fetch("/api/teams/member-profile/me", { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to load member profile (${res.status})`);
+  return res.json();
+}
+
+export async function fetchMemberProfile(userId: string): Promise<CoherentMemberProfile> {
+  const res = await fetch(`/api/teams/member-profile/${encodeURIComponent(userId)}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to load member profile (${res.status})`);
+  return res.json();
+}

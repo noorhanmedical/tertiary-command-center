@@ -41,16 +41,32 @@ export const TEAM_MEMBER_CAPABILITY_IDS = [
   "primaryConsentScreening",
   "uploadProcedureReport",
   "viewAllFacilities",
+  // ─── Phase 4 canonical operational capabilities (K5) ───
+  // Stable capability semantics for the Team Portal + call workforce. These
+  // supersede ad-hoc PCS/ACS role-string inference. Null (unset) → derive a
+  // safe default from the workspace type (see resolveTeamMemberCapabilities).
+  "canPerformPCSWork",
+  "canPerformACSWork",
+  "canHandleCalls",
+  "canReceiveHandoffs",
+  "canManageTeam",
 ] as const;
 
 export type TeamMemberCapabilityId =
   (typeof TEAM_MEMBER_CAPABILITY_IDS)[number];
+
+// Default left-rail tab (Phase 0.5 workspacePrefs concept; Phase 4C persists it
+// in the profile so an admin can set it per member). tools | messaging.
+export const TEAM_MEMBER_LEFT_TABS = ["tools", "messaging"] as const;
+export type TeamMemberLeftTab = (typeof TEAM_MEMBER_LEFT_TABS)[number];
 
 export type TeamMemberProfileSetting = {
   workspaceType: TeamMemberWorkspaceType;
   assignedFacilityIds: string[];
   defaultFacilityId?: string | null;
   defaultMode?: TeamMemberWorkspaceMode;
+  // Default left-rail tab (tools|messaging). Undefined → "tools".
+  defaultLeftTab?: TeamMemberLeftTab;
   capabilities: Partial<Record<TeamMemberCapabilityId, boolean>>;
   allowedServiceTypes?: string[];
   active?: boolean;
@@ -79,7 +95,9 @@ export const defaultAncillaryCareSpecialistProfile: TeamMemberProfileSetting = {
   workspaceType: "ancillaryCareSpecialist",
   assignedFacilityIds: [],
   defaultFacilityId: null,
-  defaultMode: "clinicSchedule",
+  // ACS → Ancillary Schedule (unifies the prior static-table vs profile
+  // mismatch, decision K16). PCS → Call List (below).
+  defaultMode: "ancillarySchedule",
   capabilities: {
     callAndSchedule: true,
     completeProcedure: true,
@@ -153,6 +171,12 @@ export function normalizeTeamMemberProfile(
     ? (raw.defaultMode as TeamMemberWorkspaceMode)
     : base.defaultMode;
 
+  const defaultLeftTab = (TEAM_MEMBER_LEFT_TABS as readonly string[]).includes(
+    raw.defaultLeftTab as string,
+  )
+    ? (raw.defaultLeftTab as TeamMemberLeftTab)
+    : "tools";
+
   const capRaw =
     raw.capabilities && typeof raw.capabilities === "object"
       ? (raw.capabilities as Record<string, unknown>)
@@ -184,6 +208,7 @@ export function normalizeTeamMemberProfile(
     assignedFacilityIds,
     defaultFacilityId,
     defaultMode,
+    defaultLeftTab,
     capabilities,
     allowedServiceTypes,
     active: active ?? true,
@@ -197,4 +222,54 @@ export function fallbackWorkspaceTypeForRole(
 ): TeamMemberWorkspaceType {
   if (role === "technician" || role === "liaison") return "ancillaryCareSpecialist";
   return "patientCareSpecialist";
+}
+
+// ─── Canonical operational capabilities (Phase 4B / K5) ──────────────────────
+//
+// The single source of truth for what a team member may OPERATIONALLY do,
+// derived from their stored capabilities + workspace type. Shared so the SERVER
+// (handoff/coverage eligibility, manager gating) and the CLIENT resolve the
+// same answer — no more ad-hoc role-string inference.
+//
+// Each capability: explicit profile bit wins; otherwise a safe default from the
+// workspace type. This does NOT replace resolvePortalCapabilities (UI-facing
+// scheduling/procedure gates) — it is the operational/authorization layer the
+// workforce engine consumes.
+
+export interface TeamMemberCapabilities {
+  canPerformPCSWork: boolean;
+  canPerformACSWork: boolean;
+  canHandleCalls: boolean;
+  canReceiveHandoffs: boolean;
+  canManageTeam: boolean;
+}
+
+export function resolveTeamMemberCapabilities(input: {
+  workspaceType: TeamMemberWorkspaceType;
+  profile?: TeamMemberProfileSetting | null;
+  // When true (e.g. an active manager relationship exists), canManageTeam is
+  // forced on regardless of the stored bit.
+  isManager?: boolean;
+}): TeamMemberCapabilities {
+  const isAcs = input.workspaceType === "ancillaryCareSpecialist";
+  const isPcs = input.workspaceType === "patientCareSpecialist";
+  const caps = input.profile?.capabilities ?? {};
+
+  const pick = (bit: boolean | undefined, fallback: boolean): boolean =>
+    bit !== undefined ? bit : fallback;
+
+  return {
+    // PCS work = patient outreach/calls; default on for PCS-typed members.
+    canPerformPCSWork: pick(caps.canPerformPCSWork, isPcs),
+    // ACS work = ancillary workflow; default on for ACS-typed members.
+    canPerformACSWork: pick(caps.canPerformACSWork, isAcs),
+    // Calls: PCS-primary, but ACS may also (fallback true for both — the
+    // engine still checks working/capacity/coverage). Explicit bit can disable.
+    canHandleCalls: pick(caps.canHandleCalls, true),
+    // Handoffs: anyone who can handle calls can receive one by default.
+    canReceiveHandoffs: pick(caps.canReceiveHandoffs, true),
+    // Management is authority-driven: an active manager relationship forces it
+    // on; otherwise the stored bit; default off.
+    canManageTeam: input.isManager ? true : pick(caps.canManageTeam, false),
+  };
 }

@@ -43,6 +43,7 @@ export type DirectoryGeneratedNote = {
 export type DirectoryProfile = {
   key: string;
   encodedKey: string;
+  plexusId: string | null;
   identity: {
     name: string;
     dob: string | null;

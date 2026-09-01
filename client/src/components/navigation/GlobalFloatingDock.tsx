@@ -1,3 +1,9 @@
+/**
+ * @deprecated Replaced by GlobalDock (client/src/components/dock/GlobalDock.tsx).
+ * Canonical dock is now the unified GlobalDock system with role-based config.
+ * This file is preserved as transition reference only — zero active callers.
+ * Do NOT import or render this component.
+ */
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";

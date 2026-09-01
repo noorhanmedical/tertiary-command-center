@@ -237,6 +237,8 @@ export function PlexusIQOperatingList({
             timeLabel: timeLabelFor(b.createdAt),
             patientCount: countById.get(b.id) ?? patients.length,
             createdAtMs: new Date(b.createdAt).getTime(),
+            facility: b.facility ?? null,
+            clinicianName: b.clinicianName ?? null,
             ...nodeStatus(counts, running),
           } satisfies PlexusIQBatchNode;
         })
@@ -499,6 +501,10 @@ export function PlexusIQOperatingList({
           patients: selected,
           scheduleDate: selectedBatch.scheduleDate,
           createdAt: selectedBatch.createdAt,
+          attribution: {
+            clinicianName: selectedBatch.clinicianName ?? null,
+            facilityName: selectedBatch.facility ?? null,
+          },
           printMode,
         });
         if (!result.ok && result.reason === "popup-blocked") {

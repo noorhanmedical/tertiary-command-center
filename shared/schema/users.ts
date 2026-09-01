@@ -1,7 +1,11 @@
 import { sql, pgTable, varchar, text, boolean, integer, createInsertSchema, z } from "./_common";
 import { clinics } from "./clinics";
 
-export const USER_ROLES = ["admin", "clinician", "scheduler", "biller", "technician", "liaison"] as const;
+// `plexus_internal_clinical_reviewer` is the Plexus-internal clinical reviewer
+// role that performs service-specific Admin Review (Phase 2C). It is a
+// platform-operator-provisioned role — clinic admins do NOT get it implicitly.
+// It is the ONLY role permitted by server/services/adminReview/authorization.ts.
+export const USER_ROLES = ["admin", "clinician", "scheduler", "biller", "technician", "liaison", "plexus_internal_clinical_reviewer"] as const;
 export type UserRole = typeof USER_ROLES[number];
 
 export const users = pgTable("users", {

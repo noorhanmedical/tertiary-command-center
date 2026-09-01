@@ -302,10 +302,21 @@ export default function PlexusIQPage() {
   }, [queryClient]);
 
   const resolveBatchId = useCallback(
-    async (facility: string, scheduleDate: string): Promise<number> => {
+    async (
+      facility: string,
+      scheduleDate: string,
+      clinician?: {
+        clinicianId: number | null;
+        clinicianName: string;
+        clinicianSource: "facility_clinician" | "free_text";
+      } | null,
+    ): Promise<number> => {
       const existing = batches.find(
         (b) => b.facility === facility && b.scheduleDate === scheduleDate,
       );
+      // Reuse keeps the existing batch's own clinician attribution (the
+      // clinician is per-run; adding a patient to an existing run does not
+      // rewrite whose list it was).
       if (existing) return existing.id;
 
       const key = `${facility}::${scheduleDate}`;
@@ -317,6 +328,13 @@ export default function PlexusIQPage() {
           name: `${facility} - ${scheduleDate}`,
           facility,
           scheduleDate,
+          ...(clinician
+            ? {
+                clinicianId: clinician.clinicianId,
+                clinicianName: clinician.clinicianName,
+                clinicianSource: clinician.clinicianSource,
+              }
+            : {}),
         })
         .then((b) => (b as { id: number }).id);
       pendingCreatesRef.current.set(key, promise);
@@ -339,9 +357,14 @@ export default function PlexusIQPage() {
       patientType: "visit" | "outreach";
       name: string;
       time?: string;
+      clinician?: {
+        clinicianId: number | null;
+        clinicianName: string;
+        clinicianSource: "facility_clinician" | "free_text";
+      } | null;
     }): Promise<boolean> => {
       try {
-        const targetBatchId = await resolveBatchId(input.facility, input.scheduleDate);
+        const targetBatchId = await resolveBatchId(input.facility, input.scheduleDate, input.clinician ?? null);
         await addPatientMut.mutateAsync({
           batchId: targetBatchId,
           name: input.name,
@@ -466,7 +489,18 @@ export default function PlexusIQPage() {
   const handleClinicalImport = useCallback(
     async (
       rows: PlexusIqClinicalImportRow[],
-      defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+      defaults: {
+        facility: string;
+        scheduleDate: string;
+        patientType: "visit" | "outreach";
+        // Option A clinician for the selected default facility. The server
+        // applies it ONLY to batches at defaults.facility.
+        clinician?: {
+          clinicianId: number | null;
+          clinicianName: string;
+          clinicianSource: "facility_clinician" | "free_text";
+        } | null;
+      },
       source: BatchSource = "paste",
     ) => {
       if (rows.length === 0) return;
@@ -475,6 +509,7 @@ export default function PlexusIQPage() {
       // `newRun` isolates every intake into its own timestamped batch;
       // `append` (Resume / Append to current batch) reuses a target batch.
       const placement = batchPlacementRef.current;
+      const { clinician, ...routingDefaults } = defaults;
       try {
         const result = await importPlexusIqClinicalRows(
           rows.map((r) => ({
@@ -482,7 +517,15 @@ export default function PlexusIQPage() {
             // strip `raw` from the wire payload — the server doesn't need it
             raw: undefined,
           })),
-          { ...defaults, placement },
+          {
+            ...routingDefaults,
+            placement,
+            // Thread the selected clinician; server scopes it to the
+            // default facility (Option A).
+            clinicianId: clinician?.clinicianId ?? null,
+            clinicianName: clinician?.clinicianName ?? null,
+            clinicianSource: clinician?.clinicianSource ?? null,
+          },
         );
 
         // Refresh the workspace and calendar to show the new batches/patients.
@@ -579,9 +622,25 @@ export default function PlexusIQPage() {
   );
 
   const handleBulkImport = useCallback(
-    async (rows: ParsedRow[], source: BatchSource = "paste") => {
+    async (
+      rows: ParsedRow[],
+      source: BatchSource = "paste",
+      ctx?: {
+        defaultFacility: string;
+        clinician: {
+          clinicianId: number | null;
+          clinicianName: string;
+          clinicianSource: "facility_clinician" | "free_text";
+        } | null;
+      },
+    ) => {
       if (rows.length === 0) return;
       setBulkPending(true);
+
+      // Option A: the selected clinician applies ONLY to batches at the
+      // selected default facility. Other facilities get no attribution.
+      const defaultFacility = ctx?.defaultFacility?.trim() || "";
+      const selectedClinician = ctx?.clinician ?? null;
 
       const groups = new Map<string, ParsedRow[]>();
       for (const r of rows) {
@@ -609,6 +668,12 @@ export default function PlexusIQPage() {
       try {
         for (const [, groupRows] of groups) {
           const first = groupRows[0];
+          // Option A: only attribute the selected clinician to the group at
+          // the selected default facility. Other groups create with none.
+          const clinicianForGroup =
+            selectedClinician && defaultFacility && first.facility.trim() === defaultFacility
+              ? selectedClinician
+              : null;
           const targetBatchId =
             appendTargetId != null
               ? appendTargetId
@@ -618,8 +683,19 @@ export default function PlexusIQPage() {
                     facility: first.facility,
                     scheduleDate: first.scheduleDate,
                     placement: { mode: "newRun" },
+                    ...(clinicianForGroup
+                      ? {
+                          clinicianId: clinicianForGroup.clinicianId,
+                          clinicianName: clinicianForGroup.clinicianName,
+                          clinicianSource: clinicianForGroup.clinicianSource,
+                        }
+                      : {}),
                   })) as { id: number }).id
-                : await resolveBatchId(first.facility, first.scheduleDate);
+                : await resolveBatchId(
+                    first.facility,
+                    first.scheduleDate,
+                    clinicianForGroup,
+                  );
           setBatchSource(targetBatchId, source);
           if (!firstBatch) firstBatch = { id: targetBatchId, facility: first.facility };
 

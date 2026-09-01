@@ -29,6 +29,11 @@ export type TeamWorkspaceClinicVisit = {
 
 export type AncillaryReadinessItemState = "complete" | "missing" | "not_required";
 
+export type AncillaryReadinessProvenance = {
+  completedAt: string | null;
+  completedByUserId: string | null;
+};
+
 export type AncillaryReadinessSummary = {
   informedConsent: AncillaryReadinessItemState;
   screeningForm: AncillaryReadinessItemState;
@@ -36,6 +41,13 @@ export type AncillaryReadinessSummary = {
   report: AncillaryReadinessItemState;
   informedConsentDocId: number | null;
   screeningFormDocId: number | null;
+  // Provenance (who/when) for completed items; null when missing/not_required.
+  informedConsentProvenance?: AncillaryReadinessProvenance | null;
+  screeningFormProvenance?: AncillaryReadinessProvenance | null;
+  reportProvenance?: AncillaryReadinessProvenance | null;
+  // True when the row has no execution-case link → readiness is not
+  // episode-accurate (honest legacy signal for the UI).
+  legacyUnlinked?: boolean;
 };
 
 export type TeamWorkspaceAncillaryAppointment = {
@@ -78,6 +90,22 @@ export type TeamWorkspaceCallListItem = {
   lastCallOutcome?: string | null;
   /** Engagement bucket: 'visit' | 'outreach' | 'scheduling_triage'. */
   engagementBucket?: string | null;
+  // ── Historical snapshot fields (present only for past-date views, sourced
+  //    from the read-only scheduler_assignments snapshot + that day's calls).
+  /** True when this row is a historical snapshot entry, not current work. */
+  historical?: boolean;
+  /** The snapshot date (YYYY-MM-DD) this row belonged to. */
+  asOfDate?: string | null;
+  /** Snapshot assignment status that day (active/released/reassigned/completed). */
+  assignmentStatus?: string | null;
+  /** Number of calls the PCS logged for this patient that day. */
+  historicalCallCount?: number | null;
+  /** Callback requested on that day's last call, if any. */
+  historicalCallbackAt?: string | null;
+  /** Timestamp of the last call activity that day. */
+  historicalLastActivityAt?: string | null;
+  /** True when at least one call was logged that day. */
+  completed?: boolean;
 };
 
 // Short, human-readable explanation of why a patient is on the call list,
@@ -160,6 +188,11 @@ type CallListParams = {
   assignedRole?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  /** Operational day (YYYY-MM-DD). When set, the SERVER scopes the call list
+   *  to cases whose nextActionAt falls on that local day, including backlog
+   *  (null nextActionAt) only for today/future. Preferred over client-side
+   *  startDate/endDate filtering. */
+  date?: string | null;
   limit?: number;
   /** ADMIN VIEW-AS — only honored when the caller is admin. */
   viewAsTeamMemberId?: string | null;
@@ -358,13 +391,11 @@ export async function schedulePatientAncillary(input: {
   return res.json();
 }
 
-// /api/scheduler-portal/cases doesn't support startDate/endDate, so we
-// fetch by facility/assigned and filter `nextActionAt` client-side when
-// a date window is supplied. Cases with NO next-action date are assigned
-// backlog (the Engagement Center shows them with no date) — they must
-// always appear in the member's call list rather than being dropped by
-// the day window. Only cases that DO carry a scheduled next-action date
-// are narrowed to the selected window.
+// Call list day scoping. PREFERRED: pass `date=YYYY-MM-DD` — the SERVER scopes
+// by nextActionAt and includes backlog (null nextActionAt) only for
+// today/future (see /api/scheduler-portal/cases). LEGACY fallback: when only
+// startDate/endDate are given (no `date`), the old client-side nextActionAt
+// filter still applies and keeps null-nextActionAt backlog on every day.
 export async function fetchWorkspaceCallList(
   params: CallListParams = {},
 ): Promise<TeamWorkspaceCallListItem[]> {
@@ -372,6 +403,7 @@ export async function fetchWorkspaceCallList(
   appendIf(qs, "facilityId", params.facilityId);
   appendIf(qs, "assignedTeamMemberId", params.assignedTeamMemberId);
   appendIf(qs, "assignedRole", params.assignedRole);
+  appendIf(qs, "date", params.date);
   appendIf(qs, "limit", params.limit ?? 100);
   appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
   appendIf(qs, "workspace", params.workspace);
@@ -379,7 +411,10 @@ export async function fetchWorkspaceCallList(
   const rows = await fetchJson<unknown[]>(url);
   if (!Array.isArray(rows)) return [];
   let out = rows as TeamWorkspaceCallListItem[];
-  if (params.startDate || params.endDate) {
+  // Server-side date scoping is authoritative when `date` is supplied — do NOT
+  // re-filter client-side. The legacy startDate/endDate client filter only runs
+  // for callers that still pass a window without `date`.
+  if (!params.date && (params.startDate || params.endDate)) {
     const startMs = params.startDate ? new Date(params.startDate).getTime() : -Infinity;
     const endMs = params.endDate ? new Date(params.endDate).getTime() : Infinity;
     out = out.filter((row) => {

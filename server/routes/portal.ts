@@ -10,10 +10,10 @@ import {
 } from "@shared/schema";
 import {
   assignDocumentToPatientChart,
+  listActiveClinicNames,
   listActiveFacilityUsers,
   listAncillaryAppointmentsForDate,
   listAncillaryAppointmentsForRange,
-  listDistinctAncillaryFacilities,
   listMyRecentPatientsScoped,
   rollbackDocumentInsert,
   searchPatientScreeningsScoped,
@@ -972,8 +972,12 @@ export function registerPortalRoutes(app: Express) {
         viewAsRosterFacility: viewAsRoster?.facility ?? null,
       });
       if (allowed.all) {
-        // Admin gets every facility ever used by an appointment.
-        const facilities = await listDistinctAncillaryFacilities();
+        // Admin sees every ACTIVE canonical clinic configured in Admin
+        // Settings (the `clinics` table) — NOT the legacy distinct
+        // ancillary-appointment facility strings, which leaked
+        // non-canonical names (e.g. seeded "Plexus Imaging") into the
+        // Team Portal facility selector.
+        const facilities = await listActiveClinicNames();
         res.json({ facilities: facilities.slice().sort() });
       } else {
         res.json({ facilities: [...allowed.facilities].sort() });

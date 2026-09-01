@@ -14,8 +14,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export type TrayTab = "direct" | "team";
 export type PlaygroundLayout = "docked" | "split";
 export type CalendarBehavior = "playground" | "quickSchedule";
+/** Which top-level left-rail tab opens by default. */
+export type LeftTab = "tools" | "messaging";
 
 export type WorkspacePrefs = {
+  /** Which top-level left-rail tab (Tools vs Messaging) opens by default.
+   *  Product decision K7: Tools is the default; the user may override. */
+  defaultLeftTab: LeftTab;
   /** Which communication-tray tab is selected by default. */
   defaultTrayTab: TrayTab;
   /** Whether sticky notes / playground widgets are shown. */
@@ -31,6 +36,9 @@ export type WorkspacePrefs = {
 };
 
 export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
+  // K7 — Tools is the default left-rail tab (was hardcoded to "messaging",
+  // which opened the mock inbox). Users may override in Settings.
+  defaultLeftTab: "tools",
   defaultTrayTab: "direct",
   stickyNotesVisible: true,
   toolsPinnedByDefault: false,
@@ -49,6 +57,7 @@ const PERSIST_DEBOUNCE_MS = 600;
 const TRAY_TABS: TrayTab[] = ["direct", "team"];
 const LAYOUTS: PlaygroundLayout[] = ["docked", "split"];
 const CAL_BEHAVIORS: CalendarBehavior[] = ["playground", "quickSchedule"];
+const LEFT_TABS: LeftTab[] = ["tools", "messaging"];
 
 // Defensive validation of a server payload — never trust the wire blindly.
 // Unknown/missing keys fall back to defaults so an older row never breaks a
@@ -57,6 +66,9 @@ export function parseWorkspacePrefs(raw: unknown): WorkspacePrefs | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   return {
+    defaultLeftTab: LEFT_TABS.includes(r.defaultLeftTab as LeftTab)
+      ? (r.defaultLeftTab as LeftTab)
+      : DEFAULT_WORKSPACE_PREFS.defaultLeftTab,
     defaultTrayTab: TRAY_TABS.includes(r.defaultTrayTab as TrayTab)
       ? (r.defaultTrayTab as TrayTab)
       : DEFAULT_WORKSPACE_PREFS.defaultTrayTab,

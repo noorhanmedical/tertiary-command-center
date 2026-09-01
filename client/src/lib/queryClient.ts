@@ -1,4 +1,14 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { getPortalClinic, PORTAL_CLINIC_HEADER } from "./portalClinicContext";
+
+// Attach the selected Team Portal clinic as a header so tenancy-scoped
+// endpoints (messaging) can resolve the admin's active clinic. Harmless on all
+// other endpoints (they ignore it); the server only honors it for admins.
+function withPortalClinicHeader(headers: Record<string, string>): Record<string, string> {
+  const clinic = getPortalClinic();
+  if (clinic) headers[PORTAL_CLINIC_HEADER] = clinic;
+  return headers;
+}
 
 /** K16: a structured API error. `message` is kept EXACTLY as before
  *  (`"<status>: <body>"`) so every existing `err.message` toast is unchanged, but the
@@ -37,7 +47,7 @@ export async function apiRequest(
 ): Promise<Response> {
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers: withPortalClinicHeader(data ? { "Content-Type": "application/json" } : {}),
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -53,6 +63,7 @@ export const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
     const res = await fetch(queryKey.join("/") as string, {
+      headers: withPortalClinicHeader({}),
       credentials: "include",
     });
 

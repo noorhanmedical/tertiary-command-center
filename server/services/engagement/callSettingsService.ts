@@ -219,6 +219,87 @@ export function remainingCapacity(
   return Math.max(0, completedCallKpi - Math.max(0, carryover));
 }
 
+// ─── Canonical per-member capacity state (K2/K3, Phase 3B) ───────────────────
+//
+// THE single capacity model for live call workforce. Every surface that shows
+// or acts on "how loaded is this PCS" — auto distribution, manager
+// redistribution preview, and the workload display — derives its numbers from
+// this one function so they can never disagree ("do not calculate different
+// numbers in different screens").
+//
+// The legacy capacityPercent × 60 model (callListEngine.dailyCapacity) is NOT
+// used here. It survives only inside the scheduler_assignments history builder
+// (buildDailyAssignments) and is display/legacy per K2. Canonical daily call
+// capacity is the Call Settings completed-call KPI (bounded by an explicit
+// maxDailyCapacity override when set).
+
+export interface MemberCapacityStateInputs {
+  targets: CallTargets;
+  configuredWorkloadPercent: number;
+  // Active non-terminal cases currently owned by this member (the live queue).
+  assigned: number;
+  // Past-due active cases (getCarryoverCounts).
+  carryover: number;
+  // Outstanding priority handoffs the member must action (Phase 3C fills this;
+  // defaults to 0 until call_handoffs lands so 3B stays additive).
+  priorityHandoffs?: number;
+  workingToday: boolean;
+}
+
+export interface MemberCapacityState {
+  // Configured workload % (Call Settings input, display + KPI derivation).
+  configuredWorkloadPercent: number;
+  // Canonical daily call capacity = completed-call KPI, capped by an explicit
+  // maxDailyCapacity override when the admin set one.
+  dailyCallCapacity: number;
+  // Live queue currently owned.
+  assigned: number;
+  // Past-due carryover.
+  carryover: number;
+  // Priority handoffs awaiting action.
+  priorityHandoffs: number;
+  // Remaining NORMAL capacity = max(0, capacity − carryover). Priority
+  // handoffs (P1/P2) may exceed this; that surfaces as overCapacity, never as
+  // a hidden negative.
+  remainingCapacity: number;
+  // Effective workload the member is actually carrying right now.
+  effectiveWorkload: number;
+  // How far effective workload exceeds capacity (0 when within capacity).
+  overCapacity: number;
+  workingToday: boolean;
+}
+
+/**
+ * Build the canonical capacity state for one member. Pure — all IO (targets,
+ * assigned/carryover counts, working status) is resolved by the caller so the
+ * distribution engine and the metrics rollup can share identical math.
+ */
+export function computeMemberCapacityState(
+  input: MemberCapacityStateInputs,
+): MemberCapacityState {
+  const dailyCallCapacity = Math.max(
+    0,
+    Math.min(input.targets.completedCallKpi, input.targets.maxDailyCapacity),
+  );
+  const carryover = Math.max(0, input.carryover);
+  const priorityHandoffs = Math.max(0, input.priorityHandoffs ?? 0);
+  const assigned = Math.max(0, input.assigned);
+  const remaining = remainingCapacity(dailyCallCapacity, carryover);
+  const effectiveWorkload = assigned + priorityHandoffs;
+  const overCapacity = Math.max(0, effectiveWorkload - dailyCallCapacity);
+  return {
+    configuredWorkloadPercent: input.configuredWorkloadPercent,
+    dailyCallCapacity,
+    assigned,
+    carryover,
+    priorityHandoffs,
+    remainingCapacity: remaining,
+    effectiveWorkload,
+    overCapacity,
+    workingToday: input.workingToday,
+  };
+}
+
 // ─── Carryover (active incomplete work from prior days) ──────────────────────
 //
 // Carryover = active execution cases assigned to a team member that still

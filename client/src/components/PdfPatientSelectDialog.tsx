@@ -57,7 +57,7 @@ export default function PdfPatientSelectDialog({
   const clearAll = () => setSelected(new Set());
   const toggle = (id: number) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
-  const title = mode === "clinician" ? "Clinician PDF" : "Plexus Team PDF";
+  const title = mode === "clinician" ? "Clinician Atlas" : "Plexus Atlas";
   const desc = mode === "clinician"
     ? "Select patients to include. Each gets a page with Dx/Hx/Rx and clinician reasoning per test."
     : "Select patients to include. Each gets a page with chart summary, test explanations, and conversation scripts.";

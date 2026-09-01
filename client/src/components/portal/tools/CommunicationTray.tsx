@@ -2,9 +2,9 @@
 //
 // iMessage-style tray docked in the bottom half of the Team Portal Tools
 // panel. Two tabs, both wired to real internal backends:
-//   - Direct: real 1:1 person-to-person messaging between team members
-//             (/api/portal/direct-messages/*). Sender attribution is decided
-//             server-side from the session, so nothing is fabricated.
+//   - Direct: real 1:1 person-to-person messaging between team members via the
+//             canonical /api/messaging/* conversation model (Phase 1). Sender
+//             attribution is decided server-side from the session.
 //   - Team:   real Plexus task-message threads (/api/plexus/tasks/:id/messages)
 //             used for group / task conversations.
 //
@@ -25,6 +25,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { messagingFetch } from "@/lib/portalClinicContext";
 
 export type TrayTab = "direct" | "team";
 
@@ -65,11 +66,19 @@ function useComposerFocus(focusNonce: number) {
   return ref;
 }
 
-type PlexusMessage = {
+// Canonical team channel (message_conversations type='team') + its messages.
+type TeamConversation = {
   id: number;
-  taskId: number;
+  type: string;
+  title: string | null;
+  unreadCount: number;
+};
+type TeamConvMessage = {
+  id: number;
+  conversationId: number;
   senderUserId: string | null;
   body: string;
+  messageType: string;
   createdAt: string;
 };
 
@@ -143,10 +152,13 @@ function DirectMessagesTab({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useComposerFocus(focusNonce);
 
+  // Phase 1 — repointed to the canonical /api/messaging backend (was the
+  // broken /api/portal/direct-messages/* path). Roster + per-recipient
+  // conversation resolution + list/send all use /api/messaging/*.
   const rosterQuery = useQuery<{ roster: RosterEntry[] }>({
-    queryKey: ["/api/portal/direct-messages/roster"],
+    queryKey: ["/api/messaging/roster"],
     queryFn: async () => {
-      const res = await fetch("/api/portal/direct-messages/roster", { credentials: "include" });
+      const res = await messagingFetch("/api/messaging/roster");
       if (!res.ok) throw new Error("Failed to load teammates");
       return res.json();
     },
@@ -165,14 +177,26 @@ function DirectMessagesTab({
 
   const activePerson = roster.find((r) => r.id === activeUserId) ?? null;
 
-  const messagesQuery = useQuery<{ messages: DirectMessage[] }>({
-    queryKey: ["/api/portal/direct-messages", activeUserId],
+  // Resolve (find-or-create) the 1:1 conversation id for the active recipient.
+  const conversationQuery = useQuery<{ conversationId: number }>({
+    queryKey: ["/api/messaging/direct", activeUserId],
     queryFn: async () => {
-      const res = await fetch(`/api/portal/direct-messages/${activeUserId}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load conversation");
+      const res = await apiRequest("POST", "/api/messaging/direct", { otherUserId: activeUserId });
       return res.json();
     },
     enabled: activeUserId != null,
+    staleTime: 5 * 60 * 1000,
+  });
+  const conversationId = conversationQuery.data?.conversationId ?? null;
+
+  const messagesQuery = useQuery<{ messages: DirectMessage[] }>({
+    queryKey: ["/api/messaging/conversations", conversationId, "messages"],
+    queryFn: async () => {
+      const res = await messagingFetch(`/api/messaging/conversations/${conversationId}/messages`);
+      if (!res.ok) throw new Error("Failed to load conversation");
+      return res.json();
+    },
+    enabled: conversationId != null,
     refetchInterval: 8000,
   });
 
@@ -180,16 +204,13 @@ function DirectMessagesTab({
 
   const sendMutation = useMutation({
     mutationFn: async (body: string) => {
-      if (activeUserId == null) throw new Error("No recipient selected");
-      return apiRequest("POST", "/api/portal/direct-messages", {
-        recipientUserId: activeUserId,
-        body,
-      });
+      if (conversationId == null) throw new Error("No conversation selected");
+      return apiRequest("POST", `/api/messaging/conversations/${conversationId}/messages`, { body });
     },
     onSuccess: () => {
       setDraft("");
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/direct-messages", activeUserId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/direct-messages/roster"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messaging/conversations", conversationId, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messaging/roster"] });
     },
   });
 
@@ -300,7 +321,7 @@ function DirectMessagesTab({
           <button
             type="button"
             onClick={() => draft.trim() && sendMutation.mutate(draft.trim())}
-            disabled={!draft.trim() || sendMutation.isPending || activeUserId == null}
+            disabled={!draft.trim() || sendMutation.isPending || conversationId == null}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white transition hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
             data-testid="tray-direct-send"
           >
@@ -312,88 +333,105 @@ function DirectMessagesTab({
   );
 }
 
-// Real Plexus task-message thread. Reads + posts via the existing
-// /api/plexus/tasks/:id/messages endpoints. Attribution is decided
-// server-side from the session, so admin "view-as" cannot fake a sender.
+// Phase 5A — CANONICAL team channels. Team Chat is now a real team CONVERSATION
+// (message_conversations type='team'), synced from canonical team_memberships
+// (Phase 4D), NOT a disguised Plexus task thread. Reads/posts via
+// /api/messaging/conversations/:id/messages; membership is server-enforced.
 function TeamChatTab({
-  teamTasks,
   currentUserId,
-  activeTaskId,
-  onActiveTaskIdChange,
+  activeConversationId,
+  onActiveConversationIdChange,
   focusNonce = 0,
   expanded = false,
 }: {
-  teamTasks: TeamTaskThread[];
   currentUserId: string | null;
-  activeTaskId: number | null;
-  onActiveTaskIdChange: (id: number | null) => void;
+  activeConversationId: number | null;
+  onActiveConversationIdChange: (id: number | null) => void;
   focusNonce?: number;
   expanded?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const composerRef = useComposerFocus(focusNonce);
 
-  useEffect(() => {
-    if (activeTaskId == null && teamTasks.length > 0) {
-      onActiveTaskIdChange(teamTasks[0].id);
-    } else if (activeTaskId != null && !teamTasks.some((t) => t.id === activeTaskId)) {
-      onActiveTaskIdChange(teamTasks[0]?.id ?? null);
-    }
-  }, [teamTasks, activeTaskId, onActiveTaskIdChange]);
-
-  const messagesQuery = useQuery<PlexusMessage[]>({
-    queryKey: ["/api/plexus/tasks", activeTaskId, "messages"],
+  // The user's TEAM conversations (membership-based; server filters to teams
+  // they actively belong to).
+  const conversationsQuery = useQuery<TeamConversation[]>({
+    queryKey: ["/api/messaging/conversations", "team"],
     queryFn: async () => {
-      const res = await fetch(`/api/plexus/tasks/${activeTaskId}/messages`, {
-        credentials: "include",
-      });
+      const res = await messagingFetch("/api/messaging/conversations");
+      if (!res.ok) throw new Error("Failed to load team channels");
+      const json = (await res.json()) as { conversations: TeamConversation[] };
+      return (json.conversations ?? []).filter((c) => c.type === "team");
+    },
+    refetchInterval: 20000,
+  });
+  const teamChannels = useMemo(() => conversationsQuery.data ?? [], [conversationsQuery.data]);
+
+  useEffect(() => {
+    if (activeConversationId == null && teamChannels.length > 0) {
+      onActiveConversationIdChange(teamChannels[0].id);
+    } else if (activeConversationId != null && !teamChannels.some((c) => c.id === activeConversationId)) {
+      onActiveConversationIdChange(teamChannels[0]?.id ?? null);
+    }
+  }, [teamChannels, activeConversationId, onActiveConversationIdChange]);
+
+  const messagesQuery = useQuery<{ messages: TeamConvMessage[] }>({
+    queryKey: ["/api/messaging/conversations", activeConversationId, "messages"],
+    queryFn: async () => {
+      const res = await messagingFetch(`/api/messaging/conversations/${activeConversationId}/messages`);
       if (!res.ok) throw new Error("Failed to load messages");
       return res.json();
     },
-    enabled: activeTaskId != null,
+    enabled: activeConversationId != null,
     refetchInterval: 15000,
   });
 
   const sendMutation = useMutation({
     mutationFn: async (body: string) => {
-      if (activeTaskId == null) throw new Error("No thread selected");
-      return apiRequest("POST", `/api/plexus/tasks/${activeTaskId}/messages`, { body });
+      if (activeConversationId == null) throw new Error("No channel selected");
+      return apiRequest("POST", `/api/messaging/conversations/${activeConversationId}/messages`, { body });
     },
     onSuccess: () => {
       setDraft("");
-      queryClient.invalidateQueries({ queryKey: ["/api/plexus/tasks", activeTaskId, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messaging/conversations", activeConversationId, "messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messaging/conversations", "team"] });
     },
   });
 
-  if (teamTasks.length === 0) {
+  if (conversationsQuery.isLoading) {
+    return <div className="px-3 pt-4 text-[11px] italic text-slate-400">Loading team channels…</div>;
+  }
+
+  if (teamChannels.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-4 text-center">
         <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
           <Users className="h-5 w-5" />
         </div>
-        <div className="text-xs font-semibold text-slate-700">No task threads yet</div>
+        <div className="text-xs font-semibold text-slate-700">No team channels yet</div>
         <p className="mt-1 text-[11px] leading-snug text-slate-500">
-          Group messaging runs on your Plexus task threads. When you're assigned or collaborating on
-          a task, its real conversation shows here.
+          Team Chat shows the channels for the teams you belong to. An admin adds
+          you to a team in Settings; its channel appears here automatically.
         </p>
       </div>
     );
   }
 
-  const messages = messagesQuery.data ?? [];
+  const messages = messagesQuery.data?.messages ?? [];
 
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-white/30 p-2">
         <select
-          value={activeTaskId ?? ""}
-          onChange={(e) => onActiveTaskIdChange(Number(e.target.value))}
+          value={activeConversationId ?? ""}
+          onChange={(e) => onActiveConversationIdChange(Number(e.target.value))}
           className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 outline-none"
-          data-testid="tray-team-task-select"
+          data-testid="tray-team-channel-select"
         >
-          {teamTasks.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.title}
+          {teamChannels.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.title ?? "Team channel"}
+              {c.unreadCount > 0 ? ` (${c.unreadCount})` : ""}
             </option>
           ))}
         </select>
@@ -404,30 +442,35 @@ function TeamChatTab({
           <div className="px-1 pt-2 text-[11px] italic text-slate-400">Loading messages…</div>
         ) : messages.length === 0 ? (
           <div className="px-1 pt-2 text-[11px] italic text-slate-400">
-            No messages in this thread yet. Start the conversation below.
+            No messages in this channel yet. Start the conversation below.
           </div>
         ) : (
           messages.map((m) => {
             const mine = !!currentUserId && m.senderUserId === currentUserId;
+            const isSystem = m.messageType === "system";
             return (
               <div
                 key={m.id}
-                className={`flex ${mine ? "justify-end" : "justify-start"}`}
+                className={`flex ${isSystem ? "justify-center" : mine ? "justify-end" : "justify-start"}`}
                 data-testid={`tray-team-message-${m.id}`}
               >
                 <div
                   className={`max-w-[80%] rounded-2xl px-3 py-1.5 ${
                     expanded ? "text-sm" : "text-xs"
                   } ${
-                    mine
+                    isSystem
+                      ? "bg-slate-100 text-slate-500 italic text-[11px]"
+                      : mine
                       ? "rounded-br-sm bg-violet-600 text-white"
                       : "rounded-bl-sm bg-slate-200 text-slate-800"
                   }`}
                 >
                   <p className="whitespace-pre-wrap">{m.body}</p>
-                  <div className={`mt-0.5 text-[9px] ${mine ? "text-violet-100" : "text-slate-500"}`}>
-                    {mine ? "You" : "Teammate"}
-                  </div>
+                  {!isSystem && (
+                    <div className={`mt-0.5 text-[9px] ${mine ? "text-violet-100" : "text-slate-500"}`}>
+                      {mine ? "You" : "Teammate"}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -445,7 +488,7 @@ function TeamChatTab({
                 sendMutation.mutate(draft.trim());
               }
             }}
-            placeholder="Message this task thread…"
+            placeholder="Message this team channel…"
             rows={expanded ? 3 : 2}
             ref={composerRef}
             className={`flex-1 resize-none rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-slate-800 outline-none placeholder:text-slate-400 ${
@@ -456,7 +499,7 @@ function TeamChatTab({
           <button
             type="button"
             onClick={() => draft.trim() && sendMutation.mutate(draft.trim())}
-            disabled={!draft.trim() || sendMutation.isPending || activeTaskId == null}
+            disabled={!draft.trim() || sendMutation.isPending || activeConversationId == null}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
             data-testid="tray-team-send"
           >
@@ -607,10 +650,9 @@ export function CommunicationTray({
           />
         ) : (
           <TeamChatTab
-            teamTasks={teamTasks}
             currentUserId={currentUserId}
-            activeTaskId={teamActive}
-            onActiveTaskIdChange={setTeamActive}
+            activeConversationId={teamActive}
+            onActiveConversationIdChange={setTeamActive}
             focusNonce={focusNonce}
             expanded={expanded}
           />

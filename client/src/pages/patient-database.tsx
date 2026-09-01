@@ -11,12 +11,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
   Loader2, Search, Database, Users, Building2, Clock, CheckCircle2,
-  Upload, X, UserSearch,
+  Upload, X, UserSearch, Plus, User as UserIcon, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { PatientProfileWorkspace } from "@/components/patient-directory/PatientProfileWorkspace";
 import { PatientChartSkeleton } from "@/components/patient-directory/PatientChart";
 import { RecentImportsPanel } from "@/components/patient-directory/RecentImportsPanel";
-import { initials, fmtDate } from "@/components/patient-directory/profileTypes";
+import { fmtDate } from "@/components/patient-directory/profileTypes";
 
 type RosterPatient = {
   key: string;
@@ -85,6 +85,7 @@ export default function PatientDatabasePage() {
   const [debouncedSearch, setDebouncedSearch] = useState(() => (urlParams.get("search") ?? "").trim());
   const [clinicFilter, setClinicFilter] = useState<string>("");
   const [windowFilter, setWindowFilter] = useState<"" | "1d" | "1w" | "1m">("");
+  const [railCollapsed, setRailCollapsed] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -103,6 +104,9 @@ export default function PatientDatabasePage() {
 
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const [addPatientOpen, setAddPatientOpen] = useState(false);
+  const [addPatientText, setAddPatientText] = useState("");
+  const [addPatientBusy, setAddPatientBusy] = useState(false);
 
   const PAGE_SIZE = 100;
   const rosterQuery = useInfiniteQuery<RosterResponse>({
@@ -279,9 +283,25 @@ export default function PatientDatabasePage() {
 
   return (
     <div className="flex h-full relative z-10 bg-finance-bg overflow-hidden">
-      {/* ── Left rail: roster + filters ── */}
+      {/* ── Left rail: roster + filters (collapsible) ── */}
+      {railCollapsed && hasSelection ? (
+        <div
+          className="hidden lg:flex flex-col items-center shrink-0 pt-3 border-r border-border/60 bg-white/40 dark:bg-card/30"
+          style={{ width: "40px" }}
+          data-testid="patient-directory-rail-collapsed"
+        >
+          <button
+            onClick={() => setRailCollapsed(false)}
+            title="Expand patient list"
+            className="w-7 h-7 rounded-md flex items-center justify-center hover:bg-slate-200/60"
+            data-testid="button-rail-expand"
+          >
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+      ) : (
       <aside
-        className={`${hasSelection ? "hidden lg:flex" : "flex"} flex-col w-full lg:w-[380px] xl:w-[420px] shrink-0 border-r border-border/60 bg-white/40 dark:bg-card/30`}
+        className={`${hasSelection ? "hidden lg:flex" : "flex"} flex-col w-full lg:w-[280px] xl:w-[300px] shrink-0 border-r border-border/60 bg-white/40 dark:bg-card/30`}
         data-testid="patient-directory-rail"
       >
         <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3">
@@ -292,12 +312,22 @@ export default function PatientDatabasePage() {
               </div>
               <div className="min-w-0">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Plexus Ancillary</div>
-                <h1 className="text-base font-bold leading-tight truncate">Patient EHR</h1>
+                <h1 className="text-base font-bold leading-tight truncate">Plexus EHR</h1>
               </div>
             </div>
-            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5 shrink-0" data-testid="button-import-test-history">
-              <Upload className="w-3.5 h-3.5" />Import
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button size="sm" variant="default" onClick={() => setAddPatientOpen(true)} className="gap-1.5" data-testid="button-add-patient-ehr">
+                <Plus className="w-3.5 h-3.5" />Add Patient
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5" data-testid="button-import-test-history">
+                <Upload className="w-3.5 h-3.5" />Import
+              </Button>
+              {hasSelection && (
+                <Button size="icon" variant="ghost" className="h-8 w-8 hidden lg:inline-flex" onClick={() => setRailCollapsed(true)} title="Collapse patient list" data-testid="button-rail-collapse">
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
           </div>
           <p className="text-xs text-muted-foreground" data-testid="text-roster-summary">
             {totalPatients} patient{totalPatients !== 1 ? "s" : ""}{loadedCount < totalPatients ? ` · showing ${loadedCount}` : ""}
@@ -408,8 +438,8 @@ export default function PatientDatabasePage() {
                             className={`w-full text-left rounded-lg px-2.5 py-2 transition-colors flex items-start gap-2.5 ${selected ? "bg-indigo-50 dark:bg-indigo-900/30 ring-1 ring-indigo-300 dark:ring-indigo-700" : "hover:bg-slate-100 dark:hover:bg-muted/50"}`}
                             data-testid={`card-patient-${p.encodedKey}`}
                           >
-                            <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-[11px] font-semibold shrink-0">
-                              {initials(p.name)}
+                            <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0" data-testid={`avatar-patient-${p.encodedKey}`}>
+                              <UserIcon className="w-4 h-4 text-slate-400 dark:text-slate-500" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
@@ -457,6 +487,7 @@ export default function PatientDatabasePage() {
           )}
         </div>
       </aside>
+      )}
 
       {/* ── Right area: patient chart ── */}
       <section
@@ -531,6 +562,60 @@ export default function PatientDatabasePage() {
             >
               {importTextMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
               Import pasted data
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Patient dialog */}
+      <Dialog open={addPatientOpen} onOpenChange={setAddPatientOpen}>
+        <DialogContent className="sm:max-w-lg" data-testid="dialog-add-patient-ehr">
+          <DialogHeader>
+            <DialogTitle>Add Patient to Plexus EHR</DialogTitle>
+            <DialogDescription>
+              Paste any clinical information — name, DOB, diagnoses, medications, insurance, notes. AI will parse it into a structured patient record.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <Textarea
+              placeholder={"Example:\nTestguy Robot\nDOB: 1960-05-15\nM\nPhone: 555-000-1234\nInsurance: Medicare\nDx: Hypertension, Type 2 Diabetes, AFib, PAD\nMeds: Metformin 1000mg, Lisinopril 20mg, Warfarin 5mg, Cilostazol\nHx: Prior stroke 2022, CABG 2019\n\nOr just paste a free-form clinical note..."}
+              value={addPatientText}
+              onChange={(e) => setAddPatientText(e.target.value)}
+              rows={10}
+              className="text-sm font-mono"
+              data-testid="textarea-add-patient"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => { setAddPatientOpen(false); setAddPatientText(""); }}>Cancel</Button>
+            <Button
+              size="sm"
+              disabled={!addPatientText.trim() || addPatientBusy}
+              onClick={async () => {
+                setAddPatientBusy(true);
+                try {
+                  const resp = await apiRequest("POST", "/api/plexus-ehr/patients/parse-and-create", {
+                    text: addPatientText,
+                  });
+                  const result = await resp.json();
+                  toast({ title: `Patient created: ${result.patient?.name ?? "Unknown"}` });
+                  setAddPatientOpen(false);
+                  setAddPatientText("");
+                  queryClient.invalidateQueries({ queryKey: ["/api/patients/database"] });
+                  // Navigate to the new patient
+                  if (result.patient?.id) {
+                    setLocation(`/patient-directory?patientId=${result.patient.id}`);
+                  }
+                } catch (err: any) {
+                  toast({ title: "Failed to create patient", description: err?.message ?? "Unknown error", variant: "destructive" });
+                } finally {
+                  setAddPatientBusy(false);
+                }
+              }}
+              data-testid="button-add-patient-submit"
+            >
+              {addPatientBusy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+              Create Patient
             </Button>
           </DialogFooter>
         </DialogContent>

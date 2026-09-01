@@ -20,6 +20,7 @@ import { Loader2 } from "lucide-react";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { VisitOutreachKindToggle } from "@/features/command-center/tiles";
 import type { CommandTileKind } from "@/features/command-center/tiles";
+import { ClinicianSelector, type ClinicianContext } from "./ClinicianSelector";
 
 type PatientType = CommandTileKind;
 
@@ -48,6 +49,7 @@ export function PlexusIQAddPatientModal({
     patientType: PatientType;
     name: string;
     time?: string;
+    clinician?: ClinicianContext | null;
   }) => Promise<boolean>;
   pending: boolean;
   defaultPatientType?: PatientType;
@@ -64,6 +66,7 @@ export function PlexusIQAddPatientModal({
   const [patientType, setPatientType] = useState<PatientType>(defaultPatientType ?? "visit");
   const [name, setName] = useState("");
   const [time, setTime] = useState("");
+  const [clinician, setClinician] = useState<ClinicianContext | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // On open, seed the form from whichever tile opened us plus the
@@ -82,6 +85,7 @@ export function PlexusIQAddPatientModal({
     setPatientType(defaultPatientType ?? "visit");
     setName("");
     setTime("");
+    setClinician(null);
     setError(null);
   }
 
@@ -102,6 +106,7 @@ export function PlexusIQAddPatientModal({
       patientType,
       name: name.trim(),
       time: time.trim() || undefined,
+      clinician,
     });
     if (ok) {
       reset();
@@ -146,6 +151,9 @@ export function PlexusIQAddPatientModal({
               </SelectContent>
             </Select>
           </div>
+
+          {/* Clinician sits right after Facility (facility-dependent dropdown). */}
+          <ClinicianSelector facilityName={facility} value={clinician} onChange={setClinician} />
 
           <div>
             <Label htmlFor="plexus-iq-add-date" className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">

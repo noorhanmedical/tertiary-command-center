@@ -4,7 +4,7 @@ import { db } from "../db";
 import { storage } from "../storage";
 import { and, eq, inArray } from "drizzle-orm";
 import { patientScreenings, screeningBatches } from "@shared/schema";
-import { VALID_FACILITIES } from "@shared/plexus";
+import { createFacilityResolver } from "../services/facilityResolver";
 import { logAudit } from "../services/auditService";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import {
@@ -125,6 +125,17 @@ const clinicalImportSchema = z.object({
     .optional(),
   defaultPatientType: z.enum(["visit", "outreach"]).optional(),
   placement: placementSchema.optional(),
+  // Batch clinician attribution (Plexus IQ). Optional. Applied ONLY to
+  // batches whose resolved facility matches the resolved defaultFacility
+  // (Option A). Rows that route to any other facility are left with no
+  // clinician attribution. free_text → clinicianId null + clinicianName
+  // required; facility_clinician → clinicianId required.
+  defaultClinicianId: z.number().int().positive().nullable().optional(),
+  defaultClinicianName: z.string().trim().min(1).max(200).nullable().optional(),
+  defaultClinicianSource: z
+    .enum(["facility_clinician", "free_text"])
+    .nullable()
+    .optional(),
 });
 
 const qualificationJobStartSchema = z.object({
@@ -138,22 +149,10 @@ const qualificationJobStartSchema = z.object({
   statuses: z.array(z.string()).optional(),
 });
 
-const FACILITY_LOOKUP: Record<string, (typeof VALID_FACILITIES)[number]> = (() => {
-  const m: Record<string, (typeof VALID_FACILITIES)[number]> = {};
-  for (const f of VALID_FACILITIES) m[f.toLowerCase()] = f;
-  return m;
-})();
-
-function resolveFacility(raw: string | undefined): string | null {
-  if (!raw) return null;
-  const k = raw.trim().toLowerCase();
-  if (!k) return null;
-  if (FACILITY_LOOKUP[k]) return FACILITY_LOOKUP[k];
-  for (const f of VALID_FACILITIES) {
-    if (f.toLowerCase().includes(k)) return f;
-  }
-  return null;
-}
+// Facility resolution is done per-request against canonical clinics data
+// (Admin Settings) unioned with legacy VALID_FACILITIES for back-compat.
+// See server/services/facilityResolver.ts. A resolver is built once per
+// request (one DB read) and used to resolve every row in-memory.
 
 /**
  * Plexus IQ runtime hardening — Routes step 1.
@@ -189,6 +188,14 @@ async function resolveBatchForGroup(
   scheduleDate: string,
   userId: string | null,
   placement: PlacementResolution,
+  // Clinician attribution applied ONLY when this group is created as a new
+  // batch (append/reuse keeps the existing batch's own attribution). Callers
+  // pass this only for the group matching the selected default facility.
+  clinician?: {
+    clinicianId: number | null;
+    clinicianName: string | null;
+    clinicianSource: "facility_clinician" | "free_text" | null;
+  } | null,
 ): Promise<{ batchId: number; created: boolean }> {
   const existing = await storage.getAllScreeningBatches();
 
@@ -228,12 +235,20 @@ async function resolveBatchForGroup(
       : [];
   const baseName = `${facility} - ${scheduleDate}`;
   const name = siblings.length > 0 ? `${baseName} (Run ${siblings.length + 1})` : baseName;
+  const clinicianSource = clinician?.clinicianSource ?? null;
   const batch = await storage.createScreeningBatch({
     name,
     patientCount: 0,
     status: "draft",
     facility,
     scheduleDate,
+    // Clinician attribution (Option A). Only set when supplied for this
+    // group (the selected default facility). facility_clinician keeps the
+    // id; free_text stores only the snapshot name.
+    clinicianId:
+      clinicianSource === "facility_clinician" ? (clinician?.clinicianId ?? null) : null,
+    clinicianName: clinician?.clinicianName?.trim() || null,
+    clinicianSource,
   });
 
   // Best-effort scheduler assignment, matching the behavior of
@@ -278,7 +293,42 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
       defaultScheduleDate,
       defaultPatientType,
       placement: placementInput,
+      defaultClinicianId,
+      defaultClinicianName,
+      defaultClinicianSource,
     } = parsed.data;
+
+    // Validate the clinician free-text/facility contract up-front so a bad
+    // payload fails before any inserts. Absent clinician context is fine.
+    const clinicianNameTrimmed = defaultClinicianName?.trim() || null;
+    if (defaultClinicianSource === "free_text" && !clinicianNameTrimmed) {
+      return res.status(400).json({
+        error: "defaultClinicianName is required when defaultClinicianSource is 'free_text'",
+      });
+    }
+    if (defaultClinicianSource === "facility_clinician" && defaultClinicianId == null) {
+      return res.status(400).json({
+        error: "defaultClinicianId is required when defaultClinicianSource is 'facility_clinician'",
+      });
+    }
+
+    // Per-request canonical facility resolver (one DB read). Resolves both
+    // row facilities and the selected default facility against Admin
+    // Settings clinics (unioned with legacy VALID_FACILITIES).
+    const { resolve: resolveFacilityRow } = await createFacilityResolver();
+    // The canonical name of the selected default facility — clinician
+    // attribution is applied ONLY to batches at this facility (Option A).
+    const defaultFacilityCanonical = defaultFacility
+      ? resolveFacilityRow(defaultFacility)?.name ?? null
+      : null;
+    const clinicianForDefaultFacility =
+      defaultClinicianSource != null
+        ? {
+            clinicianId: defaultClinicianId ?? null,
+            clinicianName: clinicianNameTrimmed,
+            clinicianSource: defaultClinicianSource,
+          }
+        : null;
 
     // Plexus IQ runtime hardening — Routes step 1.
     // Clinical Import preserves today's behavior when the client
@@ -311,8 +361,8 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
       const rowIndex = r.rowIndex ?? idx + 1;
       const rawSnippet = r.raw && r.raw.length > 200 ? r.raw.slice(0, 200) + "…" : r.raw;
       const facility =
-        resolveFacility(r.facility ?? defaultFacility) ??
-        (defaultFacility ? resolveFacility(defaultFacility) : null);
+        resolveFacilityRow(r.facility ?? defaultFacility)?.name ??
+        (defaultFacility ? resolveFacilityRow(defaultFacility)?.name ?? null : null);
       if (!facility) {
         errors.push({
           rowIndex,
@@ -394,11 +444,19 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
       for (const [, groupRows] of groups) {
         const facility = groupRows[0].facility;
         const scheduleDate = groupRows[0].scheduleDate;
+        // Option A: only the group at the selected default facility receives
+        // the chosen clinician. Every other facility's batches are created
+        // with no clinician attribution.
+        const clinicianForGroup =
+          defaultFacilityCanonical != null && facility === defaultFacilityCanonical
+            ? clinicianForDefaultFacility
+            : null;
         const resolved = await resolveBatchForGroup(
           facility,
           scheduleDate,
           userId,
           placement,
+          clinicianForGroup,
         );
         const batchId = resolved.batchId;
         if (!batchIds.includes(batchId)) batchIds.push(batchId);

@@ -213,6 +213,17 @@ export function registerOutreachRoutes(app: Express) {
       const patient = await storage.getPatientScreening(parsed.data.patientScreeningId);
       if (!patient) return res.status(404).json({ error: "Patient screening not found" });
 
+      // Canonical call-record closeout — idempotency. When the caller supplies
+      // a stable externalCallId, a repeat submission of the SAME attempt
+      // resolves the existing durable row instead of inserting a duplicate.
+      // ONE real attempt → ONE outreach_calls row, even across retries.
+      if (parsed.data.externalCallId) {
+        const existing = await storage.findOutreachCallByExternalId(parsed.data.externalCallId);
+        if (existing) {
+          return res.status(200).json(existing);
+        }
+      }
+
       const prior = await storage.listOutreachCallsForPatient(parsed.data.patientScreeningId);
       const attemptNumber = parsed.data.attemptNumber ?? prior.length + 1;
       const desiredStatus = deriveAppointmentStatus(parsed.data.outcome);
@@ -246,6 +257,29 @@ export function registerOutreachRoutes(app: Express) {
             const allSchedulers = await storage.getOutreachSchedulers();
             const sc = allSchedulers.find((s) => s.id === a.schedulerId);
             if (sc?.userId && sc.userId === userId) allowed = true;
+          }
+        }
+        if (!allowed) {
+          // CANONICAL ownership check. patient_execution_cases
+          // .assignedTeamMemberId (→ outreach_schedulers.id → user_id) is the
+          // authoritative live owner. A staff member who canonically owns the
+          // case (and therefore sees it in their Team Portal queue) must be
+          // able to log a call on it — without this, canonical ownership grants
+          // queue visibility but not the ability to act, stranding the work.
+          // This is an ADDITIVE grant off the canonical field; it does not read
+          // or write scheduler_assignments.
+          const { getExecutionCaseByScreeningId } = await import(
+            "../repositories/executionCase.repo"
+          );
+          const execCase = await getExecutionCaseByScreeningId(
+            parsed.data.patientScreeningId,
+          );
+          if (execCase?.assignedTeamMemberId != null) {
+            const allSchedulers = await storage.getOutreachSchedulers();
+            const owner = allSchedulers.find(
+              (s) => s.id === execCase.assignedTeamMemberId,
+            );
+            if (owner?.userId && owner.userId === userId) allowed = true;
           }
         }
         if (!allowed) {

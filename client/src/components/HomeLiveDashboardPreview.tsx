@@ -1,10 +1,10 @@
-// Preview copy of HomeLiveDashboard (Task #622). Visual-layer-only redesign:
-// the indigo/sky gradient "Practice Pulse" tile becomes a frosted navy/slate/
-// white panel, emerald "upcoming" numbers and indigo accents move to the
-// navy/slate system, and the heading gets a soft navy glow. All data, hooks,
-// popovers, windowKeys, override nodes, and behavior are identical to the
-// original — only presentation changes.
-import { Brain, HeartPulse, Phone, Waves, Activity, DollarSign } from "lucide-react";
+// Winter / Alpine Practice Pulse (spec redesign). Visual-layer-only: the KPI
+// row is presented as six winter KPI groups — Patients, Calls, Revenue,
+// BrainWave, VitalWave, Ultrasound — inside a single frosted `.winter-panel`.
+// All data comes from useHomeStats(); no new endpoints, no fabricated deltas
+// (the green accent reuses the existing "next 7 days" upcoming figures). The
+// three primary KPIs keep their detail popovers (Today / 7d / 30d).
+import { Brain, HeartPulse, Waves, Activity, Phone, Users, DollarSign } from "lucide-react";
 import {
   useHomeStats,
   type HomeWindowStat,
@@ -18,7 +18,67 @@ import {
 
 type WindowKey = keyof HomeWindowStat;
 
-function MetricStat({
+/** Whole-dollar currency, e.g. 4820 → "$4,820". */
+function formatDollars(value: number): string {
+  return (value || 0).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+}
+
+/** Shared winter KPI presentation: frosted icon circle, value, green accent,
+ *  uppercase label. `as` lets the primary KPIs render as a popover trigger. */
+function KpiGroup({
+  icon,
+  value,
+  accent,
+  accentLabel,
+  label,
+  accentTestId,
+}: {
+  icon: React.ReactNode;
+  value: React.ReactNode;
+  accent?: React.ReactNode;
+  accentLabel?: string;
+  label: string;
+  accentTestId?: string;
+}) {
+  return (
+    <span className="flex flex-col items-center gap-2 px-3 md:px-5">
+      <span className="winter-icon-frost">{icon}</span>
+      <span className="flex items-baseline gap-1.5 leading-none">
+        <span
+          className="text-[28px] md:text-[32px] font-semibold tabular-nums tracking-tight leading-none"
+          style={{ color: "var(--w-text)" }}
+        >
+          {value}
+        </span>
+        {accent !== undefined && (
+          <span
+            className="text-[12px] font-semibold tabular-nums leading-none"
+            style={{ color: "var(--w-green)" }}
+            title={accentLabel}
+            aria-label={accentLabel}
+            data-testid={accentTestId}
+          >
+            {accent}
+          </span>
+        )}
+      </span>
+      <span
+        className="text-[11px] font-semibold uppercase tracking-[0.08em] leading-none"
+        style={{ color: "var(--w-text-2)" }}
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+/** Primary KPI (Patients / Calls / Revenue) — KpiGroup wrapped in a detail
+ *  popover that keeps the existing Today / 7d / 30d breakdown behavior. */
+function MetricKpi({
   label,
   icon,
   testId,
@@ -26,9 +86,11 @@ function MetricStat({
   last7,
   last30,
   windowKey,
-  headlineOverride,
+  value,
+  accent,
+  accentLabel,
+  accentTestId,
   bodyOverride,
-  upcomingNode,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -37,11 +99,12 @@ function MetricStat({
   last7?: HomeWindowStat;
   last30?: HomeWindowStat;
   windowKey?: WindowKey;
-  headlineOverride?: React.ReactNode;
+  value: React.ReactNode;
+  accent?: React.ReactNode;
+  accentLabel?: string;
+  accentTestId?: string;
   bodyOverride?: React.ReactNode;
-  upcomingNode?: React.ReactNode;
 }) {
-  const headline = headlineOverride ?? (windowKey ? last7?.[windowKey] ?? 0 : 0);
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -49,55 +112,48 @@ function MetricStat({
           type="button"
           aria-label={`${label} (last 7 days)`}
           title={`${label} · last 7 days`}
-          className="group flex flex-col items-center gap-2 rounded-xl px-4 py-3 transition-colors hover:bg-plexus-navy-800/5 dark:hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-plexus-navy-800/40"
+          className="rounded-xl py-2 transition-colors hover:bg-white/50 focus:outline-none"
           data-testid={testId}
         >
-          <span className="shrink-0">{icon}</span>
-          <span className="flex items-baseline gap-1.5">
-            <span className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white tabular-nums leading-none tracking-tight">
-              {headline}
-            </span>
-            {upcomingNode}
-          </span>
+          <KpiGroup
+            icon={icon}
+            value={value}
+            accent={accent}
+            accentLabel={accentLabel}
+            accentTestId={accentTestId}
+            label={label}
+          />
         </button>
       </PopoverTrigger>
       <PopoverContent
         align="center"
-        className="w-56 preview-glass-overlay"
+        className="w-56 winter-panel-soft"
         data-testid={`${testId}-popover`}
       >
-        <div className="text-[12px] font-semibold text-slate-900 dark:text-foreground mb-2">
+        <div
+          className="text-[12px] font-semibold mb-2"
+          style={{ color: "var(--w-text)" }}
+        >
           {label}
         </div>
         {bodyOverride ?? (
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[12px]">
-              <span className="text-slate-500 dark:text-muted-foreground">Today</span>
-              <span
-                className="font-semibold tabular-nums text-slate-900 dark:text-foreground"
-                data-testid={`${testId}-today`}
-              >
-                {(windowKey ? today?.[windowKey] : 0) ?? 0}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-[12px]">
-              <span className="text-slate-500 dark:text-muted-foreground">Last 7 days</span>
-              <span
-                className="font-semibold tabular-nums text-slate-900 dark:text-foreground"
-                data-testid={`${testId}-last7`}
-              >
-                {(windowKey ? last7?.[windowKey] : 0) ?? 0}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-[12px]">
-              <span className="text-slate-500 dark:text-muted-foreground">Last 30 days</span>
-              <span
-                className="font-semibold tabular-nums text-slate-900 dark:text-foreground"
-                data-testid={`${testId}-last30`}
-              >
-                {(windowKey ? last30?.[windowKey] : 0) ?? 0}
-              </span>
-            </div>
+            {(["today", "last7", "last30"] as const).map((k, i) => (
+              <div key={k} className="flex items-center justify-between text-[12px]">
+                <span style={{ color: "var(--w-text-2)" }}>
+                  {i === 0 ? "Today" : i === 1 ? "Last 7 days" : "Last 30 days"}
+                </span>
+                <span
+                  className="font-semibold tabular-nums"
+                  style={{ color: "var(--w-text)" }}
+                  data-testid={`${testId}-${k}`}
+                >
+                  {(windowKey
+                    ? (k === "today" ? today : k === "last7" ? last7 : last30)?.[windowKey]
+                    : 0) ?? 0}
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </PopoverContent>
@@ -116,11 +172,14 @@ function CallMemberList({
 }) {
   return (
     <div data-testid={testId}>
-      <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-muted-foreground mb-1">
+      <div
+        className="text-[11px] uppercase tracking-wide mb-1"
+        style={{ color: "var(--w-text-muted)" }}
+      >
         {title}
       </div>
       {members.length === 0 ? (
-        <div className="text-[12px] text-slate-400 dark:text-muted-foreground">
+        <div className="text-[12px]" style={{ color: "var(--w-text-muted)" }}>
           No calls logged
         </div>
       ) : (
@@ -131,10 +190,13 @@ function CallMemberList({
               className="flex items-center justify-between text-[12px]"
               data-testid={`${testId}-row-${m.name}`}
             >
-              <span className="truncate text-slate-600 dark:text-muted-foreground pr-2">
+              <span className="truncate pr-2" style={{ color: "var(--w-text-2)" }}>
                 {m.name}
               </span>
-              <span className="font-semibold tabular-nums text-slate-900 dark:text-foreground">
+              <span
+                className="font-semibold tabular-nums"
+                style={{ color: "var(--w-text)" }}
+              >
                 {m.count}
               </span>
             </div>
@@ -145,111 +207,43 @@ function CallMemberList({
   );
 }
 
-function AncillaryStat({
-  label,
-  value,
-  upcoming,
-  icon,
-  testId,
-}: {
-  label: string;
-  value: number;
-  upcoming?: number;
-  icon: React.ReactNode;
-  testId: string;
-}) {
-  return (
-    <div
-      className="flex flex-col items-center gap-1.5"
-      aria-label={`${label} (last 7 days)`}
-      title={`${label} · last 7 days`}
-      data-testid={testId}
-    >
-      {icon}
-      <span className="flex flex-col items-center leading-none">
-        <span className="text-2xl md:text-3xl font-bold tabular-nums text-slate-900 dark:text-white leading-none tracking-tight">
-          {value}
-        </span>
-        {upcoming !== undefined && (
-          <span
-            className="mt-1 text-sm font-bold text-slate-500 dark:text-slate-400 tabular-nums leading-none"
-            title={`${upcoming} scheduled in the next 7 days`}
-            aria-label={`${upcoming} scheduled in the next 7 days`}
-            data-testid={`${testId}-upcoming`}
-          >
-            {upcoming}
-          </span>
-        )}
-      </span>
-    </div>
-  );
-}
+const KPI_ICON = "w-6 h-6";
+const KPI_ICON_STYLE = { color: "var(--w-blue)" } as const;
 
 function PracticePulseHeading() {
   return (
-    <div className="mb-5 flex items-center justify-center gap-2" data-testid="practice-pulse-heading">
-      <Activity className="w-4 h-4 text-plexus-navy-800 dark:text-slate-200" strokeWidth={2.25} />
-      <span className="preview-header-glow dark:text-slate-200 text-sm md:text-base font-semibold uppercase tracking-[0.18em]">
+    <div className="mb-6 flex items-center gap-2" data-testid="practice-pulse-heading">
+      <Activity className="w-4 h-4" style={KPI_ICON_STYLE} strokeWidth={2.25} />
+      <span
+        className="text-[16px] font-semibold uppercase tracking-[0.12em]"
+        style={{ color: "var(--w-text)" }}
+      >
         Practice Pulse
+      </span>
+      <span
+        className="ml-2 text-[11px]"
+        style={{ color: "var(--w-text-muted)" }}
+      >
+        Today at a glance
       </span>
     </div>
   );
 }
 
-function UpcomingBadge({
-  children,
-  testId,
-  label,
-}: {
-  children: React.ReactNode;
-  testId: string;
-  label: string;
-}) {
-  return (
-    <span
-      className="text-base md:text-lg font-bold text-slate-500 dark:text-slate-400 tabular-nums leading-none"
-      title={label}
-      aria-label={label}
-      data-testid={testId}
-    >
-      {children}
-    </span>
-  );
-}
-
-/** Whole-dollar currency, e.g. 4820 → "$4,820". */
-function formatDollars(value: number): string {
-  return (value || 0).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
-}
-
-const TILE_CLASS = "preview-panel px-6 py-7 md:px-10 md:py-9";
+const PANEL_CLASS = "winter-panel px-6 py-6 md:px-8";
 
 export function HomeLiveDashboardPreview() {
   const { data, isLoading } = useHomeStats();
 
   if (isLoading) {
     return (
-      <div className={TILE_CLASS} data-testid="live-dashboard-loading">
+      <div className={PANEL_CLASS} data-testid="live-dashboard-loading">
         <PracticePulseHeading />
-        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-6 md:gap-x-4">
-          {Array.from({ length: 3 }).map((_, i) => (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-6">
+          {Array.from({ length: 6 }).map((_, i) => (
             <div
-              key={`tile-${i}`}
-              className="h-[88px] w-[96px] rounded-xl bg-slate-200/60 dark:bg-muted/40 animate-pulse"
-            />
-          ))}
-          <div
-            className="mx-1 md:mx-3 h-12 w-px self-center bg-slate-200/80 dark:bg-border"
-            aria-hidden="true"
-          />
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div
-              key={`icon-${i}`}
-              className="h-[68px] w-[48px] rounded-xl bg-slate-200/60 dark:bg-muted/40 animate-pulse"
+              key={`kpi-${i}`}
+              className="h-[92px] w-[92px] rounded-xl bg-white/50 animate-pulse"
             />
           ))}
         </div>
@@ -270,76 +264,69 @@ export function HomeLiveDashboardPreview() {
   const financeUpcoming = finance?.upcoming ?? 0;
 
   return (
-    <div className={TILE_CLASS} data-testid="live-dashboard">
+    <div className={PANEL_CLASS} data-testid="live-dashboard">
       <PracticePulseHeading />
-      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-6 md:gap-x-4">
-        <MetricStat
-          label="Ancillaries"
-          icon={<Activity className="w-8 h-8 md:w-9 md:h-9 text-slate-900 dark:text-white" strokeWidth={1.75} />}
-          testId="stat-total-ancillaries"
+      <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-6">
+        {/* Cluster 1 — practice-level KPIs */}
+        <MetricKpi
+          label="Patients"
+          icon={<Users className={KPI_ICON} style={KPI_ICON_STYLE} strokeWidth={1.75} />}
+          testId="stat-patients"
           today={todayStat}
           last7={last7}
           last30={last30}
-          windowKey="ancillaries"
-          upcomingNode={
-            <UpcomingBadge
-              testId="stat-total-ancillaries-upcoming"
-              label={`${upcoming?.ancillaryPatients ?? 0} patients scheduled for ancillaries in the next 7 days`}
-            >
-              {upcoming?.ancillaryPatients ?? 0}
-            </UpcomingBadge>
-          }
+          windowKey="patients"
+          value={last7?.patients ?? 0}
+          accent={upcoming?.ancillaryPatients ?? 0}
+          accentLabel={`${upcoming?.ancillaryPatients ?? 0} patients scheduled for ancillaries in the next 7 days`}
+          accentTestId="stat-patients-upcoming"
         />
-        <MetricStat
+        <MetricKpi
           label="Calls"
-          icon={<Phone className="w-8 h-8 md:w-9 md:h-9 text-slate-900 dark:text-white" strokeWidth={1.75} />}
+          icon={<Phone className={KPI_ICON} style={KPI_ICON_STYLE} strokeWidth={1.75} />}
           testId="stat-calls-planned"
           today={todayStat}
           last7={last7}
           last30={last30}
           windowKey="callsPlanned"
-          upcomingNode={
-            <UpcomingBadge
-              testId="stat-calls-planned-upcoming"
-              label={`${callsDistributed} anticipated calls in the next 7 days`}
-            >
-              {callsDistributed}
-            </UpcomingBadge>
-          }
+          value={last7?.callsPlanned ?? 0}
+          accent={callsDistributed}
+          accentLabel={`${callsDistributed} anticipated calls in the next 7 days`}
+          accentTestId="stat-calls-planned-upcoming"
           bodyOverride={
             <div className="space-y-3">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-slate-500 dark:text-muted-foreground">
-                  Planned today
-                </span>
-                <span className="font-semibold tabular-nums text-slate-900 dark:text-foreground">
+                <span style={{ color: "var(--w-text-2)" }}>Planned today</span>
+                <span className="font-semibold tabular-nums" style={{ color: "var(--w-text)" }}>
                   {todayStat?.callsPlanned ?? 0}
                 </span>
               </div>
-              <div className="pt-3 border-t border-slate-200/70 dark:border-border space-y-1.5">
-                <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-muted-foreground">
+              <div className="pt-3 border-t space-y-1.5" style={{ borderColor: "var(--w-divider)" }}>
+                <div className="text-[11px] uppercase tracking-wide" style={{ color: "var(--w-text-muted)" }}>
                   Calls logged
                 </div>
                 <div className="flex items-center justify-between text-[12px]">
-                  <span className="text-slate-500 dark:text-muted-foreground">Last 7 days</span>
+                  <span style={{ color: "var(--w-text-2)" }}>Last 7 days</span>
                   <span
-                    className="font-semibold tabular-nums text-slate-900 dark:text-foreground"
+                    className="font-semibold tabular-nums"
+                    style={{ color: "var(--w-text)" }}
                     data-testid="stat-calls-planned-last7"
                   >
                     {last7?.callsPlanned ?? 0}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-[12px]">
-                  <span className="text-slate-500 dark:text-muted-foreground">Last 30 days</span>
+                  <span style={{ color: "var(--w-text-2)" }}>Last 30 days</span>
                   <span
-                    className="font-semibold tabular-nums text-slate-900 dark:text-foreground"
+                    className="font-semibold tabular-nums"
+                    style={{ color: "var(--w-text)" }}
                     data-testid="stat-calls-planned-last30"
                   >
                     {last30?.callsPlanned ?? 0}
                   </span>
                 </div>
               </div>
-              <div className="pt-3 border-t border-slate-200/70 dark:border-border space-y-3">
+              <div className="pt-3 border-t space-y-3" style={{ borderColor: "var(--w-divider)" }}>
                 <CallMemberList
                   title="Logged by member · 7 days"
                   members={callsByMember?.last7 ?? []}
@@ -354,41 +341,31 @@ export function HomeLiveDashboardPreview() {
             </div>
           }
         />
-        <MetricStat
-          label="Finances"
-          icon={<DollarSign className="w-8 h-8 md:w-9 md:h-9 text-slate-900 dark:text-white" strokeWidth={1.75} />}
+        <MetricKpi
+          label="Revenue"
+          icon={<DollarSign className={KPI_ICON} style={KPI_ICON_STYLE} strokeWidth={1.75} />}
           testId="stat-finances"
-          windowKey="patients"
-          headlineOverride={
-            <span data-testid="stat-finances-collected">{formatDollars(financeLast7)}</span>
-          }
-          upcomingNode={
-            <UpcomingBadge
-              testId="stat-finances-upcoming"
-              label={`${formatDollars(financeUpcoming)} anticipated revenue in the next 7 days`}
-            >
-              {formatDollars(financeUpcoming)}
-            </UpcomingBadge>
-          }
+          value={<span data-testid="stat-finances-collected">{formatDollars(financeLast7)}</span>}
+          accent={formatDollars(financeUpcoming)}
+          accentLabel={`${formatDollars(financeUpcoming)} anticipated revenue in the next 7 days`}
+          accentTestId="stat-finances-upcoming"
           bodyOverride={
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-slate-500 dark:text-muted-foreground">
-                  Collected · last 7 days
-                </span>
+                <span style={{ color: "var(--w-text-2)" }}>Collected · last 7 days</span>
                 <span
-                  className="font-semibold tabular-nums text-slate-900 dark:text-foreground"
+                  className="font-semibold tabular-nums"
+                  style={{ color: "var(--w-text)" }}
                   data-testid="stat-finances-last7"
                 >
                   {formatDollars(financeLast7)}
                 </span>
               </div>
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-slate-500 dark:text-muted-foreground">
-                  Anticipated · next 7 days
-                </span>
+                <span style={{ color: "var(--w-text-2)" }}>Anticipated · next 7 days</span>
                 <span
-                  className="font-semibold tabular-nums text-slate-600 dark:text-slate-300"
+                  className="font-semibold tabular-nums"
+                  style={{ color: "var(--w-green)" }}
                   data-testid="stat-finances-anticipated"
                 >
                   {formatDollars(financeUpcoming)}
@@ -398,35 +375,37 @@ export function HomeLiveDashboardPreview() {
           }
         />
 
+        {/* Cluster divider (§12 — separators only between clusters) */}
         <div
-          className="mx-1 md:mx-3 h-12 w-px self-center bg-slate-200/80 dark:bg-border"
+          className="winter-divider mx-1 md:mx-2 h-14 w-px self-center"
           aria-hidden="true"
         />
 
-        <div
-          className="flex items-center gap-6 md:gap-8 px-2"
-          data-testid="live-dashboard-system-ancillaries"
-        >
-          <AncillaryStat
+        {/* Cluster 2 — ancillary systems */}
+        <div className="flex items-start gap-1" data-testid="live-dashboard-system-ancillaries">
+          <KpiGroup
             label="BrainWave"
-            value={breakdown?.brainWave ?? 0}
-            upcoming={breakdown?.brainWaveUpcoming ?? 0}
-            icon={<Brain className="w-6 h-6 md:w-7 md:h-7 text-slate-900 dark:text-white" strokeWidth={2} />}
-            testId="ancillary-brainwave"
+            icon={<Brain className={KPI_ICON} style={KPI_ICON_STYLE} strokeWidth={1.75} />}
+            value={<span data-testid="ancillary-brainwave">{breakdown?.brainWave ?? 0}</span>}
+            accent={breakdown?.brainWaveUpcoming ?? 0}
+            accentLabel={`${breakdown?.brainWaveUpcoming ?? 0} scheduled in the next 7 days`}
+            accentTestId="ancillary-brainwave-upcoming"
           />
-          <AncillaryStat
+          <KpiGroup
             label="VitalWave"
-            value={breakdown?.vitalWave ?? 0}
-            upcoming={breakdown?.vitalWaveUpcoming ?? 0}
-            icon={<HeartPulse className="w-6 h-6 md:w-7 md:h-7 text-slate-900 dark:text-white" strokeWidth={2} />}
-            testId="ancillary-vitalwave"
+            icon={<HeartPulse className={KPI_ICON} style={KPI_ICON_STYLE} strokeWidth={1.75} />}
+            value={<span data-testid="ancillary-vitalwave">{breakdown?.vitalWave ?? 0}</span>}
+            accent={breakdown?.vitalWaveUpcoming ?? 0}
+            accentLabel={`${breakdown?.vitalWaveUpcoming ?? 0} scheduled in the next 7 days`}
+            accentTestId="ancillary-vitalwave-upcoming"
           />
-          <AncillaryStat
+          <KpiGroup
             label="Ultrasound"
-            value={breakdown?.ultrasound ?? 0}
-            upcoming={breakdown?.ultrasoundUpcoming ?? 0}
-            icon={<Waves className="w-6 h-6 md:w-7 md:h-7 text-slate-900 dark:text-white" strokeWidth={2} />}
-            testId="ancillary-ultrasound"
+            icon={<Waves className={KPI_ICON} style={KPI_ICON_STYLE} strokeWidth={1.75} />}
+            value={<span data-testid="ancillary-ultrasound">{breakdown?.ultrasound ?? 0}</span>}
+            accent={breakdown?.ultrasoundUpcoming ?? 0}
+            accentLabel={`${breakdown?.ultrasoundUpcoming ?? 0} scheduled in the next 7 days`}
+            accentTestId="ancillary-ultrasound-upcoming"
           />
         </div>
       </div>

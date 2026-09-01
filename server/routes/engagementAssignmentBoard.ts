@@ -925,6 +925,25 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
           }
         }
 
+        // Phase 3D — a manager assignment covers the case, so resolve any open
+        // NEEDS COVERAGE state for the cases that just got an owner (K8).
+        if (updated.length > 0) {
+          try {
+            const { needsCoverageRepository } = await import(
+              "../repositories/needsCoverage.repo"
+            );
+            await needsCoverageRepository.resolveForCases(
+              updated.map((u) => u.executionCaseId),
+              (req.session as { userId?: string })?.userId ?? null,
+            );
+          } catch (ncErr) {
+            console.error(
+              "[engagement/assignment-board:assign] needs-coverage resolve failed (non-fatal):",
+              ncErr instanceof Error ? ncErr.message : ncErr,
+            );
+          }
+        }
+
         res.json({
           ok: failed.length === 0,
           updated,

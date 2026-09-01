@@ -149,9 +149,9 @@ function hasQualifyingFactors(entry: TestReasoning | string): boolean {
  *
  * Identity blockers are mode-agnostic. Per-test reasoning blockers
  * follow the packet builder's actual requirements:
- *   - Clinician PDF builder reads `clinician_understanding` (or a
+ *   - Clinician Atlas builder reads `clinician_understanding` (or a
  *     string admin override treated as same). Missing => blocker.
- *   - Plexus PDF builder reads `clinician_understanding` AND
+ *   - Plexus Atlas builder reads `clinician_understanding` AND
  *     `patient_talking_points`. The talking-points slot has a generic
  *     fallback today ("Clinical indicators in this patient's chart
  *     support this study.") — that's the silent-failure case this

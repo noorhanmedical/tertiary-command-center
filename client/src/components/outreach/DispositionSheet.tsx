@@ -146,6 +146,13 @@ type Props = {
   priorAttempts?: number;
   defaultOutcome?: OutreachCallOutcome;
   onLogged?: () => void;
+  /**
+   * Optional — emitted when the in-progress disposition draft changes. Lets a
+   * host (e.g. the Playground Call workspace) reflect unsaved state. `dirty` is
+   * true once an outcome is picked or notes are typed, and false after a
+   * successful log or a reset. Outreach surfaces omit this and are unaffected.
+   */
+  onDraftChange?: (dirty: boolean, description?: string) => void;
   /** Optional — when provided, a "Push to Playground" action appears in the
    *  sheet so the caller can send this patient into the detailed Playground
    *  workspace. Outreach surfaces omit this and are unaffected. */
@@ -171,6 +178,7 @@ export function DispositionSheet({
   defaultOutcome,
   onLogged,
   onPushToPlayground,
+  onDraftChange,
 }: Props) {
   const [outcome, setOutcome] = useState<OutreachCallOutcome | null>(defaultOutcome ?? null);
   const [notes, setNotes] = useState("");
@@ -197,6 +205,22 @@ export function DispositionSheet({
       setCanonicalTerminalReason("");
     }
   }, [open, patientId, defaultOutcome]);
+
+  // Emit unsaved-draft state to an optional host (Playground Call workspace).
+  // Dirty once an outcome is chosen or notes are typed on either the legacy or
+  // structured path. Cleared when the sheet closes (draft reset above).
+  useEffect(() => {
+    if (!onDraftChange) return;
+    if (!open) {
+      onDraftChange(false);
+      return;
+    }
+    const hasLegacyDraft = outcome != null || notes.trim().length > 0;
+    const hasCanonicalDraft = canonicalOutcome !== "" || canonicalNotes.trim().length > 0;
+    const dirty = hasLegacyDraft || hasCanonicalDraft;
+    const label = (outcome ?? canonicalOutcome) || "call disposition";
+    onDraftChange(dirty, dirty ? `Unsaved ${label} disposition` : undefined);
+  }, [open, outcome, notes, canonicalOutcome, canonicalNotes, onDraftChange]);
 
   const logCall = useMutation({
     mutationFn: async () => {

@@ -108,10 +108,12 @@ import {
 import type {
   CallResultExecutionDependencies,
   AppendJourneyEventArgs,
+  CreateOutreachCallArgs,
   UpdateExecutionCaseEngagementArgs,
   UpsertTriageCaseArgs,
   CreateFollowUpTaskArgs,
 } from "../services/callResult/recordCallResultExecutionAdapter";
+import { ensureCanonicalCallRecord } from "../services/callResult/canonicalCallRecord";
 
 /**
  * Outcomes the canonical recordCallResult planner understands. The
@@ -169,6 +171,14 @@ const callResultBodySchema = z.object({
   cancelReason: z.string().optional().nullable(),
   noShowReason: z.string().optional().nullable(),
   newStartsAt: z.string().optional().nullable(),
+  // Canonical call-record closeout: idempotency key for the durable
+  // outreach_calls attempt record (client-minted UUID or provider session id).
+  // Repeat submissions with the same key resolve the existing row (no dup).
+  callKey: z.string().min(1).max(128).optional().nullable(),
+  // When explicitly false, this disposition is an administrative / note-only /
+  // schedule-only action, NOT a real dialed attempt → no call record is
+  // created. Defaults to true (a logged call result represents a real call).
+  isCallAttempt: z.boolean().optional(),
 });
 
 const CALL_RESULTS_NEEDING_TRIAGE = new Set([
@@ -617,6 +627,32 @@ export function registerExecutionCaseRoutes(app: Express) {
         });
       }
 
+      // ── Canonical call-record closeout — IDEMPOTENT REPLAY ─────────────
+      // If the caller supplied a callKey that already maps to a durable call
+      // record, this is a retry of the SAME attempt. Return the current state
+      // WITHOUT re-applying any side effects (no second attempt-count
+      // increment, no duplicate journey/triage/task, no duplicate call row).
+      // The guarantee is exactly-once per real attempt.
+      if (data.callKey) {
+        const existingCall = await storage.findOutreachCallByExternalId(data.callKey);
+        if (existingCall) {
+          const currentEc =
+            executionCaseId !== null
+              ? await getExecutionCaseById(executionCaseId).catch(() => null)
+              : executionCase;
+          return res.json({
+            ok: true,
+            executionCase: currentEc ?? executionCase,
+            journeyEvent: null,
+            triageCase: null,
+            task: null,
+            ownershipUpdated: false,
+            callRecordCreated: false,
+            idempotentReplay: true,
+          });
+        }
+      }
+
       // ── Phase 2D-B3: canonical scheduling bridge ───────────────
       // When the flag is ON, route scheduling-state outcomes
       // (cancelled / no_show / reschedule) through the canonical
@@ -679,6 +715,27 @@ export function registerExecutionCaseRoutes(app: Express) {
         }
       }
 
+      // Resolve the effective settings + attempt-count plan BEFORE the
+      // delegation branch so the canonical delegation path and the
+      // legacy path apply the SAME attempt-count semantics
+      // (callAttemptCount / lastCallOutcome / lastAttemptAt /
+      // unable_to_reach transition). Without this the delegation path
+      // silently dropped attempt tracking — a parity break caught in
+      // Item 4 parity testing.
+      const effectiveBundle = await getEffectiveAdminSettings({
+        facilityId: facilityId ?? null,
+        userId: auditIdentity.actorUserId ?? null,
+      });
+      // Phase 2 hardening — read the prior attempt count from the
+      // resolved execution case (may be null/undefined for legacy
+      // rows without the column populated; treat as 0).
+      const previousAttemptCount = executionCase?.callAttemptCount ?? 0;
+      const attemptPlan = planCallAttempt({
+        currentAttemptCount: previousAttemptCount,
+        outcome: data.callResult,
+        maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
+      });
+
       // ─── Engagement-route DELEGATION (Batch 3 of Engagement completion run) ──
       //
       // Default-OFF delegate-flag accessor (isRecordCallResultEngagement
@@ -738,9 +795,34 @@ export function registerExecutionCaseRoutes(app: Express) {
         let delegatedExecutionCase = executionCase;
         let delegatedOwnershipUpdated = false;
 
+        // Canonical call-record closeout: a real dialed attempt through the
+        // engagement surface must create exactly ONE durable outreach_calls
+        // row so it appears in Call Results (which reads only outreach_calls).
+        // All ENGAGEMENT_DELEGATION_CANONICAL_OUTCOMES represent a real dial;
+        // callers submitting an administrative / note-only action pass
+        // isCallAttempt:false to opt out. Idempotency via data.callKey.
+        const shouldCreateCallRecord = data.isCallAttempt !== false;
+        let delegatedCallRecordCreated = false;
+
         const deps: CallResultExecutionDependencies = {
-          createOutreachCall: () => {
-            // engagement-suppressed step; never reached.
+          createOutreachCall: async (args: CreateOutreachCallArgs) => {
+            // Insert-only durable record. NEVER mutates appointmentStatus
+            // (Item 2F) — that is the outreach surface's concern, applied
+            // there via createOutreachCallAtomic. Idempotent by callKey.
+            const { created } = await ensureCanonicalCallRecord({
+              patientScreeningId: patientScreeningId as number,
+              outcome: data.callResult,
+              // Consistent with the attempt-count plan the exec-case executor
+              // writes, so the record's attemptNumber matches the case counter.
+              attemptNumber: attemptPlan.newAttemptCount,
+              schedulerUserId: actorUserId,
+              callbackAt: args.callbackAt ?? computedNextActionAt ?? null,
+              notes: data.note ?? null,
+              durationSeconds: args.durationSeconds ?? null,
+              externalCallId: data.callKey ?? null,
+              sourceSurface: "engagement_center_route",
+            });
+            delegatedCallRecordCreated = created;
           },
           appendJourneyEvent: async (args: AppendJourneyEventArgs) => {
             try {
@@ -764,7 +846,8 @@ export function registerExecutionCaseRoutes(app: Express) {
           },
           updateExecutionCaseEngagement: async (args: UpdateExecutionCaseEngagementArgs) => {
             if (!executionCase) return;
-            const updates: Record<string, unknown> = { updatedAt: new Date() };
+            const nowTimestamp = new Date();
+            const updates: Record<string, unknown> = { updatedAt: nowTimestamp };
             // Re-apply the legacy "don't overwrite terminal" guard.
             if (
               args.engagementStatus &&
@@ -777,6 +860,19 @@ export function registerExecutionCaseRoutes(app: Express) {
             }
             if (args.assignedRole && args.assignedRole !== executionCase.assignedRole) {
               updates.assignedRole = args.assignedRole;
+            }
+            // Attempt-count plan — byte-equivalent to the legacy path.
+            // Always write the new count (may equal the old one when the
+            // outcome did not count as an attempt) so the column stays
+            // consistent with the latest call.
+            updates.callAttemptCount = attemptPlan.newAttemptCount;
+            updates.lastCallOutcome = data.callResult;
+            if (attemptPlan.updateLastAttempt) {
+              updates.lastAttemptAt = nowTimestamp;
+            }
+            if (attemptPlan.transitionToUnableToReach) {
+              updates.unableToReachAt = nowTimestamp;
+              updates.engagementStatus = "unable_to_reach";
             }
             // Re-apply ownership-preservation guard.
             if (assignedTeamCandidate !== null) {
@@ -870,6 +966,7 @@ export function registerExecutionCaseRoutes(app: Express) {
             | "facility_specific_issue",
           callbackAt: computedNextActionAt ? computedNextActionAt.toISOString() : null,
           notes: data.note ?? null,
+          createDurableCallRecord: shouldCreateCallRecord,
           assignedTeamMemberId:
             assignedTeamCandidate !== null ? String(assignedTeamCandidate) : null,
           assignedRole: data.assignedRole ?? null,
@@ -910,30 +1007,16 @@ export function registerExecutionCaseRoutes(app: Express) {
           triageCase: delegatedTriageCase,
           task: delegatedTask,
           ownershipUpdated: delegatedOwnershipUpdated,
+          callRecordCreated: delegatedCallRecordCreated,
         });
       }
 
       // ─── Legacy code path (flag OFF, non-canonical outcome, or no screening) ─
 
-      // PR 2.2 — resolve the effective settings + the routing plan
-      // so the legacy path also records WHICH settings drove the
-      // outcome. The plan is currently advisory (the route still
-      // owns DB writes) but the appliedSettings + nextActionReason
-      // get added to the journey-event metadata so QA / audits can
-      // trace settings-driven decisions across PRs.
-      const effectiveBundle = await getEffectiveAdminSettings({
-        facilityId: facilityId ?? null,
-        userId: auditIdentity.actorUserId ?? null,
-      });
-      // Phase 2 hardening — read the prior attempt count from the
-      // resolved execution case (may be null/undefined for legacy
-      // rows without the column populated; treat as 0).
-      const previousAttemptCount = executionCase?.callAttemptCount ?? 0;
-      const attemptPlan = planCallAttempt({
-        currentAttemptCount: previousAttemptCount,
-        outcome: data.callResult,
-        maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
-      });
+      // PR 2.2 — routing plan (advisory; the route still owns DB
+      // writes). effectiveBundle + attemptPlan are resolved earlier
+      // (before the delegation branch) so BOTH the delegation path
+      // and the legacy path apply the identical attempt-count plan.
       const routingPlan = applyCallResultRouting(
         {
           outcome: data.callResult,
@@ -1233,6 +1316,115 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
+
+      // Operational-day navigation (server-side). `date=YYYY-MM-DD` scopes the
+      // call list to cases whose nextActionAt falls on that local day. Backlog
+      // (null nextActionAt) is the "due now" pool with no scheduled day, so it
+      // is included ONLY for today/future dates — never for a strictly-past
+      // date (which would otherwise repeat the whole backlog every day).
+      // NOTE: this filters the mutable nextActionAt pointer for the current/
+      // forward operational day; it is NOT a historical call-list-membership
+      // reconstruction. Faithful past-day membership lives in
+      // scheduler_assignments.asOfDate (a separate table) — see milestone
+      // report. Past dates therefore show "cases whose next action was due
+      // that day", which is honest but not a membership snapshot.
+      const todayLocal = (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      })();
+      const requestedDate =
+        typeof q.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : null;
+      const isHistorical = requestedDate != null && requestedDate < todayLocal;
+
+      // ── HISTORICAL CALL LIST (read-only snapshot) ──────────────────────────
+      // For a PAST date we do NOT filter the mutable nextActionAt (that would
+      // misrepresent membership). Instead we read the immutable per-day
+      // snapshot from scheduler_assignments (asOfDate + schedulerId), enrich
+      // each row with CURRENT canonical patient identity + the HISTORICAL call
+      // outcome recorded that day (outreach_calls.startedAt). scheduler_
+      // assignments is used ONLY as history here — never for current ownership.
+      // schedulerId is the SAME roster-id space as the locked current filter.
+      if (isHistorical) {
+        const histSchedulerId = assignmentScope.locked
+          ? assignmentScope.schedulerId
+          : (q.assignedTeamMemberId ? parseInt(q.assignedTeamMemberId, 10) : null);
+        if (histSchedulerId == null || Number.isNaN(histSchedulerId)) {
+          return res.json([]);
+        }
+        const snapshot = await storage.listSchedulerAssignmentsForSchedulerOnDate(
+          histSchedulerId,
+          requestedDate!,
+        );
+        if (snapshot.length === 0) {
+          // Honest empty — no snapshot recorded for that PCS/day. We do NOT
+          // fabricate membership from current nextActionAt.
+          return res.json([]);
+        }
+        // Day-scope calls by CALENDAR DAY, not a millisecond window.
+        // outreach_calls.startedAt is a naive `timestamp` that the driver
+        // returns re-tagged as UTC; its toISOString() date is the wall-clock
+        // day the row was written (the same frame requestedDate is in).
+        // Building local-parsed millisecond boundaries here instead mixed a
+        // UTC-tagged instant with local boundaries and leaked a call made in
+        // the early-UTC hours into the PRIOR local day — which would let a
+        // TODAY call rewrite YESTERDAY's read-only snapshot. Compare the
+        // startedAt calendar day directly to requestedDate.
+        const callDay = (c: { startedAt: unknown }): string | null => {
+          if (!c.startedAt) return null;
+          const d = new Date(c.startedAt as string);
+          return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+        };
+        const historical = await Promise.all(
+          snapshot.map(async (a) => {
+            const screening = await storage.getPatientScreening(a.patientScreeningId);
+            // Historical outcome: the latest call the PCS logged that day.
+            const dayCalls = (await storage.listOutreachCallsForPatient(a.patientScreeningId))
+              .filter((c) => callDay(c) === requestedDate)
+              .sort((x, y) => new Date(y.startedAt).getTime() - new Date(x.startedAt).getTime());
+            const lastCall = dayCalls[0] ?? null;
+            const ec = await getExecutionCaseByScreeningId(a.patientScreeningId).catch(() => null);
+            return {
+              id: `hist:${a.id}`,
+              patientScreeningId: a.patientScreeningId,
+              // CURRENT canonical patient identity (safe to show current name).
+              patientName: screening?.name ?? ec?.patientName ?? "Patient",
+              patientDob: screening?.dob ?? null,
+              facilityId: screening?.facility ?? ec?.facilityId ?? null,
+              executionCaseId: ec?.id ?? null,
+              // HISTORICAL operational fields (not present-day state):
+              assignedTeamMemberId: a.schedulerId,
+              historical: true,
+              asOfDate: a.asOfDate,
+              assignmentStatus: a.status, // active/released/reassigned/completed
+              // Outcome recorded THAT day, if any.
+              lastCallOutcome: lastCall?.outcome ?? null,
+              historicalCallCount: dayCalls.length,
+              historicalCallbackAt: lastCall?.callbackAt
+                ? new Date(lastCall.callbackAt).toISOString()
+                : null,
+              historicalLastActivityAt: lastCall?.startedAt
+                ? new Date(lastCall.startedAt).toISOString()
+                : null,
+              completed: dayCalls.length > 0,
+              nextActionAt: null,
+              selectedServices: ec?.selectedServices ?? screening?.qualifyingTests ?? [],
+            };
+          }),
+        );
+        return res.json(historical);
+      }
+
+      // ── CURRENT/FUTURE CALL LIST (canonical ownership) ─────────────────────
+      if (requestedDate != null) {
+        const dayStart = new Date(`${requestedDate}T00:00:00.000`);
+        const dayEnd = new Date(`${requestedDate}T23:59:59.999`);
+        if (!Number.isNaN(dayStart.getTime()) && !Number.isNaN(dayEnd.getTime())) {
+          filters.dateStart = dayStart;
+          filters.dateEnd = dayEnd;
+          // Include backlog only when the requested day is today or later.
+          filters.includeBacklog = requestedDate >= todayLocal;
+        }
+      }
       const rows = await listSchedulerPortalCases(filters, limit);
 
       // Phase 2E final review — attach the EXACT, SERVICE-AWARE ancillary case
@@ -1250,6 +1442,24 @@ export function registerExecutionCaseRoutes(app: Express) {
         const byExec = await listActiveAncillaryCasesByExecutionCaseIds(execIds);
         for (const row of rows) {
           Object.assign(row, selectAncillaryCaseForRow(row as never, byExec.get(row.id) ?? []));
+        }
+      }
+
+      // Phase 3C — attach open call handoffs + apply the CENTRALIZED queue
+      // ordering (priority handoffs surface above standard work). The execution
+      // case stays the single ownership record; handoffs are display context.
+      {
+        const { annotateAndOrderQueue } = await import(
+          "../services/engagement/callHandoffService"
+        );
+        const annotated = await annotateAndOrderQueue(rows as never[]);
+        rows.length = 0;
+        for (const a of annotated) {
+          const row = a.case as Record<string, unknown>;
+          row.handoffs = a.handoffs;
+          row.isHandoff = a.isHandoff;
+          row.isCarryover = a.isCarryover;
+          rows.push(row as (typeof rows)[number]);
         }
       }
 

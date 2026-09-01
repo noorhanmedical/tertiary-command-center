@@ -16,7 +16,15 @@ export const screeningBatches = pgTable("screening_batches", {
   // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
   clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   name: text("name").notNull(),
+  // Batch clinician attribution (Plexus IQ). `clinicianName` is a SNAPSHOT of
+  // the display name at run time (already existed; kept for historical display
+  // independent of later directory renames). `clinicianId` links the canonical
+  // clinicians directory row when a configured clinician was selected (NULL for
+  // free-text or legacy runs). `clinicianSource` is "facility_clinician" |
+  // "free_text" | NULL(legacy). Never inferred from patient PCP.
   clinicianName: text("clinician_name"),
+  clinicianId: integer("clinician_id"),
+  clinicianSource: text("clinician_source"),
   patientCount: integer("patient_count").notNull().default(0),
   status: text("status").notNull().default("processing"),
   facility: text("facility"),

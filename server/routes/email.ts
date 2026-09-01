@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
 import { patientScreenings, screeningBatches, outreachSchedulers } from "../../shared/schema";
-import { sendOutreachEmail } from "../services/emailService";
+import { sendOutreachEmail, isEmailConfigured } from "../services/emailService";
 import { MARKETING_MATERIALS, getMarketingMaterial } from "../services/marketingMaterials";
 import { logPatientCommunicationEvent } from "../services/communication/communicationLogService";
 
@@ -65,6 +65,13 @@ const sendMaterialSchema = z.object({
 });
 
 export function registerEmailRoutes(app: Express) {
+  // Phase 5E — LIVE / NOT CONFIGURED signal for the Email tool. Reads only
+  // whether SMTP env is present (no secret values leave the server) so the UI
+  // can honestly distinguish a working sender from an unconfigured one.
+  app.get("/api/outreach/email-status", (_req, res) => {
+    res.json({ configured: isEmailConfigured() });
+  });
+
   // List the marketing materials available for sending. Mirrors the
   // catalog used in the scheduler portal UI but keeps the server as the
   // source of truth for what can actually be delivered.

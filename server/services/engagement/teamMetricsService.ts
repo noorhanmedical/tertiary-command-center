@@ -4,9 +4,11 @@ import { patientExecutionCases } from "@shared/schema/executionCase";
 import { storage } from "../../storage";
 import { listCallResultLoggedEventsInRange } from "../../repositories/executionCase.repo";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
+import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
 import {
   computeCallTargets,
   remainingCapacity,
+  computeMemberCapacityState,
   getCarryoverCounts,
   getPtoUserIdsForToday,
   deriveWorkingStatus,
@@ -169,6 +171,12 @@ export interface TeamMetricsMember {
   activeQueue: number; // active non-terminal cases assigned to this member
   carryover: number; // past-due active cases (call-settings carryover)
   remainingCapacity: number; // call-settings capacity = max(0, kpi − carryover)
+  // Canonical capacity state (K2/K3) — same math the distribution engine uses.
+  configuredWorkloadPercent: number;
+  dailyCallCapacity: number; // completed-call KPI, capped by maxDailyCapacity
+  effectiveWorkload: number; // assigned + priority handoffs
+  priorityHandoffs: number; // outstanding P1/P2 handoffs (Phase 3C populates)
+  overCapacity: number; // max(0, effectiveWorkload − capacity)
 }
 
 export interface TeamMetricsTotals {
@@ -304,10 +312,11 @@ export async function getTeamMetrics(
   const startOfToday = startOfTodayUtc(now);
   const endOfToday = endOfTodayUtc(now);
 
-  const [carryoverBySched, activeQueueBySched, calls, callResultEvents] =
+  const [carryoverBySched, activeQueueBySched, priorityHandoffByUser, calls, callResultEvents] =
     await Promise.all([
       getCarryoverCounts(schedulerIds, startOfToday),
       getActiveQueueCounts(schedulerIds),
+      callHandoffsRepository.countOpenPriorityByRecipient(),
       storage.listOutreachCallsInRange(startOfToday, endOfToday),
       // Canonical per-call log from the engagement-center call-result path
       // (the default portal write). See the header note on the split-brain.
@@ -419,6 +428,18 @@ export async function getTeamMetrics(
       merged.manualWorkingToday,
       working.calendarWorkingToday,
     );
+    const activeQueue = activeQueueBySched.get(s.id) ?? 0;
+
+    // Canonical capacity state — identical math to the distribution engine so
+    // the workload display and auto-distribution never show different numbers.
+    const capacity = computeMemberCapacityState({
+      targets,
+      configuredWorkloadPercent: merged.callWorkdayPercent,
+      assigned: activeQueue,
+      carryover,
+      priorityHandoffs: s.userId ? priorityHandoffByUser.get(s.userId) ?? 0 : 0,
+      workingToday,
+    });
 
     return {
       schedulerId: s.id,
@@ -438,9 +459,14 @@ export async function getTeamMetrics(
         targets.scheduledKpi,
         scheduledToday,
       ),
-      activeQueue: activeQueueBySched.get(s.id) ?? 0,
+      activeQueue,
       carryover,
-      remainingCapacity: remainingCapacity(targets.completedCallKpi, carryover),
+      remainingCapacity: capacity.remainingCapacity,
+      configuredWorkloadPercent: capacity.configuredWorkloadPercent,
+      dailyCallCapacity: capacity.dailyCallCapacity,
+      effectiveWorkload: capacity.effectiveWorkload,
+      priorityHandoffs: capacity.priorityHandoffs,
+      overCapacity: capacity.overCapacity,
     };
   });
 

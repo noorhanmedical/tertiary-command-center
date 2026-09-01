@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useEngagementActivityStream } from "@/hooks/useEngagementActivityStream";
 import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, CalendarPlus, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
@@ -17,10 +18,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { setPortalClinic, messagingFetch } from "@/lib/portalClinicContext";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
+import { AncillaryReadinessRow } from "@/components/portal/AncillaryReadinessRow";
 import type { AncillaryServiceContext } from "@/components/portal/AncillaryDocModals";
+import { QualifyingEvidence } from "@/components/patient-directory/PatientChartSections";
+import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
+import { getAncillaryCategory } from "@shared/ancillaryCategory";
+import type { EmrQualifyingTest } from "@/types/emr";
 import {
   WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
@@ -39,8 +46,9 @@ import {
   type ViewAsTeamMember,
   type ViewAsWorkspaceType,
   type TeamWorkspaceCallListItem,
+  type TeamWorkspaceAncillaryAppointment,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
-import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
+import { fetchTeamMemberProfile, fetchMyMemberProfile, fetchMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
 import { useLocation } from "wouter";
 // Left-rail tool components — shared between PCS + ACS (identical
 // shell + layout).
@@ -58,6 +66,8 @@ import {
 import { CalendarQuickScheduleDialog } from "@/components/portal/CalendarQuickScheduleDialog";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
+import { HandoffDialog } from "@/components/portal/handoff/HandoffDialog";
+import { PriorityHandoffsInbox } from "@/components/portal/handoff/PriorityHandoffsInbox";
 import {
   CompactCallRow,
   CompactClinicRow,
@@ -84,7 +94,7 @@ import { ToolDock, type DockTool, type DockGroup } from "@/components/portal/too
 import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
 import { CommunicationTray } from "@/components/portal/tools/CommunicationTray";
 import { WorkspaceSettingsDialog } from "@/components/portal/tools/WorkspaceSettingsDialog";
-import { useWorkspacePrefs, type TrayTab } from "@/components/portal/tools/workspacePrefs";
+import { useWorkspacePrefs, DEFAULT_WORKSPACE_PREFS, type TrayTab } from "@/components/portal/tools/workspacePrefs";
 import {
   useWorkspaceWidgets,
   PlaygroundWidgetLayer,
@@ -93,9 +103,23 @@ import {
   type WidgetPatientContext,
 } from "@/components/portal/tools/workspaceWidgets";
 import { MessageSquare, StickyNote, Settings as SettingsIcon, MessageCircle } from "lucide-react";
+import { GlobalDock } from "@/components/dock/GlobalDock";
+import type { DockAppDefinition } from "@/components/dock/types";
+import { DockOwnershipProvider } from "@/components/dock/DockOwnershipContext";
+import { PlaygroundWorkspaceProvider } from "@/components/playground";
+import { PlaygroundBridge } from "@/components/playground/PlaygroundBridge";
+import { WinterBackground } from "@/components/playground/WinterBackground";
+import { PlaygroundEventListener } from "@/components/playground/PlaygroundEventListener";
+import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
+import { SketchButton, SketchBadge } from "@/components/playground/sketch/SketchPrimitives";
+import { SKETCH_COLORS } from "@/components/playground/sketch/sketchTokens";
+import { dispatchOpenWorkspace } from "@/components/playground/playgroundEvents";
+import { NotificationCenter } from "@/components/portal/notifications/NotificationCenter";
+import { MetricsPopup } from "@/components/dock/popups/MetricsPopup";
+import { NovaQuickPanel } from "@/components/nova/NovaQuickPanel";
 import { PortalMessagesPanel } from "@/components/portal/messaging/PortalMessagesPanel";
 import { PortalMessagesWindow } from "@/components/portal/messaging/PortalMessagesWindow";
-import { usePortalMessages } from "@/components/portal/messaging/mockPortalMessages";
+import { useTeamMessages } from "@/components/portal/messaging/teamMessagesApi";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy
@@ -122,6 +146,17 @@ type WorkspaceRole =
 // `PublicWorkspaceRole` and let the capability resolver drive gating.
 type Role = "technician" | "liaison";
 type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart" | "calendar" | "chat";
+
+// A same-patient visit block on the Ancillary Schedule (Phase 1). `events`
+// preserves the underlying canonical service instances (each with its own
+// executionCaseId / readiness) — grouping is presentation only.
+type AncillaryVisitGroup = {
+  key: string;
+  patientName: string;
+  /** Earliest start time (ms) in the block; null when all events are undated. */
+  anchorMs: number | null;
+  events: TeamWorkspaceAncillaryAppointment[];
+};
 
 type PortalTask = {
   id: number;
@@ -242,6 +277,143 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Shift a YYYY-MM-DD operational date by N days using LOCAL calendar math
+// (no UTC parsing) so "yesterday/tomorrow" always land on the intended
+// facility-local operational day and never slip across a UTC boundary.
+function shiftIsoDate(iso: string, deltaDays: number): string {
+  const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
+  if (!y || !m || !d) return iso;
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + deltaDays);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+// Compact, human label for the right-rail date navigator. "Today" /
+// "Yesterday" / "Tomorrow" relative to the local operational day, else the
+// ISO date. Keeps the rail compact while making the selected day obvious.
+function relativeDateLabel(iso: string): string {
+  const today = todayIso();
+  if (iso === today) return "Today";
+  if (iso === shiftIsoDate(today, -1)) return "Yesterday";
+  if (iso === shiftIsoDate(today, 1)) return "Tomorrow";
+  return iso;
+}
+
+// Canonical Plexus IQ category → dot color (reuses the existing ancillary
+// color language: brainwave = violet, vitalwave = rose, ultrasound = emerald).
+// NOT a new color meaning — mirrors client/src/features/schedule/ancillaryMeta.
+function qualificationDotClass(category: string): string {
+  switch (category) {
+    case "brainwave":
+      return "bg-violet-500";
+    case "vitalwave":
+      return "bg-rose-500";
+    case "ultrasound":
+      return "bg-emerald-500";
+    default:
+      return "bg-slate-400";
+  }
+}
+
+// Map a qualifying-test name + the patient's stored reasoning into the
+// EmrQualifyingTest shape QualifyingEvidence consumes. Mirrors emrModel.ts;
+// no recompute — reads canonical stored evidence only.
+function toClinicQualifyingTest(
+  serviceName: string,
+  reasoning: Record<string, unknown> | null | undefined,
+): EmrQualifyingTest {
+  const r = (reasoning?.[serviceName] ?? null) as Record<string, unknown> | null;
+  const cat = getAncillaryCategory(serviceName);
+  const bucket: EmrQualifyingTest["bucket"] =
+    cat === "brainwave" || cat === "vitalwave" || cat === "ultrasound" ? cat : "ultrasound";
+  const arr = (v: unknown): string[] | null => (Array.isArray(v) ? (v as string[]) : null);
+  return {
+    testName: serviceName,
+    bucket,
+    clinicianUnderstanding: (r?.clinician_understanding as string) ?? null,
+    patientTalkingPoints: (r?.patient_talking_points as string) ?? null,
+    confidence: (r?.confidence as string) ?? null,
+    qualifyingFactors: arr(r?.qualifying_factors),
+    icd10Codes: arr(r?.icd10_codes),
+    pearls: arr(r?.pearls),
+    approvalRequired: typeof r?.approvalRequired === "boolean" ? (r.approvalRequired as boolean) : null,
+  };
+}
+
+// Clinic-schedule qualification dots: one colored dot per qualifying service
+// (category color), clicking opens a popup with the stored Plexus IQ evidence
+// for THAT service. Reasoning is fetched lazily (only when the popup opens)
+// from the canonical /api/patients/:id read, so the row stays cheap.
+function ClinicQualificationDots({
+  patientScreeningId,
+  qualifyingTests,
+}: {
+  patientScreeningId: number | null;
+  qualifyingTests: string[];
+}) {
+  const [openTest, setOpenTest] = useState<string | null>(null);
+  const { data: screening } = useQuery<{
+    diagnoses: string | null;
+    medications: string | null;
+    reasoning: Record<string, unknown> | null;
+  } | null>({
+    queryKey: ["/api/patients", patientScreeningId, "clinic-qual-evidence"],
+    queryFn: async () => {
+      if (patientScreeningId == null) return null;
+      const res = await fetch(`/api/patients/${patientScreeningId}`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: patientScreeningId != null && openTest != null,
+    staleTime: 30_000,
+  });
+
+  const tests = (qualifyingTests ?? []).filter(Boolean);
+  if (tests.length === 0) return null;
+
+  const splitList = (s: string | null | undefined): string[] =>
+    s ? s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean) : [];
+
+  return (
+    <div className="mt-1 flex items-center gap-1" data-testid={`clinic-qual-dots-${patientScreeningId ?? "x"}`}>
+      {tests.slice(0, 8).map((t) => {
+        const cat = getAncillaryCategory(t);
+        return (
+          <button
+            key={t}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenTest(t);
+            }}
+            className={`h-2.5 w-2.5 rounded-full ${qualificationDotClass(cat)} ring-1 ring-white/70 transition-transform hover:scale-125`}
+            title={`${t} — why qualified`}
+            aria-label={`${t} qualification`}
+            data-testid={`clinic-qual-dot-${patientScreeningId ?? "x"}-${t}`}
+          />
+        );
+      })}
+      <Dialog open={openTest != null} onOpenChange={(o) => !o && setOpenTest(null)}>
+        <DialogContent className="max-w-lg z-[95]" data-testid="clinic-qual-evidence-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <span className={`h-3 w-3 rounded-full ${qualificationDotClass(getAncillaryCategory(openTest ?? ""))}`} />
+              {openTest}
+            </DialogTitle>
+          </DialogHeader>
+          {openTest && (
+            <QualifyingEvidence
+              test={toClinicQualifyingTest(openTest, screening?.reasoning)}
+              diagnoses={splitList(screening?.diagnoses)}
+              medications={splitList(screening?.medications)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function formatTime(t: string | null) {
   if (!t) return "—";
   const m = /^(\d{1,2}):(\d{2})/.exec(t);
@@ -338,6 +510,12 @@ const RIGHT_RAIL_WIDTH: Record<RailSize, string> = {
   small: "w-[220px]",
   normal: "w-[340px]",
 };
+// Numeric px twins of the rail widths above. Used to pad the center canvas when
+// a rail is PINNED so the Playground content + tab bar re-center in the
+// remaining space (instead of hiding behind the rail). Kept in lockstep with
+// the width classes so padding and rail width never drift.
+const LEFT_RAIL_PX: Record<RailSize, number> = { small: 84, normal: 320 };
+const RIGHT_RAIL_PX: Record<RailSize, number> = { small: 220, normal: 340 };
 
 function MonthlyMiniCalendar({ facility, selectedDate, onSelect }: { facility: string; selectedDate: string; onSelect: (d: string) => void }) {
   const [cursor, setCursor] = useState(() => {
@@ -941,6 +1119,21 @@ export function TeamPortalShell({
     enabled: !!profileTargetUserId,
   });
 
+  // Phase 5A — CANONICAL member profile. Drives the PCS/ACS workspace type +
+  // operational capabilities + portal defaults from the canonical Team-Ops
+  // model (teams / memberships / coverage / capabilities) instead of inline
+  // role-string inference. Self-serve `/me` for the logged-in user; the
+  // admin-gated `/:userId` for the view-as target.
+  const { data: canonicalProfile } = useQuery({
+    queryKey: ["/api/teams/member-profile", profileTargetUserId, isAdmin && selectedViewAsCandidate?.userId ? "viewas" : "me"],
+    queryFn: () =>
+      isAdmin && selectedViewAsCandidate?.userId
+        ? fetchMemberProfile(selectedViewAsCandidate.userId)
+        : fetchMyMemberProfile(),
+    enabled: !!profileTargetUserId,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // facData refetches on admin view-as change so the facility picker
   // narrows to the selected team-member's allow-list.
   const { data: facData } = useQuery<{ facilities: string[] }>({
@@ -957,14 +1150,16 @@ export function TeamPortalShell({
   const profileViewAllFacilities = !!workspaceProfile?.capabilities?.viewAllFacilities;
   const profileAssignedFacilities = workspaceProfile?.assignedFacilityIds ?? [];
 
-  // Profile capability overrides — driven purely by the stored profile so
-  // the workspace name (PCS vs ACS) does not gate behavior. The
-  // resolver below ensures procedure-side capability ALWAYS requires
-  // an ACS-typed workspace at runtime (defense-in-depth).
+  // Profile capability overrides. Phase 5A: the PCS/ACS workspace type is now
+  // sourced from the CANONICAL member profile (portal.workspaceType) when it
+  // has resolved, falling back to the role-derived flag only until then. This
+  // makes the canonical Team-Ops model — not inline role inference — the single
+  // source of the workspace type. resolvePortalCapabilities still derives the
+  // UI scheduling/procedure gates (and hard-ANDs procedure caps with ACS).
+  const canonicalWorkspaceType = canonicalProfile?.portal?.workspaceType
+    ?? (workspaceIsAncillaryCareSpecialist ? "ancillaryCareSpecialist" : "patientCareSpecialist");
   const portalCapabilities = resolvePortalCapabilities({
-    workspaceType: workspaceIsAncillaryCareSpecialist
-      ? "ancillaryCareSpecialist"
-      : "patientCareSpecialist",
+    workspaceType: canonicalWorkspaceType,
     profile: workspaceProfile ?? null,
   });
   workspaceCanCallAndSchedule =
@@ -1001,6 +1196,16 @@ export function TeamPortalShell({
     }
   }, [facilities, facility, workspaceProfile?.defaultFacilityId]);
 
+  // Publish the ONE selected Team Portal clinic to the request layer so
+  // tenancy-scoped endpoints (messaging) resolve against it. For an admin
+  // (org-wide, no fixed clinicId) this selected clinic IS the messaging
+  // tenancy; PCS/ACS keep their own canonical clinic server-side and the
+  // hint is ignored. Cleared on unmount so it never leaks to other surfaces.
+  useEffect(() => {
+    setPortalClinic(facility || null);
+    return () => setPortalClinic(null);
+  }, [facility]);
+
   // Admin view-as: snap the selected facility to the viewed-as roster
   // member's clinic so every right-panel feed (call list, clinic +
   // ancillary schedule) observes the same facility the member would see.
@@ -1014,16 +1219,19 @@ export function TeamPortalShell({
     if (facilities.includes(target)) setFacility(target);
   }, [isAdmin, selectedViewAsCandidate?.facility, facilities, facility]);
 
-  // Seed the right-panel default mode from the profile once it loads.
+  // Seed the right-panel default mode once it loads. Phase 5A: prefer the
+  // CANONICAL profile's portal.defaultMode (PCS→callList / ACS→ancillarySchedule,
+  // unified in Phase 4C); fall back to the raw workspace_profile.defaultMode.
   const profileSeededRef = useRef(false);
+  const seededDefaultMode = canonicalProfile?.portal?.defaultMode ?? workspaceProfile?.defaultMode;
   useEffect(() => {
     if (profileSeededRef.current) return;
-    if (workspaceProfile?.defaultMode) {
+    if (seededDefaultMode) {
       profileSeededRef.current = true;
-      setActiveWorkspaceMode(workspaceProfile.defaultMode);
+      setActiveWorkspaceMode(seededDefaultMode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceProfile?.defaultMode]);
+  }, [seededDefaultMode]);
 
   // Enforce profile facility scope: if the active facility falls outside
   // the assigned-facility allow-list (and viewAllFacilities is off), snap
@@ -1046,9 +1254,33 @@ export function TeamPortalShell({
   }, [workspaceProfile, profileViewAllFacilities, profileAssignedFacilities.join("|"), facility]);
 
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
+  // Clinic Schedule clinician filter (Phase 2). null = "All clinicians".
+  // Facility-scoped clinician list comes from the canonical
+  // /api/org/clinicians-by-facility-name (facility_clinicians). The clinic
+  // schedule already returns a per-patient clinicianName (from the batch
+  // snapshot), so filtering is a client-side match on that name.
+  const [clinicClinicianFilter, setClinicClinicianFilter] = useState<string | null>(null);
+  // ═══════════════════════════════════════════════════════════════════════
+  // LEGACY CENTER STATE — DO NOT USE FOR NEW WORKSPACE NAVIGATION.
+  // The Playground workspace engine (PlaygroundWorkspaceProvider) is the sole
+  // authority for opening, focusing, and rendering center workspaces via
+  // dispatchOpenWorkspace(). PlaygroundBridge always renders the center; the
+  // centerMode/centerSrc/centerTitle + portalTabs + dock* state below is dead
+  // for workspace ownership and retained only so the pre-Playground helper
+  // chain still type-checks. New navigation MUST go through the Playground.
+  // Scheduled for removal once the last legacy helper callers are deleted.
+  // ═══════════════════════════════════════════════════════════════════════
+  /**
+   * Scheduling context only — the active patient for the left-rail
+   * PatientMiniCalendar / schedule dialogs. Derived ONE-WAY from launcher
+   * clicks; it must NOT drive center rendering (the Playground owns that).
+   */
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
+  /** @deprecated Legacy center router. Playground owns center rendering. DO NOT USE. */
   const [centerMode, setCenterMode] = useState<CenterMode>("playground");
+  /** @deprecated Legacy iframe/src for ExpandedSectionView. DO NOT USE. */
   const [centerSrc, setCenterSrc] = useState<string>("");
+  /** @deprecated Legacy center title. DO NOT USE. */
   const [centerTitle, setCenterTitle] = useState<string>("");
   const [consentDialog, setConsentDialog] = useState<{ patient: TodayPatient; testType: string | null } | null>(null);
   const [playgroundTab, setPlaygroundTab] = useState<"overview" | "tasks" | "documents">("overview");
@@ -1090,11 +1322,20 @@ export function TeamPortalShell({
   // instead of navigating to a Playground tab. CallWorkspace owns the honest
   // RingCentral boundary (manual-dial fallback when the provider is unwired).
   const [callWorkspaceCtx, setCallWorkspaceCtx] = useState<CallCaseContext | null>(null);
+  // Phase 5C — Handoff dialog target (execution case + facility + patient name).
+  const [handoffCtx, setHandoffCtx] = useState<{ executionCaseId: number; facilityId: string | null; patientName: string } | null>(null);
+  const openHandoffForRow = useCallback((row: TeamWorkspaceCallListItem) => {
+    const execId = row.executionCaseId ?? (typeof row.id === "number" ? row.id : null);
+    if (execId == null) return;
+    setHandoffCtx({ executionCaseId: execId, facilityId: row.facilityId ?? facility ?? null, patientName: row.patientName ?? "Patient" });
+  }, [facility]);
   // Step 5 — keys of call/ancillary rows mid-exit. We add a key here on a
   // one-click complete, let the row animate up (max-h-0 + opacity-0), then
   // refetch so the row disappears smoothly instead of popping out.
   const [removingRowKeys, setRemovingRowKeys] = useState<Set<string>>(new Set());
+  /** @deprecated Legacy center tab list. Superseded by Playground workspaces. DO NOT USE. */
   const [portalTabs, setPortalTabs] = useState<PortalTab[]>([]);
+  /** @deprecated Legacy active center tab id. Superseded by Playground activeWorkspaceId. DO NOT USE. */
   const [activePortalTabId, setActivePortalTabId] = useState<string | null>(null);
   // Left-rail Marketing → Email handoff payloads. The Marketing tool
   // pushes material IDs here when the operator chooses "Compose email
@@ -1143,21 +1384,36 @@ export function TeamPortalShell({
     updateWidget: updatePlaygroundWidget,
     removeWidget: removePlaygroundWidget,
   } = useWorkspaceWidgets(currentUser?.username ?? "you", currentUserId ?? null);
-  // ── Task #740: iMessage-style Messaging (frontend mock only) ─────
-  // A single source of truth for the inbox panel + floating window. No
-  // backend — the real Twilio/direct/team messaging still lives in the
-  // Communication Tray under the Tools tab and is untouched.
+  // ── Task #740: iMessage-style Messaging (REAL data since Phase 1) ─────
+  // A single source of truth for the inbox panel + floating window, backed by
+  // the canonical /api/messaging/* model via useTeamMessages below (the
+  // original frontend-only mock state was replaced). The Communication Tray
+  // under the Tools tab uses the SAME real messaging backend.
+  // Which top-level tab the left panel shows: the Messaging inbox or the
+  // Tools dock (calendar + tray + tool launchers). K7 — seeded from the
+  // persisted defaultLeftTab pref (default "tools") once prefs hydrate;
+  // user clicks win after that. NOT hardcoded.
+  const [leftPanelTab, setLeftPanelTab] = useState<"messaging" | "tools">(
+    DEFAULT_WORKSPACE_PREFS.defaultLeftTab,
+  );
+  const leftPanelTabInitRef = useRef(false);
+  const [messagesWindowOpen, setMessagesWindowOpen] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  // Phase 1 — REAL messaging. The Messaging inbox + floating window are now
+  // backed by the canonical /api/messaging/* conversation model (was the
+  // mockPortalMessages local state). Same UI contract; real data.
   const {
     conversations: messagingConversations,
     totalUnread: messagingUnread,
     markRead: markMessagingRead,
     sendMessage: sendMessagingMessage,
-  } = usePortalMessages();
-  // Which top-level tab the left panel shows: the new Messaging inbox or the
-  // existing Tools dock (calendar + tray + tool launchers).
-  const [leftPanelTab, setLeftPanelTab] = useState<"messaging" | "tools">("messaging");
-  const [messagesWindowOpen, setMessagesWindowOpen] = useState(false);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+    sendPending: messagingSendPending,
+    roster: messagingRoster,
+    rosterLoading: messagingRosterLoading,
+    openDirect: messagingOpenDirect,
+    openDirectPending: messagingOpenDirectPending,
+    clinicNotSelected: messagingClinicNotSelected,
+  } = useTeamMessages(currentUserId ?? null, activeConversationId, facility || null);
   const openMessagesConversation = useCallback(
     (id: string) => {
       setActiveConversationId(id);
@@ -1181,6 +1437,9 @@ export function TeamPortalShell({
   // pin button in each panel's header; independent per panel.
   const [leftRailPinned, setLeftRailPinned] = useState(false);
   const [rightRailPinned, setRightRailPinned] = useState(false);
+  // Derived open state — binary, the single source of truth for the slide.
+  const leftRailOpen = leftRailPinned || leftRailPeek;
+  const rightRailOpen = rightRailPinned || rightRailPeek;
   // Task #643 — apply in-session Settings prefs. Pin defaults + tray tab
   // follow the workspace prefs; changing the pref updates live.
   useEffect(() => {
@@ -1196,15 +1455,20 @@ export function TeamPortalShell({
     trayTabInitRef.current = true;
     setTrayTab(workspacePrefs.defaultTrayTab);
   }, [workspacePrefs.defaultTrayTab, workspacePrefsHydrated]);
+  useEffect(() => {
+    // K7 — seed the top-level left tab from the persisted default ONCE,
+    // after prefs hydrate; user tab clicks win after that.
+    if (leftPanelTabInitRef.current || !workspacePrefsHydrated) return;
+    leftPanelTabInitRef.current = true;
+    setLeftPanelTab(workspacePrefs.defaultLeftTab);
+  }, [workspacePrefs.defaultLeftTab, workspacePrefsHydrated]);
   const leftRailRef = useRef<HTMLDivElement>(null);
   // Task #643 — Playground surface ref for drop-point math (drag tool → widget).
   const playgroundSurfaceRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
-  // Task #755 — hover-intent debounce timers for each rail. The sliding
-  // peek transform sweeps the element's bounding rect past a stationary
-  // cursor mid-animation, firing rapid leave→enter→leave events (the
-  // "quiver"). Delaying the collapse and cancelling it on re-enter absorbs
-  // those spurious leaves.
+  // Deferred-close timers, one per rail. Entering the hotspot or the rail body
+  // cancels the pending close; leaving schedules it. This is the mechanism that
+  // treats hotspot + body (+ rail-owned popovers) as a single hover region.
   const leftRailPeekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rightRailPeekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -1213,6 +1477,16 @@ export function TeamPortalShell({
       if (rightRailPeekTimer.current) clearTimeout(rightRailPeekTimer.current);
     };
   }, []);
+  // Escape closes any hover-open (unpinned) rail. Pinned rails are unaffected.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (!leftRailPinned) setLeftRailPeek(false);
+      if (!rightRailPinned) setRightRailPeek(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [leftRailPinned, rightRailPinned]);
   // TOUCH SUPPORT (task #629) — hover is unavailable on tablets / touchscreens,
   // so the hover-only reveal from task #628 leaves touch users stuck with just
   // the center canvas. On `(hover: none)` devices we switch the panels to a TAP
@@ -1260,64 +1534,55 @@ export function TeamPortalShell({
   }, [isTouchDevice, leftRailPeek, rightRailPeek]);
   const leftRailSize = "normal" as RailSize;
   const rightRailSize = "normal" as RailSize;
-  // Collapse the hover-peek only when the pointer genuinely leaves the rail's
-  // full bounding box (task #635). The panel body translates in/out on peek,
-  // so a naive onMouseLeave on the body fires spuriously as the element slides
-  // under a stationary cursor at the panel edge — checking against the stable
-  // outer ref rect stops the flicker loop.
-  // Task #755 — schedule the collapse instead of firing it synchronously.
-  // The rect-guard below still short-circuits an obvious in-bounds leave, but
-  // during the slide animation getBoundingClientRect returns an intermediate
-  // rect, so the guard alone can't stop the quiver. Deferring setPeek(false)
-  // by ~120ms lets a matching onMouseEnter (see makeRailPeekEnterHandler)
-  // cancel the pending collapse, absorbing rapid leave→enter jitter.
-  const RAIL_PEEK_LEAVE_DELAY_MS = 120;
-  const makeRailPeekEnterHandler =
+  // Conventional side-panel hover model. The open trigger is a STATIONARY
+  // edge hotspot (see the rail JSX), never the moving body — so there is no
+  // quiver from the sliding element sweeping past the cursor, and no rect
+  // guard is needed. The hotspot and the rail body are treated as ONE hover
+  // region: entering either cancels a pending close; leaving either schedules
+  // a close after a short delay that the next enter cancels. This absorbs the
+  // hotspot→rail and rail→popover hand-offs without flicker.
+  //
+  // Derived open state is `isPinned || isHovered` (the `*Peek` state below is
+  // the "isHovered" flag; the name is retained to avoid churning ~30 call
+  // sites). Binary only — no intermediate/drag positions are ever stored.
+  const RAIL_CLOSE_DELAY_MS = 200;
+  const makeRailHoverOpen =
     (
       timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
-      setPeek: (v: boolean) => void,
+      setHovered: (v: boolean) => void,
     ) =>
     () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      setPeek(true);
+      setHovered(true);
     };
-  const makeRailPeekLeaveHandler =
+  const makeRailHoverClose =
     (
-      ref: React.RefObject<HTMLDivElement>,
       timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
-      setPeek: (v: boolean) => void,
+      setHovered: (v: boolean) => void,
     ) =>
-    (e: React.MouseEvent) => {
-      const rect = ref.current?.getBoundingClientRect();
-      if (rect) {
-        const { clientX, clientY } = e;
-        if (
-          clientX >= rect.left &&
-          clientX <= rect.right &&
-          clientY >= rect.top &&
-          clientY <= rect.bottom
-        ) {
-          return;
-        }
-      }
+    () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
-        setPeek(false);
-      }, RAIL_PEEK_LEAVE_DELAY_MS);
+        setHovered(false);
+      }, RAIL_CLOSE_DELAY_MS);
     };
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
+  const [novaQuickPanelOpen, setNovaQuickPanelOpen] = useState(false);
+  const [metricsPopupOpen, setMetricsPopupOpen] = useState(false);
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
   // Demo-patient consent / screening toggles removed in Phase 1
   // Slice 1.1. Consent / screening state for real patients now comes
   // from the live feed (p.consentSigned) and from the canonical
   // patient-detail surfaces.
+  /** @deprecated Legacy dock-app center state. Superseded by GlobalDock + Playground workspaces. DO NOT USE. */
   const [dockOpenApps, setDockOpenApps] = useState<Array<"tasks" | "schedule" | "consent" | "chart" | "documents">>([]);
+  /** @deprecated Legacy active dock-app. Superseded by Playground workspaces. DO NOT USE. */
   const [dockActiveApp, setDockActiveApp] = useState<null | "tasks" | "schedule" | "consent" | "chart" | "documents">(null);
 
   // The hardcoded demo-patient + demo-profile useMemo blocks were
@@ -1375,8 +1640,10 @@ export function TeamPortalShell({
       // because it would be ignored anyway (locked override).
       fetchWorkspaceCallList({
         facilityId: facility || null,
-        startDate: workspaceDayStartIso,
-        endDate: workspaceDayEndIso,
+        // Server-side operational-day scoping (Phase 0/#11). Backlog is
+        // included only for today/future by the server; past dates show
+        // cases whose next action was due that day.
+        date: selectedDate,
         limit: 100,
         viewAsTeamMemberId,
         workspace: workspaceCallListContext ?? null,
@@ -1406,6 +1673,12 @@ export function TeamPortalShell({
       });
     }
   }, [workspaceCallList]);
+
+  // Live cross-user queue refresh. Subscribes to the shared engagement activity
+  // SSE so a reassignment / absence redistribution / manager-logged disposition
+  // made by ANOTHER session refetches this staff member's queue within ~1s,
+  // without a manual reload. Server stays authoritative (PHI-free nudge only).
+  useEngagementActivityStream({ facility, selectedDate });
 
   const { data: workspaceClinicSchedule = [], isLoading: workspaceClinicLoading } = useQuery({
     queryKey: [
@@ -1461,16 +1734,86 @@ export function TeamPortalShell({
     });
   }, [workspaceAncillarySchedule, allowedServiceTypes]);
 
+  // Phase 1 — same-patient visit-block grouping (UI ONLY; the underlying
+  // canonical service instances / executionCaseIds are preserved intact on
+  // `group.events`). Rule (approved): group rows that share the SAME patient
+  // AND the SAME operational date AND whose start times fall within a
+  // 90-minute visit block; services more than 90 minutes apart render as
+  // SEPARATE chronological entries. Rows are ordered chronologically by
+  // startsAt; a group's time is its earliest start. Patients with a single
+  // service just render as a one-service group.
+  const ANCILLARY_VISIT_BLOCK_MS = 90 * 60 * 1000;
+  const groupedAncillarySchedule = useMemo<AncillaryVisitGroup[]>(() => {
+    type Row = (typeof filteredAncillarySchedule)[number];
+    const ms = (iso: string | null | undefined): number | null => {
+      if (!iso) return null;
+      const t = new Date(iso).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+    const localDay = (iso: string | null | undefined): string => {
+      if (!iso) return "no-date";
+      const d = new Date(iso);
+      return Number.isFinite(d.getTime())
+        ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+        : "no-date";
+    };
+    // Chronological order first (nulls last), stable by row id.
+    const sorted = [...filteredAncillarySchedule].sort((a, b) => {
+      const ta = ms(a.startsAt);
+      const tb = ms(b.startsAt);
+      if (ta == null && tb == null) return 0;
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      return ta - tb;
+    });
+    const groups: AncillaryVisitGroup[] = [];
+    // Track the open group per (patient + local day) so an interleaved
+    // schedule still blocks correctly, and close it when the 90-min window
+    // from the block's anchor is exceeded.
+    const openByKey = new Map<string, AncillaryVisitGroup>();
+    for (const row of sorted) {
+      const patientKey = ancillaryPatientKey(row);
+      const day = localDay(row.startsAt);
+      const key = `${patientKey}|${day}`;
+      const startMs = ms(row.startsAt);
+      const open = openByKey.get(key);
+      const withinBlock =
+        open != null &&
+        (open.anchorMs == null || startMs == null
+          ? open.anchorMs == null && startMs == null // both undated → same block
+          : startMs - open.anchorMs <= ANCILLARY_VISIT_BLOCK_MS);
+      if (open && withinBlock) {
+        open.events.push(row as Row);
+      } else {
+        const g: AncillaryVisitGroup = {
+          key: `${key}|${row.id ?? groups.length}`,
+          patientName: row.patientName ?? "Unnamed patient",
+          anchorMs: startMs,
+          events: [row as Row],
+        };
+        groups.push(g);
+        openByKey.set(key, g);
+      }
+    }
+    return groups;
+  }, [filteredAncillarySchedule]);
+
   // Key a patient's ancillary rows so the doc workflows can offer a compact
   // "which ancillary" selector when a patient has more than one active test.
-  const ancillaryPatientKey = (row: {
+  // NOTE: declared as a hoisted function (not a const arrow) because it is
+  // called inside the `groupedAncillarySchedule` useMemo that appears ABOVE
+  // this point in source. A const arrow would be in the temporal dead zone
+  // when that memo recomputes with non-empty rows, crashing the whole portal
+  // ("Cannot access 'ancillaryPatientKey' before initialization").
+  function ancillaryPatientKey(row: {
     patientScreeningId?: number | null;
     patientName?: string | null;
     facilityId?: string | null;
-  }): string =>
-    row.patientScreeningId != null
+  }): string {
+    return row.patientScreeningId != null
       ? `p:${row.patientScreeningId}`
       : `n:${(row.patientName ?? "").toLowerCase().trim()}|${row.facilityId ?? ""}`;
+  }
 
   const ancillariesByPatient = useMemo(() => {
     const map = new Map<string, AncillaryServiceContext[]>();
@@ -1570,9 +1913,9 @@ export function TeamPortalShell({
   // key), so opening the tray reuses this data and the mark-read there
   // invalidates this too.
   const { data: dmRosterData } = useQuery<{ roster: { id: string; username: string; role: string | null; unread: number }[] }>({
-    queryKey: ["/api/portal/direct-messages/roster"],
+    queryKey: ["/api/messaging/roster"],
     queryFn: async () => {
-      const res = await fetch("/api/portal/direct-messages/roster", { credentials: "include" });
+      const res = await messagingFetch("/api/messaging/roster");
       if (!res.ok) throw new Error("Failed to load teammates");
       return res.json();
     },
@@ -1599,7 +1942,47 @@ export function TeamPortalShell({
   // Phase 1 Slice 1.1: render only real-feed patients. The legacy
   // demo-patient prepend was removed to expose the actual canonical
   // /api/portal/today + workspace feeds.
-  const patients = livePatients;
+  const allClinicPatients = livePatients;
+
+  // Phase 2 — facility clinician directory for the Clinic Schedule selector.
+  // Canonical source: /api/org/clinicians-by-facility-name (facility_clinicians).
+  const { data: clinicClinicianData } = useQuery<{
+    facilityId: number | null;
+    clinicians: Array<{ id: number; displayName: string; credentials: string | null }>;
+  }>({
+    queryKey: ["/api/org/clinicians-by-facility-name", facility],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/org/clinicians-by-facility-name?name=${encodeURIComponent(facility)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) return { facilityId: null, clinicians: [] };
+      return res.json();
+    },
+    enabled: !!facility,
+    staleTime: 60_000,
+  });
+  const facilityClinicians = useMemo(
+    () => clinicClinicianData?.clinicians ?? [],
+    [clinicClinicianData],
+  );
+
+  // Reset the clinician filter when the facility changes (its clinician list
+  // changes) so a stale selection from another facility can't hide everyone.
+  useEffect(() => {
+    setClinicClinicianFilter(null);
+  }, [facility]);
+
+  // Clinic patients filtered by the selected clinician (client-side match on
+  // the per-patient clinicianName the schedule feed returns). "All" shows
+  // everyone. Patients with no recorded clinician are kept only under "All".
+  const patients = useMemo(() => {
+    if (!clinicClinicianFilter) return allClinicPatients;
+    const target = clinicClinicianFilter.toLowerCase();
+    return allClinicPatients.filter(
+      (p) => (p.clinicianName ?? "").toLowerCase() === target,
+    );
+  }, [allClinicPatients, clinicClinicianFilter]);
 
   const selected = useMemo(() => patients.find((p) => p.patientScreeningId === selectedPatientId) ?? null, [patients, selectedPatientId]);
 
@@ -1661,24 +2044,15 @@ export function TeamPortalShell({
   }
 
   function togglePatientInPlayground(p: TodayPatient) {
-    const samePatient = p.patientScreeningId === selectedPatientId;
-
-    if (samePatient && centerMode === "patient") {
-      setCenterMode("playground");
-      setCenterSrc("");
-      setCenterTitle("");
-      setDockActiveApp(null);
-      return;
-    }
-
+    // Open/focus patient EHR via Playground workspace engine.
     if (p.patientScreeningId != null) {
-      setSelectedPatientId(p.patientScreeningId);
+      dispatchOpenWorkspace({
+        type: "patient_ehr",
+        title: p.name,
+        patientScreeningId: p.patientScreeningId,
+        facilityId: p.facility,
+      });
     }
-
-    setCenterMode("patient");
-    setCenterSrc("");
-    setCenterTitle("");
-    markDockOpen("chart");
   }
 
   function openScheduleDialog(p: TodayPatient) {
@@ -1686,18 +2060,27 @@ export function TeamPortalShell({
     setScheduleDialogPatient(p);
   }
 
+  // Scheduling consolidation: every "schedule this patient" action (right-rail
+  // call list, clinic schedule, EHR/chart) opens the ONE full Scheduler
+  // workspace with the patient + facility + service preselected — NOT a
+  // separate SchedulePatientDialog. The UI is identical to the generic entry;
+  // only the preselected context differs.
   function openSchedulePatientDialog(
     input: SchedulePatientDialogPatient,
     opts?: { date?: string | null; time?: string | null },
   ) {
     if (input.patientScreeningId != null) setSelectedPatientId(input.patientScreeningId);
-    setSchedulePatientDialogDefaultDate(opts?.date ?? null);
-    setSchedulePatientDialogDefaultTime(opts?.time ?? null);
-    setSchedulePatientDialog(input);
-    // Persist the patient as the active scheduling context so the
-    // left-rail PatientMiniCalendar switches its header to
-    // "Scheduling: <name>" and the date picker is patient-scoped.
     setSelectedPatientForScheduling(input);
+    dispatchOpenWorkspace({
+      type: "calendar",
+      title: input.patientName ?? "Schedule",
+      patientScreeningId: input.patientScreeningId ?? null,
+      executionCaseId: input.executionCaseId ?? null,
+      patientDob: input.patientDob ?? null,
+      serviceKey: input.serviceType ?? null,
+      facilityId: input.facilityId ?? facility ?? null,
+      initialDate: opts?.date ?? null,
+    });
   }
 
   function openSchedulePatientPlayground(payload: {
@@ -1740,10 +2123,19 @@ export function TeamPortalShell({
   // case still opens in-place.
   function openCallRowPatient(row: TeamWorkspaceCallListItem) {
     if (typeof row.patientScreeningId === "number" && row.patientScreeningId > 0) {
-      openPatientTabById({
+      // Open (or focus) patient EHR via the Playground workspace engine and
+      // request one-shot service focus on the Ancillary Journey section. When
+      // the tab already exists, the provider bumps its focusToken so the chart
+      // re-scrolls/highlights without duplicating the workspace.
+      dispatchOpenWorkspace({
+        type: "patient_ehr",
+        title: row.patientName ?? "Patient",
         patientScreeningId: row.patientScreeningId,
-        name: row.patientName ?? "Patient",
-        facility: row.facilityId ?? facility ?? null,
+        executionCaseId: row.executionCaseId ?? null,
+        ancillaryCaseId: row.ancillaryCaseId ?? null,
+        serviceKey: row.selectedServices?.[0] ?? null,
+        facilityId: row.facilityId ?? facility ?? null,
+        focusSection: "ancillary-journey",
       });
       return;
     }
@@ -1756,6 +2148,38 @@ export function TeamPortalShell({
     openSchedulePatientPlayground({
       patient: callRowToDialogPatient(row),
       selectedDate,
+    });
+  }
+
+  // Open (or focus) the ACS ancillary WORKFLOW workspace for a scheduled
+  // ancillary row — the consent/screening/report surface centered on this
+  // service. Deduped per execution case + service by the Playground registry.
+  // Preserves canonical IDs; falls back to the scheduling playground only when
+  // there is no patient identity to open a workflow against.
+  function openAncillaryWorkflow(row: TeamWorkspaceAncillaryAppointment) {
+    if (row.patientScreeningId != null || row.executionCaseId != null) {
+      dispatchOpenWorkspace({
+        type: "ancillary_workflow",
+        title: row.patientName ?? "Ancillary",
+        patientScreeningId: row.patientScreeningId ?? null,
+        executionCaseId: row.executionCaseId ?? null,
+        serviceKey: row.serviceType ?? null,
+        facilityId: row.facilityId ?? facility ?? null,
+      });
+      return;
+    }
+    // Walk-in / unlinked row — no canonical patient to open a workflow on.
+    openSchedulePatientPlayground({
+      patient: {
+        patientName: row.patientName ?? null,
+        patientDob: row.patientDob ?? null,
+        facilityId: row.facilityId ?? null,
+        patientScreeningId: row.patientScreeningId ?? null,
+        executionCaseId: row.executionCaseId ?? null,
+        serviceType: row.serviceType ?? null,
+      },
+      selectedDate,
+      ancillaries: ancillariesByPatient.get(ancillaryPatientKey(row)),
     });
   }
 
@@ -1921,6 +2345,12 @@ export function TeamPortalShell({
     }
   }
 
+  /**
+   * @deprecated LEGACY center-tab launcher. DO NOT USE FOR NEW WORKSPACE
+   * NAVIGATION. Zero callers remain; new navigation goes through
+   * dispatchOpenWorkspace() into the Playground engine. Retained only until
+   * the legacy helper chain is deleted.
+   */
   function openPortalTab(kind: PortalTabKind, patient?: TodayPatient | null) {
     const id =
       kind === "patient" || kind === "schedule"
@@ -1978,24 +2408,13 @@ export function TeamPortalShell({
     name: string;
     facility?: string | null;
   }) {
-    const fakeToday: TodayPatient = {
+    // Route through the Playground workspace engine.
+    dispatchOpenWorkspace({
+      type: "patient_ehr",
+      title: input.name,
       patientScreeningId: input.patientScreeningId,
-      name: input.name,
-      dob: null,
-      time: null,
-      facility: input.facility ?? "",
-      clinicianName: null,
-      qualifyingTests: [],
-      appointmentStatus: "",
-      consentByTest: [],
-      consentSigned: false,
-      appointments: [],
-      batchId: null,
-      plexusPdfUrl: null,
-      clinicianPdfUrl: null,
-      scheduleUrl: null,
-    };
-    openPortalTab("patient", fakeToday);
+      facilityId: input.facility ?? null,
+    });
   }
 
   function closePortalTab(id: string) {
@@ -2058,18 +2477,18 @@ export function TeamPortalShell({
     };
   }
 
-  // Calendar tool action honours the Settings preference. Default (task
-  // #698) is the Quick Schedule pop-up; "playground" is the opt-out that
-  // opens the full calendar view instead.
+  // Left-rail Calendar tile → opens the ONE full Scheduler workspace in the
+  // Playground (scheduling consolidation). The tile says "Calendar", so it
+  // opens the calendar/scheduler workspace — NOT the Quick Schedule pop-up.
+  // Quick Schedule is reached by DOUBLE-CLICKING a date. Uses the selected
+  // portal facility; no patient preselected (generic entry).
   function handleCalendarTool() {
-    if (workspacePrefs.calendarBehavior === "playground") {
-      // Opt-out: open the calendar in the Playground, preserving the active
-      // patient/case context (we never clear selectedPatientId here).
-      setCenterMode("calendar");
-      setCenterTitle(`Calendar — ${globalCalendarDate}`);
-      return;
-    }
-    setCalendarQuickScheduleDate(globalCalendarDate);
+    dispatchOpenWorkspace({
+      type: "calendar",
+      title: "Schedule",
+      facilityId: facility || null,
+      initialDate: globalCalendarDate,
+    });
   }
 
   // Task #698 — clicking a day on any portal calendar opens the Quick
@@ -2159,13 +2578,16 @@ export function TeamPortalShell({
   }
 
   return (
+    <DockOwnershipProvider>
+    <PlaygroundWorkspaceProvider>
+    <PlaygroundEventListener />
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
       {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
           reclaimed space reads as usable canvas. Left: "The Playground" wordmark
           in a cursive script font, blue. Right: the existing Clinic selector,
           Calendar button, and (admins only) the "Viewing as" selector — all
           unchanged in behavior + test ids. */}
-      <header className="relative z-20 flex items-center justify-between gap-4 flex-wrap bg-white/85 px-6 py-2 backdrop-blur-xl">
+      <header className="relative z-20 flex items-center justify-between gap-4 flex-wrap px-6 py-2" style={{ backgroundColor: "#FAFBF8" }}>
         <div className="flex items-center gap-3">
           <span
             className="text-[30px] font-semibold leading-none text-[#2563EB]"
@@ -2193,74 +2615,87 @@ export function TeamPortalShell({
               >
                 Viewing as
               </Label>
-              <Select
+              <SketchSelect
+                id="admin-viewas-team-member-select"
+                seedId="admin-viewas"
                 value={viewAsTeamMemberId ?? "__self__"}
-                onValueChange={(v) =>
-                  setViewAsTeamMemberId(v === "__self__" ? null : v)
+                onChange={(e) =>
+                  setViewAsTeamMemberId(e.target.value === "__self__" ? null : e.target.value)
                 }
+                data-testid="admin-viewas-team-member-select"
               >
-                <SelectTrigger
-                  id="admin-viewas-team-member-select"
-                  className="h-8 w-[160px] border-slate-300 bg-white text-xs text-slate-900"
-                  data-testid="admin-viewas-team-member-select"
-                >
-                  <SelectValue placeholder="Admin (self)" />
-                </SelectTrigger>
-                <SelectContent className="z-[90]">
-                  <SelectItem value="__self__" data-testid="admin-viewas-option-self">
-                    Admin (self)
-                  </SelectItem>
-                  {viewAsCandidates.map((u) => (
-                    <SelectItem
-                      key={u.id}
-                      value={u.id}
-                      data-testid={`admin-viewas-option-${u.id}`}
-                    >
-                      {u.username}{u.facility ? ` · ${u.facility}` : ""}{typeof u.dailyTarget === "number" ? ` · target ${u.dailyTarget}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <option value="__self__" data-testid="admin-viewas-option-self">
+                  Admin (self)
+                </option>
+                {viewAsCandidates.map((u) => (
+                  <option
+                    key={u.id}
+                    value={u.id}
+                    data-testid={`admin-viewas-option-${u.id}`}
+                  >
+                    {u.username}{u.facility ? ` · ${u.facility}` : ""}{typeof u.dailyTarget === "number" ? ` · target ${u.dailyTarget}` : ""}
+                  </option>
+                ))}
+              </SketchSelect>
             </div>
           )}
           <Label htmlFor="facility-select" className="text-xs text-slate-600">Clinic</Label>
-          <Select value={facility} onValueChange={setFacility}>
-            <SelectTrigger id="facility-select" className="h-8 w-[160px] border-slate-300 bg-white text-xs text-slate-900" data-testid="select-facility">
-              <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
-            </SelectTrigger>
-            <SelectContent className="z-[90]">
-              {facilities.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <button
-            type="button"
+          <SketchSelect
+            id="facility-select"
+            seedId="facility"
+            value={facility}
+            onChange={(e) => setFacility(e.target.value)}
+            data-testid="select-facility"
+          >
+            {facility === "" && (
+              <option value="" disabled>
+                {facilities.length === 0 ? "No clinic assignments" : "Choose clinic"}
+              </option>
+            )}
+            {facilities.map((f) => <option key={f} value={f}>{f}</option>)}
+          </SketchSelect>
+          {/* Phase 6A — compact operational notification center (unread count +
+              recent items with click-through to the canonical workspace). */}
+          <NotificationCenter />
+          <SketchButton
+            variant="icon"
+            size="sm"
+            seedId="team-portal-calendar"
             onClick={() => setTeamPortalCalendarOpen(true)}
             aria-label="Open team portal calendar"
             title="Open team portal calendar"
-            className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-colors"
             data-testid="button-team-portal-main-calendar"
           >
             <CalendarIcon className="h-4 w-4" />
-          </button>
+          </SketchButton>
         </div>
       </header>
 
       <div className="relative flex-1 overflow-hidden">
         <div className="absolute inset-0">
-          <div className="absolute inset-0 bg-white" />
-          <div className="absolute inset-0 px-6 py-5">
-            <div className="h-full w-full rounded-[32px] bg-white" />
-          </div>
+          {/* One continuous paper background — no alternating white/tan bands. */}
+          <div className="absolute inset-0" style={{ backgroundColor: "#FAFBF8" }} />
         </div>
 
-        <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
+        <div
+          className="absolute inset-0 z-[1] overflow-auto px-6 py-5 transition-[padding] duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]"
+          style={{
+            // Reserve space for PINNED rails only, so the Playground content
+            // and workspace tab bar re-center in the remaining area and stay
+            // visible. Transient hover-peek keeps overlaying (ephemeral glance).
+            paddingLeft: leftRailPinned ? LEFT_RAIL_PX[leftRailSize] : undefined,
+            paddingRight: rightRailPinned ? RIGHT_RAIL_PX[rightRailSize] : undefined,
+          }}
+        >
           <div
             ref={playgroundSurfaceRef}
-            className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-2"
+            className="relative isolate mx-auto flex h-full min-h-full w-full flex-col bg-transparent px-6 pt-2 pb-6"
             data-testid="playground-canvas-surface"
             onDragOver={handlePlaygroundDragOver}
             onDrop={handlePlaygroundDrop}
           >
+            {/* Winter scene + light snowfall backdrop (behind all content). */}
+            <WinterBackground />
             {workspacePrefs.stickyNotesVisible && (
               <PlaygroundWidgetLayer
                 widgets={playgroundWidgets}
@@ -2271,10 +2706,12 @@ export function TeamPortalShell({
                   if (ctx?.patientScreeningId) {
                     setSelectedPatientId(ctx.patientScreeningId);
                   }
-                  openPortalTab("email");
+                  dispatchOpenWorkspace({ type: "email", title: "Email" });
                 }}
               />
             )}
+            {/* Playground workspace engine — takes over center when workspaces are open */}
+            <PlaygroundBridge />
             {portalTabs.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
                 {portalTabs.map((tab) => {
@@ -2311,7 +2748,11 @@ export function TeamPortalShell({
               </div>
             )}
 
-            <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+            {/* @deprecated LEGACY CENTER RENDERER — DEAD CODE behind PlaygroundBridge.
+                Hidden via `hidden` so it never displays (the Playground engine
+                above is the sole center) while remaining type-identical. Retained
+                temporarily; delete with the rest of the legacy center state. */}
+            <div className="hidden min-h-0 flex-1 gap-4 overflow-hidden" aria-hidden="true">
               <div className={workspacePrefs.playgroundLayout === "split" ? "min-w-0 basis-1/2 overflow-y-auto" : "min-h-0 flex-1 overflow-y-auto"}>
               {centerMode === "calendar" ? (
                 <div
@@ -2459,7 +2900,7 @@ export function TeamPortalShell({
                           // attachments via the prop bridge.
                           setPendingEmailTemplate(null);
                           setPendingEmailAttachments(ids);
-                          openPortalTab("email");
+                          dispatchOpenWorkspace({ type: "email", title: "Email" });
                         }}
                       />
                     </div>
@@ -2508,7 +2949,7 @@ export function TeamPortalShell({
                           // send paths.
                           setPendingEmailAttachments([]);
                           setPendingEmailTemplate(tpl);
-                          openPortalTab("email");
+                          dispatchOpenWorkspace({ type: "email", title: "Email" });
                         }}
                       />
                     </div>
@@ -2755,7 +3196,7 @@ export function TeamPortalShell({
                         <Card className="p-4 bg-white">
                           <div className="text-sm font-semibold text-slate-900 mb-2">Selected Patient Documents</div>
                           {selected ? (
-                            <div className="text-sm text-slate-600">Use Plexus PDF, Clinician PDF, screening, and consent actions from the right rail or patient profile.</div>
+                            <div className="text-sm text-slate-600">Use Plexus Atlas, Clinician Atlas, screening, and consent actions from the right rail or patient profile.</div>
                           ) : (
                             <div className="text-sm text-slate-500">Select a patient to work with documents.</div>
                           )}
@@ -2803,30 +3244,39 @@ export function TeamPortalShell({
           </div>
         </div>
 
+        {/* LEFT RAIL — conventional frosted-glass side panel, attached flush to
+            the left edge, running full height between header and viewport. The
+            wrapper is a fixed-width overlay; only the body's transform animates.
+            Open = leftRailPinned || leftRailPeek. */}
         <div
           ref={leftRailRef}
-          className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]}`}
+          className={`pointer-events-none absolute left-0 top-0 bottom-0 z-30 flex flex-col ${LEFT_RAIL_WIDTH[leftRailSize]}`}
           data-testid="portal-left-rail"
         >
-          {/* Body — frosted-glass panel. Hover-only (task #628): it always
-              rests aside (slid mostly off-screen at ~50% opacity, never
-              opacity:0, never unmounted) leaving a visible edge, and reveals to
-              full opacity on hover/focus; moving the pointer away slides it back
-              aside. Independent of the right rail. */}
+          {/* Stationary edge hotspot — the open trigger. Never moves, so the
+              sliding body can't sweep past the cursor and quiver. Present only
+              on hover-capable devices and only while the rail is closed. */}
+          {!isTouchDevice && !leftRailOpen ? (
+            <div
+              className="pointer-events-auto absolute left-0 top-0 bottom-0 z-10 w-[10px]"
+              onMouseEnter={makeRailHoverOpen(leftRailPeekTimer, setLeftRailPeek)}
+              data-testid="portal-left-rail-hotspot"
+              aria-hidden="true"
+            />
+          ) : null}
+          {/* Body — frosted glass. Slides in/out via transform only (no scale,
+              no opacity fade, no spring). Never unmounts, so filters / scroll /
+              selected patient / tool state are preserved. */}
           <div
             onMouseEnter={
               isTouchDevice
                 ? undefined
-                : makeRailPeekEnterHandler(leftRailPeekTimer, setLeftRailPeek)
+                : makeRailHoverOpen(leftRailPeekTimer, setLeftRailPeek)
             }
             onMouseLeave={
               isTouchDevice
                 ? undefined
-                : makeRailPeekLeaveHandler(
-                    leftRailRef,
-                    leftRailPeekTimer,
-                    setLeftRailPeek,
-                  )
+                : makeRailHoverClose(leftRailPeekTimer, setLeftRailPeek)
             }
             onClick={
               isTouchDevice
@@ -2838,63 +3288,68 @@ export function TeamPortalShell({
                   }
                 : undefined
             }
-            className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/30 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              !(leftRailPeek || leftRailPinned)
-                ? "-translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
-                : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
+            className={`portal-rail-glass min-h-0 flex-1 overflow-hidden text-slate-900 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] ${
+              leftRailOpen
+                ? "translate-x-0 pointer-events-auto"
+                : "-translate-x-full pointer-events-none"
             }`}
+            style={{ borderRadius: "0 14px 14px 0" }}
+            aria-hidden={leftRailOpen ? undefined : true}
+            {...(!leftRailOpen ? { inert: "" as unknown as boolean } : {})}
           >
-            <div className="flex h-full flex-col">
-            {/* Blue header band (step 1) — top-level tab switcher (Task #740).
-                Messaging shows the iMessage-style inbox; Tools shows the
-                existing dock + calendar + communication tray. */}
-            <div className="flex items-center justify-between gap-1.5 border-b border-white/20 bg-[#4863A0] px-2 py-1.5 text-white">
-              <div className="flex items-center gap-1" data-testid="left-panel-tabs">
+            <div className="relative flex h-full flex-col">
+            {/* Rail header — matches the right-rail Work Queue header
+                (portal-rail-header): a premium title row (title left, pin
+                right) then the tab strip beneath. Tab order: Tools first,
+                Messaging second. */}
+            <div className="portal-rail-header sticky top-0 z-10 border-b px-3 pb-1.5 pt-2">
+              <div className="mb-1.5 flex items-center justify-between px-0.5">
+                <span className="portal-rail-title" data-testid="left-rail-title">
+                  Workspace
+                </span>
                 <button
                   type="button"
+                  onClick={() => setLeftRailPinned((v) => !v)}
+                  aria-label={leftRailPinned ? "Unpin panel" : "Pin panel"}
+                  title={leftRailPinned ? "Unpin panel" : "Pin panel"}
+                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${leftRailPinned ? "text-[color:var(--sketch-blue)]" : "text-slate-400 hover:text-slate-600"}`}
+                  data-testid="button-pin-left-rail"
+                >
+                  {leftRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+              <div className="flex items-center gap-1" role="tablist" data-testid="left-panel-tabs">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={leftPanelTab === "tools"}
+                  onClick={() => setLeftPanelTab("tools")}
+                  className={`portal-rail-tab ${leftPanelTab === "tools" ? "portal-rail-tab-active" : ""}`}
+                  data-testid="left-panel-tab-tools"
+                >
+                  <Wrench className="h-3.5 w-3.5" />
+                  Tools
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={leftPanelTab === "messaging"}
                   onClick={() => setLeftPanelTab("messaging")}
-                  className={`relative inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-                    leftPanelTab === "messaging"
-                      ? "bg-white text-[#4863A0] shadow-sm"
-                      : "text-white/80 hover:bg-white/15"
-                  }`}
+                  className={`portal-rail-tab ${leftPanelTab === "messaging" ? "portal-rail-tab-active" : ""}`}
                   data-testid="left-panel-tab-messaging"
                 >
-                  <MessageCircle className="h-3 w-3" />
+                  <MessageCircle className="h-3.5 w-3.5" />
                   Messaging
                   {messagingUnread > 0 ? (
                     <span
-                      className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-purple-600 px-1 text-[8px] font-bold text-white"
+                      className="ml-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-violet-500 px-1 text-[9px] font-semibold text-white"
                       data-testid="left-panel-tab-messaging-badge"
                     >
                       {messagingUnread}
                     </span>
                   ) : null}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setLeftPanelTab("tools")}
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-                    leftPanelTab === "tools"
-                      ? "bg-white text-[#4863A0] shadow-sm"
-                      : "text-white/80 hover:bg-white/15"
-                  }`}
-                  data-testid="left-panel-tab-tools"
-                >
-                  <Wrench className="h-3 w-3" />
-                  Tools
-                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setLeftRailPinned((v) => !v)}
-                aria-label={leftRailPinned ? "Unpin panel" : "Pin panel"}
-                title={leftRailPinned ? "Unpin panel" : "Pin panel"}
-                className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${leftRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
-                data-testid="button-pin-left-rail"
-              >
-                {leftRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
-              </button>
             </div>
             {leftPanelTab === "messaging" ? (
               <div className="flex min-h-0 flex-1 flex-col p-3" data-testid="left-rail-messaging">
@@ -2902,6 +3357,11 @@ export function TeamPortalShell({
                   conversations={messagingConversations}
                   activeConversationId={messagesWindowOpen ? activeConversationId : null}
                   onOpenConversation={openMessagesConversation}
+                  roster={messagingRoster}
+                  rosterLoading={messagingRosterLoading}
+                  onCompose={messagingOpenDirect}
+                  composePending={messagingOpenDirectPending}
+                  clinicNotSelected={messagingClinicNotSelected}
                 />
               </div>
             ) : (
@@ -2919,20 +3379,16 @@ export function TeamPortalShell({
               >
                 {/*
                   Layout contract:
-                  This container is `flex min-h-0 flex-1 flex-col`. It
-                  hosts TWO children: the dock/calendar block (this div)
-                  and the communication tray (below). Without an
-                  explicit flex share on THIS child, its natural
-                  content height would consume the entire rail and the
-                  tray below (which has `flex-1 min-h-0`) would collapse
-                  to zero px — the tray was mounted but hidden.
-                  Setting `min-h-0 flex-1` here makes both children
-                  share the vertical space (~50/50); `overflow-y-auto`
-                  ensures the dock scrolls internally when its content
-                  is taller than its share. The tray therefore always
-                  has a real visible flex area.
+                  Normal top-to-bottom flow — the tool groups and the compact
+                  calendar sit sequentially with consistent gaps. The calendar
+                  is NOT pinned to the bottom (no margin-auto / flex-1 spacer /
+                  absolute bottom), so there is no dead gap above it. At normal
+                  desktop heights everything fits; `overflow-y-auto` on this
+                  single body is a fallback that only engages on genuinely short
+                  viewports.
                 */}
-                <div className={`min-h-0 flex-1 overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
+                <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"}`}>
+                <div>
                 {/* TEAM PORTAL LEFT TOOLS RAIL (Phase 1.6)
                     Shared general tools rail for PCS and ACS. The rail
                     is identical in both portals; only the work-context
@@ -2942,79 +3398,32 @@ export function TeamPortalShell({
                     metrics dashboards, no outreach call-list queue
                     (that belongs to the right rail). */}
                 {(() => {
-                  // Premium launcher dock (Task #655). Tools are organized
-                  // into labeled, color-tinted frosted-glass GROUPS:
-                  //   - Messaging: Direct + Team drive the tray tabs below;
-                  //     Email opens the real composer in the Playground and
-                  //     is draggable to spawn a floating widget.
-                  //   - Notes & Docs: Sticky Notes (persisted, draggable),
-                  //     Quick Note, Documents, Scripts, Proof/PDFs.
-                  //   - Work: Calendar (honours Settings pref), Tasks,
-                  //     Calls, Contacts, Patient Search.
+                  // Premium launcher dock. Messaging tiles (Messages / Direct /
+                  // Team Chat) were removed — messaging is its own top-level
+                  // tab now, so duplicating it here was redundant. Email stays
+                  // (a real composer workspace) and moves under Notes & Docs.
+                  // Two tight groups + System keep the whole dock + the compact
+                  // calendar visible WITHOUT scrolling:
+                  //   - Notes & Docs: Email, Sticky Notes, Quick Note,
+                  //     Documents, Scripts, Marketing.
+                  //   - Work: Calendar, Tasks, Calls, Contacts, Patient Search,
+                  //     Invoice Desk.
                   //   - System: Settings.
                   const dockGroups: DockGroup[] = [
-                    {
-                      id: "messaging",
-                      label: "Messaging",
-                      tint: "sky",
-                      tools: [
-                        {
-                          id: "messages",
-                          label: "Messages",
-                          icon: MessageCircle,
-                          onClick: () => {
-                            setMessagesWindowOpen(true);
-                            if (activeConversationId) markMessagingRead(activeConversationId);
-                          },
-                          active: messagesWindowOpen,
-                          badge: messagingUnread > 0 ? messagingUnread : undefined,
-                          testId: "left-rail-tool-messages",
-                        },
-                        // Patients dock tool removed — no live patient-SMS
-                        // path on this platform.
-                        {
-                          id: "direct",
-                          label: "Direct",
-                          icon: MessageSquare,
-                          onClick: () => {
-                            setTrayTab("direct");
-                            if (leftNarrow) setCenterMode("chat");
-                            else setLeftRailPeek(true);
-                            setChatFocusNonce((n) => n + 1);
-                          },
-                          active: trayTab === "direct",
-                          badge: directUnread > 0 ? directUnread : undefined,
-                          testId: "left-rail-tool-direct",
-                        },
-                        {
-                          id: "teamChat",
-                          label: "Team Chat",
-                          icon: Users,
-                          onClick: () => {
-                            setTrayTab("team");
-                            if (leftNarrow) setCenterMode("chat");
-                            else setLeftRailPeek(true);
-                            setChatFocusNonce((n) => n + 1);
-                          },
-                          active: trayTab === "team",
-                          testId: "left-rail-tool-team-chat",
-                        },
-                        {
-                          id: "email",
-                          label: "Email",
-                          icon: Mail,
-                          onClick: () => openPortalTab("email"),
-                          active: activeKind === "email",
-                          draggableWidget: "email",
-                          testId: "left-rail-tool-email",
-                        },
-                      ],
-                    },
                     {
                       id: "notesDocs",
                       label: "Notes & Docs",
                       tint: "amber",
                       tools: [
+                        {
+                          id: "email",
+                          label: "Email",
+                          icon: Mail,
+                          onClick: () => dispatchOpenWorkspace({ type: "email", title: "Email" }),
+                          active: activeKind === "email",
+                          draggableWidget: "email",
+                          testId: "left-rail-tool-email",
+                        },
                         {
                           id: "sticky",
                           label: "Sticky Notes",
@@ -3027,7 +3436,7 @@ export function TeamPortalShell({
                           id: "quickNote",
                           label: "Quick Note",
                           icon: NotebookPen,
-                          onClick: () => openPortalTab("quickNote"),
+                          onClick: () => dispatchOpenWorkspace({ type: "quick_note", title: "Quick Note" }),
                           active: activeKind === "quickNote",
                           testId: "left-rail-tool-quick-note",
                         },
@@ -3035,7 +3444,7 @@ export function TeamPortalShell({
                           id: "documents",
                           label: "Documents",
                           icon: FileText,
-                          onClick: () => openPortalTab("documentLibrary"),
+                          onClick: () => dispatchOpenWorkspace({ type: "documents", title: "Documents" }),
                           active: activeKind === "documentLibrary",
                           testId: "left-rail-tool-document-library",
                         },
@@ -3043,15 +3452,15 @@ export function TeamPortalShell({
                           id: "resources",
                           label: "Scripts",
                           icon: BookOpen,
-                          onClick: () => openPortalTab("resources"),
+                          onClick: () => dispatchOpenWorkspace({ type: "scripts", title: "Scripts" }),
                           active: activeKind === "resources",
                           testId: "left-rail-tool-resources",
                         },
                         {
                           id: "marketing",
-                          label: "Proof/PDFs",
+                          label: "Marketing",
                           icon: Megaphone,
-                          onClick: () => openPortalTab("marketing"),
+                          onClick: () => dispatchOpenWorkspace({ type: "proof_pdfs", title: "Marketing Materials" }),
                           active: activeKind === "marketing",
                           testId: "left-rail-tool-marketing",
                         },
@@ -3067,19 +3476,17 @@ export function TeamPortalShell({
                           label: "Calendar",
                           icon: CalendarDays,
                           onClick: handleCalendarTool,
-                          // Active when the calendar view is open in the
-                          // Playground OR the quick-schedule pop-up it
-                          // launches is showing, so the tool reads as
-                          // engaged either way.
-                          active:
-                            centerMode === "calendar" || !!calendarQuickScheduleDate,
+                          // Active while the Quick Schedule pop-up is showing
+                          // (the full Scheduler is a Playground workspace tab,
+                          // which surfaces its own active state in the tab bar).
+                          active: !!calendarQuickScheduleDate,
                           testId: "left-rail-tool-calendar",
                         },
                         {
                           id: "tasks",
                           label: "Tasks",
                           icon: ClipboardList,
-                          onClick: () => openPortalTab("plexusTasks"),
+                          onClick: () => dispatchOpenWorkspace({ type: "tasks", title: "Tasks" }),
                           active: activeKind === "plexusTasks",
                           badge: taskCount > 0 ? taskCount : undefined,
                           testId: "left-rail-tool-tasks",
@@ -3088,7 +3495,14 @@ export function TeamPortalShell({
                           id: "calls",
                           label: "Calls",
                           icon: PhoneCall,
-                          onClick: () => openPortalTab("calls"),
+                          // Phase 5E — opens the real calls repository / history
+                          // (closed + completed cases with recall), NOT an empty
+                          // single-call console. Per-patient call consoles open
+                          // separately from a specific call-list row. Pass the
+                          // SELECTED portal facility so the repository is scoped
+                          // to the same clinic as the rest of the portal (not the
+                          // first facility in the list).
+                          onClick: () => dispatchOpenWorkspace({ type: "calls_repository", title: "Calls", facilityId: facility || null }),
                           active: activeKind === "calls",
                           testId: "left-rail-tool-calls",
                         },
@@ -3096,7 +3510,7 @@ export function TeamPortalShell({
                           id: "contacts",
                           label: "Contacts",
                           icon: Phone,
-                          onClick: () => openPortalTab("internalContacts"),
+                          onClick: () => dispatchOpenWorkspace({ type: "contacts", title: "Contacts" }),
                           active: activeKind === "internalContacts",
                           testId: "left-rail-tool-internal-contacts",
                         },
@@ -3104,7 +3518,7 @@ export function TeamPortalShell({
                           id: "patientSearch",
                           label: "Patient Search",
                           icon: Search,
-                          onClick: () => openPortalTab("patientSearch"),
+                          onClick: () => dispatchOpenWorkspace({ type: "patient_search", title: "Patient Search" }),
                           active: activeKind === "patientSearch",
                           testId: "left-rail-tool-patient-search",
                         },
@@ -3112,8 +3526,11 @@ export function TeamPortalShell({
                           id: "invoiceDesk",
                           label: "Invoice Desk",
                           icon: Landmark,
-                          onClick: () => openPortalTab("invoiceDesk"),
+                          onClick: () => dispatchOpenWorkspace({ type: "invoice_desk", title: "Invoice Desk" }),
                           active: activeKind === "invoiceDesk",
+                          // Stage 1: the "demo" pill was removed from the rail
+                          // tile. The honest demo/not-live state is shown INSIDE
+                          // the Invoice Desk workspace after opening.
                           testId: "left-rail-tool-invoice-desk",
                         },
                       ],
@@ -3136,49 +3553,46 @@ export function TeamPortalShell({
                   ];
                   return <ToolDock groups={dockGroups} compact={leftNarrow} />;
                 })()}
-
-                {/* Compact Global Calendar (task #698) — clicking a day
-                    updates the selected date AND opens the Quick Schedule
-                    pop-up pre-filled with that date. Hidden in the narrow
-                    icon rail (too small). */}
-                {!leftNarrow && (
-                  <LeftRailCompactCalendar
-                    selectedDate={selectedDate}
-                    onSelectDate={(iso) => {
-                      setSelectedDate(iso);
-                      openQuickScheduleForDate(iso);
-                    }}
-                    onExpandToCanvas={() => {
-                      setCenterMode("calendar");
-                      setCenterTitle(`Calendar — ${globalCalendarDate}`);
-                    }}
-                  />
-                )}
                 </div>
 
-                {/* Communication tray (Task #643) — bottom half of the
-                    Tools panel. Hidden in the narrow icon rail (too small).
-                    Honest boundaries: no fabricated messages/sends. */}
+                {/* Compact Global Calendar — sits directly under the tool
+                    groups in normal flow with a slightly larger (but fixed)
+                    separation from System. NOT pinned to the bottom, so there
+                    is no dead gap above it. Clicking a day sets the selected
+                    date + opens Quick Schedule. Hidden in the narrow icon rail. */}
                 {!leftNarrow && (
-                  <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/40 bg-white/40">
-                    <CommunicationTray
-                      activeTab={trayTab}
-                      onTabChange={setTrayTab}
-                      currentUserId={currentUser?.id ?? null}
-                      teamTasks={trayTeamTasks}
-                      directUnread={directUnread}
-                      focusNonce={chatFocusNonce}
-                      onExpand={() => {
-                        setCenterMode("chat");
-                        setChatFocusNonce((n) => n + 1);
+                  <div className="mt-2">
+                    <LeftRailCompactCalendar
+                      selectedDate={selectedDate}
+                      facility={facility}
+                      onSelectDate={(iso) => {
+                        // Mini calendar is for date awareness + navigation. A
+                        // date click selects it and opens the ONE full Scheduler
+                        // on that date (not a separate quick form).
+                        setSelectedDate(iso);
+                        setGlobalCalendarDate(iso);
+                        dispatchOpenWorkspace({
+                          type: "calendar",
+                          title: "Schedule",
+                          facilityId: facility || null,
+                          initialDate: iso,
+                        });
                       }}
-                      directActiveUserId={chatDirectActiveUserId}
-                      onDirectActiveUserIdChange={setChatDirectActiveUserId}
-                      teamActiveTaskId={chatTeamActiveTaskId}
-                      onTeamActiveTaskIdChange={setChatTeamActiveTaskId}
+                      onExpandToCanvas={() => {
+                        dispatchOpenWorkspace({
+                          type: "calendar",
+                          title: "Schedule",
+                          facilityId: facility || null,
+                          initialDate: globalCalendarDate,
+                        });
+                      }}
                     />
                   </div>
                 )}
+                </div>
+                {/* Stage 1: the lower CommunicationTray was removed from the
+                    Tools view — Tools now owns the full rail. Direct/Team chat
+                    live under the Messaging tab, not duplicated here. */}
               </div>
               );
             })()
@@ -3187,30 +3601,34 @@ export function TeamPortalShell({
           </div>
         </div>
 
+        {/* RIGHT RAIL — mirror of the left: frosted-glass panel attached flush
+            to the right edge, transform-only slide from the right. Open =
+            rightRailPinned || rightRailPeek. */}
         <div
           ref={rightRailRef}
-          className={`pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
+          className={`pointer-events-none absolute right-0 top-0 bottom-0 z-30 flex flex-col ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
           data-testid="portal-right-rail"
         >
-          {/* Body — canonical .glass-tile panel. Hover-only (task #628): it
-              always rests aside (slid mostly off-screen at ~50% opacity, never
-              opacity:0, never unmounted) leaving a visible edge, and reveals to
-              full opacity on hover/focus; moving the pointer away slides it back
-              aside. Mirrors the left rail; independent of it. */}
+          {/* Stationary right-edge hotspot — the open trigger. */}
+          {!isTouchDevice && !rightRailOpen ? (
+            <div
+              className="pointer-events-auto absolute right-0 top-0 bottom-0 z-10 w-[10px]"
+              onMouseEnter={makeRailHoverOpen(rightRailPeekTimer, setRightRailPeek)}
+              data-testid="portal-right-rail-hotspot"
+              aria-hidden="true"
+            />
+          ) : null}
+          {/* Body — frosted glass, transform-only slide from the right edge. */}
           <div
             onMouseEnter={
               isTouchDevice
                 ? undefined
-                : makeRailPeekEnterHandler(rightRailPeekTimer, setRightRailPeek)
+                : makeRailHoverOpen(rightRailPeekTimer, setRightRailPeek)
             }
             onMouseLeave={
               isTouchDevice
                 ? undefined
-                : makeRailPeekLeaveHandler(
-                    rightRailRef,
-                    rightRailPeekTimer,
-                    setRightRailPeek,
-                  )
+                : makeRailHoverClose(rightRailPeekTimer, setRightRailPeek)
             }
             onClick={
               isTouchDevice
@@ -3222,13 +3640,16 @@ export function TeamPortalShell({
                   }
                 : undefined
             }
-            className={`glass-tile !bg-white/40 pointer-events-auto min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              !(rightRailPeek || rightRailPinned)
-                ? "translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
-                : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
+            className={`portal-rail-glass min-h-0 flex-1 overflow-hidden text-slate-900 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] ${
+              rightRailOpen
+                ? "translate-x-0 pointer-events-auto"
+                : "translate-x-full pointer-events-none"
             }`}
+            style={{ borderRadius: "14px 0 0 14px" }}
+            aria-hidden={rightRailOpen ? undefined : true}
+            {...(!rightRailOpen ? { inert: "" as unknown as boolean } : {})}
           >
-            <div className="flex h-full flex-col">
+            <div className="relative flex h-full flex-col">
               <div className="flex-1 overflow-y-auto">
                 {/* Phase 2I — the work-queue is composed by the real production
                     WorkspaceWorkQueueComposition: the sticky mode-switcher header
@@ -3238,17 +3659,60 @@ export function TeamPortalShell({
                 <WorkspaceWorkQueueComposition
                   canonicalSection={<CanonicalLifecycleSection workspaceRole={workspaceRole} />}
                   header={
-                <div className="sticky top-0 z-10 border-b border-white/10 bg-[#4863A0] px-3 pb-1.5 pt-1.5 backdrop-blur-xl">
+                <div className="portal-rail-header sticky top-0 z-10 border-b px-3 pb-1.5 pt-2">
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-white/70">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
+                    <span className="portal-rail-title" data-testid="right-rail-title">Work Queue</span>
+                    <div className="flex items-center gap-1">
+                      {/* Compact operational date navigator (Phase 0A). Drives
+                          all three right-rail feeds via `selectedDate`. Local
+                          calendar math (shiftIsoDate) keeps yesterday/tomorrow
+                          on the intended facility-local day. A "Today" shortcut
+                          appears only when off today. Not a full calendar. */}
+                      <div className="flex items-center gap-0.5" data-testid="right-rail-date-nav">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDate((d) => shiftIsoDate(d, -1))}
+                          aria-label="Previous day"
+                          title="Previous day"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-200/60 hover:text-slate-600"
+                          data-testid="button-right-rail-prev-day"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <span
+                          className="min-w-[62px] text-center text-[10px] font-medium text-slate-600 tabular-nums"
+                          title={selectedDate}
+                          data-testid="text-right-rail-selected-date"
+                        >
+                          {relativeDateLabel(selectedDate)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDate((d) => shiftIsoDate(d, 1))}
+                          aria-label="Next day"
+                          title="Next day"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-200/60 hover:text-slate-600"
+                          data-testid="button-right-rail-next-day"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                        {selectedDate !== todayIso() && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDate(todayIso())}
+                            className="ml-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[color:var(--sketch-blue)] hover:bg-slate-200/60"
+                            data-testid="button-right-rail-today"
+                          >
+                            Today
+                          </button>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => setRightRailPinned((v) => !v)}
                         aria-label={rightRailPinned ? "Unpin Work Queue panel" : "Pin Work Queue panel"}
                         title={rightRailPinned ? "Unpin Work Queue panel" : "Pin Work Queue panel"}
-                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors ${rightRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${rightRailPinned ? "text-[color:var(--sketch-blue)]" : "text-slate-400 hover:text-slate-600"}`}
                         data-testid="button-pin-right-rail"
                       >
                         {rightRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
@@ -3264,10 +3728,13 @@ export function TeamPortalShell({
                     compact={rightRailSize === "small"}
                     counts={{
                       callList: workspaceCallList.length,
-                      clinicSchedule:
-                        workspaceClinicSchedule.length > 0
-                          ? workspaceClinicSchedule.length
-                          : patients.length,
+                      // Count MUST match the rows the clinicSchedule body
+                      // actually renders. The body iterates `patients` (from
+                      // /api/portal/today-schedule), not `workspaceClinicSchedule`
+                      // (/api/technician-liaison/clinic-visits), so counting the
+                      // latter could diverge from the visible rows + the in-body
+                      // badge (which also uses patients.length).
+                      clinicSchedule: patients.length,
                       ancillarySchedule: filteredAncillarySchedule.length,
                     }}
                   />
@@ -3276,11 +3743,42 @@ export function TeamPortalShell({
                 >
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
-                <div className="mb-3 flex items-center justify-between">
-                  <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <span data-testid="badge-patient-count">
+                    <SketchBadge tone="graphite">{patients.length}</SketchBadge>
+                  </span>
+                  {/* Phase 2 — facility-scoped clinician filter. Options come
+                      from the canonical facility_clinicians directory; "All"
+                      clears the filter. Selection persists across date changes
+                      within the same facility (reset on facility change). */}
+                  {facilityClinicians.length > 0 && (
+                    <select
+                      value={clinicClinicianFilter ?? "__all__"}
+                      onChange={(e) =>
+                        setClinicClinicianFilter(
+                          e.target.value === "__all__" ? null : e.target.value,
+                        )
+                      }
+                      className="h-7 max-w-[60%] rounded-lg border border-slate-200 bg-white px-1.5 text-[11px] text-slate-700"
+                      data-testid="select-clinic-clinician-filter"
+                      title="Filter by clinician"
+                    >
+                      <option value="__all__">All clinicians</option>
+                      {facilityClinicians.map((c) => (
+                        <option key={c.id} value={c.displayName}>
+                          {c.displayName}
+                          {c.credentials ? `, ${c.credentials}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 {patients.length === 0 ? (
-                  <div className="text-xs text-slate-600 py-4 text-center">No patients scheduled.</div>
+                  <div className="text-xs text-slate-600 py-4 text-center">
+                    {clinicClinicianFilter
+                      ? `No patients for ${clinicClinicianFilter} on this day.`
+                      : "No patients scheduled."}
+                  </div>
                 ) : (
                   <div className="space-y-1">
                     {patients.map((p) => {
@@ -3307,11 +3805,14 @@ export function TeamPortalShell({
                       return (
                         <div
                           key={(p.patientScreeningId ?? p.name) + ""}
-                          className={`relative rounded-xl border border-l-4 px-2 py-1.5 text-slate-900 shadow-sm transition-colors ${
-                            consentDone ? "border-l-emerald-400" : "border-l-amber-400"
-                          } ${
-                            isSelected && centerMode === "patient" ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
+                          className={`relative rounded-lg border border-l-4 px-2 py-1.5 text-slate-900 transition-colors ${
+                            isSelected && centerMode === "patient" ? "bg-slate-900/[0.04]" : "hover:bg-slate-900/[0.03]"
                           }`}
+                          style={{
+                            backgroundColor: isSelected && centerMode === "patient" ? undefined : SKETCH_COLORS.paper,
+                            borderColor: "rgba(148,163,184,0.35)",
+                            borderLeftColor: consentDone ? "var(--sketch-green)" : "var(--sketch-gold)",
+                          }}
                           data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
                         >
                           <button
@@ -3325,24 +3826,57 @@ export function TeamPortalShell({
                                 <div className="text-sm font-medium truncate">{p.name}</div>
                                 <div className="text-[10px] text-slate-500">
                                   {formatTime(p.time)} · {p.appointments.length} test{p.appointments.length === 1 ? "" : "s"}
+                                  {p.clinicianName ? ` · ${p.clinicianName}` : ""}
                                 </div>
                               </div>
                               {consentDone ? (
-                                <Badge className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0">
+                                <SketchBadge tone="green">
                                   <Check className="h-2.5 w-2.5 mr-0.5" /> Consent ✓
-                                </Badge>
+                                </SketchBadge>
                               ) : (
-                                <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0">
+                                <SketchBadge tone="gold">
                                   <AlertCircle className="h-2.5 w-2.5 mr-0.5" /> Needed
-                                </Badge>
+                                </SketchBadge>
                               )}
                             </div>
                           </button>
 
+                          {/* Plexus IQ qualification dots (category color) +
+                              Atlas quick access. Outside the name button so
+                              their clicks don't toggle the row selection. */}
+                          <div className="mt-1 flex items-center justify-between gap-2">
+                            <ClinicQualificationDots
+                              patientScreeningId={p.patientScreeningId}
+                              qualifyingTests={p.qualifyingTests}
+                            />
+                            {p.patientScreeningId != null && (
+                              <PatientPdfActions
+                                patient={{
+                                  id: p.patientScreeningId,
+                                  name: p.name,
+                                  dob: p.dob,
+                                  qualifyingTests: p.qualifyingTests,
+                                } as never}
+                                facility={p.facility}
+                                scheduleDate={selectedDate}
+                                iconOnly
+                              />
+                            )}
+                          </div>
+
                           <div className="mt-2 flex items-center justify-end gap-1">
                             <button
                               type="button"
-                              onClick={() => openPortalTab("patient", p)}
+                              onClick={() => {
+                                if (p.patientScreeningId != null) {
+                                  dispatchOpenWorkspace({
+                                    type: "patient_ehr",
+                                    title: p.name,
+                                    patientScreeningId: p.patientScreeningId,
+                                    facilityId: p.facility,
+                                  });
+                                }
+                              }}
                               className="absolute -right-3 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
                               data-testid={`button-patient-profile-expand-${p.patientScreeningId ?? p.name}`}
                               title="Open patient profile in Playground"
@@ -3440,6 +3974,9 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "callList" && (
                   <div className="space-y-1" data-testid="workspace-mode-body-callList">
+                    {/* Phase 5C — inbound PRIORITY / TEAM HANDOFFS surface above
+                        standard assigned work (self-hides when empty). */}
+                    <PriorityHandoffsInbox />
                     {workspaceCallListLoading ? (
                       <div className="text-xs text-slate-600 py-4 text-center">Loading call list…</div>
                     ) : workspaceCallList.length === 0 ? (
@@ -3468,12 +4005,15 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-xl border border-blue-100/60 bg-blue-50/40 px-2 py-1.5 text-slate-900 shadow-sm backdrop-blur-sm transition-all hover:bg-blue-100/50 hover:shadow-[0_0_12px_rgba(72,99,160,0.18)]"
+                          className="rounded-lg border border-l-2 px-2 py-1.5 text-slate-900 transition-colors hover:bg-slate-900/[0.03]"
+                          style={{ backgroundColor: SKETCH_COLORS.paper, borderColor: "rgba(148,163,184,0.35)", borderLeftColor: "var(--sketch-blue)" }}
                           data-testid={`workspace-call-${row.id ?? idx}`}
                         >
                           {/* Minimal card: just the patient name + a circular
                               phone button (call) and a circular calendar button
-                              (opens the quick schedule popup). */}
+                              (opens the quick schedule popup). Historical rows
+                              (past dates) show the recorded outcome instead of
+                              live quick-actions — the day is read-only. */}
                           <div className="flex items-center justify-between gap-2">
                             <button
                               type="button"
@@ -3484,14 +4024,35 @@ export function TeamPortalShell({
                             >
                               {row.patientName ?? "Unnamed patient"}
                             </button>
-                            <CallRowQuickActions
-                              row={row}
-                              idx={row.id ?? idx}
-                              canCall={canCall}
-                              onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
-                              onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
-                            />
+                            {row.historical ? (
+                              <span
+                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                                  row.completed
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                                data-testid={`call-historical-status-${row.id ?? idx}`}
+                              >
+                                {row.completed ? "Called" : "No call"}
+                              </span>
+                            ) : (
+                              <CallRowQuickActions
+                                row={row}
+                                idx={row.id ?? idx}
+                                canCall={canCall}
+                                onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                                onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
+                                onHandoff={() => openHandoffForRow(row)}
+                              />
+                            )}
                           </div>
+                          {row.historical && (row.lastCallOutcome || (row.historicalCallCount ?? 0) > 0 || row.historicalCallbackAt) && (
+                            <div className="mt-1 text-[10px] text-slate-500" data-testid={`call-historical-detail-${row.id ?? idx}`}>
+                              {row.lastCallOutcome ? `Outcome: ${row.lastCallOutcome}` : "No outcome logged"}
+                              {(row.historicalCallCount ?? 0) > 0 ? ` · ${row.historicalCallCount} attempt${row.historicalCallCount === 1 ? "" : "s"}` : ""}
+                              {row.historicalCallbackAt ? ` · callback ${new Date(row.historicalCallbackAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+                            </div>
+                          )}
                         </div>
                         );
                       })
@@ -3510,7 +4071,46 @@ export function TeamPortalShell({
                           : "No ancillary tests scheduled for this facility/date."}
                       </div>
                     ) : (
-                      filteredAncillarySchedule.map((row, idx) => {
+                      groupedAncillarySchedule.map((group) => {
+                        // Multi-service visit block: render the patient name +
+                        // block time-range ONCE as a header, then the per-service
+                        // rows below it (each still carries its own service/time/
+                        // readiness/executionCaseId). Single-service groups skip
+                        // the header and render just the one row as before.
+                        const isBlock = group.events.length > 1;
+                        const blockTimes = group.events
+                          .map((e) =>
+                            e.startsAt
+                              ? new Date(e.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+                              : null,
+                          )
+                          .filter(Boolean);
+                        const blockRange =
+                          blockTimes.length > 0
+                            ? blockTimes.length > 1
+                              ? `${blockTimes[0]}–${blockTimes[blockTimes.length - 1]}`
+                              : blockTimes[0]
+                            : "—";
+                        return (
+                          <div
+                            key={group.key}
+                            className={isBlock ? "rounded-xl border border-violet-200/70 bg-violet-50/30 p-1" : ""}
+                            data-testid={isBlock ? `ancillary-visit-block-${group.key}` : undefined}
+                          >
+                            {isBlock && (
+                              <div
+                                className="flex items-center justify-between gap-2 px-1.5 pb-1 pt-0.5"
+                                data-testid={`ancillary-visit-block-header-${group.key}`}
+                              >
+                                <span className="truncate text-sm font-semibold text-slate-800">
+                                  {group.patientName}
+                                </span>
+                                <span className="shrink-0 text-[10px] text-slate-500 tabular-nums">
+                                  {blockRange} · {group.events.length} tests
+                                </span>
+                              </div>
+                            )}
+                            {group.events.map((row, idx) => {
                         const rowKey = `ancillary:${row.id ?? idx}`;
                         const removing = removingRowKeys.has(rowKey);
                         if (rightRailSize === "small" && !removing) {
@@ -3525,22 +4125,7 @@ export function TeamPortalShell({
                               }
                               serviceType={row.serviceType ?? "Ancillary"}
                               testIdKey={row.id ?? idx}
-                              onClick={() =>
-                                openSchedulePatientPlayground({
-                                  patient: {
-                                    patientName: row.patientName ?? null,
-                                    patientDob: row.patientDob ?? null,
-                                    facilityId: row.facilityId ?? null,
-                                    patientScreeningId: row.patientScreeningId ?? null,
-                                    executionCaseId: row.executionCaseId ?? null,
-                                    serviceType: row.serviceType ?? null,
-                                  },
-                                  selectedDate,
-                                  ancillaries: ancillariesByPatient.get(
-                                    ancillaryPatientKey(row),
-                                  ),
-                                })
-                              }
+                              onClick={() => openAncillaryWorkflow(row)}
                             />
                           );
                         }
@@ -3549,40 +4134,12 @@ export function TeamPortalShell({
                           key={`${row.id ?? idx}`}
                           role="button"
                           tabIndex={0}
-                          title="Open patient workspace"
-                          onClick={() =>
-                            openSchedulePatientPlayground({
-                              patient: {
-                                patientName: row.patientName ?? null,
-                                patientDob: row.patientDob ?? null,
-                                facilityId: row.facilityId ?? null,
-                                patientScreeningId: row.patientScreeningId ?? null,
-                                executionCaseId: row.executionCaseId ?? null,
-                                serviceType: row.serviceType ?? null,
-                              },
-                              selectedDate,
-                              ancillaries: ancillariesByPatient.get(
-                                ancillaryPatientKey(row),
-                              ),
-                            })
-                          }
+                          title="Open ancillary workflow"
+                          onClick={() => openAncillaryWorkflow(row)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
-                              openSchedulePatientPlayground({
-                                patient: {
-                                  patientName: row.patientName ?? null,
-                                  patientDob: row.patientDob ?? null,
-                                  facilityId: row.facilityId ?? null,
-                                  patientScreeningId: row.patientScreeningId ?? null,
-                                  executionCaseId: row.executionCaseId ?? null,
-                                  serviceType: row.serviceType ?? null,
-                                },
-                                selectedDate,
-                                ancillaries: ancillariesByPatient.get(
-                                  ancillaryPatientKey(row),
-                                ),
-                              });
+                              openAncillaryWorkflow(row);
                             }
                           }}
                           className={`cursor-pointer overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
@@ -3614,6 +4171,32 @@ export function TeamPortalShell({
                               </Badge>
                             )}
                           </div>
+                          {/* Document readiness (consent / screening / brainwave)
+                              rendered inline on the row from the already-fetched
+                              row.readiness the server enriches each ancillary
+                              appointment with. ACS-only; the mark/upload actions
+                              hit existing canonical /api/portal/case-readiness
+                              routes keyed on the row's executionCaseId, and a
+                              change refetches the ancillary feed. Clicks inside
+                              this control must not bubble to the row's open-in-
+                              Playground handler. */}
+                          {workspaceCanCompleteProcedure &&
+                            row.readiness && (
+                              <div onClick={(e) => e.stopPropagation()}>
+                                <AncillaryReadinessRow
+                                  executionCaseId={row.executionCaseId ?? null}
+                                  serviceType={row.serviceType ?? null}
+                                  patientName={row.patientName ?? null}
+                                  readiness={row.readiness}
+                                  rowId={String(row.id ?? idx)}
+                                  onChanged={() =>
+                                    queryClient.invalidateQueries({
+                                      queryKey: ["team-workspace-ancillary-schedule"],
+                                    })
+                                  }
+                                />
+                              </div>
+                            )}
                           {/* Document workflows live inside the patient's
                               Playground (opened by clicking anywhere on this row),
                               keeping the schedule row clean and uncluttered. */}
@@ -3652,6 +4235,9 @@ export function TeamPortalShell({
                             )}
                         </div>
                         );
+                            })}
+                          </div>
+                        );
                       })
                     )}
                   </div>
@@ -3671,65 +4257,110 @@ export function TeamPortalShell({
             </div>
           </div>
         </div>
-        <div className="absolute bottom-5 left-1/2 z-50 -translate-x-1/2 w-full max-w-[95vw] overflow-x-auto">
-          <div className="group/dock mx-auto flex w-fit items-center gap-1 rounded-2xl border border-white/10 bg-slate-900/40 px-2 py-2 opacity-60 backdrop-blur-xl transition-all duration-300 ease-out hover:gap-2 hover:border-white/20 hover:bg-slate-900/60 hover:px-3 hover:py-2 hover:opacity-100 hover:shadow-2xl">
-            {/* Admin Home dock button — only rendered for admins. Routes
-                 back to /home (the existing main app dashboard route).
-                 PCS and ACS users keep the standard 6-app dock; the
-                 button is appended for admins so we don't re-engineer
-                 the existing dock structure. */}
-            {isAdmin && (
-              <div className="flex items-center" data-testid="dock-icon-home-wrap">
-                <button
-                  type="button"
-                  onClick={() => setLocation("/home")}
-                  aria-label="Return to main app home"
-                  title="Home"
-                  className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-[#4863A0]/25 text-[#6F8FD6] shadow-md transition-all duration-300 ease-out group-hover/dock:h-11 group-hover/dock:w-11 hover:-translate-y-0.5 hover:scale-105 hover:bg-[#4863A0]/35"
-                  data-testid="dock-icon-home"
-                >
-                  <Home className="h-5 w-5 text-white" />
-                </button>
-                <div className="mx-1 h-6 w-px bg-white/15" />
-              </div>
-            )}
-            {[
-              { key: "tasks", icon: Bell },
-              { key: "schedule", icon: CalendarIcon },
-              { key: "consent", icon: FileSignature },
-              { key: "chart", icon: User },
-              { key: "documents", icon: FileText },
-              { key: "ai", icon: Bot },
-            ].map((app, index) => {
-              const Icon = app.icon;
-              const isActive = dockActiveApp === app.key || (app.key === "ai" && aiOpen);
-              const isOpen = app.key === "ai" ? aiOpen : dockOpenApps.includes(app.key as any);
-
-              return (
-                <div key={app.key} className="flex items-center">
-                  {index > 0 && <div className="mx-1 h-6 w-px bg-white/15" />}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (app.key === "ai") {
-                        setAiOpen((v) => !v);
-                        setAiMinimized(false);
-                        return;
-                      }
-                      toggleDockApp(app.key as "tasks" | "schedule" | "consent" | "chart" | "documents");
-                    }}
-                    className={`relative flex h-10 w-10 items-center justify-center rounded-xl bg-[#4863A0]/25 text-[#6F8FD6] shadow-md transition-all duration-300 ease-out group-hover/dock:h-11 group-hover/dock:w-11 hover:-translate-y-0.5 hover:scale-105 hover:bg-[#4863A0]/35 ${
-                      isActive ? "ring-2 ring-white bg-[#4863A0]/45 text-white" : ""
-                    }`}
-                    data-testid={`dock-icon-${app.key}`}
-                  >
-                    <Icon className="h-5 w-5 text-white" />
-                    {isOpen && <div className="absolute -bottom-1.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-white" />}
-                  </button>
-                </div>
-              );
-            })}
+        {/* Metrics floating popup — toggled from dock */}
+        {metricsPopupOpen && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-40" data-testid="metrics-popup-anchor">
+            <MetricsPopup
+              open={metricsPopupOpen}
+              onClose={() => setMetricsPopupOpen(false)}
+              metrics={{
+                queueCount: workspaceCallList?.length ?? 0,
+                tasksDue: (tasksData?.urgent?.length ?? 0) + (tasksData?.open?.length ?? 0),
+              }}
+            />
           </div>
+        )}
+        {/* Nova quick panel — toggled from dock */}
+        {novaQuickPanelOpen && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-40" data-testid="nova-panel-anchor">
+            <NovaQuickPanel
+              open={novaQuickPanelOpen}
+              onClose={() => setNovaQuickPanelOpen(false)}
+              onOpenInPlayground={() => {
+                setNovaQuickPanelOpen(false);
+                dispatchOpenWorkspace({ type: "nova", title: "Nova" });
+              }}
+              contextLabel={
+                selected
+                  ? `${selected.name}${selected.qualifyingTests?.[0] ? ` · ${selected.qualifyingTests[0]}` : ""}`
+                  : null
+              }
+            />
+          </div>
+        )}
+        {/* Dock wrapper is CENTERED + fit-content (NOT full-width) so the
+            dock's hover hit area matches the pill footprint. A previous
+            `w-full max-w-[95vw]` wrapper made the hover target span 95vw of the
+            bottom edge, waking the dock from anywhere along the bottom. */}
+        <div className="pointer-events-none absolute bottom-5 left-1/2 z-50 w-fit max-w-[95vw] -translate-x-1/2 overflow-x-auto">
+          <GlobalDock
+            role={workspaceRole ?? role}
+            isAdmin={isAdmin}
+            position="absolute"
+            className="pointer-events-auto relative !bottom-0 !left-auto !z-auto w-fit !translate-x-0"
+            activeState={{
+              activeAppId: dockActiveApp ?? (novaQuickPanelOpen ? "nova" : null),
+              openAppIds: [
+                ...dockOpenApps,
+                ...(novaQuickPanelOpen ? ["nova"] : []),
+              ],
+            }}
+            onActivate={(app: DockAppDefinition) => {
+              // Map unified dock app activations to existing TeamPortalShell behavior.
+              if (app.id === "home") {
+                // Team roles: activate Playground Home workspace.
+                dispatchOpenWorkspace({ type: "playground_home", title: "Home" });
+                return;
+              }
+              if (app.id === "nova") { setNovaQuickPanelOpen((v) => !v); return; }
+              // Metrics → toggle floating MetricsPopup (not a navigation).
+              if (app.id === "metrics") { setMetricsPopupOpen((v) => !v); return; }
+              // Map dock apps to real Playground workspaces.
+              const workspaceMap: Record<string, { type: string; title: string }> = {
+                "plexus-tasks": { type: "tasks", title: "Tasks" },
+                "schedule": { type: "schedule", title: "Schedule" },
+                "documents": { type: "documents", title: "Documents" },
+              };
+              const wsMapping = workspaceMap[app.id];
+              if (wsMapping) {
+                dispatchOpenWorkspace({ type: wsMapping.type as any, title: wsMapping.title });
+                return;
+              }
+              // Team Ops → existing Engagement Center (team operations surface)
+              if (app.id === "team-ops") { setLocation("/engagement-center"); return; }
+              // Plexus Nucleus → honest unavailable (no runtime destination yet)
+              if (app.id === "plexus-nucleus") {
+                toast({ title: "Plexus Nucleus", description: "Nucleus workspace is not yet available." });
+                return;
+              }
+              // Phone → open call workspace for selected patient if available
+              if (app.id === "phone") {
+                if (selected?.patientScreeningId != null) {
+                  setCallWorkspaceCtx({
+                    patientScreeningId: selected.patientScreeningId,
+                    executionCaseId: null,
+                    patientName: selected.name ?? "Patient",
+                    patientDob: selected.dob ?? null,
+                    facilityId: facility ?? null,
+                    callReason: "Dock quick call",
+                    targetServices: selected.qualifyingTests ?? [],
+                    ancillaryCaseId: null,
+                    serviceType: selected.qualifyingTests?.[0] ?? null,
+                    sourcePortal: "PCS",
+                    engagementStatus: null,
+                    lifecycleStatus: null,
+                  });
+                }
+                return;
+              }
+              // Route-type apps: navigate.
+              if (app.destinationType === "route" && app.route) { setLocation(app.route); return; }
+              // Popup/workspace apps: open real Playground workspace.
+              if (app.destinationType === "workspace" || app.destinationType === "popup") {
+                dispatchOpenWorkspace({ type: (app.workspaceType ?? app.id) as any, title: app.label });
+              }
+            }}
+          />
         </div>
 
         {aiOpen ? (
@@ -3933,6 +4564,17 @@ export function TeamPortalShell({
         </DialogContent>
       </Dialog>
 
+      {/* Phase 5C — Handoff dialog (from a call-list row's handoff action). */}
+      {handoffCtx ? (
+        <HandoffDialog
+          open={!!handoffCtx}
+          onOpenChange={(o) => { if (!o) setHandoffCtx(null); }}
+          executionCaseId={handoffCtx.executionCaseId}
+          facilityId={handoffCtx.facilityId}
+          patientName={handoffCtx.patientName}
+        />
+      ) : null}
+
       {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
       <CanonicalCommandCalendar
         mode="drawer"
@@ -3954,6 +4596,7 @@ export function TeamPortalShell({
         activeConversationId={activeConversationId}
         onSelectConversation={openMessagesConversation}
         onSend={sendMessagingMessage}
+        sendPending={messagingSendPending}
         onClose={() => setMessagesWindowOpen(false)}
       />
 
@@ -3970,5 +4613,7 @@ export function TeamPortalShell({
         flushPersist={flushWorkspacePrefs}
       />
     </div>
+    </PlaygroundWorkspaceProvider>
+    </DockOwnershipProvider>
   );
 }

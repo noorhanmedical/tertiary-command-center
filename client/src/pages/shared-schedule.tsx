@@ -175,7 +175,7 @@ export default function SharedSchedule() {
                 data-testid="button-clinician-pdf-shared"
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Clinician PDF</span>
+                <span className="hidden sm:inline">Clinician Atlas</span>
                 <span className="sm:hidden">Clin</span>
               </Button>
               <Button
@@ -187,7 +187,7 @@ export default function SharedSchedule() {
                 data-testid="button-plexus-pdf-shared"
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Plexus PDF</span>
+                <span className="hidden sm:inline">Plexus Atlas</span>
                 <span className="sm:hidden">Plx</span>
               </Button>
               <Button
@@ -486,10 +486,11 @@ export default function SharedSchedule() {
         patients={patients}
         onClose={() => setPdfMode(null)}
         onGenerate={(selected) => {
+          const attribution = { clinicianName: batch.clinicianName ?? null, facilityName: batch.facility ?? null };
           if (pdfMode === "clinician") {
-            generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
+            generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt, attribution);
           } else {
-            generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
+            generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt, attribution);
           }
           setPdfMode(null);
         }}

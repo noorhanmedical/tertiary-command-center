@@ -4,7 +4,10 @@
 //   npx tsx tests/unit/ancillaryReadinessRequirements.test.ts
 
 import assert from "node:assert/strict";
-import { requirementsForService } from "../../server/services/ancillary/ancillaryReadinessRules";
+import {
+  requirementsForService,
+  readinessCountsForSchedule,
+} from "../../server/services/ancillary/ancillaryReadinessRules";
 
 async function testBrainWaveRequiresAll() {
   const r = requirementsForService("BrainWave");
@@ -70,6 +73,39 @@ async function testEmptyStringServiceHasCategoryOther() {
   assert.equal(r.screeningForm, false);
 }
 
+// ── Dated consent guard (mirrors clinic consentForTest on/after-scheduledDate) ──
+
+async function testDatedGuardNotComplete() {
+  // A non-complete status never counts, regardless of dates.
+  assert.equal(readinessCountsForSchedule("missing", "2026-08-28T09:00:00Z", "2026-08-28"), false);
+  assert.equal(readinessCountsForSchedule("pending", null, null), false);
+}
+
+async function testDatedGuardNoScheduledDateSkips() {
+  // No scheduledDate → guard skipped (backward-compatible with billing gate).
+  assert.equal(readinessCountsForSchedule("completed", "2020-01-01T00:00:00Z", null), true);
+  assert.equal(readinessCountsForSchedule("uploaded", null, undefined), true);
+}
+
+async function testDatedGuardNoCompletedAtNotFailedRetroactively() {
+  // Complete but no provenance timestamp → not failed retroactively.
+  assert.equal(readinessCountsForSchedule("completed", null, "2026-08-28"), true);
+}
+
+async function testDatedGuardOnOrAfterCounts() {
+  // Completed exactly on the scheduled date → counts (inclusive lower bound).
+  assert.equal(readinessCountsForSchedule("completed", "2026-08-28T10:00:00Z", "2026-08-28"), true);
+  // Completed after → counts.
+  assert.equal(readinessCountsForSchedule("approved", "2026-09-01T00:00:00Z", "2026-08-28"), true);
+}
+
+async function testDatedGuardStaleBeforeDoesNotCount() {
+  // Completed a year before the scheduled date → does NOT count (stale).
+  assert.equal(readinessCountsForSchedule("completed", "2025-08-28T09:00:00Z", "2026-08-28"), false);
+  // One day before → does NOT count.
+  assert.equal(readinessCountsForSchedule("completed", "2026-08-27T23:59:59Z", "2026-08-28"), false);
+}
+
 async function main() {
   await testBrainWaveRequiresAll();
   await testVitalWaveRequiresConsentAndForm();
@@ -78,6 +114,11 @@ async function main() {
   await testNullServiceHasCategoryOther();
   await testUndefinedServiceHasCategoryOther();
   await testEmptyStringServiceHasCategoryOther();
+  await testDatedGuardNotComplete();
+  await testDatedGuardNoScheduledDateSkips();
+  await testDatedGuardNoCompletedAtNotFailedRetroactively();
+  await testDatedGuardOnOrAfterCounts();
+  await testDatedGuardStaleBeforeDoesNotCount();
   console.log("ancillaryReadinessRequirements.test.ts: all tests passed");
 }
 

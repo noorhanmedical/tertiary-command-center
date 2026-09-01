@@ -458,7 +458,7 @@ export function HomeDashboard({
                 <SecondaryTile
                   href="/patient-directory"
                   testId="tile-patient-directory"
-                  label="Patient EHR"
+                  label="Plexus EHR"
                   icon={<Users className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <Link href="/plexus-iq">

@@ -116,6 +116,40 @@ for (const f of FIXTURES) {
   }
 }
 
+// ── Roster (outreach_schedulers) fixtures ─────────────────────────
+// The Team Portal work queue is USER-scoped, but Engagement assigns
+// work to an outreach_schedulers row (patient_execution_cases
+// .assignedTeamMemberId = roster id). The bridge from a logged-in user
+// to their roster row is outreach_schedulers.user_id. When that is NULL
+// the staff member can never see their assigned work (see
+// server/services/callList/schedulerUserMapping.ts +
+// server/services/teamMemberScope.ts:resolveCallListAssignmentScope).
+//
+// The existing named roster rows (Callista/Brian/…) are real roster
+// IDENTITIES with no role/team column, so mapping a login onto one of
+// them would be a guess and would corrupt that identity. Instead we
+// create DEDICATED, deterministic fixture roster rows — one per portal
+// staff fixture — matched idempotently by user_id so a reseed is a
+// no-op. Names carry an explicit "(E2E fixture)" marker so they are
+// never mistaken for production roster members.
+//
+// `facility` MUST equal the roster/case facility string used elsewhere
+// for the test clinic (queue scope matches on user_id + facility, and
+// the case feed filters by facilityId). We resolve it from the clinic
+// row's name at runtime rather than hardcoding.
+const ROSTER_FIXTURE_MARKER = "(E2E fixture)";
+type RosterFixture = {
+  // The fixture user whose login should resolve to this roster row.
+  linkUsername: string;
+  // Human-readable roster name — carries the marker so it is obviously
+  // a test row.
+  name: string;
+};
+const ROSTER_FIXTURES: readonly RosterFixture[] = [
+  { linkUsername: "e2e_playwright_pcs", name: `E2E PCS ${ROSTER_FIXTURE_MARKER}` },
+  { linkUsername: "e2e_playwright_acs", name: `E2E ACS ${ROSTER_FIXTURE_MARKER}` },
+] as const;
+
 // ── Environment gates ─────────────────────────────────────────────
 function bail(msg: string, code = 1): never {
   console.error(`[seed:e2e-users] ${msg}`);
@@ -158,7 +192,7 @@ async function main(): Promise<void> {
   // Deferred imports so the module errors above surface BEFORE any
   // DB connection is attempted.
   const { db, pool } = await import("../server/db");
-  const { users, clinics } = await import("@shared/schema");
+  const { users, clinics, outreachSchedulers } = await import("@shared/schema");
 
   // Verify the target clinic exists. Never create it — the operator
   // must provision a non-production test clinic in the Replit
@@ -279,6 +313,96 @@ async function main(): Promise<void> {
 
   console.error(
     `[seed:e2e-users] summary: create=${willCreate} update=${willUpdate} unchanged=${unchanged}` +
+      (apply ? "" : " (DRY-RUN — no writes performed)"),
+  );
+
+  // ── Roster (outreach_schedulers) linkage ────────────────────────
+  // Idempotent: matched by user_id. Creates a dedicated fixture roster
+  // row per portal staff user and links user_id + facility so the Team
+  // Portal work queue resolves the assigned-case scope for a REAL staff
+  // login (not just admin view-as). Reproducible across reseed.
+  const rosterFacility = clinicRow.name; // queue scope matches on facility string
+  console.error(
+    `[seed:e2e-users] roster facility (from clinic name): ${JSON.stringify(rosterFacility)}`,
+  );
+  // Re-read fixture users so we can resolve their ids (they exist now
+  // under APPLY; under DRY-RUN they may not, which we report honestly).
+  const usersAfter = await db
+    .select({ id: users.id, username: users.username })
+    .from(users)
+    .where(like(users.username, `${SEED_USERNAME_PREFIX}%`));
+  const userIdByName = new Map(usersAfter.map((u) => [u.username, u.id]));
+
+  let rosterCreate = 0;
+  let rosterUpdate = 0;
+  let rosterUnchanged = 0;
+  for (const rf of ROSTER_FIXTURES) {
+    const linkedUserId = userIdByName.get(rf.linkUsername) ?? null;
+    if (!linkedUserId) {
+      console.error(
+        `  ! ROSTER SKIP  ${rf.name}: fixture user ${rf.linkUsername} not found` +
+          (apply ? "" : " (expected under DRY-RUN — user not yet created)"),
+      );
+      continue;
+    }
+    // Match an existing fixture roster row by its linked user_id. This
+    // is the idempotency key — never scans/edits unrelated roster rows.
+    const [existingRoster] = await db
+      .select({
+        id: outreachSchedulers.id,
+        name: outreachSchedulers.name,
+        facility: outreachSchedulers.facility,
+        clinicId: outreachSchedulers.clinicId,
+        userId: outreachSchedulers.userId,
+      })
+      .from(outreachSchedulers)
+      .where(eq(outreachSchedulers.userId, linkedUserId))
+      .limit(1);
+
+    if (!existingRoster) {
+      rosterCreate++;
+      console.error(
+        `  + ROSTER CREATE  ${rf.name}  user=${rf.linkUsername}  facility=${JSON.stringify(rosterFacility)}`,
+      );
+      if (apply) {
+        await db.insert(outreachSchedulers).values({
+          name: rf.name,
+          facility: rosterFacility,
+          clinicId,
+          userId: linkedUserId,
+        });
+      }
+      continue;
+    }
+
+    // Guard: refuse to hijack a NON-fixture roster identity. We only
+    // ever touch a row we ourselves created (marker in the name).
+    if (!existingRoster.name.includes(ROSTER_FIXTURE_MARKER)) {
+      console.error(
+        `  ! ROSTER REFUSE  user ${rf.linkUsername} is already linked to non-fixture roster "${existingRoster.name}" (id=${existingRoster.id}); not modifying a real roster identity.`,
+      );
+      continue;
+    }
+    const facilityDrift = existingRoster.facility !== rosterFacility;
+    const clinicDrift = existingRoster.clinicId !== clinicId;
+    if (!facilityDrift && !clinicDrift) {
+      rosterUnchanged++;
+      console.error(`  = ROSTER UNCHANGED  ${existingRoster.name}  (id=${existingRoster.id})`);
+    } else {
+      rosterUpdate++;
+      console.error(
+        `  ~ ROSTER UPDATE  ${existingRoster.name}  (id=${existingRoster.id})  facility→${JSON.stringify(rosterFacility)} clinicId→${clinicId}`,
+      );
+      if (apply) {
+        await db
+          .update(outreachSchedulers)
+          .set({ facility: rosterFacility, clinicId })
+          .where(eq(outreachSchedulers.id, existingRoster.id));
+      }
+    }
+  }
+  console.error(
+    `[seed:e2e-users] roster summary: create=${rosterCreate} update=${rosterUpdate} unchanged=${rosterUnchanged}` +
       (apply ? "" : " (DRY-RUN — no writes performed)"),
   );
 

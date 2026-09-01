@@ -122,6 +122,72 @@ function sessionUserIdFromGlobalSchedule(req: Request): string | null {
   return sess?.userId ?? null;
 }
 
+// Derive an appointment end from the service's configured resource duration so
+// the capacity engine sees a real occupancy interval. BrainWave/VitalWave use
+// their duration; ultrasound uses studyCount × minutesPerStudy. Returns null
+// when the service maps to no resource pool (leaves endsAt unset — legacy).
+async function deriveEndsAt(args: {
+  serviceType: string;
+  startsAt: Date;
+  facilityName: string | null;
+  ultrasoundStudyCount: number | null;
+}): Promise<Date | null> {
+  const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
+  const cat = getAncillaryCategory(args.serviceType);
+  if (cat === "other") return null;
+  const { createFacilityResolver } = await import("../services/facilityResolver");
+  const { getEffectiveCapacityConfig } = await import(
+    "../repositories/schedulingCapacity.repo"
+  );
+  const { serviceDurationMinutes } = await import(
+    "@shared/scheduling/availabilityEngine"
+  );
+  let clinicId: number | null = null;
+  if (args.facilityName) {
+    try {
+      const { resolve } = await createFacilityResolver();
+      clinicId = resolve(args.facilityName)?.clinicId ?? null;
+    } catch {
+      /* defaults apply */
+    }
+  }
+  const capacity = await getEffectiveCapacityConfig(clinicId);
+  const minutes = serviceDurationMinutes(
+    {
+      resourceType: cat,
+      studyCount: args.ultrasoundStudyCount ?? 1,
+    },
+    capacity,
+  );
+  return new Date(args.startsAt.getTime() + minutes * 60_000);
+}
+
+// Shared single-service scheduling core, exposed for the multi-service visit
+// orchestration so it writes through the EXACT same canonical path as the
+// route. Populated when the routes register (the implementation closes only
+// over module imports). Never call before routes are registered.
+export type ScheduleAncillaryCoreInput = z.infer<typeof scheduleAncillaryBodySchema>;
+export type ScheduleAncillaryCoreResult = { httpStatus: number; body: Record<string, unknown> };
+let _scheduleAncillaryCore:
+  | ((
+      data: ScheduleAncillaryCoreInput,
+      actorUserId: string | null,
+      reqClinicId: number | null,
+    ) => Promise<ScheduleAncillaryCoreResult>)
+  | null = null;
+export async function scheduleAncillaryCoreShared(
+  data: ScheduleAncillaryCoreInput,
+  actorUserId: string | null,
+  reqClinicId: number | null,
+): Promise<ScheduleAncillaryCoreResult> {
+  if (!_scheduleAncillaryCore) {
+    throw new Error(
+      "scheduleAncillaryCore not initialized — global schedule routes not registered",
+    );
+  }
+  return _scheduleAncillaryCore(data, actorUserId, reqClinicId);
+}
+
 export function registerGlobalScheduleRoutes(app: Express) {
   // GET /api/global-schedule-events
   // Filters: facilityId, eventType, status, assignedUserId, assignedRole,
@@ -278,6 +344,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
           executionCaseId: r.executionCaseId ?? null,
           patientScreeningId: r.patientScreeningId ?? null,
           serviceType: r.serviceType ?? null,
+          // The appointment's scheduled day drives the dated consent guard
+          // (mirrors the clinic-portal consentForTest rule): a completion
+          // recorded BEFORE this visit's scheduled date does not count.
+          scheduledDate: r.startsAt
+            ? new Date(r.startsAt).toISOString().slice(0, 10)
+            : null,
         })),
       );
       const enriched = rows.map((r) => ({
@@ -355,21 +427,54 @@ export function registerGlobalScheduleRoutes(app: Express) {
   // scheduled_ancillary patient journey event, and advances the execution
   // case to engagementStatus=scheduled with nextActionAt=startsAt.
   app.post("/api/global-schedule-events/schedule-ancillary", async (req, res) => {
-    try {
-      const parsed = scheduleAncillaryBodySchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
-      }
-      const data = parsed.data;
-      const actorUserId = sessionUserIdFromGlobalSchedule(req);
+    const parsed = scheduleAncillaryBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    }
+    const actorUserId = sessionUserIdFromGlobalSchedule(req);
+    const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+    const result = await scheduleAncillaryCore(parsed.data, actorUserId, reqClinicId);
+    return res.status(result.httpStatus).json(result.body);
+  });
+  // Expose the core for the multi-service visit orchestration.
+  _scheduleAncillaryCore = scheduleAncillaryCore;
 
+  // Shared core for scheduling ONE ancillary service. Used by the route above
+  // and by the multi-service visit orchestration so both write through the
+  // exact same canonical path (identity/stub resolution, endsAt derivation,
+  // canonical vs legacy write, journey + execution-case advancement). Returns
+  // an HTTP status + body rather than touching res, so callers can aggregate.
+  async function scheduleAncillaryCore(
+    data: z.infer<typeof scheduleAncillaryBodySchema>,
+    actorUserId: string | null,
+    reqClinicIdIn: number | null,
+  ): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
+    try {
       const startsAt = new Date(data.startsAt);
       if (isNaN(startsAt.getTime())) {
-        return res.status(400).json({ error: "startsAt is not a valid datetime" });
+        return { httpStatus: 400, body: { error: "startsAt is not a valid datetime" } };
       }
-      const endsAt = data.endsAt ? new Date(data.endsAt) : null;
+      let endsAt = data.endsAt ? new Date(data.endsAt) : null;
       if (endsAt && isNaN(endsAt.getTime())) {
-        return res.status(400).json({ error: "endsAt is not a valid datetime" });
+        return { httpStatus: 400, body: { error: "endsAt is not a valid datetime" } };
+      }
+      // Capacity engine needs real occupancy intervals. When the client does
+      // not send endsAt, derive it from the service's configured duration
+      // (ultrasound = studyCount × minutesPerStudy) so the appointment blocks
+      // its machine for the correct span. Never overrides a client-sent end.
+      if (!endsAt) {
+        try {
+          endsAt = await deriveEndsAt({
+            serviceType: data.serviceType,
+            startsAt,
+            facilityName: data.facilityId ?? null,
+            ultrasoundStudyCount:
+              (data.metadata as { ultrasoundStudyCount?: number } | undefined)
+                ?.ultrasoundStudyCount ?? null,
+          });
+        } catch {
+          /* fall through — endsAt stays null (legacy behavior) */
+        }
       }
 
       // Resolve patient context — must be able to identify the case
@@ -400,9 +505,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
         // "Jon Smith" (matching stays case-insensitive in the repo).
         const stubName = (data.patientName ?? "").trim().replace(/\s+/g, " ");
         if (!stubName) {
-          return res.status(404).json({
-            error: "Could not resolve an execution case from executionCaseId or patientScreeningId (provide patientName to quick-schedule a new patient)",
-          });
+          return {
+            httpStatus: 404,
+            body: {
+              error: "Could not resolve an execution case from executionCaseId or patientScreeningId (provide patientName to quick-schedule a new patient)",
+            },
+          };
         }
         const stubDob = (data.patientDob ?? "").trim() || null;
         const stubFacility = data.facilityId ?? null;
@@ -435,7 +543,7 @@ export function registerGlobalScheduleRoutes(app: Express) {
           // backfill) creates the canonical ancillary case for this
           // service. Never fabricates identity ids. No-op with flag OFF.
           try {
-            const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+            const reqClinicId = reqClinicIdIn;
             if (reqClinicId) {
               const { featureFlags: ff } = await import("../lib/featureFlags");
               if (ff.ancillaryCaseWrite) {
@@ -479,7 +587,22 @@ export function registerGlobalScheduleRoutes(app: Express) {
       // orchestrator. Deferred (walk-in / no identity) returns 202 with
       // the provisional stub preserved. Missing migration → 503.
       if (featureFlags.canonicalAppointment) {
-        const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+        // Resolve the clinic tenancy for the canonical write. Non-admin
+        // sessions carry req.clinicId. An admin session is org-wide
+        // (req.clinicId === null), so we resolve the clinic from the SELECTED
+        // facility name in the request (the Team Portal's one selected clinic).
+        // Without this, admin scheduling silently defers ("no_clinic") and the
+        // appointment never persists.
+        let reqClinicId = reqClinicIdIn;
+        if (reqClinicId == null && facilityId) {
+          try {
+            const { createFacilityResolver } = await import("../services/facilityResolver");
+            const { resolve } = await createFacilityResolver();
+            reqClinicId = resolve(facilityId)?.clinicId ?? null;
+          } catch {
+            /* fall through — deferred path still applies if unresolved */
+          }
+        }
         try {
           const canonical = await scheduleCanonicalAncillaryAppointment({
             clinicId: reqClinicId,
@@ -496,38 +619,50 @@ export function registerGlobalScheduleRoutes(app: Express) {
             metadata: data.metadata ?? {},
           });
           if (canonical.status === "created" || canonical.status === "reused") {
-            return res.json({
-              ok: true,
-              canonical: true,
-              event: canonical.event,
-              created: canonical.status === "created",
-              createdStubCase,
-              globalScheduleEventId: canonical.globalScheduleEventId,
-              ancillaryCaseId: canonical.ancillaryCaseId,
-              projectionDeferred: canonical.projectionDeferred,
-              executionCase,
-            });
+            return {
+              httpStatus: 200,
+              body: {
+                ok: true,
+                canonical: true,
+                event: canonical.event,
+                created: canonical.status === "created",
+                createdStubCase,
+                globalScheduleEventId: canonical.globalScheduleEventId,
+                ancillaryCaseId: canonical.ancillaryCaseId,
+                projectionDeferred: canonical.projectionDeferred,
+                executionCase,
+              },
+            };
           }
           if (canonical.status === "deferred") {
-            return res.status(202).json({
-              ok: true,
-              canonical: true,
-              deferred: true,
-              reason: canonical.reason,
-              createdStubCase,
-              executionCase,
-            });
+            return {
+              httpStatus: 202,
+              body: {
+                ok: true,
+                canonical: true,
+                deferred: true,
+                reason: canonical.reason,
+                createdStubCase,
+                executionCase,
+              },
+            };
           }
-          return res.status(503).json({
-            error: canonical.status === "error" ? canonical.message : "canonical scheduling unavailable",
-          });
+          return {
+            httpStatus: 503,
+            body: {
+              error: canonical.status === "error" ? canonical.message : "canonical scheduling unavailable",
+            },
+          };
         } catch (e) {
           const code = (e as { code?: string })?.code;
           if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
-            return res.status(503).json({
-              error: "canonical appointment schema unavailable — apply migration 0052",
-              code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
-            });
+            return {
+              httpStatus: 503,
+              body: {
+                error: "canonical appointment schema unavailable — apply migration 0052",
+                code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+              },
+            };
           }
           throw e;
         }
@@ -596,18 +731,21 @@ export function registerGlobalScheduleRoutes(app: Express) {
         console.error("[schedule-ancillary] execution case update failed:", err.message);
       }
 
-      return res.json({
-        ok: true,
-        event,
-        created,
-        createdStubCase,
-        executionCase: updatedExecutionCase,
-        journeyEvent,
-      });
+      return {
+        httpStatus: 200,
+        body: {
+          ok: true,
+          event,
+          created,
+          createdStubCase,
+          executionCase: updatedExecutionCase,
+          journeyEvent,
+        },
+      };
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return { httpStatus: 500, body: { error: error.message } };
     }
-  });
+  }
 
   // POST /api/global-schedule-events/:id/transition  — PR 2.4
   //

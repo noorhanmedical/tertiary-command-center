@@ -389,6 +389,13 @@ export function PlexusIQBatchFlowDialog({
                               <div className="truncate text-sm font-medium text-slate-900">
                                 {vm.batch.facility ?? "Unassigned clinic"}
                               </div>
+                              {/* Clinician attribution (legacy → "Clinician not recorded"). */}
+                              <div
+                                className={`mt-0.5 truncate text-xs ${vm.batch.clinicianName ? "text-slate-600" : "italic text-slate-400"}`}
+                                data-testid={`batchflow-history-clinician-${vm.batch.id}`}
+                              >
+                                {vm.batch.clinicianName?.trim() || "Clinician not recorded"}
+                              </div>
                               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                                 <span className="inline-flex items-center gap-1">
                                   <Clock className="h-3 w-3" />

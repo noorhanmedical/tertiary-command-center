@@ -9,7 +9,73 @@ import {
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import {
+  legacyPriorityToLevel,
+  levelToLegacyPriority,
+  effectiveTaskPriorityLevel,
+  type PlexusTaskPriorityLevel,
+  type InsertPlexusTask,
+} from "@shared/schema/plexus";
+import type { ManagerTaskFilters } from "../repositories/plexus.repo";
 import { featureFlags } from "../lib/featureFlags";
+
+// Terminal task statuses that stamp completion provenance.
+const TERMINAL_TASK_STATUSES = new Set(["done", "closed"]);
+
+/** Phase 6B — keep the CANONICAL `dueAt` timestamp and the LEGACY `dueDate`
+ *  text (YYYY-MM-DD) coherent on create/update. New SLA logic reads dueAt; the
+ *  legacy dueDate column is kept in sync for backward compatibility.
+ *
+ *  Facility/local-time interpretation: an incoming date-only value (YYYY-MM-DD)
+ *  is treated as END OF THAT DAY in UTC (23:59:59.999Z), matching the legacy
+ *  end-of-day backfill semantics (migration 0072) so a same-day task is not
+ *  considered overdue until the day is actually over. A full ISO datetime is
+ *  used verbatim. Returns the fields to merge into the task payload. */
+function coherentDueFields(due: string | Date | null | undefined): {
+  dueAt?: Date | null;
+  dueDate?: string | null;
+} {
+  if (due === undefined) return {};
+  if (due === null) return { dueAt: null, dueDate: null };
+  let at: Date | null = null;
+  let dateText: string | null = null;
+  if (due instanceof Date) {
+    at = Number.isNaN(due.getTime()) ? null : due;
+    dateText = at ? at.toISOString().slice(0, 10) : null;
+  } else {
+    const s = due.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      // Date-only → end of that day (UTC), matching the 0072 backfill.
+      at = new Date(`${s}T23:59:59.999Z`);
+      dateText = s;
+    } else {
+      const parsed = new Date(s);
+      if (!Number.isNaN(parsed.getTime())) {
+        at = parsed;
+        dateText = parsed.toISOString().slice(0, 10);
+      }
+    }
+  }
+  return { dueAt: at, dueDate: dateText };
+}
+
+/** Keep the legacy `priority` and canonical `priorityLevel` coherent on a
+ *  create/update payload. Whichever the caller supplied drives the other so a
+ *  row never carries a contradictory pair. Returns the fields to merge in. */
+function coherentPriorityFields(input: {
+  priority?: string | null;
+  priorityLevel?: string | null;
+}): { priority?: string; priorityLevel?: string } {
+  const out: { priority?: string; priorityLevel?: string } = {};
+  if (input.priorityLevel != null) {
+    out.priorityLevel = input.priorityLevel;
+    out.priority = levelToLegacyPriority(input.priorityLevel as PlexusTaskPriorityLevel);
+  } else if (input.priority != null) {
+    out.priority = input.priority;
+    out.priorityLevel = legacyPriorityToLevel(input.priority);
+  }
+  return out;
+}
 import {
   runCallResultScheduling,
   plexusActionForAppointmentStatus,
@@ -50,6 +116,11 @@ const createProjectSchema = z.object({
   status: z.enum(PROJECT_STATUS).default("active"),
 });
 
+// Canonical P1..P5 operational priority (decision K5). Accepted on create/
+// update alongside the legacy low/normal/high `priority`. When one is given
+// the other is kept coherent via the shared mapping helpers.
+const TASK_PRIORITY_LEVEL = ["P1", "P2", "P3", "P4", "P5"] as const;
+
 const createTaskSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
@@ -58,8 +129,13 @@ const createTaskSchema = z.object({
   taskType: z.enum(TASK_TYPE).default("task"),
   urgency: z.enum(TASK_URGENCY).default("none"),
   priority: z.enum(TASK_PRIORITY).default("normal"),
+  priorityLevel: z.enum(TASK_PRIORITY_LEVEL).optional().nullable(),
   assignedToUserId: z.string().optional().nullable(),
+  assignedTeamId: z.number().int().optional().nullable(),
   patientScreeningId: z.number().optional().nullable(),
+  executionCaseId: z.number().int().optional().nullable(),
+  ancillaryCaseId: z.number().int().optional().nullable(),
+  facilityId: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
 });
 
@@ -69,8 +145,13 @@ const updateTaskSchema = z.object({
   status: z.enum(TASK_STATUS).optional(),
   urgency: z.enum(TASK_URGENCY).optional(),
   priority: z.enum(TASK_PRIORITY).optional(),
+  priorityLevel: z.enum(TASK_PRIORITY_LEVEL).optional().nullable(),
   assignedToUserId: z.string().optional().nullable(),
+  assignedTeamId: z.number().int().optional().nullable(),
   projectId: z.number().optional().nullable(),
+  executionCaseId: z.number().int().optional().nullable(),
+  ancillaryCaseId: z.number().int().optional().nullable(),
+  facilityId: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   taskType: z.enum(TASK_TYPE).optional(),
 });
@@ -88,11 +169,13 @@ const createPatientTaskSchema = z.object({
   title: z.string().min(1),
   taskType: z.enum(TASK_TYPE),
   priority: z.enum(TASK_PRIORITY).default("normal"),
+  priorityLevel: z.enum(TASK_PRIORITY_LEVEL).optional().nullable(),
   urgency: z.enum(TASK_URGENCY).optional(),
   assignedUserId: z.string().optional().nullable(),
   assignedRole: z.string().optional().nullable(),
   facilityId: z.string().optional().nullable(),
   executionCaseId: z.number().int().optional().nullable(),
+  ancillaryCaseId: z.number().int().optional().nullable(),
   patientScreeningId: z.number().int().optional().nullable(),
   patientName: z.string().optional().nullable(),
   patientDob: z.string().optional().nullable(),
@@ -187,7 +270,19 @@ export function registerPlexusTasksRoutes(app: Express) {
       const q = String(req.query.q ?? "").trim();
       if (!q || q.length < 2) return res.json([]);
       const patients = await storage.searchPatientsByName(q);
-      res.json(patients.map((p) => ({ id: p.id, name: p.name, dob: p.dob, insurance: p.insurance })));
+      // qualifyingTests is additive on this response (existing consumers ignore
+      // extra fields). The Team Portal quick-schedule popover uses it to offer
+      // the patient's ACTUAL Plexus IQ–qualified services instead of a static
+      // list, so a PCS never schedules a test the patient isn't qualified for.
+      res.json(
+        patients.map((p) => ({
+          id: p.id,
+          name: p.name,
+          dob: p.dob,
+          insurance: p.insurance,
+          qualifyingTests: Array.isArray(p.qualifyingTests) ? p.qualifyingTests : [],
+        })),
+      );
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -280,6 +375,84 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
+  // ── Manager cross-team task visibility (Phase 2, decision K5/manager) ──────
+  // ADMIN-GATED for now. Full manager/team relationship scoping lands in
+  // Phase 4 (K4); until then only admins get the org-wide view so the existing
+  // self-scoped authorization on every other task endpoint is NOT weakened.
+  // Returns tasks across all users enriched with owner/creator display names,
+  // canonical priorityLevel, completion provenance, and a derived overdue flag
+  // so a manager can see who owns what, how long it's been open, and what's
+  // overdue — without inferring from the current owner alone.
+  app.get("/api/plexus/tasks/manager", async (req: Request, res: Response) => {
+    try {
+      const userId = uid(req);
+      const actor = await storage.getUser(userId);
+      // Phase 4E — admin sees org-wide; a manager sees only tasks owned by
+      // members of the team(s) they manage; ordinary staff are forbidden.
+      const { resolveManagerScope, scopeCoversUser, isManagerOrAdmin } =
+        await import("../services/teams/managerScope");
+      const scope = await resolveManagerScope(userId, actor?.role ?? null);
+      if (!isManagerOrAdmin(scope)) {
+        return res.status(403).json({ error: "Manager task view requires admin or a team-manager role" });
+      }
+      const q = req.query as Record<string, string | undefined>;
+      const filters: ManagerTaskFilters = {};
+      if (q.status) filters.status = q.status;
+      if (q.assignedToUserId) filters.assignedToUserId = q.assignedToUserId;
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.priorityLevel) filters.priorityLevel = q.priorityLevel;
+      if (q.overdueOnly === "true") filters.overdueOnly = true;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 200, 500) : 200;
+
+      const allTasks = await storage.getTasksForManager(filters, limit);
+      // Manager scope filter (admin: no filter). A task is in scope if its
+      // assignee OR its creator is a scoped user (covers unassigned team tasks
+      // a manager created too).
+      const tasks = scope.isAdmin
+        ? allTasks
+        : allTasks.filter((t) =>
+            (t.assignedToUserId && scopeCoversUser(scope, t.assignedToUserId)) ||
+            (t.createdByUserId && scopeCoversUser(scope, t.createdByUserId)),
+          );
+      const withNames = await enrichWithPatientNames(tasks);
+
+      // Resolve owner/creator/completer usernames in one batch.
+      const userIds = Array.from(new Set(
+        tasks.flatMap((t) => [t.assignedToUserId, t.createdByUserId, t.completedByUserId])
+          .filter((id): id is string => !!id),
+      ));
+      const userMap = new Map<string, string>();
+      await Promise.all(userIds.map(async (id) => {
+        const u = await storage.getUser(id);
+        if (u) userMap.set(id, u.username);
+      }));
+
+      const today = new Date().toISOString().slice(0, 10);
+      const enriched = withNames.map((t) => {
+        const isTerminal = t.status === "done" || t.status === "closed";
+        // Phase 6B — prefer the canonical dueAt timestamp; fall back to legacy
+        // dueDate text only when a row has no dueAt.
+        const overdue = !isTerminal && (
+          t.dueAt
+            ? new Date(t.dueAt).getTime() < Date.now()
+            : (!!t.dueDate && t.dueDate < today)
+        );
+        return {
+          ...t,
+          priorityLevel: effectiveTaskPriorityLevel(t),
+          assignedToUsername: t.assignedToUserId ? (userMap.get(t.assignedToUserId) ?? null) : null,
+          createdByUsername: t.createdByUserId ? (userMap.get(t.createdByUserId) ?? null) : null,
+          completedByUsername: t.completedByUserId ? (userMap.get(t.completedByUserId) ?? null) : null,
+          overdue,
+          ageDays: Math.max(0, Math.floor((Date.now() - new Date(t.createdAt as unknown as string).getTime()) / 86_400_000)),
+        };
+      });
+      res.json({ tasks: enriched, count: enriched.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Tasks ─────────────────────────────────────────────────────────────────
   // Returns all tasks where the user is creator or assignee (union, deduplicated)
   app.get("/api/plexus/tasks", async (req: Request, res: Response) => {
@@ -338,6 +511,77 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
+  // Phase 4D — TEAM WORK POOL. Unclaimed tasks assigned to the caller's active
+  // teams. An authorized team member can claim one (below). A team task is NOT
+  // duplicated into N per-member tasks — it stays one task in the pool.
+  app.get("/api/plexus/tasks/team-pool", async (req: Request, res: Response) => {
+    try {
+      const userId = uid(req);
+      const { teamsRepository } = await import("../repositories/teams.repo");
+      const memberships = await teamsRepository.listMembershipsForUser(userId, true);
+      const teamIds = memberships.map((m) => m.teamId);
+      const tasks = teamIds.length ? await storage.getTeamPoolTasks(teamIds) : [];
+      res.json(await enrichWithPatientNames(tasks));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Claim a team-pool task: sets assignedToUserId to the caller (keeping
+  // assignedTeamId as the origin team) so it leaves the pool and enters the
+  // member's my-work. Only an active member of the task's team may claim.
+  app.post("/api/plexus/tasks/:id/claim", async (req: Request, res: Response) => {
+    try {
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
+      const userId = uid(req);
+      const task = await storage.getTaskById(id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      if (task.assignedTeamId == null) return res.status(400).json({ error: "Task is not a team task" });
+      if (task.assignedToUserId != null) {
+        return res.status(409).json({ error: "Task already claimed", claimedBy: task.assignedToUserId });
+      }
+      const { teamsRepository } = await import("../repositories/teams.repo");
+      const memberships = await teamsRepository.listMembershipsForUser(userId, true);
+      const isMember = memberships.some((m) => m.teamId === task.assignedTeamId);
+      const actor = await storage.getUser(userId);
+      const isAdmin = (actor?.role ?? "") === "admin";
+      if (!isMember && !isAdmin) {
+        return res.status(403).json({ error: "Only an active member of the task's team can claim it" });
+      }
+      // Phase 6B (req 18) — ATOMIC claim. The conditional UPDATE (WHERE
+      // assigned_to_user_id IS NULL AND assigned_team_id = teamId) is the
+      // race arbiter: exactly one concurrent claimant wins; the loser gets
+      // undefined and a 409. The read-then-write null check above is only a
+      // fast pre-check, NOT the correctness guarantee.
+      const updated = await storage.claimTeamTask(id, task.assignedTeamId, userId);
+      if (!updated) {
+        // Someone else won the race (or the task left the team pool). Re-read
+        // for an accurate "claimed by" without trusting the stale pre-check.
+        const current = await storage.getTaskById(id);
+        return res.status(409).json({
+          error: "Task already claimed",
+          claimedBy: current?.assignedToUserId ?? null,
+        });
+      }
+      await writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: null, to: userId, claimedFromTeam: task.assignedTeamId } });
+      // Durable notification for the claimer (best-effort; Phase 6A).
+      try {
+        const { notifyTaskAssigned } = await import("../services/notifications/notificationService");
+        await notifyTaskAssigned({
+          recipientUserId: userId,
+          taskId: id,
+          title: task.title,
+          priorityLevel: effectiveTaskPriorityLevel(task),
+          patientScreeningId: task.patientScreeningId ?? null,
+          facilityId: task.facilityId ?? null,
+        });
+      } catch { /* best-effort */ }
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Policy: urgent tasks (high/critical urgency, non-closed) are visible to all authenticated
   // clinic staff so team members can volunteer via the Help button. This is intentional
   // operational coordination policy — all users are authenticated clinic personnel.
@@ -354,10 +598,25 @@ export function registerPlexusTasksRoutes(app: Express) {
     try {
       const userId = uid(req);
       const tasks = await storage.getOverdueTasksForUser(userId);
+      const now = Date.now();
       const today = new Date().toISOString().slice(0, 10);
       const enriched = await enrichWithPatientNames(tasks);
-      const overdue = enriched.filter((t) => (t.dueDate ?? "") < today);
-      const dueToday = enriched.filter((t) => t.dueDate === today);
+      // Phase 6B — split using the CANONICAL dueAt timestamp when present
+      // (strictly past = overdue; still-today = dueToday), falling back to the
+      // legacy dueDate text only for rows without a dueAt.
+      const isOverdue = (t: (typeof enriched)[number]): boolean => {
+        if (t.dueAt) return new Date(t.dueAt).getTime() < now;
+        return (t.dueDate ?? "") < today;
+      };
+      const isDueToday = (t: (typeof enriched)[number]): boolean => {
+        if (t.dueAt) {
+          const d = new Date(t.dueAt).getTime();
+          return d >= now && new Date(t.dueAt).toISOString().slice(0, 10) === today;
+        }
+        return t.dueDate === today;
+      };
+      const overdue = enriched.filter(isOverdue);
+      const dueToday = enriched.filter(isDueToday);
       res.json({ overdue, dueToday, overdueCount: overdue.length, dueTodayCount: dueToday.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -410,6 +669,7 @@ export function registerPlexusTasksRoutes(app: Express) {
           status: t.status,
           urgency: t.urgency,
           priority: t.priority,
+          priorityLevel: effectiveTaskPriorityLevel(t),
         }))
       );
     } catch (e: any) {
@@ -488,16 +748,24 @@ export function registerPlexusTasksRoutes(app: Express) {
         }
       }
 
-      // Create the task
+      // Create the task. Phase 2 — persist the canonical case links
+      // (executionCaseId / ancillaryCaseId / facilityId) ON THE TASK ITSELF
+      // (previously only recorded on the journey-event metadata), and keep the
+      // legacy priority ↔ canonical priorityLevel coherent.
       const task = await storage.createTask({
         title: data.title,
         description: data.note ?? undefined,
         taskType: data.taskType,
         urgency: data.urgency ?? "none",
-        priority: data.priority,
+        ...coherentPriorityFields({ priority: data.priority, priorityLevel: data.priorityLevel }),
         assignedToUserId: data.assignedUserId ?? null,
         patientScreeningId: patientScreeningId,
-        dueDate: data.dueAt ?? null,
+        executionCaseId: executionCaseId ?? null,
+        ancillaryCaseId: data.ancillaryCaseId ?? null,
+        facilityId: data.facilityId ?? null,
+        // Phase 6B — write BOTH the canonical timestamp (dueAt) and legacy text
+        // (dueDate) coherently so time-aware overdue works on new tasks.
+        ...coherentDueFields(data.dueAt),
         createdByUserId: userId,
       });
 
@@ -558,7 +826,16 @@ export function registerPlexusTasksRoutes(app: Express) {
           return res.status(403).json({ error: "Not authorized to add tasks to this project" });
         }
       }
-      const task = await storage.createTask({ ...parsed.data, createdByUserId: userId });
+      // Keep the legacy priority (low/normal/high) and canonical
+      // priorityLevel (P1..P5) coherent regardless of which the caller sent.
+      const task = await storage.createTask({
+        ...parsed.data,
+        ...coherentPriorityFields(parsed.data),
+        // Phase 6B — derive the canonical dueAt timestamp from the supplied
+        // dueDate so time-aware overdue works (keeps dueDate coherent too).
+        ...coherentDueFields(parsed.data.dueDate),
+        createdByUserId: userId,
+      });
       await writeEvent({ taskId: task.id, userId, eventType: "created", payload: { title: task.title } });
       if (task.assignedToUserId) {
         await writeEvent({ taskId: task.id, userId, eventType: "assignment_changed", payload: { from: null, to: task.assignedToUserId } });
@@ -593,13 +870,81 @@ export function registerPlexusTasksRoutes(app: Express) {
           return res.status(403).json({ error: "Not authorized to move task to this project" });
         }
       }
-      const task = await storage.updateTask(id, parsed.data);
+      // Build the normalized update: keep priority↔priorityLevel coherent and
+      // stamp/clear completion provenance when status crosses the terminal
+      // boundary (was only inferable from status+updatedAt before Phase 2).
+      const statusChanging = !!parsed.data.status && parsed.data.status !== prev.status;
+      const updates: Record<string, unknown> = {
+        ...parsed.data,
+        ...coherentPriorityFields(parsed.data),
+        // Phase 6B — keep dueAt coherent with any dueDate change.
+        ...coherentDueFields(parsed.data.dueDate),
+      };
+      // Completion provenance for a status crossing the terminal boundary.
+      const completionFields: Partial<InsertPlexusTask> = {};
+      if (statusChanging) {
+        const nowTerminal = TERMINAL_TASK_STATUSES.has(parsed.data.status!);
+        const wasTerminal = TERMINAL_TASK_STATUSES.has(prev.status);
+        if (nowTerminal && !wasTerminal) {
+          completionFields.completedAt = new Date();
+          completionFields.completedByUserId = userId;
+        } else if (!nowTerminal && wasTerminal) {
+          // Reopened — clear completion provenance (only when accepted, req 19).
+          completionFields.completedAt = null;
+          completionFields.completedByUserId = null;
+        }
+      }
+
+      // Phase 6B (req 19) — deterministic status transition under concurrency.
+      // When the status is changing, apply it via an ATOMIC conditional update
+      // guarded by the observed prior status, so two racing complete/reopen
+      // requests can't both "win": the loser sees the status already moved and
+      // gets a 409 (with the current status). completedAt/By + coherent fields
+      // are written in the SAME statement so provenance matches the winner.
+      let task: typeof prev | undefined;
+      if (statusChanging) {
+        // Non-status fields (priority, dueAt, title, …) go with the transition.
+        const { status: _omitStatus, ...restUpdates } = updates as Record<string, unknown>;
+        task = await storage.transitionTaskStatus(id, prev.status, parsed.data.status!, {
+          ...(restUpdates as Partial<InsertPlexusTask>),
+          ...completionFields,
+        });
+        if (!task) {
+          const current = await storage.getTaskById(id);
+          return res.status(409).json({
+            error: "Task status changed since you loaded it. Refresh and retry.",
+            code: "status_conflict",
+            currentStatus: current?.status ?? null,
+          });
+        }
+      } else {
+        task = await storage.updateTask(id, { ...updates, ...completionFields } as Partial<InsertPlexusTask>);
+      }
       const eventWrites: Promise<void>[] = [];
-      if (parsed.data.status && parsed.data.status !== prev.status) {
-        eventWrites.push(writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status } }));
+      if (statusChanging) {
+        eventWrites.push(writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status! } }));
       }
       if (parsed.data.assignedToUserId !== undefined && parsed.data.assignedToUserId !== prev.assignedToUserId) {
         eventWrites.push(writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: prev.assignedToUserId, to: parsed.data.assignedToUserId } }));
+        // Notify the new assignee (unless they assigned it to themselves).
+        const newAssignee = parsed.data.assignedToUserId;
+        if (newAssignee && newAssignee !== userId) {
+          eventWrites.push(
+            (async () => {
+              try {
+                const { notifyTaskAssigned } = await import("../services/notifications/notificationService");
+                await notifyTaskAssigned({
+                  recipientUserId: newAssignee,
+                  taskId: id,
+                  title: prev.title,
+                  priorityLevel: effectiveTaskPriorityLevel(prev),
+                  patientScreeningId: prev.patientScreeningId ?? null,
+                  facilityId: prev.facilityId ?? null,
+                });
+              } catch { /* best-effort */ }
+            })(),
+          );
+        }
       }
       const DEDICATED_EVENTS = new Set(["status", "assignedToUserId"]);
       const otherChangedFields = Object.fromEntries(

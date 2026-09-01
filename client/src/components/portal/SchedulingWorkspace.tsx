@@ -1,10 +1,14 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import {
+  SketchSurface,
+  SketchButton,
+  SketchInput,
+  SketchTextarea,
+} from "@/components/playground/sketch/SketchPrimitives";
+import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import {
   CalendarDays,
   CalendarPlus,
@@ -107,34 +111,35 @@ function BigMonthCalendar({
   const today = todayIso();
 
   return (
-    <div
-      className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-      data-testid="scheduling-workspace-calendar"
-    >
+    <SketchSurface seedId="sw-calendar" padded className="flex flex-col" data-testid="scheduling-workspace-calendar">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <CalendarDays className="h-4 w-4" style={{ color: ACCENT }} />
           {monthLabel}
         </div>
         <div className="flex items-center gap-1">
-          <button
+          <SketchButton
             type="button"
+            variant="icon"
+            size="sm"
+            seedId="sw-cal-prev"
             onClick={() => setCursor((c) => (c.m === 0 ? { y: c.y - 1, m: 11 } : { ...c, m: c.m - 1 }))}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
             data-testid="button-sw-cal-prev"
             aria-label="Previous month"
           >
             <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
+          </SketchButton>
+          <SketchButton
             type="button"
+            variant="icon"
+            size="sm"
+            seedId="sw-cal-next"
             onClick={() => setCursor((c) => (c.m === 11 ? { y: c.y + 1, m: 0 } : { ...c, m: c.m + 1 }))}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
             data-testid="button-sw-cal-next"
             aria-label="Next month"
           >
             <ChevronRight className="h-4 w-4" />
-          </button>
+          </SketchButton>
         </div>
       </div>
 
@@ -182,7 +187,7 @@ function BigMonthCalendar({
           );
         })}
       </div>
-    </div>
+    </SketchSurface>
   );
 }
 
@@ -356,55 +361,59 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
 
   return (
     <div
-      className="flex h-full w-full flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_20px_70px_rgba(15,23,42,0.10)]"
+      className="flex h-full w-full flex-col overflow-hidden bg-transparent"
       data-testid="scheduling-workspace"
     >
-      {/* Premium gradient header */}
-      <div
-        className="relative px-7 py-6 text-white"
-        style={{ backgroundImage: `linear-gradient(135deg, ${ACCENT}, #2f4673)` }}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-4">
-            <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-lg font-bold backdrop-blur">
-              {initials || <User className="h-6 w-6" />}
-            </span>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
-                <CalendarPlus className="h-3.5 w-3.5" />
-                Schedule Appointment
-              </div>
-              <div className="truncate text-2xl font-bold leading-tight" data-testid="scheduling-workspace-name">
-                {ctx.patientName}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/80">
-                {ctx.patientDob && <span>DOB {ctx.patientDob}</span>}
-                {facilityId && (
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-1 w-1 rounded-full bg-white/50" />
-                    {facilityId}
-                  </span>
-                )}
-                {ctx.callReason && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 font-medium">
-                    <Stethoscope className="h-3 w-3" />
-                    {ctx.callReason}
-                  </span>
-                )}
+      {/* Notebook header — sketch surface, no gradient tile. */}
+      <div className="px-6 pt-4">
+        <SketchSurface seedId="sw-header" padded>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-4">
+              <span
+                className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-base font-bold"
+                style={{ backgroundColor: "rgba(84,106,154,0.14)", color: ACCENT }}
+              >
+                {initials || <User className="h-6 w-6" />}
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <CalendarPlus className="h-3.5 w-3.5" />
+                  Schedule Appointment
+                </div>
+                <div className="truncate text-xl font-bold leading-tight text-slate-900" data-testid="scheduling-workspace-name">
+                  {ctx.patientName}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                  {ctx.patientDob && <span>DOB {ctx.patientDob}</span>}
+                  {facilityId && (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-1 w-1 rounded-full bg-slate-300" />
+                      {facilityId}
+                    </span>
+                  )}
+                  {ctx.callReason && (
+                    <span className="inline-flex items-center gap-1 text-slate-600">
+                      <Stethoscope className="h-3 w-3" />
+                      {ctx.callReason}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
+            <SketchButton
+              type="button"
+              variant="icon"
+              size="sm"
+              seedId="sw-close"
+              onClick={onClose}
+              aria-label="Close scheduling view"
+              title="Close"
+              data-testid="button-scheduling-workspace-close"
+            >
+              <X className="h-4 w-4" />
+            </SketchButton>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close scheduling view"
-            title="Close"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
-            data-testid="button-scheduling-workspace-close"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        </SketchSurface>
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto p-6">
@@ -420,32 +429,28 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
               }}
             />
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <SketchSurface seedId="sw-times" padded>
               <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Clock className="h-4 w-4" style={{ color: ACCENT }} />
                 Available times
               </div>
               <div className="mb-3 text-[11px] text-slate-400">{prettyDateLong(selectedDate)}</div>
               <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
-                {TIME_SLOTS.map((slot) => {
-                  const active = slot === time;
-                  return (
-                    <button
-                      key={slot}
-                      type="button"
-                      onClick={() => setTime(slot)}
-                      className={`rounded-lg border px-2 py-2 text-[12px] font-medium transition-colors ${
-                        active
-                          ? "border-transparent text-white shadow-sm"
-                          : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                      }`}
-                      style={active ? { backgroundColor: ACCENT } : undefined}
-                      data-testid={`sw-slot-${slot}`}
-                    >
-                      {prettyTime(slot)}
-                    </button>
-                  );
-                })}
+                {TIME_SLOTS.map((slot) => (
+                  <SketchButton
+                    key={slot}
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    active={slot === time}
+                    seedId={`sw-slot-${slot}`}
+                    onClick={() => setTime(slot)}
+                    className="justify-center"
+                    data-testid={`sw-slot-${slot}`}
+                  >
+                    {prettyTime(slot)}
+                  </SketchButton>
+                ))}
               </div>
               <div className="mt-3">
                 <Label
@@ -454,20 +459,20 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                 >
                   Custom time
                 </Label>
-                <Input
+                <SketchInput
                   id="sw-custom-time"
                   type="time"
                   value={time}
                   onChange={(e) => setTime(e.target.value)}
-                  className="mt-1.5 rounded-xl"
+                  containerClassName="mt-1.5"
                   data-testid="input-sw-custom-time"
                 />
               </div>
-            </div>
+            </SketchSurface>
           </div>
 
           {/* RIGHT — booking form */}
-          <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <SketchSurface seedId="sw-booking" padded className="space-y-4">
             <div className="text-sm font-semibold text-slate-900">Appointment details</div>
 
             <div className="space-y-1.5">
@@ -525,8 +530,8 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                 </div>
               ) : (
                 <>
-                  <ProofLink label="Clinician PDF" doc={proof.clinicianPdf} testId="sw-proof-clinician" />
-                  <ProofLink label="Plexus PDF" doc={proof.plexusPdf} testId="sw-proof-plexus" />
+                  <ProofLink label="Clinician Atlas" doc={proof.clinicianPdf} testId="sw-proof-clinician" />
+                  <ProofLink label="Plexus Atlas" doc={proof.plexusPdf} testId="sw-proof-plexus" />
                 </>
               )}
             </div>
@@ -538,12 +543,13 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
               >
                 Appointment type
               </Label>
-              <select
+              <SketchSelect
                 id="sw-appointment-type"
+                seedId="sw-appointment-type"
                 value={appointmentType}
                 onChange={(e) => setAppointmentType(e.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2"
-                style={{ ["--tw-ring-color" as string]: ACCENT }}
+                containerClassName="mt-1.5 w-full"
+                className="w-full"
                 data-testid="select-sw-appointment-type"
               >
                 <option value="">— Select appointment type —</option>
@@ -552,7 +558,7 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                     {s}
                   </option>
                 ))}
-              </select>
+              </SketchSelect>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -563,7 +569,7 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                 >
                   Date
                 </Label>
-                <Input
+                <SketchInput
                   id="sw-date"
                   type="date"
                   value={selectedDate}
@@ -571,7 +577,7 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                     setSelectedDate(e.target.value);
                     setTime("");
                   }}
-                  className="mt-1.5 rounded-xl"
+                  containerClassName="mt-1.5"
                   data-testid="input-sw-date"
                 />
               </div>
@@ -582,12 +588,12 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                 >
                   Time
                 </Label>
-                <Input
+                <SketchInput
                   id="sw-time"
                   type="time"
                   value={time}
                   onChange={(e) => setTime(e.target.value)}
-                  className="mt-1.5 rounded-xl"
+                  containerClassName="mt-1.5"
                   data-testid="input-sw-time"
                 />
               </div>
@@ -600,12 +606,12 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
               >
                 Location
               </Label>
-              <Input
+              <SketchInput
                 id="sw-location"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 placeholder="Clinic / room / address"
-                className="mt-1.5 rounded-xl"
+                containerClassName="mt-1.5"
                 data-testid="input-sw-location"
               />
             </div>
@@ -617,22 +623,24 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
               >
                 Notes (optional)
               </Label>
-              <Textarea
+              <SketchTextarea
                 id="sw-note"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                className="mt-1.5 min-h-[80px] rounded-xl"
+                containerClassName="mt-1.5"
+                className="min-h-[80px]"
                 placeholder="Context for the technician/scheduler"
                 data-testid="textarea-sw-note"
               />
             </div>
 
-            <Button
+            <SketchButton
               type="button"
+              variant="primary"
               disabled={!canSubmit || scheduleMutation.isPending}
               onClick={() => scheduleMutation.mutate()}
-              className="w-full gap-1.5 rounded-xl py-5 text-sm font-semibold shadow-sm"
-              style={{ backgroundColor: ACCENT }}
+              seedId="sw-confirm"
+              className="w-full justify-center py-2.5 text-sm font-semibold"
               data-testid="button-sw-confirm"
             >
               {scheduleMutation.isPending ? (
@@ -641,8 +649,8 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                 <CheckCircle2 className="h-4 w-4" />
               )}
               {time ? `Confirm ${prettyDate(selectedDate)} · ${prettyTime(time)}` : "Confirm appointment"}
-            </Button>
-          </div>
+            </SketchButton>
+          </SketchSurface>
         </div>
       </div>
     </div>
