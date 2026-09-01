@@ -49,6 +49,10 @@ export type OrderNoteRefreshResult =
   | { status: "migration_missing" }
   | { status: "populated_in_place"; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "versioned"; supersededNoteId: number; orderNoteId: number; fingerprint: string; screeningVersion: string }
+  // A SIGNED current note went materially stale: v1 is left immutable + signed
+  // in history (superseded), a new unsigned v2 is generated from current
+  // evidence and requires re-signature before the procedure may proceed.
+  | { status: "versioned_from_signed_stale"; supersededNoteId: number; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "reevaluated"; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "unchanged"; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "ai_generation_failed"; orderNoteId: number }
@@ -99,6 +103,58 @@ function buildDeterministicSourceData(
   };
 }
 
+/**
+ * Supersede the current note (audit-preserving: sets supersededAt only — never
+ * touches body/signature) and insert a NEW unsigned version carrying the same
+ * canonical identity + supersedesNoteId linkage. Atomic; the partial-unique
+ * active-case index is never left with two active rows. Shared by the unsigned
+ * material-change path and the signed-stale regeneration path.
+ */
+async function supersedeAndInsertOrderNoteVersion(
+  note: typeof procedureNotes.$inferSelect,
+  values: {
+    generatedText: string;
+    generatedByAi: boolean;
+    sourceData: Record<string, unknown>;
+    fingerprint: string;
+    screeningVersion: string;
+  },
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const superseded = await tx
+      .update(procedureNotes)
+      .set({ supersededAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(procedureNotes.id, note.id), isNull(procedureNotes.supersededAt)))
+      .returning({ id: procedureNotes.id });
+    if (superseded.length !== 1) throw new Error("concurrent_supersede");
+    const [created] = await tx
+      .insert(procedureNotes)
+      .values({
+        clinicId: note.clinicId,
+        executionCaseId: note.executionCaseId,
+        patientScreeningId: note.patientScreeningId,
+        ancillaryCaseId: note.ancillaryCaseId,
+        globalPlexusPatientId: note.globalPlexusPatientId,
+        patientClinicMembershipId: note.patientClinicMembershipId,
+        qualifyingGlobalScheduleEventId: note.qualifyingGlobalScheduleEventId,
+        adminReviewEventId: note.adminReviewEventId,
+        effectiveClinicalDate: note.effectiveClinicalDate,
+        serviceType: note.serviceType,
+        noteType: "order_note",
+        generationStatus: "generated",
+        generatedText: values.generatedText,
+        generatedByAi: values.generatedByAi,
+        sourceData: values.sourceData as never,
+        signatureStatus: "needs_signature",
+        supersedesNoteId: note.id,
+        evidenceFingerprint: values.fingerprint,
+        evaluatedScreeningEvidenceVersion: values.screeningVersion,
+      })
+      .returning({ id: procedureNotes.id });
+    return created.id;
+  });
+}
+
 export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Promise<OrderNoteRefreshResult> {
   if (!featureFlags.canonicalOrderNote || !featureFlags.orderNoteRefresh) return { status: "skipped_flag_off" };
   try {
@@ -115,7 +171,11 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
       .limit(1);
     if (!note) return { status: "no_current_note" };
     if (note.clinicId != null && note.clinicId !== input.clinicId) return { status: "no_current_note" };
-    if (note.signatureStatus === "signed") return { status: "signed_no_refresh", orderNoteId: note.id };
+
+    // NOTE: signed notes are handled per-path below. A signed note is NEVER
+    // mutated: if its canonical evidence is unchanged it is left untouched
+    // (signed_no_refresh); if the evidence materially changed it is superseded
+    // (audit-preserving) and a new unsigned v2 is generated for re-signature.
 
     // Order Note standard — OpenAI-assisted narrative path. Fails HONESTLY
     // (no silent fallback to the deterministic template).
@@ -134,6 +194,24 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
     const screeningVersion = bundle.screeningEvidenceVersion ?? "";
     const fingerprint = orderNoteEvidenceBundleFingerprint(bundle);
     const rendered = renderDeterministicOrderNoteBody(bundle);
+
+    // Signed note — immutable. Preserve the signature/body; NEVER update in
+    // place. If current canonical evidence is unchanged, leave it untouched. If
+    // it materially changed (fingerprint drift), supersede v1 (audit-preserving)
+    // and generate a fresh unsigned v2 for clinician re-review/re-signature.
+    if (note.signatureStatus === "signed") {
+      if (note.evidenceFingerprint === fingerprint) {
+        return { status: "signed_no_refresh", orderNoteId: note.id };
+      }
+      const newId = await supersedeAndInsertOrderNoteVersion(note, {
+        generatedText: rendered.text,
+        generatedByAi: false,
+        sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion),
+        fingerprint,
+        screeningVersion,
+      });
+      return { status: "versioned_from_signed_stale", supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion };
+    }
 
     // Case 1 — body-less pending skeleton → populate in place as v1.
     if (note.generationStatus === "pending" || !note.generatedText) {
@@ -166,38 +244,12 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
     }
 
     // Case 3 — material change → supersede current + insert new version (atomic).
-    const newId = await db.transaction(async (tx) => {
-      const superseded = await tx
-        .update(procedureNotes)
-        .set({ supersededAt: new Date(), updatedAt: new Date() })
-        .where(and(eq(procedureNotes.id, note.id), isNull(procedureNotes.supersededAt)))
-        .returning({ id: procedureNotes.id });
-      if (superseded.length !== 1) throw new Error("concurrent_supersede");
-      const [created] = await tx
-        .insert(procedureNotes)
-        .values({
-          clinicId: note.clinicId,
-          executionCaseId: note.executionCaseId,
-          patientScreeningId: note.patientScreeningId,
-          ancillaryCaseId: note.ancillaryCaseId,
-          globalPlexusPatientId: note.globalPlexusPatientId,
-          patientClinicMembershipId: note.patientClinicMembershipId,
-          qualifyingGlobalScheduleEventId: note.qualifyingGlobalScheduleEventId,
-          adminReviewEventId: note.adminReviewEventId,
-          effectiveClinicalDate: note.effectiveClinicalDate,
-          serviceType: note.serviceType,
-          noteType: "order_note",
-          generationStatus: "generated",
-          generatedText: rendered.text,
-          generatedByAi: false,
-          sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion) as never,
-          signatureStatus: "needs_signature",
-          supersedesNoteId: note.id,
-          evidenceFingerprint: fingerprint,
-          evaluatedScreeningEvidenceVersion: screeningVersion,
-        })
-        .returning({ id: procedureNotes.id });
-      return created.id;
+    const newId = await supersedeAndInsertOrderNoteVersion(note, {
+      generatedText: rendered.text,
+      generatedByAi: false,
+      sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion),
+      fingerprint,
+      screeningVersion,
     });
 
     return { status: "versioned", supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion };
@@ -292,6 +344,14 @@ async function refreshOrderNoteViaAi(input: RefreshInput, note: ProcedureNoteRow
   const bodyless = note.generationStatus === "pending" || !note.generatedText;
   const changed = note.evidenceFingerprint !== fingerprint;
 
+  // Signed note — immutable. If canonical evidence is unchanged, leave it
+  // untouched (never mutate a signed note, including its evaluated screening
+  // version). If it materially changed, fall through to generate a fresh
+  // unsigned v2 that supersedes the signed v1 (audit-preserving).
+  if (note.signatureStatus === "signed" && !changed) {
+    return { status: "signed_no_refresh", orderNoteId: note.id };
+  }
+
   // No new body needed — only reconcile the evaluated screening version.
   if (!bodyless && !changed) {
     if (note.evaluatedScreeningEvidenceVersion !== screeningVersion) {
@@ -365,5 +425,8 @@ async function refreshOrderNoteViaAi(input: RefreshInput, note: ProcedureNoteRow
     }).returning({ id: procedureNotes.id });
     return created.id;
   });
-  return { status: "versioned", supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion };
+  return {
+    status: note.signatureStatus === "signed" ? "versioned_from_signed_stale" : "versioned",
+    supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion,
+  };
 }

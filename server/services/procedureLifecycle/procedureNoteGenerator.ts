@@ -36,6 +36,7 @@ import { syncProcedureNoteReferenceSignature } from "./procedureNoteService";
 import { renderProcedureNoteBody } from "./procedureNoteBody";
 import { resolveProcedureNoteContext, loadProcedureComponents, procedureServiceLabel } from "./procedureNoteContext";
 import { procedureRequiresSignedOrderNote } from "../ancillaryDocuments/orderNoteServiceConfig";
+import { evaluateSignedOrderNoteFreshness } from "../ancillaryDocuments/orderNoteFreshness";
 import { serviceKeyForComponents } from "@shared/schema/procedureComponents";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
@@ -353,6 +354,15 @@ async function buildCanonicalProcedureNoteBody(
   // cross-clinic. The rendered body then references that exact signed note id.
   const requiresSignedOrder = procedureRequiresSignedOrderNote(note.serviceType ?? "");
   if (requiresSignedOrder && !ctx.associatedOrder) return { ok: false, code: "missing_signed_order_note" };
+  // FRESHNESS BACKSTOP (mirrors the procedure_start gate): even if procedure
+  // start was bypassed via a legacy/alternate route, a Procedure Note must NOT
+  // be generated against a STALE signed Order Note. ctx.associatedOrder is the
+  // current active signed note; verify it is still fresh vs current canonical
+  // evidence and fail closed on drift (or if freshness is indeterminate).
+  if (requiresSignedOrder && ctx.associatedOrder) {
+    const freshness = await evaluateSignedOrderNoteFreshness({ clinicId, ancillaryCaseId });
+    if (!freshness.fresh) return { ok: false, code: "order_note_stale_review_required" };
+  }
 
   // Validated component evidence is a SEPARATE requirement that applies only to
   // services that HAVE a structured component contract (BrainWave/VitalWave).

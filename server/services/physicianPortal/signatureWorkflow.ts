@@ -59,6 +59,7 @@ import {
 import { featureFlags } from "../../lib/featureFlags";
 import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
 import { orderNoteRequiresStructuredScreening } from "../ancillaryDocuments/orderNoteServiceConfig";
+import { computeCurrentOrderNoteFingerprint } from "../ancillaryDocuments/orderNoteFreshness";
 
 // Re-export the pure surface + types so route + client code has one
 // import path for physicianPortal signature primitives.
@@ -127,7 +128,7 @@ export async function listSignatureItems(
       // screening currency (only under the canonical flag; legacy order notes
       // keep the original behavior via a null context).
       let orderNoteCtx = null as
-        | { requireScreening: boolean; screeningComplete: boolean; currentScreeningVersion: string | null }
+        | { requireScreening: boolean; screeningComplete: boolean; currentScreeningVersion: string | null; currentEvidenceFingerprint: string | null }
         | null;
       if (
         featureFlags.canonicalOrderNote &&
@@ -149,7 +150,18 @@ export async function listSignatureItems(
             currentScreeningVersion = cur.version;
           }
         }
-        orderNoteCtx = { requireScreening, screeningComplete, currentScreeningVersion };
+        // Post-signature freshness: recompute the current canonical fingerprint
+        // ONLY for signed rows (so the portal can surface signed_stale_review_
+        // required instead of a plain "signed"). Unsigned rows keep the existing
+        // screening-version-based state derivation.
+        let currentEvidenceFingerprint: string | null = null;
+        if (r.signatureStatus === "signed") {
+          currentEvidenceFingerprint = await computeCurrentOrderNoteFingerprint({
+            clinicId: r.clinicId,
+            ancillaryCaseId: r.ancillaryCaseId,
+          });
+        }
+        orderNoteCtx = { requireScreening, screeningComplete, currentScreeningVersion, currentEvidenceFingerprint };
       }
       return computeSignatureItem(r, reportKeys.has(key), billingMap.get(key) ?? "not_ready", orderNoteCtx);
     }),

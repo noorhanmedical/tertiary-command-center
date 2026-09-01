@@ -23,7 +23,8 @@ import { listActivePrerequisiteConfigs } from "../../repositories/procedurePrere
 import { isOrderNoteAppointmentEligible } from "../canonicalAppointments/canonicalAppointmentService";
 import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
 import { getActiveOrderNoteForCase } from "../../repositories/orderNoteLifecycle.repo";
-import { orderNoteRequiresStructuredScreening } from "../ancillaryDocuments/orderNoteServiceConfig";
+import { orderNoteRequiresStructuredScreening, procedureRequiresSignedOrderNote } from "../ancillaryDocuments/orderNoteServiceConfig";
+import { evaluateSignedOrderNoteFreshness } from "../ancillaryDocuments/orderNoteFreshness";
 import { applySemanticPrerequisites } from "./procedurePrerequisiteRules";
 export { applySemanticPrerequisites, type SemanticPrereqContext } from "./procedurePrerequisiteRules";
 
@@ -111,6 +112,22 @@ export async function evaluateProcedurePrerequisites(
       const appt = await isOrderNoteAppointmentEligible({ ancillaryCaseId: acase.id });
       if (appt.eligible) result.qualifyingAppointmentId = appt.event.id;
       else result.hardBlockers.push({ requirementCode: "valid_canonical_appointment", category: "hard_procedure_blocker", overrideable: false });
+
+      // Post-signature FRESHNESS (always-hard; never overrideable). A signed
+      // Order Note authorizes the procedure ONLY while it is still fresh against
+      // current canonical evidence. If the active signed note has gone materially
+      // stale (evidence fingerprint drift after signature), the procedure MUST NOT
+      // proceed on the stale authorization — a re-reviewed/re-signed v2 is
+      // required. Fail-closed and service-agnostic (config-driven: applies to any
+      // service that requires a signed Order Note for its procedure). The
+      // "unsigned / no signed note" case is handled by the order_note_signature
+      // requirement below; this only fires when a signed note EXISTS but is stale.
+      if (procedureRequiresSignedOrderNote(acase.serviceType)) {
+        const freshness = await evaluateSignedOrderNoteFreshness({ clinicId: input.clinicId, ancillaryCaseId: acase.id });
+        if (freshness.hasSignedCurrent && !freshness.fresh) {
+          result.hardBlockers.push({ requirementCode: "order_note_review_required", category: "hard_procedure_blocker", overrideable: false });
+        }
+      }
     }
 
     // ── Configured, service-specific requirements ──
