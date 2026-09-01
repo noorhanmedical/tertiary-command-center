@@ -1,0 +1,161 @@
+{
+  "Changes": [
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "plexusclinical.com",
+        "Type": "A",
+        "TTL": 600,
+        "ResourceRecords": [
+          {
+            "Value": "75.2.60.5"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "app.plexusclinical.com",
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": "Z35SXDOTRQ7X7K",
+          "DNSName": "plexus-alb-879306297.us-east-1.elb.amazonaws.com",
+          "EvaluateTargetHealth": true
+        }
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "www.plexusclinical.com",
+        "Type": "CNAME",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "plexusclinical.netlify.app"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "7nh3p7qyrtfzkqczmar57txmhsgk3gxy._domainkey.plexusclinical.com",
+        "Type": "CNAME",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "7nh3p7qyrtfzkqczmar57txmhsgk3gxy.dkim.amazonses.com"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "cbbguo7q57iabid7kles64eln2wyrlym._domainkey.plexusclinical.com",
+        "Type": "CNAME",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "cbbguo7q57iabid7kles64eln2wyrlym.dkim.amazonses.com"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "oyjyfl3m7rbsfrvdrnqvvb2vdkpsekqr._domainkey.plexusclinical.com",
+        "Type": "CNAME",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "oyjyfl3m7rbsfrvdrnqvvb2vdkpsekqr.dkim.amazonses.com"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "_448235e266fd20ddc465a46787e32c53.staging.plexusclinical.com",
+        "Type": "CNAME",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "_8aaf85fecd96901a74e23d77c9659041.jkddzztszm.acm-validations.aws"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "_de5931c56cfad8540cb1fa2c418a221d.app.plexusclinical.com",
+        "Type": "CNAME",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "_44abdd0b8440983902f62739b17d8da3.jkddzztszm.acm-validations.aws"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "plexusclinical.com",
+        "Type": "MX",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "1 aspmx.l.google.com"
+          },
+          {
+            "Value": "5 alt1.aspmx.l.google.com"
+          },
+          {
+            "Value": "5 alt2.aspmx.l.google.com"
+          },
+          {
+            "Value": "10 alt3.aspmx.l.google.com"
+          },
+          {
+            "Value": "10 alt4.aspmx.l.google.com"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "plexusclinical.com",
+        "Type": "TXT",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "\"google-site-verification=4_hdDWz8Uzp6d40UzIBBEXOjthFtsaITgXB7usnZFPE\""
+          },
+          {
+            "Value": "\"v=spf1 include:_spf.google.com include:amazonses.com ~all\""
+          }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "_dmarc.plexusclinical.com",
+        "Type": "TXT",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {
+            "Value": "\"v=DMARC1; p=reject; adkim=r; aspf=r; rua=mailto:dmarc_rua@onsecureserver.net;\""
+          }
+        ]
+      }
+    }
+  ]
+}
