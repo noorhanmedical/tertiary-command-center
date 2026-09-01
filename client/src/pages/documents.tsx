@@ -164,19 +164,6 @@ function docStatus(note: GeneratedNote): { label: string; tone: PlexusStatusTone
   return { label: "Ready", tone: "ready" };
 }
 
-// PLACEHOLDER display values — the generated-notes payload carries no DOB/MRN.
-// Deterministic per patient id so they stay stable across renders. These are
-// sample values for the visual only; wiring real DOB/MRN needs a data pass.
-function sampleDob(id: number): string {
-  const mm = String((id * 7) % 12 + 1).padStart(2, "0");
-  const dd = String((id * 13) % 28 + 1).padStart(2, "0");
-  const yyyy = 1955 + ((id * 3) % 45);
-  return `${mm}/${dd}/${yyyy}`;
-}
-function sampleMrn(id: number): string {
-  return String(1000000 + ((id * 104729) % 9000000));
-}
-
 // Word-document style page. Renders the SAME note content (title + visible
 // sections, hiding __meta__ helpers exactly like DocumentSection) as a white
 // paper page with clinical-document typography. The text is never rewritten;
@@ -564,8 +551,13 @@ export default function DocumentsPage() {
                               className="plexus-nav-row flex cursor-pointer flex-col gap-0.5 py-2.5 pl-3 pr-3 focus-visible:outline-none"
                             >
                               <span className="block truncate" style={{ fontSize: 14, fontWeight: 600, color: "#18243b" }}>{p.patientName}</span>
+                              {/* Real available metadata only. DOB / MRN / Plexus ID are
+                                  intentionally omitted until wired from real data — never
+                                  render sample/fabricated identifiers on the live route. */}
                               <span className="block" style={{ fontSize: 11.5, color: "#8a97ab" }}>
-                                DOB {sampleDob(p.patientId)} · MRN {sampleMrn(p.patientId)}
+                                {p.scheduleDate ? formatDate(p.scheduleDate) : "\u2014"}
+                                {" \u00b7 "}
+                                {p.serviceGroups.length} service{p.serviceGroups.length !== 1 ? "s" : ""}
                               </span>
                             </div>
                           );
