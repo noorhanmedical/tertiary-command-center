@@ -165,7 +165,9 @@ test.describe("Quick == Full parity (K)", () => {
   });
 });
 
-test.describe("Scheduler UI — preselection + admin review + multi-select (A, B, C, J)", () => {
+test.describe("Scheduler UI — qualification vs selection, tabs, explicit confirm", () => {
+  const THU_UI = "2027-03-18"; // ultrasound ON
+
   async function openScheduler(page: Page) {
     const { loginAs } = await import("../fixtures/auth");
     await loginAs(page, "admin");
@@ -180,183 +182,184 @@ test.describe("Scheduler UI — preselection + admin review + multi-select (A, B
     await expect(page.getByTestId("unified-scheduler")).toBeVisible();
   }
 
-  // Select all three services (BrainWave + VitalWave + one Ultrasound study)
-  // from the ONE Appointment Types dropdown.
-  async function selectAllThree(page: Page) {
-    await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-service-brainwave").click();
-    await page.getByTestId("scheduler-service-vitalwave").click();
-    await page.getByTestId("scheduler-service-ultrasound").click();
-    await page.locator('[data-testid^="scheduler-ultrasound-option-"]').first().click();
-    await page.getByTestId("scheduler-service-dropdown").click(); // close the menu
-    await page.waitForTimeout(600);
+  // Choose an ancillary from the ONE picker → its scheduling tab activates.
+  async function choose(page: Page, kind: "brainwave" | "vitalwave" | "ultrasound") {
+    await page.getByTestId("scheduler-choose-ancillary").click();
+    await page.getByTestId(`scheduler-pick-${kind}`).click();
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId(`scheduler-tab-${kind}`)).toBeVisible();
   }
 
-  // Select the ACTIVE service's recommended time (PENDING) then EXPLICITLY
-  // click Schedule to commit it — the real appointment flow. Jumps to the
-  // service's own next eligible day first if today is one of its off-days.
-  async function selectRecommended(page: Page) {
-    const use = page.getByTestId("scheduler-recommended-use");
-    const chooseNext = page.getByTestId("scheduler-offday-choose-next");
-    // Wait for the pending area to settle: either a recommended time (eligible
-    // day) or the off-day "choose next" prompt appears.
-    await expect(use.or(chooseNext)).toBeVisible({ timeout: 12000 });
-    if (await chooseNext.isVisible().catch(() => false)) {
-      await chooseNext.click();
-      await expect(use).toBeVisible({ timeout: 12000 });
+  // Navigate the month calendar to a fixed ISO date and select it.
+  async function goToDate(page: Page, iso: string) {
+    const cell = page.getByTestId(`scheduler-day-${iso}`);
+    for (let i = 0; i < 24 && !(await cell.isVisible().catch(() => false)); i++) {
+      await page.getByTestId("scheduler-next-month").click();
+      await page.waitForTimeout(120);
     }
-    await use.click(); // SELECT only (pending)
-  }
-  async function placeActiveExplicit(page: Page) {
-    await selectRecommended(page);
-    const sched = page.getByTestId("scheduler-schedule-active");
-    await sched.waitFor({ state: "visible", timeout: 8000 });
-    await sched.click(); // explicit commit
+    await cell.click();
     await page.waitForTimeout(400);
   }
 
-  test("C+E+J. ONE dropdown drives the active service; calendar follows it (no intersection)", async ({ page }) => {
+  test("53. QUALIFIED FOR is read-only; nothing is active/scheduled until an ancillary is chosen", async ({ page }) => {
     await openScheduler(page);
-    await selectAllThree(page);
+    await page.getByTestId("scheduler-patient-search").fill("John Smith");
+    const result = page.locator('[data-testid^="scheduler-patient-result-"]').first();
+    await expect(result).toBeVisible({ timeout: 8000 });
+    await result.click();
+    await expect(page.getByTestId("scheduler-patient-name")).toBeVisible();
 
-    // Exactly ONE Appointment Types control; NO separate Schedule-Services list.
-    await expect(page.getByTestId("scheduler-service-dropdown")).toHaveCount(1);
-    await expect(page.getByTestId("scheduler-section-units")).toHaveCount(0);
+    // QUALIFIED FOR shows Plexus IQ guidance, read-only (no checkboxes, no tabs).
+    await expect(page.getByTestId("scheduler-qualified-for")).toBeVisible();
+    await expect(page.getByTestId("scheduler-qual-for-brainwave")).toBeVisible();
+    // Nothing is active/scheduled merely because it is qualified.
+    await expect(page.getByTestId("scheduler-tabs")).toHaveCount(0);
+    await expect(page.getByTestId("scheduler-active-service")).toHaveCount(0);
+    await expect(page.getByTestId("scheduler-admin-review-tag")).toBeVisible({ timeout: 8000 });
 
-    // Default active = first unscheduled = BrainWave (Mon–Fri): only weekends muted.
+    // The scheduler CHOOSES BrainWave → a tab appears + activates the calendar.
+    await choose(page, "brainwave");
     await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
-    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible();
-    const offBrainWave = await page.locator('[data-testid^="scheduler-day-offday-"]').count();
-
-    // Switch active to Ultrasound (Tue/Thu) from INSIDE the one dropdown. Same
-    // calendar now mutes Mon/Wed/Fri too → strictly MORE off-days. Proves the
-    // calendar uses the ACTIVE service, never the intersection of all selected.
-    await page.getByTestId("scheduler-service-dropdown").click();
-    const together = page.getByTestId("scheduler-us-schedule-together");
-    if (!(await together.isVisible().catch(() => false))) await page.getByTestId("scheduler-service-ultrasound").click();
-    await together.click();
-    await page.waitForTimeout(600);
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("Ultrasound");
-    const offUltrasound = await page.locator('[data-testid^="scheduler-day-offday-"]').count();
-    expect(offUltrasound).toBeGreaterThan(offBrainWave);
-
-    // Switch back to BrainWave via its Schedule action → calendar back to Mon–Fri.
-    await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-svc-brainwave-schedule").click();
-    await page.waitForTimeout(600);
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
-    expect(await page.locator('[data-testid^="scheduler-day-offday-"]').count()).toBe(offBrainWave);
-
-    // No service was ever unchecked to get correct dates; machine inventory stays
-    // behind the compact disclosure.
-    await expect(page.getByTestId("scheduler-equipment")).toHaveCount(0);
-    await page.getByTestId("scheduler-equipment-toggle").click();
-    await expect(page.getByTestId("scheduler-equipment-ultrasound")).toBeVisible();
   });
 
-  test("time click SELECTS (no commit, no auto-advance); explicit Schedule commits", async ({ page }) => {
+  test("54. time click SELECTS only (no commit, no auto-advance); explicit Schedule commits", async ({ page }) => {
     await openScheduler(page);
-    await selectAllThree(page);
+    await choose(page, "brainwave");
+    await goToDate(page, TUE); // BrainWave operates Mon–Fri
 
-    // Activate BrainWave from the one control.
-    await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-svc-brainwave-schedule").click();
-    await page.waitForTimeout(400);
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
-
-    // Click a time → SELECT only. It must NOT commit and must NOT jump service.
-    await selectRecommended(page);
+    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible({ timeout: 8000 });
+    await page.getByTestId("scheduler-slot-08:00").click();
+    // Selected + highlighted; active tab unchanged; nothing persisted.
     await expect(page.getByTestId("scheduler-selected-appointment")).toBeVisible();
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave"); // no jump
-    await expect(page.getByTestId("scheduler-submit")).not.toContainText("("); // nothing added yet
+    await expect(page.getByTestId("scheduler-slot-selected-08:00")).toBeVisible();
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
+    await expect(page.getByTestId("scheduler-submit")).not.toContainText("(");
 
     // Explicit commit.
     await page.getByTestId("scheduler-schedule-active").click();
     await page.waitForTimeout(300);
     await expect(page.getByTestId("scheduler-scheduled-success")).toBeVisible();
     await expect(page.getByTestId("scheduler-submit")).toContainText("(1)");
-    // Still BrainWave context afterwards — no forced switch to VitalWave.
+    // No forced switch away — still BrainWave.
     await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
+    await expect(page.getByTestId("scheduler-tab-status-brainwave")).toBeVisible();
   });
 
-  test("changing the pending time updates the selection; nothing persists before commit", async ({ page }) => {
+  test("55. recommendation populates the pending time but does not commit", async ({ page }) => {
     await openScheduler(page);
-    await selectAllThree(page);
-    await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-svc-brainwave-schedule").click();
-    await page.waitForTimeout(400);
-    const chooseNext = page.getByTestId("scheduler-offday-choose-next");
-    if (await chooseNext.isVisible().catch(() => false)) { await chooseNext.click(); await page.waitForTimeout(400); }
-    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible();
-
-    const slots = page.locator('[data-testid^="scheduler-slot-"]');
-    await slots.nth(1).click();
+    await choose(page, "brainwave");
+    await goToDate(page, TUE);
+    const use = page.getByTestId("scheduler-recommended-use");
+    await use.waitFor({ state: "visible", timeout: 8000 });
+    await use.click();
+    // A pending selection appears; nothing is committed.
     await expect(page.getByTestId("scheduler-selected-appointment")).toBeVisible();
-    const t1 = await page.getByTestId("scheduler-selected-time").textContent();
-    await slots.nth(4).click();
-    const t2 = await page.getByTestId("scheduler-selected-time").textContent();
-    expect(t2).not.toBe(t1); // only the latest is selected
-    await expect(page.getByTestId("scheduler-submit")).not.toContainText("("); // still no commit
+    await expect(page.getByTestId("scheduler-submit")).not.toContainText("(");
   });
 
-  test("zero ultrasound means zero — no phantom scheduling unit", async ({ page }) => {
+  test("56. zero ultrasounds means zero — no phantom block or duration", async ({ page }) => {
     await openScheduler(page);
-    await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-service-ultrasound").click();
-    const opts = page.locator('[data-testid^="scheduler-ultrasound-option-"]');
-    await opts.nth(0).click();
-    await opts.nth(1).click();
-    await expect(page.getByTestId("scheduler-us-schedule-together")).toBeVisible();
-    // Uncheck every ultrasound study.
-    await opts.nth(0).click();
-    await opts.nth(1).click();
-    // No ultrasound scheduling unit, no phantom "1", no active service at all.
-    await expect(page.getByTestId("scheduler-us-schedule-together")).toHaveCount(0);
-    await page.waitForTimeout(400);
-    await expect(page.getByTestId("scheduler-active-service")).toHaveCount(0);
+    await choose(page, "ultrasound");
+    // Studies start unselected.
+    await expect(page.getByTestId("scheduler-us-selected-count")).toContainText("0 selected");
+    // Select all, then clear.
+    await page.getByTestId("scheduler-us-select-all").click();
+    await expect(page.getByTestId("scheduler-us-selected-count")).not.toContainText("0 selected");
+    await page.getByTestId("scheduler-us-clear").click();
+    // Back to zero: no time grid, no active duration, no phantom "1".
+    await expect(page.getByTestId("scheduler-us-selected-count")).toContainText("0 selected");
+    await expect(page.getByTestId("scheduler-times-empty")).toBeVisible();
+    await expect(page.getByTestId("scheduler-time-slots")).toHaveCount(0);
+    await expect(page.getByTestId("scheduler-active-service")).not.toContainText("min");
   });
 
-  test("ultrasound SPLIT: explicit per-group scheduling yields two ultrasound groups", async ({ page }) => {
+  test("57+58. ultrasound multi-day split → two groups on two dates, no duplicates", async ({ page }) => {
     await openScheduler(page);
-    await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-service-ultrasound").click();
-    const opts = page.locator('[data-testid^="scheduler-ultrasound-option-"]');
-    await opts.nth(0).click();
-    await opts.nth(1).click();
-    const picks = page.locator('[data-testid^="scheduler-us-pick-"]');
-    await expect(picks).toHaveCount(2);
-    await picks.nth(1).click(); // un-pick 2nd → group 1 has 1 study
-    await expect(page.getByTestId("scheduler-us-schedule-together")).toContainText("(1)");
-    await page.getByTestId("scheduler-us-schedule-together").click();
-    await page.waitForTimeout(400);
+    await choose(page, "ultrasound");
+    const studies = page.locator('[data-testid^="scheduler-us-study-"]');
+    expect(await studies.count()).toBeGreaterThanOrEqual(4);
 
-    // Explicitly schedule group 1; the remaining study stays active (same
-    // service — not a jump). Explicitly schedule group 2.
-    await placeActiveExplicit(page);
-    await expect(page.getByTestId("scheduler-active-service")).toContainText("Ultrasound");
-    await placeActiveExplicit(page);
+    // Group 1: first two studies on Tuesday.
+    await goToDate(page, TUE);
+    await studies.nth(0).click();
+    await studies.nth(1).click();
+    await expect(page.getByTestId("scheduler-us-selected-count")).toContainText("2 selected");
+    await page.getByTestId("scheduler-slot-08:00").click();
+    await expect(page.getByTestId("scheduler-selected-studies")).toBeVisible();
+    await page.getByTestId("scheduler-schedule-active").click();
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId("scheduler-scheduled-success")).toBeVisible();
+    // One scheduled group so far; selection cleared (no auto-advance/duplicate).
+    await expect(page.locator('[data-testid^="scheduler-us-group-"]')).toHaveCount(1);
+    await expect(page.getByTestId("scheduler-us-selected-count")).toContainText("0 selected");
 
+    // Group 2: remaining two studies on Thursday.
+    const remaining = page.locator('[data-testid^="scheduler-us-study-"]');
+    await remaining.nth(0).click();
+    await remaining.nth(1).click();
+    await goToDate(page, THU_UI);
+    await page.getByTestId("scheduler-slot-09:00").click();
+    await page.getByTestId("scheduler-schedule-active").click();
+    await page.waitForTimeout(300);
+
+    // Two ultrasound groups across two dates; the plan holds both.
+    await expect(page.locator('[data-testid^="scheduler-us-group-"]')).toHaveCount(2);
     await expect(page.getByTestId("scheduler-submit")).toContainText("(2)");
-    await page.getByTestId("scheduler-service-dropdown").click();
-    if (!(await page.locator('[data-testid^="scheduler-us-study-status-"]').first().isVisible().catch(() => false))) {
-      await page.getByTestId("scheduler-service-ultrasound").click();
-    }
-    await expect(page.locator('[data-testid^="scheduler-us-study-status-"]')).toHaveCount(2);
-    await expect(page.getByTestId("scheduler-us-schedule-together")).toHaveCount(0);
   });
 
-  test("B. patient-context shows admin-review tag and stays scheduleable", async ({ page }) => {
+  test("59. active tab drives calendar eligibility — no all-service intersection", async ({ page }) => {
     await openScheduler(page);
-    // Search + pick a seeded patient → preselection + review tag appear.
-    await page.getByTestId("scheduler-patient-search").fill("John Smith");
-    const result = page.locator('[data-testid^="scheduler-patient-result-"]').first();
-    await expect(result).toBeVisible({ timeout: 8000 });
-    await result.click();
-    await expect(page.getByTestId("scheduler-patient-name")).toBeVisible();
-    // Admin review tag renders (informational — scheduling not blocked).
-    await expect(page.getByTestId("scheduler-admin-review-tag")).toBeVisible({ timeout: 8000 });
-    // A. Preselection: at least one service arrives checked from Plexus IQ.
-    await expect(page.getByTestId("scheduler-plexus-hint")).toBeVisible();
+    // BrainWave active (Mon–Fri): only weekends muted.
+    await choose(page, "brainwave");
+    await expect(page.getByTestId("scheduler-time-slots")).toBeVisible({ timeout: 8000 });
+    const offBrainWave = await page.locator('[data-testid^="scheduler-day-offday-"]').count();
+
+    // Add Ultrasound + select all studies → Tue/Thu only → strictly MORE muted
+    // days. Proves the calendar uses the ACTIVE tab, never an intersection.
+    await choose(page, "ultrasound");
+    await page.getByTestId("scheduler-us-select-all").click();
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("Ultrasound");
+    const offUltrasound = await page.locator('[data-testid^="scheduler-day-offday-"]').count();
+    expect(offUltrasound).toBeGreaterThan(offBrainWave);
+
+    // Switch back to the BrainWave tab → eligibility returns to Mon–Fri.
+    await page.getByTestId("scheduler-tab-brainwave").click();
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId("scheduler-active-service")).toContainText("BrainWave");
+    expect(await page.locator('[data-testid^="scheduler-day-offday-"]').count()).toBe(offBrainWave);
+  });
+
+  test("60. soft conflict (FULL) stays clickable and routes to override", async ({ page }) => {
+    // Log in first (openScheduler authenticates page.request), then fill.
+    await openScheduler(page);
+    const req = page.request;
+    const ids: Array<number | null> = [];
+    try {
+      // Fill both BrainWave machines at 09:00 Thursday so 09:00 is FULL.
+      for (const ps of [P1, P2]) {
+        const r = await req.post("/api/global-schedule-events/schedule-ancillary", {
+          data: { patientScreeningId: ps, serviceType: "BrainWave", startsAt: `${THU_UI}T09:00:00`, facilityId: CLINIC, metadata: { source: "e2e_fill" } },
+        });
+        const b = await r.json();
+        ids.push(b?.event?.id ?? null);
+      }
+      await choose(page, "brainwave");
+      await goToDate(page, THU_UI);
+      const full = page.getByTestId("scheduler-slot-09:00");
+      await expect(full).toBeVisible({ timeout: 8000 });
+      // Authorized admin may still click a FULL slot → it selects + shows conflict.
+      await full.click();
+      await expect(page.getByTestId("scheduler-selected-conflict")).toBeVisible();
+      // The primary action becomes Override & Schedule → opens the reason dialog.
+      await page.getByTestId("scheduler-schedule-active").click();
+      await expect(page.getByTestId("scheduler-override-dialog")).toBeVisible();
+    } finally {
+      for (const id of ids) {
+        if (id == null) continue;
+        await req.post(`/api/global-schedule-events/${id}/transition`, { data: { transition: "cancel", note: "e2e cleanup" } }).catch(() => {});
+      }
+    }
   });
 });
 

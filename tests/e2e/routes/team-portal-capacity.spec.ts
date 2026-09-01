@@ -266,11 +266,10 @@ test.describe("Scheduler UI surfaces capacity", () => {
     await expect(page.getByTestId("unified-scheduler")).toBeVisible();
     // Machine inventory is NOT shown by default (removed from the main UI).
     await expect(page.getByTestId("scheduler-equipment")).toHaveCount(0);
-    // Choose BrainWave from the dropdown → a 15-min time grid appears, with no
+    // Choose BrainWave from the picker → a 15-min time grid appears, with no
     // per-slot machine counts.
-    await page.getByTestId("scheduler-service-dropdown").click();
-    await page.getByTestId("scheduler-service-brainwave").click();
-    await page.getByTestId("scheduler-service-dropdown").click(); // close the menu
+    await page.getByTestId("scheduler-choose-ancillary").click();
+    await page.getByTestId("scheduler-pick-brainwave").click();
     await expect(page.getByTestId("scheduler-slot-08:00")).toBeVisible({ timeout: 8000 });
     await expect(page.getByTestId("scheduler-slot-08:15")).toBeVisible();
     // The equipment inventory is available on demand via the compact toggle.

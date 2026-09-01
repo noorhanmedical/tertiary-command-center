@@ -3,21 +3,23 @@
 // Rendered inside the Playground "schedule"/"calendar" workspace. Every full
 // scheduling entry point (dock Calendar, left-rail Calendar tile, right-rail
 // patient calendar, EHR schedule) opens THIS component; only the entry CONTEXT
-// differs (patient/facility/services preselected or not).
+// differs (patient/facility preselected or not).
 //
-// UX MODEL (consolidated):
-//   • ONE "Appointment Types" dropdown is the single service-selection control.
-//     It carries WHAT the patient needs (multi-select, Plexus IQ preselected)
-//     AND the per-service scheduling actions/status. There is no second
-//     "Schedule Services" list — that would duplicate the same information and
-//     push Available Times down.
-//   • The ACTIVE scheduling unit (chosen from inside the dropdown) determines
-//     WHAT the shared month calendar + Available Times currently reflect:
-//     operating days, duration, capacity, conflicts. Calendar eligibility is
-//     ALWAYS the active service only — never the intersection of all selected
-//     services.
-//   • Ultrasound studies can be scheduled all-together (one block) or split
-//     into multiple groups on different dates.
+// MENTAL MODEL (redesigned):
+//   • PLEXUS IQ answers WHAT THE PATIENT QUALIFIED FOR — read-only guidance.
+//     It never decides what the scheduler is currently scheduling.
+//   • The scheduler CHOOSES an ancillary from a single "+ Choose ancillary"
+//     picker. Each chosen ancillary becomes a compact SCHEDULING TAB (a
+//     scheduling context) — BrainWave, VitalWave, and ONE Ultrasound tab.
+//   • The ACTIVE tab drives the ONE shared month calendar + Available Times:
+//     operating-day eligibility, duration, capacity, conflicts, recommendation.
+//     Eligibility is ALWAYS the active tab only — never an all-service
+//     intersection, and there is no "All" mode.
+//   • A time-slot click SELECTS + HIGHLIGHTS (pending) only. Nothing is written
+//     or advanced until the explicit "Schedule <service>" button is clicked.
+//   • Inside the Ultrasound tab, any subset of qualified studies can be grouped
+//     and scheduled on one or multiple dates. Zero selected means zero.
+//
 // The write goes through the ONE multi-service /api/scheduling/visit
 // orchestration (grouped, multi-date, shared visitGroupId). Capacity + off-day
 // conflicts are SOFT — an authorized user overrides with a reason.
@@ -29,13 +31,13 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  Plus,
   Search,
   User,
   X,
   Loader2,
   Check,
   AlertTriangle,
-  Sparkles,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
@@ -106,14 +108,6 @@ type SelectedPatient = {
   facility: string | null;
 };
 
-// One selected appointment service. Ultrasound studies are individual entries.
-type SelectedService = {
-  internalCode: string;
-  displayName: string;
-  resourceType: CapResourceType;
-  plexusSourced: boolean;
-};
-
 type OverrideMeta = { constraint: SoftConstraint; reason: string; category: string | null };
 
 // A placed block in the CLIENT-SIDE visit plan (source of truth before write).
@@ -130,6 +124,7 @@ type UltrasoundGroupBlock = Placed & {
   studyCodes: string[];
   perStudyMin: number;
 };
+// SCHEDULED ASSIGNMENTS — the client visit plan.
 type VisitPlan = {
   brainwave?: SingleBlock;
   vitalwave?: SingleBlock;
@@ -137,13 +132,10 @@ type VisitPlan = {
 };
 const EMPTY_PLAN: VisitPlan = { ultrasound: [] };
 
-// The ACTIVE scheduling unit — WHAT the calendar is currently scheduling.
-type ActiveUnit =
-  | { kind: "brainwave" }
-  | { kind: "vitalwave" }
-  | { kind: "ultrasound"; studyCodes: string[]; editGroupId: string | null };
+// A scheduling TAB kind — a scheduling context the scheduler chose to work on.
+type TabKind = "brainwave" | "vitalwave" | "ultrasound";
 
-// A flattened placed item (for the confirm summary + counts).
+// A flattened placed item (for the plan summary + confirm counts).
 type PlacedItem = {
   key: string;
   resourceType: CapResourceType;
@@ -170,9 +162,12 @@ type PatientQualification = {
   adminReviewSummary: "approved" | "pending" | "partially_reviewed" | "not_reviewed";
 };
 
+type StudyRef = { internalCode: string; displayName: string; cptCode: string | null };
+
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const RESOURCE_LABELS: Record<string, string> = { brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound" };
-const RESOURCE_DOT: Record<string, string> = { brainwave: "bg-violet-500", vitalwave: "bg-red-500", ultrasound: "bg-emerald-500" };
+// Subtle single-accent dots only — the surface stays neutral.
+const RESOURCE_DOT: Record<string, string> = { brainwave: "bg-violet-500", vitalwave: "bg-rose-600", ultrasound: "bg-emerald-600" };
 const OVERRIDE_CATEGORIES = [
   "machine available despite capacity model",
   "special clinic day",
@@ -224,29 +219,33 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const [selectedDate, setSelectedDate] = useState<string>(
     context.initialDate && /^\d{4}-\d{2}-\d{2}$/.test(context.initialDate) ? context.initialDate : todayIso(),
   );
+  // PENDING SELECTION — a time chosen but NOT yet committed.
   const [time, setTime] = useState<string>(context.initialTime ?? "");
-  // Multi-select: internalCode -> SelectedService. (WHAT the patient needs.)
-  const [selected, setSelected] = useState<Map<string, SelectedService>>(new Map());
-  const [ultrasoundOpen, setUltrasoundOpen] = useState(false);
-  // The ONE Appointment Types dropdown open state.
-  const [serviceMenuOpen, setServiceMenuOpen] = useState(false);
+
+  // CHOSEN SCHEDULING TABS (ordered) + the ACTIVE tab.
+  const [chosenTabs, setChosenTabs] = useState<TabKind[]>([]);
+  const [activeTab, setActiveTab] = useState<TabKind | null>(null);
+
+  // SELECTED ULTRASOUND STUDIES FOR THE CURRENT GROUP — user-controlled, starts
+  // EMPTY. Never derived from qualification. Zero means zero.
+  const [usGroupSel, setUsGroupSel] = useState<Set<string>>(new Set());
+
+  // SCHEDULED ASSIGNMENTS — the client visit plan (source of truth pre-write).
+  const [visitPlan, setVisitPlan] = useState<VisitPlan>(EMPTY_PLAN);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerUsOpen, setPickerUsOpen] = useState(false);
+  const [addMoreOpen, setAddMoreOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [equipmentOpen, setEquipmentOpen] = useState(false);
   const [agendaExpanded, setAgendaExpanded] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
   const [quickDate, setQuickDate] = useState<string | null>(null);
-  // The ACTIVE scheduling unit — WHAT the shared calendar is scheduling now.
-  const [activeUnit, setActiveUnit] = useState<ActiveUnit | null>(null);
-  // CLIENT-SIDE visit plan (per-service + per-ultrasound-group). Source of truth.
-  const [visitPlan, setVisitPlan] = useState<VisitPlan>(EMPTY_PLAN);
-  // Which UNSCHEDULED ultrasound studies are picked for the NEXT group.
-  // Missing key ⇒ picked (default true).
-  const [usPick, setUsPick] = useState<Record<string, boolean>>({});
   const [confirmOpen, setConfirmOpen] = useState(false);
-  // Success marker for the most recently COMMITTED service (shown so the user
-  // sees what they just scheduled — never an abrupt jump). Cleared when a new
-  // pending selection starts.
+  // Success marker for the most recently COMMITTED service (so the user sees
+  // what they just scheduled — never an abrupt jump). Cleared on a new pending.
   const [lastScheduled, setLastScheduled] = useState<{ key: string; label: string; isoDate: string; time: string } | null>(null);
-  // Override dialog — placed against the CURRENT active unit + chosen time.
+  // Override dialog — placed against the CURRENT active tab + chosen time.
   const [overrideCtx, setOverrideCtx] = useState<{ constraint: SoftConstraint; time: string; message: string } | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
   const [overrideCategory, setOverrideCategory] = useState("");
@@ -257,18 +256,18 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     return { y: base.getFullYear(), m: base.getMonth() };
   });
 
-  // Close the Appointment Types dropdown on outside-click / Escape.
-  const serviceMenuRef = useRef<HTMLDivElement | null>(null);
+  // Close the ancillary picker on outside-click / Escape.
+  const pickerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!serviceMenuOpen) return;
+    if (!pickerOpen) return;
     function onDown(e: MouseEvent) {
-      if (serviceMenuRef.current && !serviceMenuRef.current.contains(e.target as Node)) setServiceMenuOpen(false);
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setPickerOpen(false);
     }
-    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setServiceMenuOpen(false); }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setPickerOpen(false); }
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
-  }, [serviceMenuOpen]);
+  }, [pickerOpen]);
 
   // ── Registry services for this facility ──
   const { data: services = [], isLoading: servicesLoading } = useQuery<RegistryService[]>({
@@ -278,7 +277,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   });
   const { brainwave, vitalwave, ultrasound } = useMemo(() => bucketServices(services), [services]);
 
-  // ── Plexus IQ preselection (patient context only) ──
+  // ── Plexus IQ qualification (patient context only) — READ-ONLY guidance ──
   const { data: qualification } = useQuery<PatientQualification>({
     queryKey: ["scheduler-qualification", patient.patientScreeningId],
     queryFn: async () => {
@@ -289,60 +288,49 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     enabled: patient.patientScreeningId != null,
     staleTime: 60_000,
   });
-  const preselectedRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!qualification || patient.patientScreeningId == null) return;
-    if (preselectedRef.current === patient.patientScreeningId) return;
-    preselectedRef.current = patient.patientScreeningId;
-    const next = new Map<string, SelectedService>();
-    for (const s of qualification.services) {
-      if (s.resourceType === "other") continue;
-      next.set(s.internalCode, {
-        internalCode: s.internalCode,
-        displayName: s.displayName,
-        resourceType: s.resourceType as CapResourceType,
-        plexusSourced: true,
-      });
-    }
-    if (next.size > 0) setSelected(next);
-  }, [qualification, patient.patientScreeningId]);
 
-  function toggleService(svc: { internalCode: string; displayName: string }, resourceType: CapResourceType) {
-    setSelected((prev) => {
-      const next = new Map(prev);
-      if (next.has(svc.internalCode)) next.delete(svc.internalCode);
-      else next.set(svc.internalCode, { internalCode: svc.internalCode, displayName: svc.displayName, resourceType, plexusSourced: false });
-      return next;
-    });
-  }
+  // QUALIFIED services (read-only). NEVER auto-selected for scheduling.
+  const qualBrain = !!qualification?.services.some((s) => s.resourceType === "brainwave");
+  const qualVital = !!qualification?.services.some((s) => s.resourceType === "vitalwave");
+  const qualUsStudies = useMemo<StudyRef[]>(
+    () => qualification?.services.filter((s) => s.resourceType === "ultrasound").map((s) => ({ internalCode: s.internalCode, displayName: s.displayName, cptCode: s.cptCode })) ?? [],
+    [qualification],
+  );
 
-  const selectedList = useMemo(() => Array.from(selected.values()), [selected]);
-  const ultrasoundSelected = useMemo(() => selectedList.filter((s) => s.resourceType === "ultrasound"), [selectedList]);
-  const brainSelected = !!brainwave && selected.has(brainwave.internalCode);
-  const vitalSelected = !!vitalwave && selected.has(vitalwave.internalCode);
+  // The ultrasound study universe the picker/tab offers: qualified studies in
+  // patient context, otherwise the registry ultrasound bucket.
+  const usUniverse = useMemo<StudyRef[]>(() => {
+    if (hasPatient && qualUsStudies.length > 0) return qualUsStudies;
+    return ultrasound.map((u) => ({ internalCode: u.internalCode, displayName: u.displayName, cptCode: u.cptCode }));
+  }, [hasPatient, qualUsStudies, ultrasound]);
+  const usNameOf = (code: string) => usUniverse.find((u) => u.internalCode === code)?.displayName ?? code;
 
   const patientKey =
     patient.patientScreeningId != null ? `ps:${patient.patientScreeningId}`
       : patient.executionCaseId != null ? `ec:${patient.executionCaseId}` : null;
 
-  // ── Active-unit derived meta ──
-  const activeResourceType: CapResourceType | null = activeUnit?.kind ?? null;
-  const activeStudyCodes = activeUnit?.kind === "ultrasound" ? activeUnit.studyCodes : [];
-  const activeStudyCount = activeUnit?.kind === "ultrasound" ? activeStudyCodes.length : 1;
-  const activeLabel = !activeUnit
-    ? null
-    : activeUnit.kind === "ultrasound"
-      ? (activeStudyCount > 0 ? `Ultrasound ×${activeStudyCount}` : null) // 0 studies ⇒ no active label (zero means zero)
-      : RESOURCE_LABELS[activeUnit.kind];
+  // ── Ultrasound scheduling derivations ──
+  const scheduledUltrasoundCodes = useMemo(
+    () => new Set(visitPlan.ultrasound.flatMap((g) => g.studyCodes)),
+    [visitPlan.ultrasound],
+  );
+  const unscheduledUsStudies = useMemo(
+    () => usUniverse.filter((u) => !scheduledUltrasoundCodes.has(u.internalCode)),
+    [usUniverse, scheduledUltrasoundCodes],
+  );
 
-  const activeRequest: CapServiceRequest | null = !activeUnit
+  // ── ACTIVE-tab derived request/meta — the calendar reflects THIS only ──
+  const activeStudyCount = activeTab === "ultrasound" ? usGroupSel.size : 1;
+  const activeRequest: CapServiceRequest | null = !activeTab
     ? null
-    : activeUnit.kind === "ultrasound"
-      ? (activeStudyCount > 0 ? { resourceType: "ultrasound", studyCount: activeStudyCount } : null)
-      : { resourceType: activeUnit.kind };
+    : activeTab === "ultrasound"
+      ? (usGroupSel.size > 0 ? { resourceType: "ultrasound", studyCount: usGroupSel.size } : null) // 0 studies ⇒ no request (zero means zero)
+      : { resourceType: activeTab };
   const primary = activeRequest;
+  const activeResourceType: CapResourceType | null = activeRequest ? activeRequest.resourceType : null;
+  const activeTabLabel = activeTab ? RESOURCE_LABELS[activeTab] : null;
 
-  // ── Availability (the ONE engine) — asked about the ACTIVE service only ──
+  // ── Availability (the ONE engine) — asked about the ACTIVE tab only ──
   const activeServices: CapServiceRequest[] = activeRequest ? [activeRequest] : [];
   const { data: availability } = useQuery<AvailabilityResult>({
     queryKey: [
@@ -359,7 +347,6 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const equipment = availability?.equipment ?? [];
   const operatingDays = availability?.operatingDays ?? [];
   const durations = availability?.durations ?? {};
-  const selectedSlot = slots.find((s) => s.time === time) ?? null;
 
   const activeOpDay = activeResourceType ? operatingDays.find((o) => o.resourceType === activeResourceType) ?? null : null;
   const activeIsOffDay = !!activeOpDay && !activeOpDay.isOperatingToday;
@@ -377,7 +364,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   });
   const dayCells = useMemo(() => buildCommandCalendarCells({ summary, facility }), [summary, facility]);
 
-  // ── Calendar eligibility — the ACTIVE service ONLY (never an intersection) ──
+  // ── Calendar eligibility — the ACTIVE tab ONLY (never an intersection) ──
   const operatingDaysByResource = useMemo(() => {
     const m = new Map<string, number[]>();
     for (const o of operatingDays) m.set(o.resourceType, o.days);
@@ -398,16 +385,6 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     enabled: !hasPatient && searchTerm.length >= 2,
   });
 
-  // Drop any selected service that vanished from the registry.
-  useEffect(() => {
-    if (services.length === 0 || selected.size === 0) return;
-    const codes = new Set(services.map((s) => s.internalCode));
-    let changed = false;
-    const next = new Map(selected);
-    for (const code of next.keys()) if (!codes.has(code)) { next.delete(code); changed = true; }
-    if (changed) setSelected(next);
-  }, [services]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── Existing appointments (dedupe) ──
   // Resource types the patient already has on the SELECTED date (from agenda).
   const existingOnSelectedDate = useMemo(() => {
@@ -420,136 +397,121 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     return m;
   }, [agenda, patient.name]);
 
-  // ── Ultrasound scheduling derivations ──
-  const scheduledUltrasoundCodes = useMemo(
-    () => new Set(visitPlan.ultrasound.flatMap((g) => g.studyCodes)),
-    [visitPlan.ultrasound],
-  );
-  const unscheduledUltrasoundCodes = useMemo(
-    () => ultrasoundSelected.map((s) => s.internalCode).filter((c) => !scheduledUltrasoundCodes.has(c)),
-    [ultrasoundSelected, scheduledUltrasoundCodes],
-  );
-  const pickedUltrasoundCodes = useMemo(
-    () => unscheduledUltrasoundCodes.filter((c) => usPick[c] !== false),
-    [unscheduledUltrasoundCodes, usPick],
-  );
-
   const brainPlaced = !!visitPlan.brainwave;
   const vitalPlaced = !!visitPlan.vitalwave;
 
-  // Reconcile the plan when the selection changes: drop blocks/studies whose
-  // service was unchecked; empty ultrasound groups are removed.
-  useEffect(() => {
-    setVisitPlan((prev) => {
-      let changed = false;
-      const next: VisitPlan = { ...prev, ultrasound: [] as UltrasoundGroupBlock[] };
-      if (prev.brainwave && !(brainwave && selected.has(prev.brainwave.code))) { delete next.brainwave; changed = true; }
-      if (prev.vitalwave && !(vitalwave && selected.has(prev.vitalwave.code))) { delete next.vitalwave; changed = true; }
-      for (const g of prev.ultrasound) {
-        const codes = g.studyCodes.filter((c) => selected.has(c));
-        if (codes.length === 0) { changed = true; continue; }
-        if (codes.length !== g.studyCodes.length) { next.ultrasound.push({ ...g, studyCodes: codes, durationMin: g.perStudyMin * codes.length }); changed = true; }
-        else next.ultrasound.push(g);
-      }
-      return changed ? next : prev;
-    });
-  }, [selected, brainwave, vitalwave]);
-
-  // ── Default / auto-advance active unit ──
-  // First unscheduled selected service by bucket order; ultrasound defaults to
-  // ALL currently-unscheduled selected studies (Schedule All Together).
-  function computeDefaultActive(plan: VisitPlan): ActiveUnit | null {
-    const bwPlaced = !!plan.brainwave || existingOnSelectedDate.has("brainwave");
-    const vwPlaced = !!plan.vitalwave || existingOnSelectedDate.has("vitalwave");
-    const usDone = new Set(plan.ultrasound.flatMap((g) => g.studyCodes));
-    const usLeft = ultrasoundSelected.map((s) => s.internalCode).filter((c) => !usDone.has(c));
-    if (brainSelected && !bwPlaced) return { kind: "brainwave" };
-    if (vitalSelected && !vwPlaced) return { kind: "vitalwave" };
-    if (usLeft.length > 0) return { kind: "ultrasound", studyCodes: usLeft, editGroupId: null };
-    if (brainSelected) return { kind: "brainwave" };
-    if (vitalSelected) return { kind: "vitalwave" };
-    if (ultrasoundSelected.length > 0) return { kind: "ultrasound", studyCodes: ultrasoundSelected.map((s) => s.internalCode), editGroupId: null };
-    return null;
+  // ── Choosing / activating tabs ──
+  // Choose from the picker: add the tab if new, activate it, reset pending.
+  // For a NEW ultrasound choice, the current-group selection starts EMPTY.
+  function chooseTab(kind: TabKind) {
+    setChosenTabs((prev) => (prev.includes(kind) ? prev : [...prev, kind]));
+    setActiveTab(kind);
+    setTime("");
+    setLastScheduled(null);
+    if (kind === "ultrasound") setUsGroupSel(new Set());
+    setPickerOpen(false);
+    setAddMoreOpen(false);
+    setPickerUsOpen(false);
   }
-  // Keep a valid active unit; otherwise fall back to the default. Runs when the
-  // selection or plan changes (never clobbers an explicit still-valid choice).
-  useEffect(() => {
-    setActiveUnit((cur) => {
-      if (cur) {
-        if (cur.kind === "brainwave" && brainSelected) return cur;
-        if (cur.kind === "vitalwave" && vitalSelected) return cur;
-        if (cur.kind === "ultrasound") {
-          const stillCodes = cur.studyCodes.filter((c) => selected.has(c));
-          if (stillCodes.length > 0) return stillCodes.length === cur.studyCodes.length ? cur : { ...cur, studyCodes: stillCodes };
-        }
-      }
-      return computeDefaultActive(visitPlan);
+  // Click an existing tab: activate it. Preserve the ultrasound group selection.
+  function activateTab(kind: TabKind, opts?: { date?: string; time?: string }) {
+    setActiveTab(kind);
+    setLastScheduled(null);
+    if (opts?.date) setSelectedDate(opts.date);
+    setTime(opts?.time ?? "");
+  }
+  // Close a tab: remove it, drop its client-plan blocks, re-point active.
+  function closeTab(kind: TabKind) {
+    setChosenTabs((prev) => {
+      const next = prev.filter((k) => k !== kind);
+      setActiveTab((cur) => (cur === kind ? next[next.length - 1] ?? null : cur));
+      return next;
     });
-  }, [selected, visitPlan, brainSelected, vitalSelected]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (kind === "brainwave") setVisitPlan((p) => { const n = { ...p }; delete n.brainwave; return n; });
+    else if (kind === "vitalwave") setVisitPlan((p) => { const n = { ...p }; delete n.vitalwave; return n; });
+    else { setVisitPlan((p) => ({ ...p, ultrasound: [] })); setUsGroupSel(new Set()); }
+    setTime("");
+    setLastScheduled(null);
+  }
 
-  // ── Flattened placed items + confirmation grouping ──
+  // ── Ultrasound current-group selection (user-controlled) ──
+  function toggleUsStudy(code: string) {
+    if (scheduledUltrasoundCodes.has(code)) return; // already scheduled — not selectable
+    setUsGroupSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
+    });
+    setTime("");
+    setLastScheduled(null);
+  }
+  function selectAllUs() {
+    setUsGroupSel(new Set(unscheduledUsStudies.map((u) => u.internalCode)));
+    setTime("");
+    setLastScheduled(null);
+  }
+  function clearUs() {
+    setUsGroupSel(new Set());
+    setTime("");
+    setLastScheduled(null);
+  }
+  // "Change" a scheduled ultrasound group: pull it out of the plan and re-stage
+  // its studies as the current group at its old date/time (selection, not commit).
+  function changeUsGroup(g: UltrasoundGroupBlock) {
+    setVisitPlan((p) => ({ ...p, ultrasound: p.ultrasound.filter((x) => x.id !== g.id) }));
+    setActiveTab("ultrasound");
+    setUsGroupSel(new Set(g.studyCodes));
+    setSelectedDate(g.isoDate);
+    setTime(g.time);
+    setLastScheduled(null);
+  }
+
+  // ── Flattened placed items + plan summary ──
   const placedItems = useMemo<PlacedItem[]>(() => {
     const out: PlacedItem[] = [];
     if (visitPlan.brainwave) out.push({ key: "brainwave", resourceType: "brainwave", label: "BrainWave", ...pick(visitPlan.brainwave) });
     if (visitPlan.vitalwave) out.push({ key: "vitalwave", resourceType: "vitalwave", label: "VitalWave", ...pick(visitPlan.vitalwave) });
-    for (const g of visitPlan.ultrasound) out.push({ key: `ultrasound:${g.id}`, resourceType: "ultrasound", label: `Ultrasound ×${g.studyCodes.length}`, isoDate: g.isoDate, time: g.time, startMinutes: g.startMinutes, durationMin: g.durationMin, override: g.override ?? null });
+    for (const g of visitPlan.ultrasound) out.push({ key: `ultrasound:${g.id}`, resourceType: "ultrasound", label: g.studyCodes.map(usNameOf).join(" + "), isoDate: g.isoDate, time: g.time, startMinutes: g.startMinutes, durationMin: g.durationMin, override: g.override ?? null });
     return out;
     function pick(b: SingleBlock) { return { isoDate: b.isoDate, time: b.time, startMinutes: b.startMinutes, durationMin: b.durationMin, override: b.override ?? null }; }
-  }, [visitPlan]);
+  }, [visitPlan]); // eslint-disable-line react-hooks/exhaustive-deps
   const plannedCount = placedItems.length;
   const canConfirm = hasPatient && plannedCount > 0;
 
   // ── Commit the pending selection into the client visit plan ──
   // Called ONLY by the explicit "Schedule <service>" action — NEVER by a bare
   // time-slot click. Adds/updates the plan, clears the pending time, records a
-  // success marker, and deliberately does NOT auto-advance to another service
-  // (a time click is a selection; scheduling is an explicit commit).
+  // success marker, and deliberately does NOT auto-advance to another tab.
   function placeActive(at: { time: string; startMinutes?: number }, override?: OverrideMeta | null) {
-    if (!activeUnit) return;
+    if (!activeTab) return;
     const startMinutes = at.startMinutes ?? hmToMin(at.time);
-    // Dedupe brainwave/vitalwave against an existing same-day appointment.
-    if ((activeUnit.kind === "brainwave" || activeUnit.kind === "vitalwave") && existingOnSelectedDate.has(activeUnit.kind)) {
-      toast({ title: "Already scheduled", description: `${RESOURCE_LABELS[activeUnit.kind]} already has an appointment on ${prettyDateShort(selectedDate)}.` });
+    // Dedupe brainwave/vitalwave against an existing (server-written) same-day
+    // appointment — but allow overwriting a client-plan block (reschedule).
+    if ((activeTab === "brainwave" || activeTab === "vitalwave") && existingOnSelectedDate.has(activeTab) && !visitPlan[activeTab]) {
+      toast({ title: "Already scheduled", description: `${RESOURCE_LABELS[activeTab]} already has an appointment on ${prettyDateShort(selectedDate)}.` });
       return;
     }
-    let nextPlan: VisitPlan;
-    let successKey: string;
-    let successLabel: string;
-    let nextActive: ActiveUnit;
-    if (activeUnit.kind === "brainwave") {
+    if (activeTab === "brainwave") {
       const code = brainwave?.internalCode; if (!code) return;
       const durationMin = activeDurationMin ?? 0;
-      nextPlan = { ...visitPlan, brainwave: { code, isoDate: selectedDate, time: at.time, startMinutes, durationMin, override: override ?? null } };
-      successKey = "brainwave"; successLabel = "BrainWave"; nextActive = { kind: "brainwave" };
-    } else if (activeUnit.kind === "vitalwave") {
+      setVisitPlan((p) => ({ ...p, brainwave: { code, isoDate: selectedDate, time: at.time, startMinutes, durationMin, override: override ?? null } }));
+      setLastScheduled({ key: "brainwave", label: "BrainWave", isoDate: selectedDate, time: at.time });
+    } else if (activeTab === "vitalwave") {
       const code = vitalwave?.internalCode; if (!code) return;
       const durationMin = activeDurationMin ?? 0;
-      nextPlan = { ...visitPlan, vitalwave: { code, isoDate: selectedDate, time: at.time, startMinutes, durationMin, override: override ?? null } };
-      successKey = "vitalwave"; successLabel = "VitalWave"; nextActive = { kind: "vitalwave" };
+      setVisitPlan((p) => ({ ...p, vitalwave: { code, isoDate: selectedDate, time: at.time, startMinutes, durationMin, override: override ?? null } }));
+      setLastScheduled({ key: "vitalwave", label: "VitalWave", isoDate: selectedDate, time: at.time });
     } else {
-      const codes = activeUnit.studyCodes.filter((c) => selected.has(c));
+      const codes = Array.from(usGroupSel);
       if (codes.length === 0) return;
-      const perStudyMin = Math.max(5, Math.round((activeDurationMin ?? 15 * codes.length) / codes.length));
-      const durationMin = activeDurationMin ?? perStudyMin * codes.length;
-      const groups = visitPlan.ultrasound.filter((g) => g.id !== activeUnit.editGroupId);
-      groups.push({ id: activeUnit.editGroupId ?? nextGroupId(), studyCodes: codes, isoDate: selectedDate, time: at.time, startMinutes, durationMin, perStudyMin, override: override ?? null });
-      nextPlan = { ...visitPlan, ultrasound: groups };
-      successKey = "ultrasound"; successLabel = `${codes.length} Ultrasound${codes.length === 1 ? "" : "s"}`;
-      // Stay on ultrasound for split flow: if studies remain, keep them active
-      // (same service — not a jump); otherwise keep the ultrasound context.
-      const done = new Set(nextPlan.ultrasound.flatMap((g) => g.studyCodes));
-      const remaining = ultrasoundSelected.map((s) => s.internalCode).filter((c) => !done.has(c));
-      nextActive = { kind: "ultrasound", studyCodes: remaining, editGroupId: null };
+      const durationMin = activeDurationMin ?? 15 * codes.length;
+      const perStudyMin = Math.max(5, Math.round(durationMin / codes.length));
+      setVisitPlan((p) => ({ ...p, ultrasound: [...p.ultrasound, { id: nextGroupId(), studyCodes: codes, isoDate: selectedDate, time: at.time, startMinutes, durationMin, perStudyMin, override: override ?? null }] }));
+      setUsGroupSel(new Set()); // group committed — current selection empties
+      setLastScheduled({ key: "ultrasound", label: `${codes.length} Ultrasound${codes.length === 1 ? "" : "s"}`, isoDate: selectedDate, time: at.time });
     }
-    setVisitPlan(nextPlan);
-    setTime("");
-    setLastScheduled({ key: successKey, label: successLabel, isoDate: selectedDate, time: at.time });
-    setActiveUnit(nextActive);
+    setTime(""); // NO auto-advance: the active tab stays put.
   }
-
-  function removeBrain() { setVisitPlan((p) => { const n = { ...p }; delete n.brainwave; return n; }); }
-  function removeVital() { setVisitPlan((p) => { const n = { ...p }; delete n.vitalwave; return n; }); }
-  function removeUltrasoundGroup(id: string) { setVisitPlan((p) => ({ ...p, ultrasound: p.ultrasound.filter((g) => g.id !== id) })); }
 
   // ── Write mapping → existing grouped multi-date endpoint ──
   type WriteGroup = {
@@ -615,7 +577,9 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
         setQuickDate(null);
         setConfirmOpen(false);
         setVisitPlan(EMPTY_PLAN);
-        setUsPick({});
+        setUsGroupSel(new Set());
+        setChosenTabs([]);
+        setActiveTab(null);
       } else if (result.overall === "partial") {
         const failed = result.services.filter((s) => s.status !== "scheduled").map((s) => s.serviceType);
         toast({ title: "Partially scheduled", description: `${result.scheduledCount} of ${result.totalCount} scheduled. Not scheduled: ${failed.join(", ")}.`, variant: "destructive" });
@@ -635,19 +599,17 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     scheduleMutation.mutate(groups);
   }
 
-  // Click a time slot for the ACTIVE unit: this ONLY SELECTS the time (pending).
-  // It never commits and never advances. The visible SELECTED APPOINTMENT
-  // summary + explicit "Schedule <service>" button is the commit (and, for a
-  // soft conflict, routes through the override reason first).
+  // Click a time slot for the ACTIVE tab: this ONLY SELECTS the time (pending).
+  // It never commits, never advances, never switches tabs.
   function onPickSlot(slot: { time: string }) {
-    if (!activeUnit) return;
+    if (!activeRequest) return;
     setLastScheduled(null);
     setTime(slot.time);
   }
 
   // Explicit commit of the pending selection (the primary Schedule button).
   function scheduleActive() {
-    if (!activeUnit || !time) return;
+    if (!activeRequest || !time) return;
     const slot = slots.find((s) => s.time === time) ?? null;
     if (slot && !slot.fits) {
       // Soft conflict — require an override reason before committing.
@@ -656,10 +618,10 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
         time,
         message:
           slot.constraint === "off_day"
-            ? `${activeLabel} is not normally scheduled on ${prettyDateLong(selectedDate)}.`
+            ? `${activeTabLabel} is not normally scheduled on ${prettyDateLong(selectedDate)}.`
             : slot.constraint === "outage"
-              ? `${activeLabel} is unavailable (equipment outage) at ${pretty12h(time)}.`
-              : `${activeLabel} capacity is full at ${pretty12h(time)}.`,
+              ? `${activeTabLabel} is unavailable (equipment outage) at ${pretty12h(time)}.`
+              : `${activeTabLabel} capacity is full at ${pretty12h(time)}.`,
       });
       return;
     }
@@ -674,9 +636,9 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     setOverrideCategory("");
   }
 
-  // ── Recommendation for the ACTIVE service (client-side smart hint) ──
+  // ── Recommendation for the ACTIVE tab (client-side smart hint) ──
   const activeRecommendation = useMemo(() => {
-    if (!activeUnit) return null;
+    if (!activeRequest) return null;
     const fitting = slots.filter((s) => s.fits);
     if (fitting.length === 0) return null;
     const sameDayEnds = placedItems
@@ -689,7 +651,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     }
     const first = fitting[0];
     return { time: first.time, startMinutes: first.startMinutes, reason: sameDayEnds.length > 0 ? "Next open time today" : "Earliest available" };
-  }, [activeUnit, slots, placedItems, selectedDate]);
+  }, [activeRequest, slots, placedItems, selectedDate]);
 
   const monthCells = useMemo(() => {
     const first = new Date(cursor.y, cursor.m, 1);
@@ -711,7 +673,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
 
   const title = hasPatient && patient.name ? `Schedule — ${patient.name}` : "Schedule";
 
-  // ── Admin-review + Plexus summary tags ──
+  // ── Admin-review tag (informational; never blocks scheduling) ──
   const reviewTag = (() => {
     if (patient.patientScreeningId == null || !qualification) return null;
     const s = qualification.adminReviewSummary;
@@ -725,186 +687,253 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
           : "border-slate-200 bg-slate-50 text-slate-600";
     return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${tone}`} data-testid="scheduler-admin-review-tag">{label}</span>;
   })();
-  const plexusCount = qualification?.services.filter((s) => s.resourceType !== "other").length ?? 0;
 
-  // Activate a unit from inside the dropdown, then close the menu (+ jump the
-  // calendar to a placed block's date when editing).
-  function activateAndClose(unit: ActiveUnit, jumpTo?: string) {
-    activate(unit, jumpTo ? { date: jumpTo } : undefined);
+  // ── QUALIFIED FOR (patient context) — READ-ONLY, neutral, minimal ──
+  const qualifiedForSection = (
+    <div className="flex flex-col gap-1" data-testid="scheduler-qualified-for">
+      {qualBrain ? (
+        <div className="flex items-center gap-2 text-[13px] text-slate-700" data-testid="scheduler-qual-for-brainwave">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" /> BrainWave
+        </div>
+      ) : null}
+      {qualVital ? (
+        <div className="flex items-center gap-2 text-[13px] text-slate-700" data-testid="scheduler-qual-for-vitalwave">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-600" /> VitalWave
+        </div>
+      ) : null}
+      {qualUsStudies.length > 0 ? (
+        <div className="flex items-center gap-2 text-[13px] text-slate-700" data-testid="scheduler-qual-for-ultrasound">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600" /> Ultrasound · {qualUsStudies.length} stud{qualUsStudies.length === 1 ? "y" : "ies"}
+        </div>
+      ) : null}
+      {!qualBrain && !qualVital && qualUsStudies.length === 0 ? (
+        <div className="text-[12px] italic text-slate-400" data-testid="scheduler-qual-for-none">No qualified ancillaries on file.</div>
+      ) : null}
+    </div>
+  );
+
+  // ── The ONE ancillary picker ("+ Choose ancillary") ──
+  const brainAlready = chosenTabs.includes("brainwave");
+  const vitalAlready = chosenTabs.includes("vitalwave");
+  const usAlready = chosenTabs.includes("ultrasound");
+  // In patient context, qualified services are the primary list; the rest sit
+  // behind "+ Add another ancillary". In generic context, all are primary.
+  const primaryBrain = hasPatient ? qualBrain : !!brainwave;
+  const primaryVital = hasPatient ? qualVital : !!vitalwave;
+  const primaryUs = hasPatient ? qualUsStudies.length > 0 : ultrasound.length > 0;
+  const extraBrain = !!brainwave && !primaryBrain;
+  const extraVital = !!vitalwave && !primaryVital;
+  const extraUs = ultrasound.length > 0 && !primaryUs;
+  const hasExtras = extraBrain || extraVital || extraUs;
+
+  function PickRow({ kind, label, testId }: { kind: TabKind; label: string; testId: string }) {
+    const chosen = chosenTabs.includes(kind);
+    return (
+      <button type="button" onClick={() => chooseTab(kind)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-50"
+        data-testid={testId}>
+        <span className="flex items-center gap-2 truncate">
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RESOURCE_DOT[kind]}`} />
+          {label}
+        </span>
+        {chosen ? <Check className="h-3.5 w-3.5 shrink-0 text-slate-400" /> : null}
+      </button>
+    );
   }
 
-  // ── The ONE Appointment Types dropdown (selection + scheduling actions) ──
-  const serviceSummary = (() => {
-    const parts: string[] = [];
-    if (brainSelected) parts.push("BrainWave");
-    if (vitalSelected) parts.push("VitalWave");
-    if (ultrasoundSelected.length > 0) parts.push(`Ultrasound (${ultrasoundSelected.length})`);
-    return parts.length > 0 ? parts.join(", ") : "Select appointment types";
-  })();
-
-  // Compact inline status for a single-service row.
-  function singleStatus(block: SingleBlock | undefined, existing: { time: string } | undefined) {
-    if (block) return `${prettyDateShort(block.isoDate)} · ${pretty12h(block.time)}${block.override ? " · override" : ""}`;
-    if (existing) return `Existing · ${pretty12h(existing.time)}`;
-    return "Not scheduled";
-  }
-  function studyGroupFor(code: string): UltrasoundGroupBlock | null {
-    return visitPlan.ultrasound.find((g) => g.studyCodes.includes(code)) ?? null;
-  }
-
-  const serviceSelector = (
-    <div data-testid="scheduler-service-selector" ref={serviceMenuRef}>
+  const picker = (
+    <div className="relative" ref={pickerRef} data-testid="scheduler-schedule-picker">
       {servicesLoading ? (
         <div className="flex items-center gap-2 py-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading services…</div>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => setServiceMenuOpen((v) => !v)}
-            className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${selectedList.length > 0 ? "border-slate-300 bg-white text-slate-800" : "border-slate-200 bg-white text-slate-400"} hover:bg-slate-50`}
-            data-testid="scheduler-service-dropdown"
-            aria-expanded={serviceMenuOpen}
-          >
-            <span className="truncate font-medium">{serviceSummary}</span>
-            <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${serviceMenuOpen ? "rotate-180" : ""}`} />
+          <button type="button" onClick={() => setPickerOpen((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-600 transition-colors hover:border-slate-400 hover:bg-slate-50"
+            data-testid="scheduler-choose-ancillary" aria-expanded={pickerOpen}>
+            <Plus className="h-3.5 w-3.5" /> Choose ancillary
+            <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform ${pickerOpen ? "rotate-180" : ""}`} />
           </button>
-          {selectedList.some((s) => s.plexusSourced) ? (
-            <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500" data-testid="scheduler-plexus-hint"><Sparkles className="h-3 w-3" /> Selected from Plexus IQ</div>
-          ) : null}
-          {serviceMenuOpen && (
-            <div className="mt-1 max-h-[60vh] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg" data-testid="scheduler-service-menu">
-              {/* BrainWave row: checkbox (select) + status + Schedule/Change */}
-              {brainwave && (
-                <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                  <button type="button" onClick={() => toggleService(brainwave, "brainwave")}
-                    className={`flex min-w-0 flex-1 items-center gap-2 text-left ${brainSelected ? "text-violet-700" : "text-slate-700"}`}
-                    data-testid="scheduler-service-brainwave" aria-pressed={brainSelected}>
-                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${brainSelected ? "border-violet-500 bg-violet-500 text-white" : "border-slate-300"}`}>{brainSelected ? <Check className="h-3 w-3" /> : null}</span>
-                    <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-violet-500" />
-                    <span className="min-w-0">
-                      <span className="block truncate">BrainWave</span>
-                      {brainSelected ? <span className="block truncate text-[10px] text-slate-400" data-testid="scheduler-svc-brainwave-status">{singleStatus(visitPlan.brainwave, existingOnSelectedDate.get("brainwave"))}</span> : null}
-                    </span>
-                  </button>
-                  {brainSelected ? (
-                    <button type="button" onClick={() => activateAndClose({ kind: "brainwave" }, visitPlan.brainwave?.isoDate)}
-                      className="shrink-0 rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 hover:bg-violet-100"
-                      data-testid="scheduler-svc-brainwave-schedule">
-                      {brainPlaced ? "Change" : "Schedule"}
+          {pickerOpen ? (
+            <div className="absolute z-30 mt-1 w-60 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg" data-testid="scheduler-ancillary-menu">
+              {primaryBrain ? <PickRow kind="brainwave" label="BrainWave" testId="scheduler-pick-brainwave" /> : null}
+              {primaryVital ? <PickRow kind="vitalwave" label="VitalWave" testId="scheduler-pick-vitalwave" /> : null}
+              {primaryUs ? (
+                <div>
+                  <div className="flex items-center">
+                    <button type="button" onClick={() => chooseTab("ultrasound")}
+                      className="flex min-w-0 flex-1 items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-50"
+                      data-testid="scheduler-pick-ultrasound">
+                      <span className="flex items-center gap-2 truncate">
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600" /> Ultrasound
+                        {usUniverse.length > 0 ? <span className="text-[11px] text-slate-400">· {usUniverse.length} studies</span> : null}
+                      </span>
+                      {usAlready ? <Check className="h-3.5 w-3.5 shrink-0 text-slate-400" /> : null}
                     </button>
-                  ) : null}
-                </div>
-              )}
-              {/* VitalWave row */}
-              {vitalwave && (
-                <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                  <button type="button" onClick={() => toggleService(vitalwave, "vitalwave")}
-                    className={`flex min-w-0 flex-1 items-center gap-2 text-left ${vitalSelected ? "text-red-700" : "text-slate-700"}`}
-                    data-testid="scheduler-service-vitalwave" aria-pressed={vitalSelected}>
-                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${vitalSelected ? "border-red-500 bg-red-500 text-white" : "border-slate-300"}`}>{vitalSelected ? <Check className="h-3 w-3" /> : null}</span>
-                    <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-red-500" />
-                    <span className="min-w-0">
-                      <span className="block truncate">VitalWave</span>
-                      {vitalSelected ? <span className="block truncate text-[10px] text-slate-400" data-testid="scheduler-svc-vitalwave-status">{singleStatus(visitPlan.vitalwave, existingOnSelectedDate.get("vitalwave"))}</span> : null}
-                    </span>
-                  </button>
-                  {vitalSelected ? (
-                    <button type="button" onClick={() => activateAndClose({ kind: "vitalwave" }, visitPlan.vitalwave?.isoDate)}
-                      className="shrink-0 rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 hover:bg-red-100"
-                      data-testid="scheduler-svc-vitalwave-schedule">
-                      {vitalPlaced ? "Change" : "Schedule"}
-                    </button>
-                  ) : null}
-                </div>
-              )}
-              {/* Ultrasound: studies + Together/Split scheduling — the ONLY nested list */}
-              {ultrasound.length > 0 && (
-                <div className="border-t border-slate-100">
-                  <button type="button" onClick={() => setUltrasoundOpen((v) => !v)}
-                    className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm transition-colors hover:bg-slate-50 ${ultrasoundSelected.length > 0 ? "text-emerald-700" : "text-slate-700"}`}
-                    data-testid="scheduler-service-ultrasound" aria-expanded={ultrasoundOpen}>
-                    <span className="flex items-center gap-2 truncate">
-                      <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-                      Ultrasound{ultrasoundSelected.length > 0 ? ` (${ultrasoundSelected.length})` : ""}
-                    </span>
-                    <ChevronRight className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${ultrasoundOpen ? "rotate-90" : ""}`} />
-                  </button>
-                  {ultrasoundOpen && (
-                    <div className="border-t border-slate-100 bg-slate-50/50" data-testid="scheduler-ultrasound-menu">
-                      <div className="max-h-52 overflow-y-auto py-1">
-                        {ultrasound.map((u) => {
-                          const on = selected.has(u.internalCode);
-                          const grp = studyGroupFor(u.internalCode);
-                          const picked = usPick[u.internalCode] !== false;
-                          return (
-                            <div key={u.internalCode} className="flex items-center gap-2 py-1.5 pl-6 pr-3 text-sm">
-                              <button type="button" onClick={() => toggleService(u, "ultrasound")}
-                                className={`flex min-w-0 flex-1 items-center gap-2 text-left ${on ? "text-emerald-700" : "text-slate-700"}`}
-                                data-testid={`scheduler-ultrasound-option-${u.internalCode}`} aria-pressed={on}>
-                                <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"}`}>{on ? <Check className="h-3 w-3" /> : null}</span>
-                                <span className="min-w-0">
-                                  <span className="block truncate">{u.displayName}</span>
-                                  {u.cptCode ? <span className="block text-[10px] text-slate-400">CPT {u.cptCode}</span> : null}
-                                </span>
-                              </button>
-                              {on && grp ? (
-                                <button type="button" onClick={() => activateAndClose({ kind: "ultrasound", studyCodes: grp.studyCodes, editGroupId: grp.id }, grp.isoDate)}
-                                  className="shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
-                                  data-testid={`scheduler-us-study-status-${u.internalCode}`}>
-                                  {prettyDateShort(grp.isoDate)} · {pretty12h(grp.time)} ✓
-                                </button>
-                              ) : on ? (
-                                <button type="button" onClick={() => setUsPick((p) => ({ ...p, [u.internalCode]: !(p[u.internalCode] !== false) }))}
-                                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${picked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white"}`}
-                                  title={picked ? "In next group" : "Not in next group"}
-                                  data-testid={`scheduler-us-pick-${u.internalCode}`} aria-pressed={picked}>
-                                  {picked ? <Check className="h-3 w-3" /> : null}
-                                </button>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {unscheduledUltrasoundCodes.length > 0 ? (
-                        <div className="border-t border-slate-100 px-3 py-1.5">
-                          <button type="button"
-                            disabled={pickedUltrasoundCodes.length === 0}
-                            onClick={() => activateAndClose({ kind: "ultrasound", studyCodes: pickedUltrasoundCodes, editGroupId: null })}
-                            className="w-full rounded-md bg-emerald-600 px-2 py-1 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
-                            data-testid="scheduler-us-schedule-together">
-                            {pickedUltrasoundCodes.length === unscheduledUltrasoundCodes.length
-                              ? `Schedule All ${unscheduledUltrasoundCodes.length} Together`
-                              : `Schedule Selected Together (${pickedUltrasoundCodes.length})`}
-                          </button>
-                          <div className="mt-0.5 text-center text-[9px] text-slate-400">Uncheck a study on the right to split it onto another day.</div>
-                        </div>
-                      ) : ultrasoundSelected.length > 0 ? (
-                        <div className="border-t border-slate-100 px-3 py-1.5 text-center text-[10px] text-emerald-600" data-testid="scheduler-us-all-scheduled">All ultrasound studies scheduled.</div>
-                      ) : null}
+                    {usUniverse.length > 0 ? (
+                      <button type="button" onClick={() => setPickerUsOpen((v) => !v)} className="px-2 py-1.5 text-slate-400 hover:text-slate-600" data-testid="scheduler-pick-ultrasound-expand" aria-label="Preview ultrasound studies">
+                        <ChevronRight className={`h-3.5 w-3.5 transition-transform ${pickerUsOpen ? "rotate-90" : ""}`} />
+                      </button>
+                    ) : null}
+                  </div>
+                  {pickerUsOpen ? (
+                    <div className="border-t border-slate-100 bg-slate-50/60 py-0.5" data-testid="scheduler-pick-ultrasound-studies">
+                      {usUniverse.map((u) => (
+                        <div key={u.internalCode} className="truncate px-3 py-0.5 pl-7 text-[11px] text-slate-500">{u.displayName}</div>
+                      ))}
+                      <div className="px-3 py-0.5 pl-7 text-[10px] italic text-slate-400">Choose studies to schedule inside the Ultrasound tab.</div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
-              )}
+              ) : null}
+              {hasExtras ? (
+                <div className="border-t border-slate-100">
+                  <button type="button" onClick={() => setAddMoreOpen((v) => !v)}
+                    className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[12px] font-medium text-slate-500 transition-colors hover:bg-slate-50"
+                    data-testid="scheduler-add-another" aria-expanded={addMoreOpen}>
+                    <Plus className="h-3 w-3" /> Add another ancillary
+                    <ChevronDown className={`ml-auto h-3.5 w-3.5 text-slate-400 transition-transform ${addMoreOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {addMoreOpen ? (
+                    <div className="bg-slate-50/60">
+                      {extraBrain ? <PickRow kind="brainwave" label="BrainWave" testId="scheduler-pick-extra-brainwave" /> : null}
+                      {extraVital ? <PickRow kind="vitalwave" label="VitalWave" testId="scheduler-pick-extra-vitalwave" /> : null}
+                      {extraUs ? <PickRow kind="ultrasound" label="Ultrasound" testId="scheduler-pick-extra-ultrasound" /> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-          )}
+          ) : null}
         </>
       )}
     </div>
   );
 
-  // ── Time grid (compact, 15-min) — reflects the ACTIVE service only ──
-  const activePlacedTime = (() => {
-    if (!activeUnit) return null;
-    if (activeUnit.kind === "brainwave" && visitPlan.brainwave?.isoDate === selectedDate) return visitPlan.brainwave.time;
-    if (activeUnit.kind === "vitalwave" && visitPlan.vitalwave?.isoDate === selectedDate) return visitPlan.vitalwave.time;
-    if (activeUnit.kind === "ultrasound" && activeUnit.editGroupId) {
-      const g = visitPlan.ultrasound.find((x) => x.id === activeUnit.editGroupId);
-      if (g && g.isoDate === selectedDate) return g.time;
+  // ── Scheduling tabs (minimal, professional) with compact status ──
+  function tabStatus(kind: TabKind): string {
+    if (kind === "ultrasound") {
+      const total = usUniverse.length;
+      const done = scheduledUltrasoundCodes.size;
+      if (done === 0) return "";
+      if (total > 0 && done >= total) return "✓";
+      return total > 0 ? `${done}/${total}` : `${done}`;
+    }
+    const placed = kind === "brainwave" ? brainPlaced : vitalPlaced;
+    const existing = existingOnSelectedDate.has(kind);
+    return placed || existing ? "✓" : "";
+  }
+
+  const tabsRow = chosenTabs.length > 0 ? (
+    <div className="flex flex-wrap items-stretch gap-0.5 border-b border-slate-200" data-testid="scheduler-tabs">
+      {chosenTabs.map((kind) => {
+        const active = activeTab === kind;
+        const status = tabStatus(kind);
+        return (
+          <div key={kind} className={`group -mb-px flex items-center gap-1 border-b-2 px-2.5 py-1.5 text-[12px] ${active ? "border-slate-900 font-semibold text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
+            <button type="button" onClick={() => activateTab(kind)} className="flex items-center gap-1.5" data-testid={`scheduler-tab-${kind}`} aria-pressed={active}>
+              <span className={`h-1.5 w-1.5 rounded-full ${RESOURCE_DOT[kind]}`} />
+              {RESOURCE_LABELS[kind]}
+              {status ? <span className="text-[11px] font-semibold tabular-nums text-slate-500" data-testid={`scheduler-tab-status-${kind}`}>{status}</span> : null}
+            </button>
+            <button type="button" onClick={() => closeTab(kind)} className="rounded p-0.5 text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100" title={`Remove ${RESOURCE_LABELS[kind]}`} data-testid={`scheduler-tab-close-${kind}`}>
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
+
+  // ── Active single-service tab status (BrainWave / VitalWave) ──
+  const activeSingleStatus = (activeTab === "brainwave" || activeTab === "vitalwave") ? (() => {
+    const block = activeTab === "brainwave" ? visitPlan.brainwave : visitPlan.vitalwave;
+    const existing = existingOnSelectedDate.get(activeTab);
+    if (block) {
+      return (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5" data-testid={`scheduler-tab-scheduled-${activeTab}`}>
+          <span className="flex items-center gap-1.5 text-[12px] text-slate-700"><Check className="h-3.5 w-3.5 text-emerald-600" /> Scheduled · {prettyDateShort(block.isoDate)} · {pretty12h(block.time)}{block.override ? " · override" : ""}</span>
+          <button type="button" onClick={() => activateTab(activeTab!, { date: block.isoDate, time: block.time })} className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100" data-testid={`scheduler-tab-change-${activeTab}`}>Change</button>
+        </div>
+      );
+    }
+    if (existing) {
+      return (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[12px] text-slate-600" data-testid={`scheduler-tab-existing-${activeTab}`}>
+          Existing appointment · {pretty12h(existing.time)}
+        </div>
+      );
     }
     return null;
+  })() : null;
+
+  // ── Ultrasound tab body (study selection + scheduled groups) ──
+  const ultrasoundTabBody = activeTab === "ultrasound" ? (
+    <div className="flex flex-col gap-2" data-testid="scheduler-ultrasound-tab">
+      {unscheduledUsStudies.length > 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2.5 py-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Available studies</span>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={selectAllUs} className="text-[11px] font-medium text-slate-500 underline hover:text-slate-700" data-testid="scheduler-us-select-all">Select all</button>
+              {usGroupSel.size > 0 ? <button type="button" onClick={clearUs} className="text-[11px] font-medium text-slate-500 underline hover:text-slate-700" data-testid="scheduler-us-clear">Clear</button> : null}
+            </div>
+          </div>
+          <div className="max-h-40 overflow-y-auto py-0.5">
+            {unscheduledUsStudies.map((u) => {
+              const checked = usGroupSel.has(u.internalCode);
+              return (
+                <button key={u.internalCode} type="button" onClick={() => toggleUsStudy(u.internalCode)}
+                  className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[13px] transition-colors hover:bg-slate-50 ${checked ? "text-slate-900" : "text-slate-700"}`}
+                  data-testid={`scheduler-us-study-${u.internalCode}`} aria-pressed={checked}>
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300"}`} data-testid={`scheduler-us-check-${u.internalCode}`}>{checked ? <Check className="h-3 w-3" /> : null}</span>
+                  <span className="min-w-0 truncate">{u.displayName}{u.cptCode ? <span className="ml-1 text-[10px] text-slate-400">CPT {u.cptCode}</span> : null}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="border-t border-slate-100 px-2.5 py-1 text-[11px] text-slate-500" data-testid="scheduler-us-selected-count">
+            {usGroupSel.size} selected{usGroupSel.size > 0 && activeDurationMin ? ` · ${activeDurationMin} min` : ""}
+            {usGroupSel.size === 0 ? " — check a study to schedule it." : " — pick a time below, then Schedule."}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-[11px] text-emerald-700" data-testid="scheduler-us-all-scheduled">All ultrasound studies scheduled.</div>
+      )}
+
+      {visitPlan.ultrasound.length > 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white" data-testid="scheduler-us-scheduled">
+          <div className="border-b border-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Scheduled groups</div>
+          <div className="flex flex-col divide-y divide-slate-100">
+            {visitPlan.ultrasound.map((g) => (
+              <div key={g.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5" data-testid={`scheduler-us-group-${g.id}`}>
+                <span className="min-w-0 text-[12px] text-slate-700">
+                  <span className="font-semibold tabular-nums">{prettyDateShort(g.isoDate)} · {pretty12h(g.time)}</span>
+                  <span className="block truncate text-slate-500">{g.studyCodes.map(usNameOf).join(" + ")}</span>
+                </span>
+                <button type="button" onClick={() => changeUsGroup(g)} className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100" data-testid={`scheduler-us-change-${g.id}`}>Change</button>
+              </div>
+            ))}
+          </div>
+          {unscheduledUsStudies.length > 0 ? (
+            <div className="border-t border-slate-100 px-2.5 py-1 text-[11px] text-slate-500" data-testid="scheduler-us-remaining">
+              Remaining: {unscheduledUsStudies.map((u) => u.displayName).join(", ")}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  // ── Time grid (compact, 15-min) — reflects the ACTIVE tab only ──
+  const activePlacedTime = (() => {
+    if (activeTab === "brainwave" && visitPlan.brainwave?.isoDate === selectedDate) return visitPlan.brainwave.time;
+    if (activeTab === "vitalwave" && visitPlan.vitalwave?.isoDate === selectedDate) return visitPlan.vitalwave.time;
+    return null;
   })();
-  const timeGrid = !primary ? (
-    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Choose an appointment type to schedule.</p>
+  const timeGrid = !activeRequest ? (
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-times-empty">
+      {activeTab === "ultrasound" ? "Select at least one study to see available times." : "Choose an ancillary to schedule."}
+    </p>
   ) : slots.length === 0 ? (
     <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Loading availability…</p>
   ) : (
@@ -915,34 +944,35 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
         const full = slot.constraint === "full" || slot.constraint === "outage";
         return (
           <button key={slot.time} type="button" onClick={() => onPickSlot(slot)}
-            className={`relative rounded-lg border px-1 py-1.5 text-center text-[12px] font-medium tabular-nums transition-colors ${
-              isSel ? "border-transparent bg-slate-900 text-white"
+            className={`relative flex items-center justify-center gap-1 rounded-lg border px-1 py-1.5 text-center text-[12px] font-medium tabular-nums transition-colors ${
+              isSel ? "border-slate-900 bg-slate-900 text-white ring-2 ring-slate-900/20"
                 : full ? "border-red-100 bg-red-50/50 text-red-400 hover:bg-red-100"
                   : offDay ? "border-amber-100 bg-amber-50/50 text-amber-500 hover:bg-amber-100"
                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
             title={full ? "At capacity — selecting will prompt an override" : offDay ? "Not a normal service day — selecting will prompt an override" : undefined}
-            data-testid={`scheduler-slot-${slot.time}`}>
+            data-testid={`scheduler-slot-${slot.time}`} aria-pressed={isSel}>
             <span className="leading-none">{pretty12h(slot.time)}</span>
-            {full ? <span className="ml-1 text-[8px] font-semibold uppercase text-red-400" data-testid={`scheduler-slot-full-${slot.time}`}>full</span> : null}
+            {isSel ? <Check className="h-3 w-3 shrink-0" data-testid={`scheduler-slot-selected-${slot.time}`} /> : null}
+            {full && !isSel ? <span className="text-[8px] font-semibold uppercase text-red-400" data-testid={`scheduler-slot-full-${slot.time}`}>full</span> : null}
           </button>
         );
       })}
     </div>
   );
 
-  // ── Off-day banner (ACTIVE service) + its OWN next eligible day ──
-  const offDayBanner = activeIsOffDay && activeOpDay && activeLabel ? (
+  // ── Off-day banner (ACTIVE tab) + its OWN next eligible day ──
+  const offDayBanner = activeIsOffDay && activeOpDay && activeTabLabel ? (
     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800" data-testid="scheduler-offday-banner">
       <div className="flex items-start gap-1.5">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <div>
-          {activeLabel} is not normally scheduled{facility ? ` at ${facility}` : ""} on {WEEKDAYS[weekdayOf(selectedDate)] ?? "this day"}s.
+          {activeTabLabel} is not normally scheduled{facility ? ` at ${facility}` : ""} on {WEEKDAYS[weekdayOf(selectedDate)] ?? "this day"}s.
           {activeOpDay.nextEligibleDay ? (
             <div className="mt-1 flex flex-wrap gap-2">
               <button type="button" onClick={() => { setSelectedDate(activeOpDay.nextEligibleDay!); setTime(""); }} className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-700 hover:bg-amber-100" data-testid="scheduler-offday-choose-next">
                 Choose {prettyDateLong(activeOpDay.nextEligibleDay)}
               </button>
-              <button type="button" onClick={() => setOverrideCtx({ constraint: "off_day", time: time || slots.find((s) => s.capacityFits)?.time || slots[0]?.time || "09:00", message: `${activeLabel} is not normally scheduled on ${prettyDateLong(selectedDate)}.` })} className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-700 hover:bg-amber-100" data-testid="scheduler-offday-override">
+              <button type="button" onClick={() => setOverrideCtx({ constraint: "off_day", time: time || slots.find((s) => s.capacityFits)?.time || slots[0]?.time || "09:00", message: `${activeTabLabel} is not normally scheduled on ${prettyDateLong(selectedDate)}.` })} className="rounded-md border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-700 hover:bg-amber-100" data-testid="scheduler-offday-override">
                 Override this day
               </button>
             </div>
@@ -951,10 +981,6 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       </div>
     </div>
   ) : null;
-
-  // (Soft conflicts are surfaced in the SELECTED APPOINTMENT summary with an
-  // explicit "Override & Schedule" action — never as a bare time-click side
-  // effect.)
 
   // ── Compact equipment access (secondary; not shown by default) ──
   const anyOffToday = operatingDays.some((o) => !o.isOperatingToday);
@@ -983,70 +1009,63 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   ) : null;
 
-  // ── Recommended (ACTIVE service, concise) ──
-  const recommendedBlock = !activeUnit ? (
-    <p className="text-[11px] italic text-slate-400" data-testid="scheduler-recommended-empty">Choose an appointment type to see a recommendation.</p>
-  ) : activeRecommendation ? (
-    <button type="button" onClick={() => { setLastScheduled(null); setTime(activeRecommendation.time); }}
-      className="flex w-full items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left transition-colors hover:bg-emerald-100"
-      data-testid="scheduler-recommended-use">
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold text-slate-900">{pretty12h(activeRecommendation.time)} · {activeLabel}</span>
-        <span className="block truncate text-[11px] text-slate-600">{activeRecommendation.reason}</span>
-      </span>
-      <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">Use</span>
-    </button>
-  ) : (
-    <p className="text-[11px] italic text-slate-400" data-testid="scheduler-recommended-empty">
-      {activeIsOffDay ? `${activeLabel} isn't offered on this day — pick its next eligible day below.` : "No open times for this service today — try another day."}
-    </p>
-  );
-
   // Compact "what the calendar is currently showing" indicator (near times).
-  const activeServiceIndicator = activeUnit && activeLabel ? (
+  const activeServiceIndicator = activeTab && activeTabLabel ? (
     <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500" data-testid="scheduler-active-service">
-      <span className={`h-2 w-2 rounded-full ${RESOURCE_DOT[activeUnit.kind] ?? "bg-slate-300"}`} />
-      {activeLabel}{activeDurationMin ? ` · ${activeDurationMin} min` : ""}
+      <span className={`h-2 w-2 rounded-full ${RESOURCE_DOT[activeTab]}`} />
+      {activeTabLabel}{activeDurationMin ? ` · ${activeDurationMin} min` : ""}
     </span>
   ) : null;
 
-  // Set the active scheduling context (from a Qualified Ancillaries row or the
-  // generic dropdown). Optionally prefill a placed block's date/time (edit).
-  function activate(unit: ActiveUnit, opts?: { date?: string; time?: string }) {
-    setLastScheduled(null);
-    setActiveUnit(unit);
-    if (opts?.date) setSelectedDate(opts.date);
-    setTime(opts?.time ?? "");
-    setServiceMenuOpen(false);
-  }
+  // ── Recommended (ACTIVE tab, concise) — populates only, never commits ──
+  const recommendedBlock = !activeRequest ? null : activeRecommendation ? (
+    <button type="button" onClick={() => { setLastScheduled(null); setTime(activeRecommendation.time); }}
+      className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50"
+      data-testid="scheduler-recommended-use">
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-slate-900">{pretty12h(activeRecommendation.time)}</span>
+        <span className="block truncate text-[11px] text-slate-500">{activeRecommendation.reason}</span>
+      </span>
+      <span className="shrink-0 rounded-full border border-slate-300 px-2 py-0.5 text-[9px] font-semibold uppercase text-slate-600">Use</span>
+    </button>
+  ) : (
+    <p className="text-[11px] italic text-slate-400" data-testid="scheduler-recommended-empty">
+      {activeIsOffDay ? `${activeTabLabel} isn't offered on this day — pick its next eligible day above.` : "No open times for this service today — try another day."}
+    </p>
+  );
 
   // ── Pending selection (a time is chosen but NOT yet scheduled) ──
-  const pendingSlot = activeUnit && time ? slots.find((s) => s.time === time) ?? null : null;
+  const pendingSlot = activeRequest && time ? slots.find((s) => s.time === time) ?? null : null;
   const pendingConflict = !!pendingSlot && !pendingSlot.fits;
   const pendingEnd = time && activeDurationMin ? minToHm(hmToMin(time) + activeDurationMin) : null;
-  const scheduleLabel = !activeUnit
+  const activeUsNames = Array.from(usGroupSel).map(usNameOf);
+  const scheduleLabel = !activeTab
     ? "Schedule"
-    : activeUnit.kind === "ultrasound" ? `Schedule ${activeStudyCount} Ultrasound${activeStudyCount === 1 ? "" : "s"}` : `Schedule ${activeLabel}`;
+    : activeTab === "ultrasound"
+      ? `Schedule ${activeStudyCount} Ultrasound${activeStudyCount === 1 ? "" : "s"}`
+      : `Schedule ${activeTabLabel}`;
   const editingPlaced =
-    (activeUnit?.kind === "brainwave" && brainPlaced) ||
-    (activeUnit?.kind === "vitalwave" && vitalPlaced) ||
-    (activeUnit?.kind === "ultrasound" && !!activeUnit.editGroupId);
-  // The active unit still has unscheduled work (so a recommendation is useful,
-  // e.g. the remaining ultrasound studies after a split, or an unplaced service).
-  const activeHasWork = !activeUnit
+    (activeTab === "brainwave" && brainPlaced) ||
+    (activeTab === "vitalwave" && vitalPlaced);
+  // Does the active tab still have unscheduled work (so a recommendation helps)?
+  const activeHasWork = !activeTab
     ? false
-    : activeUnit.kind === "ultrasound" ? activeStudyCount > 0
-      : activeUnit.kind === "brainwave" ? !brainPlaced : !vitalPlaced;
+    : activeTab === "ultrasound" ? usGroupSel.size > 0
+      : activeTab === "brainwave" ? !(brainPlaced || existingOnSelectedDate.has("brainwave"))
+        : !(vitalPlaced || existingOnSelectedDate.has("vitalwave"));
 
   // SELECTED APPOINTMENT — visible ONLY after a time is picked; the explicit
   // Schedule button here is the commit. A soft conflict routes through override.
-  const selectedAppointment = activeUnit && activeLabel && time ? (
+  const selectedAppointment = activeRequest && activeTab && time ? (
     <div className={`rounded-lg border px-3 py-2.5 ${pendingConflict ? "border-red-200 bg-red-50" : "border-slate-300 bg-slate-50"}`} data-testid="scheduler-selected-appointment">
-      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Selected appointment</div>
+      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Selected</div>
       <div className="mt-0.5 flex items-center gap-2">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${RESOURCE_DOT[activeUnit.kind]}`} />
-        <span className="text-sm font-semibold text-slate-900">{activeLabel}</span>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${RESOURCE_DOT[activeTab]}`} />
+        <span className="text-sm font-semibold text-slate-900">{activeTabLabel}</span>
       </div>
+      {activeTab === "ultrasound" && activeUsNames.length > 0 ? (
+        <div className="text-[12px] text-slate-600" data-testid="scheduler-selected-studies">{activeUsNames.join(" + ")}</div>
+      ) : null}
       <div className="text-[12px] text-slate-600">{prettyDateLong(selectedDate)}</div>
       <div className="text-[13px] font-semibold tabular-nums text-slate-900" data-testid="scheduler-selected-time">{pretty12h(time)}{pendingEnd ? `–${pretty12h(pendingEnd)}` : ""}</div>
       {pendingConflict ? (
@@ -1055,141 +1074,40 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
         </div>
       ) : null}
       <div className="mt-2 flex items-center gap-2">
-        <button type="button" onClick={() => setTime("")} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-medium text-slate-600 hover:bg-slate-100" data-testid="scheduler-selected-change">Change</button>
+        <button type="button" onClick={() => setTime("")} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-medium text-slate-600 hover:bg-slate-100" data-testid="scheduler-selected-change">{pendingConflict ? "Choose another time" : "Change"}</button>
         <button type="button" disabled={scheduleMutation.isPending} onClick={scheduleActive} className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-white ${pendingConflict ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-900 hover:bg-slate-800"}`} data-testid="scheduler-schedule-active">
-          <Check className="h-3.5 w-3.5" /> {pendingConflict ? "Override & Schedule" : editingPlaced ? "Reschedule" : scheduleLabel}
+          <Check className="h-3.5 w-3.5" /> {pendingConflict ? "Override & Schedule" : editingPlaced ? "Confirm Reschedule" : scheduleLabel}
         </button>
       </div>
     </div>
   ) : null;
 
+  // Next-unscheduled optional action (subtle; never auto-triggered).
+  const nextUnscheduledTab = useMemo<TabKind | null>(() => {
+    for (const k of chosenTabs) {
+      if (k === activeTab) continue;
+      if (k === "brainwave" && !(brainPlaced || existingOnSelectedDate.has("brainwave"))) return k;
+      if (k === "vitalwave" && !(vitalPlaced || existingOnSelectedDate.has("vitalwave"))) return k;
+      if (k === "ultrasound" && unscheduledUsStudies.length > 0) return k;
+    }
+    return null;
+  }, [chosenTabs, activeTab, brainPlaced, vitalPlaced, unscheduledUsStudies.length, existingOnSelectedDate]);
+
   // Success confirmation — what was just added to the plan (no abrupt jump).
   const successBlock = lastScheduled && !time ? (
-    <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800" data-testid="scheduler-scheduled-success">
-      <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-      <span><span className="font-semibold">{lastScheduled.label}</span> added · {prettyDateShort(lastScheduled.isoDate)} · {pretty12h(lastScheduled.time)}</span>
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800" data-testid="scheduler-scheduled-success">
+        <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+        <span><span className="font-semibold">{lastScheduled.label}</span> scheduled · {prettyDateShort(lastScheduled.isoDate)} · {pretty12h(lastScheduled.time)}</span>
+      </div>
+      {nextUnscheduledTab ? (
+        <button type="button" onClick={() => activateTab(nextUnscheduledTab)} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-left text-[12px] text-slate-600 hover:bg-slate-50" data-testid="scheduler-next-unscheduled">
+          <span>Next unscheduled: <span className="font-semibold text-slate-800">{RESOURCE_LABELS[nextUnscheduledTab]}</span></span>
+          <span className="shrink-0 rounded-full border border-slate-300 px-2 py-0.5 text-[9px] font-semibold uppercase text-slate-600">Go</span>
+        </button>
+      ) : null}
     </div>
   ) : null;
-
-  // ── QUALIFIED ANCILLARIES (patient context): the single checklist ──
-  // Rendered instead of the generic dropdown when a patient is loaded. Shows
-  // what Plexus IQ qualified + current selection + per-service scheduling.
-  const qualifiedBrainwave = !!qualification?.services.some((s) => s.resourceType === "brainwave");
-  const qualifiedVitalwave = !!qualification?.services.some((s) => s.resourceType === "vitalwave");
-  const qualifiedUltrasoundCount = qualification?.services.filter((s) => s.resourceType === "ultrasound").length ?? 0;
-  const scheduledUltrasoundCount = scheduledUltrasoundCodes.size;
-
-  function QualRow({ kind }: { kind: "brainwave" | "vitalwave" }) {
-    const reg = kind === "brainwave" ? brainwave : vitalwave;
-    if (!reg) return null;
-    const isSel = kind === "brainwave" ? brainSelected : vitalSelected;
-    const isQual = kind === "brainwave" ? qualifiedBrainwave : qualifiedVitalwave;
-    // Only surface services the patient qualifies for (or has been manually added).
-    if (!isQual && !isSel) return null;
-    const block = kind === "brainwave" ? visitPlan.brainwave : visitPlan.vitalwave;
-    const existing = existingOnSelectedDate.get(kind);
-    const isActive = activeUnit?.kind === kind;
-    const plexus = qualification?.services.some((s) => s.resourceType === kind && ("plexusSourced" in s ? true : true));
-    const status = block ? `${prettyDateShort(block.isoDate)} · ${pretty12h(block.time)}${block.override ? " · override" : ""}`
-      : existing ? `Existing · ${pretty12h(existing.time)}`
-        : isSel ? "Qualified · Not scheduled" : "Not included";
-    return (
-      <div className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${isActive ? (kind === "brainwave" ? "border-violet-300 bg-violet-50" : "border-red-300 bg-red-50") : "border-slate-200 bg-white"}`} data-testid={`scheduler-qual-${kind}`}>
-        <button type="button" onClick={() => toggleService(reg, kind)} className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSel ? (kind === "brainwave" ? "border-violet-500 bg-violet-500" : "border-red-500 bg-red-500") + " text-white" : "border-slate-300"}`} data-testid={`scheduler-qual-${kind}-check`} aria-pressed={isSel} title={isSel ? "Included" : "Not included"}>{isSel ? <Check className="h-3 w-3" /> : null}</button>
-        <span className={`h-2 w-2 shrink-0 rounded-full ${RESOURCE_DOT[kind]}`} />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-900">
-            {block ? <Check className="h-3 w-3 text-emerald-600" /> : null}{RESOURCE_LABELS[kind]}
-          </span>
-          <span className="block truncate text-[11px] text-slate-500" data-testid={`scheduler-qual-${kind}-status`}>{plexus && isSel && !block && !existing ? "Qualified by Plexus IQ · Not scheduled" : status}</span>
-        </span>
-        {isSel ? (
-          <button type="button" onClick={() => activate({ kind }, block ? { date: block.isoDate, time: block.time } : undefined)}
-            className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${kind === "brainwave" ? "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"}`}
-            data-testid={`scheduler-qual-${kind}-schedule`}>
-            {block ? "Change" : "Schedule"}
-          </button>
-        ) : null}
-      </div>
-    );
-  }
-
-  const ultrasoundStudyList = (
-    <div className="mt-1 rounded-lg border border-emerald-100 bg-emerald-50/40 py-1" data-testid="scheduler-ultrasound-menu">
-      <div className="max-h-52 overflow-y-auto py-0.5">
-        {ultrasound.map((u) => {
-          const on = selected.has(u.internalCode);
-          const grp = studyGroupFor(u.internalCode);
-          const picked = usPick[u.internalCode] !== false;
-          return (
-            <div key={u.internalCode} className="flex items-center gap-2 py-1 pl-3 pr-2.5 text-sm">
-              <button type="button" onClick={() => toggleService(u, "ultrasound")}
-                className={`flex min-w-0 flex-1 items-center gap-2 text-left ${on ? "text-emerald-700" : "text-slate-700"}`}
-                data-testid={`scheduler-ultrasound-option-${u.internalCode}`} aria-pressed={on}>
-                <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"}`}>{on ? <Check className="h-3 w-3" /> : null}</span>
-                <span className="min-w-0"><span className="block truncate">{u.displayName}</span>{u.cptCode ? <span className="block text-[10px] text-slate-400">CPT {u.cptCode}</span> : null}</span>
-              </button>
-              {on && grp ? (
-                <button type="button" onClick={() => activate({ kind: "ultrasound", studyCodes: grp.studyCodes, editGroupId: grp.id }, { date: grp.isoDate, time: grp.time })}
-                  className="shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
-                  data-testid={`scheduler-us-study-status-${u.internalCode}`}>
-                  {prettyDateShort(grp.isoDate)} · {pretty12h(grp.time)} ✓
-                </button>
-              ) : on ? (
-                <button type="button" onClick={() => setUsPick((p) => ({ ...p, [u.internalCode]: !(p[u.internalCode] !== false) }))}
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${picked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white"}`}
-                  title={picked ? "In next group" : "Not in next group"} data-testid={`scheduler-us-pick-${u.internalCode}`} aria-pressed={picked}>
-                  {picked ? <Check className="h-3 w-3" /> : null}
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-      {unscheduledUltrasoundCodes.length > 0 ? (
-        <div className="border-t border-emerald-100 px-3 py-1.5">
-          <button type="button" disabled={pickedUltrasoundCodes.length === 0}
-            onClick={() => activate({ kind: "ultrasound", studyCodes: pickedUltrasoundCodes, editGroupId: null })}
-            className="w-full rounded-md bg-emerald-600 px-2 py-1 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
-            data-testid="scheduler-us-schedule-together">
-            {pickedUltrasoundCodes.length === unscheduledUltrasoundCodes.length
-              ? `Schedule All ${unscheduledUltrasoundCodes.length} Together`
-              : `Schedule Selected Together (${pickedUltrasoundCodes.length})`}
-          </button>
-          <div className="mt-0.5 text-center text-[9px] text-slate-400">Uncheck a study on the right to split it onto another day.</div>
-        </div>
-      ) : ultrasoundSelected.length > 0 ? (
-        <div className="border-t border-emerald-100 px-3 py-1.5 text-center text-[10px] text-emerald-600" data-testid="scheduler-us-all-scheduled">All selected ultrasound studies scheduled.</div>
-      ) : (
-        <div className="border-t border-emerald-100 px-3 py-1.5 text-center text-[10px] text-slate-400" data-testid="scheduler-us-none-selected">0 selected — check a study to schedule it.</div>
-      )}
-    </div>
-  );
-
-  const qualifiedSection = (
-    <div className="flex flex-col gap-1" data-testid="scheduler-qualified">
-      {selectedList.some((s) => s.plexusSourced) ? (
-        <div className="inline-flex items-center gap-1 pb-0.5 text-[10px] font-medium text-indigo-500" data-testid="scheduler-plexus-hint"><Sparkles className="h-3 w-3" /> Qualified by Plexus IQ</div>
-      ) : null}
-      <QualRow kind="brainwave" />
-      <QualRow kind="vitalwave" />
-      {(qualifiedUltrasoundCount > 0 || ultrasoundSelected.length > 0) ? (
-        <div className={`rounded-lg border ${activeUnit?.kind === "ultrasound" ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`} data-testid="scheduler-qual-ultrasound">
-          <button type="button" onClick={() => setUltrasoundOpen((v) => !v)} className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-semibold text-slate-900">Ultrasound</span>
-              <span className="block truncate text-[11px] text-slate-500" data-testid="scheduler-qual-ultrasound-status">
-                {ultrasoundSelected.length} selected{qualifiedUltrasoundCount > 0 ? ` of ${qualifiedUltrasoundCount} qualified` : ""} · {scheduledUltrasoundCount} scheduled
-              </span>
-            </span>
-            <span className="shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700" data-testid="scheduler-qual-ultrasound-schedule">{ultrasoundOpen ? "Hide" : "View / Schedule"}</span>
-          </button>
-          {ultrasoundOpen ? <div className="px-2 pb-2">{ultrasoundStudyList}</div> : null}
-        </div>
-      ) : null}
-    </div>
-  );
 
   // ── Day agenda (grouped by patient) ──
   const groupedAgenda = useMemo(() => {
@@ -1258,7 +1176,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
               <div className="truncate text-[11px] text-slate-500">{patient.dob ? `DOB ${patient.dob}` : null}{facility ? `${patient.dob ? " · " : ""}${facility}` : null}</div>
             </div>
           </div>
-          <button type="button" onClick={() => { setPatient({ patientScreeningId: null, executionCaseId: null, name: null, dob: null, facility }); setPatientSearch(""); setSelected(new Map()); setVisitPlan(EMPTY_PLAN); setUsPick({}); preselectedRef.current = null; }} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Change patient" data-testid="scheduler-change-patient">
+          <button type="button" onClick={() => { setPatient({ patientScreeningId: null, executionCaseId: null, name: null, dob: null, facility }); setPatientSearch(""); setVisitPlan(EMPTY_PLAN); setUsGroupSel(new Set()); setChosenTabs([]); setActiveTab(null); setTime(""); setLastScheduled(null); }} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Change patient" data-testid="scheduler-change-patient">
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -1273,7 +1191,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
               {searching ? (<div className="px-3 py-2 text-xs italic text-slate-400">Searching…</div>)
                 : matches.length === 0 ? (<div className="px-3 py-2 text-xs italic text-slate-400">No patients found.</div>)
                   : (matches.map((m) => (
-                    <button key={m.patientScreeningId} type="button" onClick={() => { setPatient({ patientScreeningId: m.patientScreeningId, executionCaseId: null, name: m.name, dob: m.dob, facility: m.facility ?? facility }); preselectedRef.current = null; }} className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-slate-50" data-testid={`scheduler-patient-result-${m.patientScreeningId}`}>
+                    <button key={m.patientScreeningId} type="button" onClick={() => { setPatient({ patientScreeningId: m.patientScreeningId, executionCaseId: null, name: m.name, dob: m.dob, facility: m.facility ?? facility }); setChosenTabs([]); setActiveTab(null); setUsGroupSel(new Set()); setVisitPlan(EMPTY_PLAN); }} className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-slate-50" data-testid={`scheduler-patient-result-${m.patientScreeningId}`}>
                       <span className="min-w-0"><span className="block truncate text-sm text-slate-800">{m.name}</span><span className="block truncate text-[10px] text-slate-400">{m.facility ?? "—"}{m.dob ? ` · DOB ${m.dob}` : ""}</span></span>
                     </button>
                   )))}
@@ -1283,6 +1201,28 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       )}
     </div>
   );
+
+  // ── PLAN summary (compact disclosure) ──
+  const planBlock = plannedCount > 0 ? (
+    <div data-testid="scheduler-plan">
+      <button type="button" onClick={() => setPlanOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 text-left" data-testid="scheduler-plan-toggle">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">Plan</span>
+        <span className="inline-flex items-center gap-1 text-[12px] text-slate-500">{plannedCount} appointment{plannedCount === 1 ? "" : "s"} planned <ChevronRight className={`h-3.5 w-3.5 transition-transform ${planOpen ? "rotate-90" : ""}`} /></span>
+      </button>
+      {planOpen ? (
+        <div className="mt-1.5 flex flex-col gap-1" data-testid="scheduler-plan-list">
+          {placedItems.slice().sort((a, b) => a.isoDate.localeCompare(b.isoDate) || a.startMinutes - b.startMinutes).map((b) => (
+            <div key={b.key} className="flex items-center gap-2 rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1 text-[12px] text-slate-700" data-testid={`scheduler-plan-item-${b.key}`}>
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RESOURCE_DOT[b.resourceType]}`} />
+              <span className="w-[128px] shrink-0 tabular-nums font-semibold">{prettyDateShort(b.isoDate)} · {pretty12h(b.time)}</span>
+              <span className="truncate">{b.label}</span>
+              {b.override ? <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0 text-[9px] font-semibold uppercase text-amber-700"><AlertTriangle className="h-2.5 w-2.5" /> Override</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
 
   const scheduleButton = (
     <button type="button" disabled={!canConfirm || scheduleMutation.isPending} onClick={() => setConfirmOpen(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-submit">
@@ -1363,8 +1303,8 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </>
   ) : null;
 
-  // Available Times = grid + (active-service) off-day banner only. Soft conflict
-  // is shown in the SELECTED APPOINTMENT summary, not as a time-grid side effect.
+  // Available Times = grid + (active-tab) off-day banner. Soft conflict shows in
+  // the SELECTED summary, not as a time-grid side effect.
   const availableTimesBlock = (
     <>
       {timeGrid}
@@ -1372,10 +1312,29 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </>
   );
 
-  // Selection surface: patient context → Qualified Ancillaries checklist;
-  // generic (no patient) → the compact Appointment Type dropdown. Never both.
-  const selectionSurface = hasPatient ? qualifiedSection : serviceSelector;
-  const selectionTitle = hasPatient ? "Qualified Ancillaries" : "Appointment Type";
+  // SCHEDULE surface: picker + tabs + active-tab body. Patient context adds the
+  // read-only QUALIFIED FOR section above it; generic context does not.
+  const scheduleSurface = (
+    <div className="flex flex-col gap-2" data-testid="scheduler-schedule-surface">
+      {picker}
+      {tabsRow}
+      {activeSingleStatus}
+      {ultrasoundTabBody}
+      {!activeTab && chosenTabs.length === 0 ? (
+        <p className="text-[11px] italic text-slate-400" data-testid="scheduler-no-tab">Choose an ancillary to start scheduling.</p>
+      ) : null}
+    </div>
+  );
+  const scheduleTitle = hasPatient ? "Schedule" : "Appointment Type";
+
+  // Pending / success / recommendation cluster (shared full + quick).
+  const pendingCluster = (activeRequest || time || lastScheduled) ? (
+    <div className="flex flex-col gap-2" data-testid="scheduler-pending-area">
+      {selectedAppointment}
+      {successBlock}
+      {!time && activeRequest && activeHasWork ? recommendedBlock : null}
+    </div>
+  ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent" data-testid="unified-scheduler">
@@ -1387,9 +1346,6 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{monthLabel}</span>
           </div>
         </div>
-        {patient.patientScreeningId != null && qualification && plexusCount > 0 ? (
-          <span className="text-[11px] text-slate-500" data-testid="scheduler-plexus-summary">Plexus IQ: {plexusCount} ancillar{plexusCount === 1 ? "y" : "ies"}</span>
-        ) : null}
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 px-5 pb-5 lg:grid-cols-[1.9fr_1fr]">
@@ -1415,11 +1371,11 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                   onClick={() => { setSelectedDate(c.iso!); setTime(""); }}
                   onDoubleClick={() => { setSelectedDate(c.iso!); setTime(""); setQuickDate(c.iso!); }}
                   className={`flex min-h-0 flex-col items-center justify-center rounded-lg border text-sm transition-colors ${
-                    isSelected ? "border-transparent bg-slate-900 text-white"
+                    isSelected ? "border-transparent bg-slate-900 text-white ring-2 ring-slate-900/20"
                       : isToday ? "border-slate-300 bg-slate-50 text-slate-900"
                         : !normal ? "border-slate-100 bg-slate-50/40 text-slate-300 hover:bg-slate-50"
                           : "border-slate-100 text-slate-700 hover:bg-slate-50"}`}
-                  title={normal ? "Click to select · double-click for Quick Schedule" : `Not a normal ${activeLabel ?? "service"} day · still selectable`}
+                  title={normal ? "Click to select · double-click for Quick Schedule" : `Not a normal ${activeTabLabel ?? "service"} day · still selectable`}
                   data-testid={`scheduler-day-${c.iso}`}>
                   <span className="font-semibold leading-none">{c.day}</span>
                   {!normal && !isSelected ? <span className="text-[8px] leading-none text-amber-400" data-testid={`scheduler-day-offday-${c.iso}`}>·</span> : null}
@@ -1437,13 +1393,19 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick Schedule</span>
                   <button type="button" onClick={() => setQuickDate(null)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" data-testid="scheduler-quick-close" aria-label="Close quick schedule"><X className="h-4 w-4" /></button>
                 </div>
-                {/* Quick Schedule uses the SAME ONE dropdown + Available Times. */}
+                {/* Quick Schedule uses the SAME picker + tabs + Available Times. */}
                 <div className="flex flex-col gap-2.5">
                   <div className="text-sm font-semibold text-slate-900">{prettyDateLong(quickDate)}</div>
                   {patientBlock}
+                  {hasPatient ? (
+                    <div>
+                      <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Qualified For</div>
+                      {qualifiedForSection}
+                    </div>
+                  ) : null}
                   <div className="relative">
-                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">{selectionTitle}</div>
-                    {selectionSurface}
+                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">{scheduleTitle}</div>
+                    {scheduleSurface}
                   </div>
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2">
@@ -1455,13 +1417,8 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
                     </div>
                     {availableTimesBlock}
                   </div>
-                  {(activeUnit || time || lastScheduled) ? (
-                    <div className="flex flex-col gap-2">
-                      {selectedAppointment}
-                      {successBlock}
-                      {!time && activeUnit && activeHasWork ? recommendedBlock : null}
-                    </div>
-                  ) : null}
+                  {pendingCluster}
+                  {planBlock}
                   <button type="button" disabled={!canConfirm || scheduleMutation.isPending} onClick={() => setConfirmOpen(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" data-testid="scheduler-quick-submit">
                     {scheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />} Review &amp; Confirm{plannedCount > 0 ? ` (${plannedCount})` : ""}
                   </button>
@@ -1486,13 +1443,19 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
             {patientBlock}
           </Section>
 
-          {/* SELECTION — ONE control. Patient: Qualified Ancillaries checklist.
-              Generic: Appointment Type dropdown. Never both. */}
-          <Section title={selectionTitle} testId="scheduler-section-types">
-            <div className="relative">{selectionSurface}</div>
+          {/* QUALIFIED FOR — read-only Plexus IQ guidance (patient context only). */}
+          {hasPatient ? (
+            <Section title="Qualified For" testId="scheduler-section-qualified">
+              {qualifiedForSection}
+            </Section>
+          ) : null}
+
+          {/* SCHEDULE — the one picker + scheduling tabs + active-tab body. */}
+          <Section title={scheduleTitle} testId="scheduler-section-schedule">
+            {scheduleSurface}
           </Section>
 
-          {/* AVAILABLE TIMES — immediately under the selection (above fold). */}
+          {/* AVAILABLE TIMES — driven by the ACTIVE tab, kept high. */}
           <Section title="Available Times" testId="scheduler-section-times" right={<span className="flex items-center gap-2">{activeServiceIndicator}{equipmentControl}</span>}>
             {availableTimesBlock}
           </Section>
@@ -1500,13 +1463,10 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
           {/* SELECTED APPOINTMENT (pending) / success / recommendation. A time
               click lands here as a PENDING selection; the Schedule button
               commits it. Nothing advances automatically. */}
-          {(activeUnit || time || lastScheduled) ? (
-            <div className="flex flex-col gap-2" data-testid="scheduler-pending-area">
-              {selectedAppointment}
-              {successBlock}
-              {!time && activeUnit && activeHasWork ? recommendedBlock : null}
-            </div>
-          ) : null}
+          {pendingCluster}
+
+          {/* PLAN — compact disclosure (does not permanently occupy the panel). */}
+          {planBlock ? <div className="border-t border-slate-100 pt-2.5">{planBlock}</div> : null}
 
           {scheduleButton}
 
