@@ -162,3 +162,67 @@ function capitalize(s: string): string {
 function stripHistoryPrefix(s: string): string {
   return s.replace(/^a history of /i, "").replace(/^testing positive for /i, "positive COVID-19 test — ");
 }
+
+
+// ─── Order Note standard (AI narrative) — 5-section renderer ────────────────
+// Deterministic assembly of PATIENT INFORMATION / ORDER-PLAN / ATTESTATION
+// around the two AI-generated narrative sections. NO ICD/CPT. The AI sections
+// are inserted verbatim (already compliance-validated upstream). Patient
+// identifiers, service, ordered components, attestation, and signature fields
+// are NEVER AI-generated.
+
+import type { OrderNoteEvidenceBundle as AiOrderNoteEvidenceBundle } from "./orderNoteEvidenceBundle";
+import type { OrderNoteNarrative } from "./orderNoteNarrativeAi";
+
+export const ORDER_NOTE_AI_GENERATOR_VERSION = "order_note_ai_v1";
+
+export function renderAiOrderNoteBody(
+  bundle: AiOrderNoteEvidenceBundle,
+  narrative: OrderNoteNarrative,
+): RenderedOrderNote {
+  const sections: OrderNoteSection[] = [];
+
+  // PATIENT INFORMATION (deterministic).
+  const info: string[] = [`Patient: ${bundle.patient.name}`];
+  if (bundle.patient.dob) info.push(`Date of Birth: ${bundle.patient.dob}`);
+  if (bundle.patient.age != null) info.push(`Age: ${bundle.patient.age}`);
+  if (bundle.patient.sex) info.push(`Sex: ${bundle.patient.sex}`);
+  if (bundle.patient.plexusId) info.push(`Plexus ID: ${bundle.patient.plexusId}`);
+  if (bundle.patient.clinicName) info.push(`Clinic: ${bundle.patient.clinicName}`);
+  info.push(`Ordering Clinician: ${bundle.orderingClinician.name}`);
+  if (bundle.orderingClinician.npi) info.push(`NPI: ${bundle.orderingClinician.npi}`);
+  if (bundle.orderDate) info.push(`Order Date: ${bundle.orderDate}`);
+  sections.push({ heading: "PATIENT INFORMATION", body: info.join("\n") });
+
+  // CLINICAL HISTORY / INDICATION (AI).
+  sections.push({ heading: "CLINICAL HISTORY / INDICATION", body: narrative.clinicalHistoryIndication.trim() });
+
+  // ASSESSMENT / MEDICAL NECESSITY (AI).
+  sections.push({ heading: "ASSESSMENT / MEDICAL NECESSITY", body: narrative.assessmentMedicalNecessity.trim() });
+
+  // ORDER / PLAN (deterministic — service + the actual ordered components).
+  const componentLines = bundle.orderedComponents.map((c) => `• ${c.label}`);
+  const plan = [
+    bundle.serviceLabel,
+    "",
+    "Proceed with the clinically applicable ordered components per the approved protocol and the patient-specific indications above:",
+    ...componentLines,
+    "",
+    "No specific abnormal result or final diagnosis is presumed by this order.",
+  ].join("\n");
+  sections.push({ heading: "ORDER / PLAN", body: plan });
+
+  // ORDERING CLINICIAN ATTESTATION (deterministic, unsigned).
+  sections.push({
+    heading: "ORDERING CLINICIAN ATTESTATION",
+    body: [
+      `I have reviewed ${bundle.patient.name}'s available clinical history and screening information. Based on the patient-specific indications documented above, I am ordering ${bundle.serviceLabel} and its clinically applicable components.`,
+      `Ordering Clinician: ${bundle.orderingClinician.name}`,
+      `Signature: __________________________`,
+      `Date/Time: __________________________`,
+    ].join("\n"),
+  });
+
+  const text = sections.map((s) => `${s.heading}\n${"-".repeat(s.heading.length)}\n${s.body}`).join("\n\n");
+  return { sections, text };
+}

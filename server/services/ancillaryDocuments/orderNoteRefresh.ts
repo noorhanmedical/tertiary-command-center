@@ -29,9 +29,13 @@ import {
   resolveClinicForClinician,
   DEFAULT_CLINIC,
 } from "../../../shared/plexus";
-import { renderOrderNoteBody } from "./orderNoteBody";
+import { renderOrderNoteBody, renderAiOrderNoteBody, ORDER_NOTE_AI_GENERATOR_VERSION } from "./orderNoteBody";
 import { canonicalOrderNoteEvidenceString } from "./orderNoteFingerprint";
 import type { OrderNoteEvidenceBundle, ChartDiagnosis } from "./orderNoteProjection";
+// Order Note standard — AI narrative pipeline (Slice AI-1..AI-4).
+import { assembleOrderNoteEvidenceBundle, orderNoteEvidenceBundleFingerprint } from "./orderNoteEvidenceBundle";
+import { generateOrderNoteNarrative } from "./orderNoteNarrativeAi";
+import { validateOrderNoteNarrative, complianceFeedback } from "./orderNoteComplianceValidator";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 
@@ -45,6 +49,8 @@ export type OrderNoteRefreshResult =
   | { status: "versioned"; supersededNoteId: number; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "reevaluated"; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "unchanged"; orderNoteId: number; fingerprint: string; screeningVersion: string }
+  | { status: "ai_generation_failed"; orderNoteId: number }
+  | { status: "ai_compliance_failed"; orderNoteId: number; failures: string[] }
   | { status: "failed"; reason: string };
 
 export type RefreshInput = {
@@ -164,6 +170,12 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
     if (note.clinicId != null && note.clinicId !== input.clinicId) return { status: "no_current_note" };
     if (note.signatureStatus === "signed") return { status: "signed_no_refresh", orderNoteId: note.id };
 
+    // Order Note standard — OpenAI-assisted narrative path. Fails HONESTLY
+    // (no silent fallback to the deterministic template).
+    if (featureFlags.orderNoteAi) {
+      return await refreshOrderNoteViaAi(input, note);
+    }
+
     const bundle = await assembleBundle(input);
     if (!bundle || !bundle.screening) return { status: "screening_incomplete" };
     const screeningVersion = (bundle as { __screeningVersion?: string }).__screeningVersion ?? "";
@@ -241,4 +253,163 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
     if (code != null && MIGRATION_MISSING_CODES.has(code)) return { status: "migration_missing" };
     return { status: "failed", reason: (e as { message?: string })?.message ?? "refresh_failed" };
   }
+}
+
+
+// ─── Order Note standard — OpenAI-assisted refresh (Slice AI-4) ─────────────
+
+type ProcedureNoteRow = typeof procedureNotes.$inferSelect;
+
+const AI_MAX_RETRIES = 2; // total attempts = 1 + AI_MAX_RETRIES
+
+type ValidatedNarrative =
+  | { ok: true; result: Awaited<ReturnType<typeof generateOrderNoteNarrative>>; retryCount: number }
+  | { ok: false; failures: string[]; retryCount: number };
+
+/** Generate → validate → retry-with-corrective-feedback. Throws only if the
+ *  OpenAI request itself fails (after the client's transient retries). */
+async function generateValidatedOrderNoteNarrative(
+  bundle: Awaited<ReturnType<typeof assembleOrderNoteEvidenceBundle>> & object,
+): Promise<ValidatedNarrative> {
+  let feedback: string | undefined;
+  let lastFailures: string[] = [];
+  for (let attempt = 0; attempt <= AI_MAX_RETRIES; attempt++) {
+    const result = await generateOrderNoteNarrative(bundle, feedback ? { correctiveFeedback: feedback } : undefined);
+    const v = validateOrderNoteNarrative(result.narrative, bundle);
+    if (v.passed) return { ok: true, result, retryCount: attempt };
+    lastFailures = v.failures.map((f) => `${f.code}: ${f.message}`);
+    feedback = complianceFeedback(v.failures);
+  }
+  return { ok: false, failures: lastFailures, retryCount: AI_MAX_RETRIES };
+}
+
+function buildAiSourceData(
+  bundle: NonNullable<Awaited<ReturnType<typeof assembleOrderNoteEvidenceBundle>>>,
+  rendered: { sections: unknown },
+  gen: Extract<ValidatedNarrative, { ok: true }>,
+  fingerprint: string,
+  screeningVersion: string,
+): Record<string, unknown> {
+  return {
+    orderNoteBody: rendered.sections,
+    generatorVersion: ORDER_NOTE_AI_GENERATOR_VERSION,
+    evidence: {
+      chartDiagnoses: bundle.diagnoses.map((d) => d.displayText),
+      qualificationFactors: bundle.qualification.factors,
+    },
+    orderNoteAi: {
+      provider: "openai",
+      model: gen.result.modelUsed,
+      reasoningEffort: gen.result.reasoningEffort,
+      promptVersion: gen.result.promptVersion,
+      generatedAt: gen.result.generatedAt,
+      evidenceBundleVersion: bundle.bundleVersion,
+      evidenceBundleFingerprint: fingerprint,
+      evidenceSourceIds: bundle.sourceRecordIds,
+      orderedComponents: bundle.orderedComponents.map((c) => c.key),
+      screeningEvidenceVersion: screeningVersion,
+      rawResponse: gen.result.rawResponse,
+      validation: { passed: true, failures: [], retryCount: gen.retryCount },
+    },
+    // Durable snapshot of the exact evidence the model was permitted to use.
+    evidenceBundle: bundle,
+  };
+}
+
+async function failOrderNoteAi(noteId: number, clinicId: number, code: string): Promise<void> {
+  try {
+    await db.update(procedureNotes)
+      .set({ generationStatus: "failed", errorMessage: code, updatedAt: new Date() })
+      .where(and(eq(procedureNotes.id, noteId), eq(procedureNotes.clinicId, clinicId), isNull(procedureNotes.supersededAt)));
+  } catch { /* best-effort; never reverse screening completion */ }
+}
+
+async function refreshOrderNoteViaAi(input: RefreshInput, note: ProcedureNoteRow): Promise<OrderNoteRefreshResult> {
+  const bundle = await assembleOrderNoteEvidenceBundle({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
+  if (!bundle) return { status: "screening_incomplete" };
+  // BrainWave/VitalWave REQUIRE a completed A0 structured screening; other
+  // services (echo/ultrasound/vascular) qualify from chart + qualification
+  // evidence and have no A0 questionnaire.
+  const requiresStructuredScreening = /brain|vital/i.test(bundle.service);
+  if (requiresStructuredScreening && !bundle.structuredScreening) return { status: "screening_incomplete" };
+
+  const screeningVersion = bundle.screeningEvidenceVersion ?? "";
+  const fingerprint = orderNoteEvidenceBundleFingerprint(bundle);
+  const bodyless = note.generationStatus === "pending" || !note.generatedText;
+  const changed = note.evidenceFingerprint !== fingerprint;
+
+  // No new body needed — only reconcile the evaluated screening version.
+  if (!bodyless && !changed) {
+    if (note.evaluatedScreeningEvidenceVersion !== screeningVersion) {
+      await db.update(procedureNotes)
+        .set({ evaluatedScreeningEvidenceVersion: screeningVersion, updatedAt: new Date() })
+        .where(eq(procedureNotes.id, note.id));
+      return { status: "reevaluated", orderNoteId: note.id, fingerprint, screeningVersion };
+    }
+    return { status: "unchanged", orderNoteId: note.id, fingerprint, screeningVersion };
+  }
+
+  // A (new) body is required → generate + validate. FAIL HONESTLY on error.
+  let gen: ValidatedNarrative;
+  try {
+    gen = await generateValidatedOrderNoteNarrative(bundle);
+  } catch {
+    await failOrderNoteAi(note.id, input.clinicId, "ai_generation_failed");
+    return { status: "ai_generation_failed", orderNoteId: note.id };
+  }
+  if (!gen.ok) {
+    await failOrderNoteAi(note.id, input.clinicId, "ai_compliance_failed");
+    return { status: "ai_compliance_failed", orderNoteId: note.id, failures: gen.failures };
+  }
+
+  const rendered = renderAiOrderNoteBody(bundle, gen.result.narrative);
+  const sourceData = buildAiSourceData(bundle, rendered, gen, fingerprint, screeningVersion);
+
+  // Case A — body-less pending skeleton → populate in place.
+  if (bodyless) {
+    await db.update(procedureNotes)
+      .set({
+        generationStatus: "generated",
+        generatedText: rendered.text,
+        generatedByAi: true,
+        sourceData: sourceData as never,
+        evidenceFingerprint: fingerprint,
+        evaluatedScreeningEvidenceVersion: screeningVersion,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(procedureNotes.id, note.id), isNull(procedureNotes.supersededAt)));
+    return { status: "populated_in_place", orderNoteId: note.id, fingerprint, screeningVersion };
+  }
+
+  // Case B — already-bodied + unsigned + material change → supersede + version.
+  const newId = await db.transaction(async (tx) => {
+    const superseded = await tx.update(procedureNotes)
+      .set({ supersededAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(procedureNotes.id, note.id), isNull(procedureNotes.supersededAt)))
+      .returning({ id: procedureNotes.id });
+    if (superseded.length !== 1) throw new Error("concurrent_supersede");
+    const [created] = await tx.insert(procedureNotes).values({
+      clinicId: note.clinicId,
+      executionCaseId: note.executionCaseId,
+      patientScreeningId: note.patientScreeningId,
+      ancillaryCaseId: note.ancillaryCaseId,
+      globalPlexusPatientId: note.globalPlexusPatientId,
+      patientClinicMembershipId: note.patientClinicMembershipId,
+      qualifyingGlobalScheduleEventId: note.qualifyingGlobalScheduleEventId,
+      adminReviewEventId: note.adminReviewEventId,
+      effectiveClinicalDate: note.effectiveClinicalDate,
+      serviceType: note.serviceType,
+      noteType: "order_note",
+      generationStatus: "generated",
+      generatedText: rendered.text,
+      generatedByAi: true,
+      sourceData: sourceData as never,
+      signatureStatus: "needs_signature",
+      supersedesNoteId: note.id,
+      evidenceFingerprint: fingerprint,
+      evaluatedScreeningEvidenceVersion: screeningVersion,
+    }).returning({ id: procedureNotes.id });
+    return created.id;
+  });
+  return { status: "versioned", supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion };
 }

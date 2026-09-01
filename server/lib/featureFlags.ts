@@ -148,6 +148,16 @@ export const featureFlags = {
   // note and NEVER auto-signs.
   orderNoteRefresh: readBool("FEATURE_ORDER_NOTE_REFRESH", false),
 
+  // ─── Order Note standard — OpenAI-assisted narrative generation ─────────
+  // When ON (and orderNoteRefresh is ON), the canonical unsigned Order Note is
+  // generated via the OpenAI Responses API narrative path (evidence bundle →
+  // gpt-5.6-sol reasoning → deterministic compliance validation → 5-section
+  // note). Requires ORDER_NOTE_AI_MODEL + a working OpenAI key. Fails HONESTLY
+  // (note left failed/pending) on generation or compliance failure — it does
+  // NOT silently fall back to the legacy deterministic template. Default OFF ⇒
+  // the deterministic renderer remains the path (rollback).
+  orderNoteAi: readBool("FEATURE_ORDER_NOTE_AI", false),
+
   // ─── Phase 2F — Canonical procedure lifecycle + Procedure Note ─────
   // Both default OFF. Migration 0054 (procedure_events ancillary identity +
   // procedure_notes report evidence + case-scoped post_procedure_note
