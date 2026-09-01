@@ -25,106 +25,20 @@
 
 import crypto from "node:crypto";
 import type { OrderNoteEvidenceBundle, EvidenceFact } from "./orderNoteEvidenceBundle";
+import {
+  serviceKeyForOrderNoteMateriality,
+  isEvidenceRelevantToService,
+  type OrderNoteServiceRelevanceKey,
+} from "./orderNoteEvidenceRelevance";
 
-type ServiceKey =
-  | "brainwave" | "vitalwave" | "echo" | "stress_echo" | "carotid" | "renal"
-  | "le_arterial" | "ue_arterial" | "le_venous" | "ue_venous" | "aaa" | "generic";
-
-/** Deterministic service classification from the canonical service identity. */
-export function materialityServiceKey(bundle: Pick<OrderNoteEvidenceBundle, "service" | "serviceLabel">): ServiceKey {
-  const s = `${bundle.service} ${bundle.serviceLabel}`.toLowerCase();
-  if (s.includes("brain")) return "brainwave";
-  if (s.includes("vital")) return "vitalwave";
-  if (s.includes("stress") && s.includes("echo")) return "stress_echo";
-  if (s.includes("echo") || s.includes("tte")) return "echo";
-  if (s.includes("carotid")) return "carotid";
-  if (s.includes("renal")) return "renal";
-  if (s.includes("aort") || s.includes("aaa") || s.includes("aneurysm")) return "aaa";
-  if (s.includes("upper extremity") && s.includes("arter")) return "ue_arterial";
-  if (s.includes("upper extremity") && s.includes("ven")) return "ue_venous";
-  if (s.includes("arter")) return "le_arterial";
-  if (s.includes("ven")) return "le_venous";
-  return "generic";
-}
-
-// Shared risk terms used across multiple vascular/cardiac services.
-const VASCULAR_RISK = ["hypertension", "htn", "diabet", "hyperlipid", "cholesterol", "lipid", "smok", "tobacco", "nicotine"];
-
-// Per-service relevance keywords (lowercase substrings). Grounded in the
-// symptoms/diagnoses/labs/imaging Plexus uses to qualify each service.
-const SERVICE_RELEVANCE: Record<Exclude<ServiceKey, "generic">, string[]> = {
-  brainwave: [
-    "neuro", "cognit", "memory", "attention", "executive", "concentrat", "dementia", "alzheimer",
-    "brain", "cerebr", "headache", "migraine", "dizz", "vertigo", "lighthead", "seizure", "epilep",
-    "convuls", "stroke", "tia", "transient ischemic", "parkinson", "tremor", "neuropath", "brain fog",
-    "confusion", "encephal", "eeg", "evoked potential", "vep", "aep", "mri brain", "ct head", "ct brain",
-    "donepezil", "memantine", "rivastigmine", "galantamine", "levetiracetam", "keppra", "gabapentin",
-    "pregabalin", "lamotrigine", "phenytoin", "valproate", "topiramate", "sumatriptan",
-    ...VASCULAR_RISK,
-  ],
-  vitalwave: [
-    "autonomic", "dysautonomia", "dizz", "lighthead", "position", "orthostat", "postural", "syncope",
-    "presyncope", "faint", "palpitation", "tachycard", "bradycard", "neuropath", "vascular",
-    "peripheral arter", "cardiovascular", "blood pressure", "bp", "heart rate", "pots", "diabet",
-    ...VASCULAR_RISK,
-  ],
-  echo: [
-    "dyspnea", "shortness of breath", "sob", "edema", "chest pain", "chest discomfort", "angina",
-    "heart failure", "chf", "cardiomyopath", "coronary", "cad", "ischem", "valv", "murmur", "stenosis",
-    "regurg", "palpitation", "syncope", "bnp", "probnp", "troponin", "echo", "cardiac", "ejection",
-    "lvef", "myocard", "arrhythmi", "atrial fib", "afib", "beta blocker", "metoprolol", "carvedilol",
-    "furosemide", "lasix", "digoxin", "entresto", "sacubitril",
-    ...VASCULAR_RISK,
-  ],
-  stress_echo: [
-    "dyspnea", "shortness of breath", "sob", "chest pain", "chest discomfort", "angina", "coronary",
-    "cad", "ischem", "stress", "exercise", "treadmill", "dobutamine", "cardiac", "echo", "ejection",
-    "lvef", "arrhythmi", "atrial fib", "afib", "palpitation", "syncope", "valv", "murmur", "bnp",
-    "probnp", "troponin", "heart failure", "chf", "cardiomyopath", "myocard", ...VASCULAR_RISK,
-  ],
-  carotid: [
-    "carotid", "cerebrovascular", "stroke", "tia", "transient ischemic", "amaurosis", "bruit", "dizz",
-    "vertigo", "vascular", "atheroscler", "stenosis", "plaque", "neuro", "endarterectomy", "cea",
-    "cta neck", "mra neck", ...VASCULAR_RISK,
-  ],
-  renal: [
-    "renal", "kidney", "nephro", "creatinine", "egfr", "gfr", "bun", "urinalysis", "proteinuria",
-    "albuminuria", "hematuria", "ckd", "aki", "resistant hypertension", "vascular", "stenosis",
-    "hydronephro", "ace inhibitor", "arb", "lisinopril", "losartan", ...VASCULAR_RISK,
-  ],
-  le_arterial: [
-    "claudicat", "arter", "pad", "peripheral arterial", "perfusion", "ankle brachial", "abi", "ischem",
-    "rest pain", "ulcer", "gangrene", "pulse", "leg pain", "exertion", "cold foot", "cold feet",
-    "diabet", "smok", "tobacco",
-  ],
-  ue_arterial: [
-    "claudicat", "arter", "pad", "peripheral arterial", "perfusion", "ischem", "rest pain", "ulcer",
-    "arm pain", "hand", "subclavian", "steal", "raynaud", "diabet", "smok", "tobacco",
-  ],
-  le_venous: [
-    "venous", "dvt", "deep vein", "thrombos", "thrombus", "edema", "swelling", "varicose",
-    "insufficiency", "reflux", "phleb", "leg swelling", "leg pain", "stasis", "ulcer", "compression",
-  ],
-  ue_venous: [
-    "venous", "dvt", "deep vein", "thrombos", "thrombus", "edema", "swelling", "arm swelling",
-    "insufficiency", "reflux", "phleb", "picc", "central line", "port",
-  ],
-  aaa: [
-    "aort", "aneurysm", "aaa", "abdominal aort", "aortoiliac", "iliac", "vascular", "atheroscler",
-    "pulsatile", "back pain", ...VASCULAR_RISK,
-  ],
-};
-
-function factText(f: EvidenceFact): string {
-  return `${f.concept ?? ""} ${f.displayText ?? ""}`.toLowerCase();
+/** Deterministic service classification (delegates to the shared registry). */
+export function materialityServiceKey(bundle: Pick<OrderNoteEvidenceBundle, "service" | "serviceLabel">): OrderNoteServiceRelevanceKey {
+  return serviceKeyForOrderNoteMateriality(bundle.service, bundle.serviceLabel);
 }
 
 /** Whether a patient-level evidence fact is RELEVANT to the ordered service. */
-function isRelevant(key: ServiceKey, f: EvidenceFact): boolean {
-  if (key === "generic") return true; // unmapped service → conservative (keep all)
-  const kws = SERVICE_RELEVANCE[key];
-  const text = factText(f);
-  return kws.some((k) => text.includes(k));
+function isRelevant(key: OrderNoteServiceRelevanceKey, f: EvidenceFact): boolean {
+  return isEvidenceRelevantToService(key, f);
 }
 
 /** Stable content key for a fact — NEVER the DB row id or sort position. */

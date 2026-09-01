@@ -23,15 +23,44 @@ import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
 import { screeningConceptDisplay } from "@shared/schema/screeningEvidence";
 import { orderNoteServiceConfig, type OrderedComponent } from "./orderNoteServiceConfig";
+import {
+  serviceKeyForOrderNoteMateriality,
+  retainRelevantFirst,
+  type OrderNoteServiceRelevanceKey,
+} from "./orderNoteEvidenceRelevance";
 
 export const ORDER_NOTE_EVIDENCE_BUNDLE_VERSION = "order_note_evidence_bundle_v1";
 
-// Bounds — keep the bundle focused; the model selects the relevant subset.
+// CONTEXTUAL (narrative/AI) bounds — cap the NON-material context so the bundle
+// stays focused and the OpenAI prompt stays bounded. Service-relevant
+// (authorization-material) evidence is NEVER subject to these caps: it is
+// retained in full BEFORE truncation (see selectRelevantFirst) so the material
+// fingerprint can never miss a relevant item that unrelated evidence outranked.
 const MAX_LABS = 14;
 const MAX_VITALS = 8;
 const MAX_IMAGING = 6;
 const MAX_ENCOUNTERS = 4;
 const MAX_FINDINGS = 20;
+
+// Candidate pools read from the DB before in-memory relevance partitioning.
+// Generous but bounded so relevant items far down the recency/abnormality order
+// are still considered (fixes pre-projection bounding); a pathological chart
+// exceeding these pools is an accepted safety bound.
+const LAB_CANDIDATE_LIMIT = 400;
+const VITAL_CANDIDATE_LIMIT = 200;
+const IMAGING_CANDIDATE_LIMIT = 200;
+const ENCOUNTER_CANDIDATE_LIMIT = 200;
+const FINDING_CANDIDATE_LIMIT = 200;
+
+/** Stable content identity for an evidence fact — never the DB row id. */
+function factContentKey(f: EvidenceFact): string {
+  return `${f.evidenceClass}|${f.concept}|${String(f.value ?? "")}`;
+}
+
+/** Retain relevant-first then bounded contextual (shared registry primitive). */
+function selectRelevantFirst(ranked: EvidenceFact[], key: OrderNoteServiceRelevanceKey, contextualCap: number): EvidenceFact[] {
+  return retainRelevantFirst(ranked, key, contextualCap, factContentKey);
+}
 
 export type OrderNoteEvidenceClass =
   | "chart_documented_diagnosis"
@@ -198,6 +227,9 @@ export async function assembleOrderNoteEvidenceBundle(input: {
   }));
 
   // Clinical-reference tables (all keyed by patient_screening_id + clinic).
+  // Service-relevance is resolved ONCE (shared registry) and used to retain
+  // authorization-material evidence BEFORE contextual truncation.
+  const relevanceKey = serviceKeyForOrderNoteMateriality(serviceType, cfg.serviceLabel);
   let labs: EvidenceFact[] = [];
   let vitals: EvidenceFact[] = [];
   let priorImaging: EvidenceFact[] = [];
@@ -205,16 +237,15 @@ export async function assembleOrderNoteEvidenceBundle(input: {
   let clinicianFindings: EvidenceFact[] = [];
 
   if (screeningId != null) {
-    // ── Labs (prefer abnormal + most recent) ──
+    // ── Labs (rank abnormal-first, then retain relevant + bounded contextual) ──
     const labRows = await db.select().from(patientLabs)
       .where(and(eq(patientLabs.patientScreeningId, screeningId), eq(patientLabs.clinicId, input.clinicId)))
-      .orderBy(desc(patientLabs.collectedAt)).limit(60);
-    const abnormalFirst = [...labRows].sort((a, b) => {
+      .orderBy(desc(patientLabs.collectedAt)).limit(LAB_CANDIDATE_LIMIT);
+    const rankedLabFacts: EvidenceFact[] = [...labRows].sort((a, b) => {
       const aAb = a.flag && a.flag !== "normal" ? 0 : 1;
       const bAb = b.flag && b.flag !== "normal" ? 0 : 1;
       return aAb - bAb;
-    }).slice(0, MAX_LABS);
-    labs = abnormalFirst.map((l) => ({
+    }).map((l) => ({
       factId: `lab_${l.id}`,
       concept: (l.name ?? "").toLowerCase(),
       displayText: `${l.name}${l.value != null ? ` ${l.value}` : ""}${l.unit ? ` ${l.unit}` : ""}${l.referenceRange ? ` (ref ${l.referenceRange})` : ""}${l.flag && l.flag !== "normal" ? ` [${l.flag}]` : ""}`,
@@ -224,13 +255,14 @@ export async function assembleOrderNoteEvidenceBundle(input: {
       sourceRecordId: String(l.id),
       evidenceClass: "laboratory_result",
     }));
-    for (const l of abnormalFirst) sourceRecordIds.push(`patient_lab:${l.id}`);
+    labs = selectRelevantFirst(rankedLabFacts, relevanceKey, MAX_LABS);
+    for (const f of labs) sourceRecordIds.push(`patient_lab:${f.sourceRecordId}`);
 
-    // ── Vitals (most recent) ──
+    // ── Vitals (most recent; retain relevant + bounded contextual) ──
     const vitalRows = await db.select().from(patientVitals)
       .where(and(eq(patientVitals.patientScreeningId, screeningId), eq(patientVitals.clinicId, input.clinicId)))
-      .orderBy(desc(patientVitals.measuredAt)).limit(MAX_VITALS);
-    vitals = vitalRows.map((v) => ({
+      .orderBy(desc(patientVitals.measuredAt)).limit(VITAL_CANDIDATE_LIMIT);
+    const rankedVitalFacts: EvidenceFact[] = vitalRows.map((v) => ({
       factId: `vital_${v.id}`,
       concept: (v.label ?? "").toLowerCase(),
       displayText: `${v.label}${v.value != null ? `: ${v.value}` : ""}${v.unit ? ` ${v.unit}` : ""}`,
@@ -240,18 +272,18 @@ export async function assembleOrderNoteEvidenceBundle(input: {
       sourceRecordId: String(v.id),
       evidenceClass: "vital_sign",
     }));
-    for (const v of vitalRows) sourceRecordIds.push(`patient_vital:${v.id}`);
+    vitals = selectRelevantFirst(rankedVitalFacts, relevanceKey, MAX_VITALS);
+    for (const f of vitals) sourceRecordIds.push(`patient_vital:${f.sourceRecordId}`);
 
-    // ── Prior imaging / diagnostic results (prefer final + report available) ──
+    // ── Prior imaging / diagnostic results (rank final-first; retain relevant) ──
     const imgRows = await db.select().from(patientImagingStudies)
       .where(and(eq(patientImagingStudies.patientScreeningId, screeningId), eq(patientImagingStudies.clinicId, input.clinicId)))
-      .orderBy(desc(patientImagingStudies.performedAt)).limit(40);
-    const finalFirst = [...imgRows].sort((a, b) => {
+      .orderBy(desc(patientImagingStudies.performedAt)).limit(IMAGING_CANDIDATE_LIMIT);
+    const rankedImgFacts: EvidenceFact[] = [...imgRows].sort((a, b) => {
       const aF = (a.status ?? "").toLowerCase() === "final" ? 0 : 1;
       const bF = (b.status ?? "").toLowerCase() === "final" ? 0 : 1;
       return aF - bF;
-    }).slice(0, MAX_IMAGING);
-    priorImaging = finalFirst.map((im) => ({
+    }).map((im) => ({
       factId: `img_${im.id}`,
       concept: (im.study ?? "").toLowerCase(),
       displayText: `${im.study}${im.modality ? ` (${im.modality})` : ""}${im.performedAt ? ` ${im.performedAt}` : ""}${im.impression ? ` — impression: ${im.impression}` : ""}${im.status ? ` [${im.status}]` : ""}`,
@@ -261,13 +293,14 @@ export async function assembleOrderNoteEvidenceBundle(input: {
       sourceRecordId: String(im.id),
       evidenceClass: "prior_imaging_result",
     }));
-    for (const im of finalFirst) sourceRecordIds.push(`patient_imaging:${im.id}`);
+    priorImaging = selectRelevantFirst(rankedImgFacts, relevanceKey, MAX_IMAGING);
+    for (const f of priorImaging) sourceRecordIds.push(`patient_imaging:${f.sourceRecordId}`);
 
     // ── Clinical notes / encounters (structured summary only — never raw body) ──
     const encRows = await db.select().from(patientEncounters)
       .where(and(eq(patientEncounters.patientScreeningId, screeningId), eq(patientEncounters.clinicId, input.clinicId)))
-      .orderBy(desc(patientEncounters.occurredAt)).limit(MAX_ENCOUNTERS);
-    clinicalNotes = encRows
+      .orderBy(desc(patientEncounters.occurredAt)).limit(ENCOUNTER_CANDIDATE_LIMIT);
+    const rankedEncFacts: EvidenceFact[] = encRows
       .filter((e) => (e.summary ?? "").trim().length > 0)
       .map((e) => ({
         factId: `enc_${e.id}`,
@@ -279,13 +312,14 @@ export async function assembleOrderNoteEvidenceBundle(input: {
         sourceRecordId: String(e.id),
         evidenceClass: "clinical_note_evidence",
       }));
-    for (const e of encRows) sourceRecordIds.push(`patient_encounter:${e.id}`);
+    clinicalNotes = selectRelevantFirst(rankedEncFacts, relevanceKey, MAX_ENCOUNTERS);
+    for (const f of clinicalNotes) sourceRecordIds.push(`patient_encounter:${f.sourceRecordId}`);
 
     // ── Clinician-entered structured findings (exclude ICD fields) ──
     const findingRows = await db.select().from(plexusClinicalFindings)
       .where(and(eq(plexusClinicalFindings.patientScreeningId, screeningId), eq(plexusClinicalFindings.clinicId, input.clinicId)))
-      .orderBy(desc(plexusClinicalFindings.sourceDate)).limit(MAX_FINDINGS);
-    clinicianFindings = findingRows
+      .orderBy(desc(plexusClinicalFindings.sourceDate)).limit(FINDING_CANDIDATE_LIMIT);
+    const rankedFindingFacts: EvidenceFact[] = findingRows
       .filter((f) => f.reviewStatus !== "rejected")
       .map((f) => ({
         factId: `finding_${f.id}`,
@@ -297,7 +331,8 @@ export async function assembleOrderNoteEvidenceBundle(input: {
         sourceRecordId: String(f.id),
         evidenceClass: "clinician_entered_finding",
       }));
-    for (const f of findingRows) sourceRecordIds.push(`clinical_finding:${f.id}`);
+    clinicianFindings = selectRelevantFirst(rankedFindingFacts, relevanceKey, MAX_FINDINGS);
+    for (const f of clinicianFindings) sourceRecordIds.push(`clinical_finding:${f.sourceRecordId}`);
   }
 
   // ── Structured screening (A0) ──
