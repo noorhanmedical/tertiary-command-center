@@ -30,6 +30,11 @@ export const PREREQUISITE_STAGES = [
   "check_in",
   "procedure_start",
   "billing",
+  // Canonical billing-readiness evaluation stage. The billing readiness
+  // evaluator (billingReadinessEvaluator.ts, BILLING_READINESS_STAGE) reads
+  // configs at this stage — e.g. the order_note_signature requirement. Added
+  // to the DB CHECK in migration 0077.
+  "billing_readiness",
   "claim_submission",
 ] as const;
 export type PrerequisiteStage = (typeof PREREQUISITE_STAGES)[number];
