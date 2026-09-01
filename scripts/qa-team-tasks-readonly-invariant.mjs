@@ -192,7 +192,18 @@ const LEGACY_ROUTE_FILES = [
 for (const rel of LEGACY_ROUTE_FILES) {
   const c = read(rel);
   if (c === null) continue; // not every legacy route exists; informational.
-  for (const needle of ["modules/team-tasks", "getTeamTaskView", "TeamTask"]) {
+  // Target the deprecated module's ACTUAL API surface precisely. The bare
+  // substring "TeamTask" is intentionally NOT used here: it collides with
+  // legitimate, unrelated method names in the legacy routes (e.g. the atomic
+  // claimTeamTask / releaseTeamTasksForUser storage helpers on plexus_tasks),
+  // which are the canonical path — not the dormant modules/team-tasks module.
+  // The invariant is "legacy routes must not adopt the read-only module", so
+  // we match its module path + exported read helpers.
+  for (const needle of [
+    "modules/team-tasks",
+    "getTeamTaskView",
+    "getTeamTaskViewByPatient",
+  ]) {
     if (c.includes(needle)) {
       failures.push(
         `${rel}: still references Team Task module ("${needle}") — adoption requires its own approved PR`,

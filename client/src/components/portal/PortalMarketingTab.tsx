@@ -1,9 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Loader2, Mail, FileText, Megaphone } from "lucide-react";
+import { SketchSurface, SketchButton, SketchInput } from "@/components/playground/sketch/SketchPrimitives";
 import {
   fetchMarketingMaterials,
   sendMarketingMaterial,
@@ -78,8 +76,8 @@ export function PortalMarketingTab({
   });
 
   return (
-    <div className="flex h-full w-full flex-col gap-3 overflow-hidden p-4" data-testid="portal-marketing">
-      <Card className="p-3 bg-white">
+    <div className="flex h-full w-full flex-col gap-3 overflow-hidden bg-transparent p-4" data-testid="portal-marketing">
+      <SketchSurface seedId="marketing-header">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Megaphone className="h-4 w-4 text-slate-500" />
           Marketing materials
@@ -89,10 +87,10 @@ export function PortalMarketingTab({
           Send via email through the canonical send route. Text/SMS send is
           not wired yet — disabled rather than faked.
         </div>
-      </Card>
+      </SketchSurface>
 
       <div className="grid flex-1 min-h-0 gap-3 lg:grid-cols-[1fr_280px] overflow-hidden">
-        <Card className="p-3 bg-white overflow-y-auto" data-testid="portal-marketing-list">
+        <SketchSurface seedId="marketing-list" className="overflow-y-auto" data-testid="portal-marketing-list">
           {isLoading ? (
             <div className="flex items-center gap-2 text-xs text-slate-500 italic py-2">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading materials…
@@ -114,11 +112,12 @@ export function PortalMarketingTab({
                     <button
                       type="button"
                       onClick={() => setSelectedMaterialId(m.id)}
-                      className={`flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                      className="flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-slate-900/[0.03]"
+                      style={
                         isSelected
-                          ? "border-indigo-300 bg-indigo-50"
-                          : "border-slate-100 bg-slate-50/40 hover:bg-slate-50"
-                      }`}
+                          ? { borderColor: "var(--sketch-blue)", backgroundColor: "rgba(84,106,154,0.12)" }
+                          : { borderColor: "rgba(148,163,184,0.35)", backgroundColor: "transparent" }
+                      }
                       data-testid={`portal-marketing-row-${m.id}`}
                     >
                       <FileText className="h-4 w-4 text-slate-500 shrink-0 mt-0.5" />
@@ -135,9 +134,9 @@ export function PortalMarketingTab({
               })}
             </ul>
           )}
-        </Card>
+        </SketchSurface>
 
-        <Card className="p-3 bg-white" data-testid="portal-marketing-send">
+        <SketchSurface seedId="marketing-send" data-testid="portal-marketing-send">
           <div className="text-xs font-semibold text-slate-900">Send to</div>
           {selectedPatient ? (
             <div className="mt-1 text-[11px] text-slate-700">
@@ -156,25 +155,27 @@ export function PortalMarketingTab({
             <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               Email override
             </label>
-            <Input
+            <SketchInput
               value={overrideEmail}
               onChange={(e) => setOverrideEmail(e.target.value)}
               placeholder={selectedPatient?.email ?? "patient@example.com"}
-              className="mt-1 h-8 text-xs"
+              containerClassName="mt-1"
               data-testid="input-portal-marketing-email"
             />
           </div>
 
-          <Button
+          <SketchButton
             type="button"
+            variant="primary"
             size="sm"
+            seedId="marketing-send"
             disabled={
               !selectedPatient ||
               !selectedMaterialId ||
               sendMutation.isPending
             }
             onClick={() => sendMutation.mutate()}
-            className="mt-3 w-full gap-1.5"
+            className="mt-3 w-full"
             data-testid="button-portal-marketing-send"
           >
             {sendMutation.isPending ? (
@@ -183,40 +184,42 @@ export function PortalMarketingTab({
               <Mail className="h-3.5 w-3.5" />
             )}
             Send marketing
-          </Button>
+          </SketchButton>
 
           {/* Compose-email handoff: hands the picked material to the
               Email Composer tab in the center canvas so the operator
               can edit subject/body before sending. */}
           {onComposeEmailWithMaterials && (
-            <Button
+            <SketchButton
               type="button"
+              variant="secondary"
               size="sm"
-              variant="outline"
+              seedId="marketing-compose"
               disabled={!selectedMaterialId}
               onClick={() => {
                 if (!selectedMaterialId) return;
                 onComposeEmailWithMaterials([selectedMaterialId]);
               }}
-              className="mt-1.5 w-full gap-1.5"
+              className="mt-1.5 w-full"
               data-testid="portal-marketing-compose-email"
             >
               <Mail className="h-3.5 w-3.5" />
               Compose email with selected material
-            </Button>
+            </SketchButton>
           )}
 
-          <Button
+          <SketchButton
             type="button"
+            variant="secondary"
             size="sm"
-            variant="outline"
+            seedId="marketing-sms"
             disabled
-            className="mt-1.5 w-full gap-1.5"
+            className="mt-1.5 w-full"
             title="Text/SMS send is not wired yet"
           >
             Text/SMS · not wired yet
-          </Button>
-        </Card>
+          </SketchButton>
+        </SketchSurface>
       </div>
     </div>
   );

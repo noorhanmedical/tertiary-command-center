@@ -18,6 +18,9 @@ import {
   X,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CanonicalAppointmentSummary } from "@/components/canonical/CanonicalAppointmentSummary";
+import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -132,6 +135,34 @@ export function EngagementCasePanel({
   const patient = patientQuery.data;
 
   const executionCaseId = row?.executionCaseId ?? null;
+
+  // Phase 2D — canonical per-service appointment projection for the ONE
+  // selected case. Fetched per panel-open (a user action), not per board
+  // row: the assignment board is an unbounded worklist, so a per-row
+  // projection would be an unbounded N+1. Clinic-scoped by session; only
+  // requested when the client flag is ON (enabled:false → no request).
+  const canonicalApptQuery = useQuery<{ appointmentByService?: Record<string, AncillaryAppointmentProjection> }>({
+    queryKey: ["/api/canonical-appointments", "byExecutionCase", executionCaseId],
+    enabled: isCanonicalAppointmentUiEnabled() && executionCaseId != null,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/canonical-appointments?executionCaseId=${executionCaseId}&byService=true&includeHistory=true`,
+      );
+      return res.json();
+    },
+  });
+  // Render only Phase 2C eligible services (a rejected/pending/needs_info
+  // service is never shown). When eligibleServices is undefined (sync
+  // OFF) the legacy contract shows all returned services.
+  const appointmentByService = (() => {
+    const all = canonicalApptQuery.data?.appointmentByService ?? {};
+    const eligible = row?.eligibleServices;
+    if (!eligible) return all;
+    const allow = new Set(eligible);
+    return Object.fromEntries(Object.entries(all).filter(([svc]) => allow.has(svc)));
+  })();
+
   const journeyQuery = useQuery<{ events: JourneyEvent[] }>({
     queryKey: [
       "/api/engagement/assignment-board/cases",
@@ -415,6 +446,28 @@ export function EngagementCasePanel({
           )}
         </Section>
 
+        {/* Phase 2D-D1 — canonical appointments per eligible service.
+            Each service shows its own canonical event (matched by
+            ancillary case); a cancelled/no_show/rescheduled prior is
+            history-only; doctor_visit is excluded server-side. Mounted
+            only when the client flag is ON and the server returned data. */}
+        {isCanonicalAppointmentUiEnabled() && Object.keys(appointmentByService).length > 0 ? (
+          <Section icon={Stethoscope} title="Appointments" testId="engagement-case-panel-appointments">
+            <div className="space-y-2">
+              {Object.entries(appointmentByService).map(([serviceType, projection]) => (
+                <CanonicalAppointmentSummary
+                  key={`${serviceType}-${projection.activeAppointment?.globalScheduleEventId ?? "none"}`}
+                  projection={projection}
+                  serviceType={serviceType}
+                  showHistory
+                  showReadiness
+                  data-testid={`engagement-appointment-${serviceType}`}
+                />
+              ))}
+            </div>
+          </Section>
+        ) : null}
+
         {/* Missing info */}
         {row.missingInfo?.length ? (
           <Section icon={ShieldAlert} title="Blocking gaps">
@@ -673,7 +726,7 @@ export function EngagementCasePanel({
               ) : (
                 <FileText className="h-3.5 w-3.5" />
               )}
-              Plexus PDF
+              Plexus Atlas
             </Button>
             <Button
               size="sm"
@@ -688,7 +741,7 @@ export function EngagementCasePanel({
               ) : (
                 <FileText className="h-3.5 w-3.5" />
               )}
-              Clinician PDF
+              Clinician Atlas
             </Button>
             {psid != null && (
               <Button

@@ -1,5 +1,7 @@
 // EMR type layer for the premium Patient EHR chart.
 //
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
+//
 // These interfaces describe the 15 API-ready data categories the EMR
 // chart renders. Every field is optional/nullable so the chart never
 // crashes on missing data — sections that have no live source render a
@@ -79,6 +81,8 @@ export interface EmrLab {
   referenceRange?: string | null;
   collectedAt?: string | null;
   flag?: "normal" | "high" | "low" | "critical" | null;
+  /** Panel this analyte belongs to (e.g. "CBC", "CMP", "Lipid Panel"). */
+  panel?: string | null;
 }
 
 // ── 8. Imaging ──────────────────────────────────────────────────────────
@@ -88,6 +92,8 @@ export interface EmrImaging {
   performedAt?: string | null;
   status?: string | null;
   impression?: string | null;
+  source?: string | null;
+  reportAvailable?: boolean | null;
 }
 
 // ── 9. Vitals ───────────────────────────────────────────────────────────
@@ -105,6 +111,11 @@ export interface EmrEncounter {
   occurredAt?: string | null;
   provider?: string | null;
   summary?: string | null;
+  /** Full note body rendered in the encounter drawer/modal (not inline). */
+  noteBody?: string | null;
+  /** Coarse category for filtering: primary_care | specialist | hospital | telephone | other */
+  category?: string | null;
+  tags?: string[] | null;
 }
 
 // ── 11. Documents ───────────────────────────────────────────────────────
@@ -126,6 +137,15 @@ export interface EmrCall {
   attemptNumber?: number | null;
   durationSeconds?: number | null;
   occurredAt?: string | null;
+  /** Staff member who handled the communication. */
+  teamMember?: string | null;
+  role?: string | null;
+  channel?: string | null;
+  nextAction?: string | null;
+  /** outbound | inbound */
+  direction?: string | null;
+  /** Optional service this communication concerned (null = patient-level). */
+  serviceType?: string | null;
 }
 
 export interface EmrCommunicationSummary {
@@ -233,6 +253,61 @@ export interface EmrQualifyingTest {
   clinicianUnderstanding?: string | null;
   patientTalkingPoints?: string | null;
   confidence?: string | null;
+  qualifyingFactors?: string[] | null;
+  icd10Codes?: string[] | null;
+  pearls?: string[] | null;
+  approvalRequired?: boolean | null;
+}
+
+// ── Ancillary service journey (per-service episode) ──────────────────────
+// User-facing lifecycle stages for the Ancillary Journey stepper. This is the
+// single canonical stage vocabulary consumed by BOTH the Journey and the
+// Overview "Current Tests" panel so they never disagree.
+export const JOURNEY_STAGES = [
+  "Qualified", "Approved", "Order", "Outreach", "Scheduled",
+  "Signed", "Screening", "Test", "Report", "Procedure", "Billing",
+] as const;
+export const JOURNEY_STAGE_ABBR = [
+  "Qual", "Approve", "Order", "Outreach", "Sched",
+  "Sign", "Screen", "Test", "Report", "Proc", "Bill",
+] as const;
+export type JourneyStage = (typeof JOURNEY_STAGES)[number];
+
+// A prior performance of an ancillary service (service-specific history).
+export interface EmrPriorTest {
+  dateOfService: string;
+  serviceName?: string | null;
+  payer?: string | null;
+  facility?: string | null;
+  resultSummary?: string | null;
+  reportAvailable?: boolean | null;
+  procedureNoteAvailable?: boolean | null;
+}
+
+// A single current-cycle ancillary service episode with its lifecycle stage,
+// operational details, and service-specific prior-test history.
+export interface EmrServiceEpisode {
+  serviceKey: string;
+  serviceName: string;
+  /** Canonical ancillary case id (patient_ancillary_cases.id). Real
+   *  operational identifier — never a display/array index. */
+  caseId?: number | null;
+  bucket: "brainwave" | "vitalwave" | "ultrasound";
+  /** Current user-facing stage (must be one of JOURNEY_STAGES). */
+  stage: JourneyStage;
+  /** Index of `stage` within JOURNEY_STAGES (drives the stepper). */
+  stageIndex: number;
+  nextAction?: string | null;
+  owner?: string | null;
+  appointment?: { date?: string | null; time?: string | null; facility?: string | null; status?: string | null } | null;
+  orderStatus?: string | null;
+  screeningStatus?: string | null;
+  reportStatus?: string | null;
+  procedureNoteStatus?: string | null;
+  episodeStartedAt?: string | null;
+  priorTests?: EmrPriorTest[] | null;
+  /** Full qualification reasoning for the Why-Qualifies drill-down. */
+  reasoning?: EmrQualifyingTest | null;
 }
 
 export interface EmrPlexusIq {
@@ -294,6 +369,11 @@ export interface EmrOverview {
 // ── Top-level chart projection ──────────────────────────────────────────
 export interface EmrChart {
   patientScreeningId?: number | null;
+  /** Canonical Plexus identifier (e.g. "PLX-000003") shown in the header. */
+  plexusId?: string | null;
+  /** True when this chart's sections are populated via the eCW API
+   *  integration — surfaces a "Synced from eCW" indicator per section. */
+  ecwSynced?: boolean | null;
   demographics: EmrDemographics;
   insurance: EmrInsurance;
   providers?: EmrProvider[] | null;
@@ -307,10 +387,20 @@ export interface EmrChart {
   documents?: EmrDocument[] | null;
   communication: EmrCommunicationSummary;
   scheduling?: EmrAppointment[] | null;
+  /**
+   * Phase 2D — canonical per-service appointment projection for this
+   * patient's ancillary cases. Present only when
+   * FEATURE_CANONICAL_APPOINTMENT is ON; the scheduling section renders
+   * from this (canonical truth) instead of the legacy `scheduling` list.
+   */
+  canonicalAppointmentByService?: Record<string, AncillaryAppointmentProjection> | null;
   cooldown: EmrCooldown;
   adAutomation: EmrAdAutomation;
   billing: EmrBillingReadiness;
   plexusIq: EmrPlexusIq;
+  /** Per-service ancillary episodes (current stage + history) — the single
+   *  source consumed by the Ancillary Journey and Overview Current Tests. */
+  serviceEpisodes?: EmrServiceEpisode[] | null;
   executionCases?: EmrExecutionCase[] | null;
   caseStatus: EmrCaseStatus;
   overview: EmrOverview;

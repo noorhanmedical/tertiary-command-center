@@ -176,7 +176,7 @@ function ResultsHeaderActions({
         data-testid="button-clinician-pdf"
         disabled={patients.length === 0}
       >
-        <Printer className="w-3.5 h-3.5" /> Clinician PDF
+        <Printer className="w-3.5 h-3.5" /> Clinician Atlas
       </Button>
       <Button
         variant="outline"
@@ -186,7 +186,7 @@ function ResultsHeaderActions({
         data-testid="button-plexus-pdf"
         disabled={patients.length === 0}
       >
-        <Users2 className="w-3.5 h-3.5" /> Plexus PDF
+        <Users2 className="w-3.5 h-3.5" /> Plexus Atlas
       </Button>
     </div>
   );
@@ -221,7 +221,7 @@ export function ResultsView({
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
   // When true, suppress the StepTimeline + sidebar trigger + title block. The
   // caller (e.g. Plexus IQ day modal) supplies its own dialog header but still
-  // wants the actions row (Plexus PDF / Clinician PDF / Share / Export /
+  // wants the actions row (Plexus Atlas / Clinician Atlas / Share / Export /
   // Send All) and the patient bars. Default false preserves Visit/Outreach.
   chromeless?: boolean;
 }) {

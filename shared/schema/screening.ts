@@ -4,13 +4,27 @@ import {
 } from "./_common";
 import { users } from "./users";
 import { clinics } from "./clinics";
+// Phase 2A — transitional identity linkage. `plexusIdentity.ts` does NOT
+// import from this file, so this reverse import introduces no cycle.
+import {
+  globalPlexusPatients,
+  patientClinicMemberships,
+} from "./plexusIdentity";
 
 export const screeningBatches = pgTable("screening_batches", {
   id: serial("id").primaryKey(),
   // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
   clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   name: text("name").notNull(),
+  // Batch clinician attribution (Plexus IQ). `clinicianName` is a SNAPSHOT of
+  // the display name at run time (already existed; kept for historical display
+  // independent of later directory renames). `clinicianId` links the canonical
+  // clinicians directory row when a configured clinician was selected (NULL for
+  // free-text or legacy runs). `clinicianSource` is "facility_clinician" |
+  // "free_text" | NULL(legacy). Never inferred from patient PCP.
   clinicianName: text("clinician_name"),
+  clinicianId: integer("clinician_id"),
+  clinicianSource: text("clinician_source"),
   patientCount: integer("patient_count").notNull().default(0),
   status: text("status").notNull().default("processing"),
   facility: text("facility"),
@@ -91,6 +105,19 @@ export const patientScreenings = pgTable("patient_screenings", {
   adminApprovedAt: timestamp("admin_approved_at"),
   adminApprovedByUserId: varchar("admin_approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
   adminApprovalNote: text("admin_approval_note"),
+  // Phase 2A — transitional Plexus identity linkage. Populated by the
+  // shared identity orchestrator (server-side only) after every insert,
+  // or by the backfill script. Both nullable during the transition and
+  // remain nullable when FEATURE_PLEXUS_IDENTITY_WRITE is OFF. NEVER
+  // accepted from client input — insertPatientScreeningSchema omits them.
+  patientClinicMembershipId: integer("patient_clinic_membership_id").references(
+    () => patientClinicMemberships.id,
+    { onDelete: "set null" },
+  ),
+  globalPlexusPatientId: integer("global_plexus_patient_id").references(
+    () => globalPlexusPatients.id,
+    { onDelete: "set null" },
+  ),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
@@ -103,6 +130,8 @@ export const patientScreenings = pgTable("patient_screenings", {
   index("idx_patient_screenings_deleted_at").on(table.deletedAt),
   index("idx_patient_screenings_delete_expires_at").on(table.deleteExpiresAt),
   index("idx_patient_screenings_admin_approval_status").on(table.adminApprovalStatus),
+  index("idx_ps_pcm").on(table.patientClinicMembershipId),
+  index("idx_ps_gpp").on(table.globalPlexusPatientId),
 ]);
 
 export const ADMIN_APPROVAL_STATUSES = [
@@ -123,6 +152,11 @@ export const COMMIT_RECALL_WINDOW_MS = 5 * 60 * 1000;
 export const insertPatientScreeningSchema = createInsertSchema(patientScreenings).omit({
   id: true,
   createdAt: true,
+  // Server-owned Phase 2A linkage — never accepted from client input.
+  // Populated exclusively by the shared identity orchestrator or the
+  // Phase 2A backfill script.
+  patientClinicMembershipId: true,
+  globalPlexusPatientId: true,
 });
 
 export type PatientScreening = typeof patientScreenings.$inferSelect;

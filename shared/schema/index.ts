@@ -65,4 +65,89 @@ export * from "./clinicalIntelligence";
 // TeamPortalShell tool dock + floating widget layer).
 export * from "./portalWidgets";
 export * from "./portalPrefs";
+// Phase 1 (Team Ops) — first-class internal team messaging: canonical
+// conversations + members + team_messages replacing the mock inbox and the
+// orphaned direct_messages path. Migration 0065.
+export * from "./messaging";
+// Phase 3C (Team Ops) — first-class call handoffs (K6): ownership transfer /
+// request between team members with P1..P5 priority, acknowledgement, and
+// provenance. Live ownership stays on patient_execution_cases; this is the
+// transfer source of truth. Migration 0067.
+export * from "./callHandoffs";
+// Phase 3D (Team Ops) — structured NEEDS COVERAGE state (K8): records WHY a
+// case is currently uncovered (category + reason). NOT a second ownership
+// store; the case stays canonically unassigned. Migration 0068.
+export * from "./needsCoverage";
+// Phase 6A (Team Ops resilience) — unified operational NOTIFICATIONS: a
+// lightweight delivery/signal layer that points at canonical records (task /
+// handoff / conversation / case) without duplicating them. Migration 0073.
+export * from "./notifications";
+// Phase 4 (Team Ops) — canonical organizational model (K4): teams,
+// team_memberships (multi-team), manager_relationships (team-level authority),
+// and a relationship-change audit ledger. Admin Settings is the authoritative
+// management surface; Engagement/messaging/tasks consume these. Migration 0069.
+export * from "./teams";
+// Phase 4B (Team Ops) — canonical facility coverage: ONE source for which
+// facilities a team member serves (converges roster home + facilitiesCovered).
+// Migration 0070.
+export * from "./facilityCoverage";
+// Phase 2A — Global Plexus patient identity (six new tables). Every
+// write path is guarded by FEATURE_PLEXUS_IDENTITY_WRITE (default OFF)
+// and the SQL migration (migrations/0049_add_plexus_identity.sql) is
+// not applied automatically.
+export * from "./plexusIdentity";
+// Phase 2B — Canonical per-service ancillary case model. Every write
+// path is guarded by FEATURE_ANCILLARY_CASE_WRITE (default OFF) and
+// the SQL migration (migrations/0050_add_patient_ancillary_cases.sql)
+// is not applied automatically.
+export * from "./ancillaryCases";
+// Phase 2C — Service-specific Admin Review (append-only history) and
+// Engagement list identity. Every write path is guarded by four
+// flags (all default OFF); migration 0051 is not applied automatically.
+export * from "./adminReviewEvents";
+export * from "./engagementLists";
+// Phase 2D — Canonical ancillary appointments in global_schedule_events.
+// Additive columns added to globalScheduleEvents; new failures ledger.
+// Guarded by FEATURE_CANONICAL_APPOINTMENT (default OFF); migration
+// 0052 is not applied automatically.
+export * from "./canonicalAppointments";
+// Phase 2E — Unified Ancillary Documents reference index + Order Note
+// foundation. Guarded by FEATURE_UNIFIED_ANCILLARY_DOCUMENTS /
+// FEATURE_CANONICAL_ORDER_NOTE (default OFF); migration 0053 is not
+// applied automatically.
+export * from "./ancillaryDocuments";
+// Phase 3 — Plexus Clinical Findings (structured AI-found clinical findings
+// with provenance). Migration 0057; no feature flag gate at schema level.
+export * from "./plexusClinicalFindings";
+// Phase 4 — Ancillary Service Registry (centralized service definitions,
+// CPT codes, qualification criteria, cooldown rules). Migration 0058.
+export * from "./ancillaryServiceRegistry";
+// Scheduling Resource Capacity — per-facility equipment machine counts +
+// service durations + ultrasound turnover, plus temporary (date-range)
+// capacity overrides for machine outages. Read by the capacity-aware
+// scheduling availability engine. Migration 0074.
+export * from "./schedulingCapacity";
+// Phase 5 — Note Addenda (traceable addenda for signed clinical documents).
+// Migration 0059.
+export * from "./noteAddenda";
+// Slice A0 — Structured ACS/PCS screening evidence contract (pinned BW/VW
+// question registries + evidence taxonomy + capture/provenance + validator +
+// completion policy + full screening version). No migration: the validated
+// payload is stored in the existing case_document_readiness.metadata JSONB.
+export * from "./screeningEvidence";
+// Slice F — typed procedure component evidence (stored in
+// procedure_events.metadata.components; validated at write time). Governs
+// which components the Procedure Note may claim were performed.
+export * from "./procedureComponents";
+// Slice G — Billing Document CPT/ICD selection (performed-component ×
+// approved-code intersection; ICD from approved case diagnoses only).
+export * from "./billingCodeMap";
+// Phase 10 — Plexus Bank Events (append-only financial reconciliation ledger).
+// Migration 0060.
+export * from "./plexusBankEvents";
+// Phase 11 — Canonical clinical reference domains (providers, allergies, labs,
+// imaging, vitals, encounters) that back the Patient EHR chart. Additive;
+// migration 0061. Replaces the client-side demo enrichment for these six
+// sections with real DB-backed rows.
+export * from "./clinicalData";
 export * from "../models/chat";

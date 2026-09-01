@@ -28,6 +28,7 @@ import {
   marketingMaterialsRepository,
   documentLibraryRepository,
 } from "./repositories";
+import type { ManagerTaskFilters } from "./repositories/plexus.repo";
 
 import type {
   ScreeningBatch,
@@ -116,6 +117,7 @@ export interface IStorage {
   updateUserRole(id: string, role: string): Promise<void>;
   validateUserPassword(username: string, plaintext: string): Promise<User | null>;
   deactivateUser(id: string): Promise<void>;
+  reactivateUser(id: string): Promise<void>;
   deleteUser(id: string): Promise<void>;
 
   createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch>;
@@ -209,6 +211,7 @@ export interface IStorage {
 
   createOutreachCall(record: InsertOutreachCall): Promise<OutreachCall>;
   createOutreachCallAtomic(record: InsertOutreachCall, desiredStatus: string): Promise<OutreachCall>;
+  findOutreachCallByExternalId(externalCallId: string): Promise<OutreachCall | undefined>;
   listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
@@ -219,6 +222,7 @@ export interface IStorage {
   bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]>;
   applySchedulerAssignmentDiff(releaseIds: number[], drafts: InsertSchedulerAssignment[], reason: string): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }>;
   listActiveSchedulerAssignments(filters?: { schedulerId?: number; asOfDate?: string }): Promise<SchedulerAssignment[]>;
+  listSchedulerAssignmentsForSchedulerOnDate(schedulerId: number, asOfDate: string): Promise<SchedulerAssignment[]>;
   getActiveAssignmentForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined>;
   getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string): Promise<SchedulerAssignment | undefined>;
   releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string): Promise<SchedulerAssignment[]>;
@@ -258,12 +262,18 @@ export interface IStorage {
   getTaskById(id: number): Promise<PlexusTask | undefined>;
   getTasksByProject(projectId: number): Promise<PlexusTask[]>;
   getTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  getOpenTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  releaseTeamTasksForUser(userId: string): Promise<PlexusTask[]>;
+  getTeamPoolTasks(teamIds: number[], includeClaimed?: boolean): Promise<PlexusTask[]>;
   getTasksByCreator(userId: string): Promise<PlexusTask[]>;
   getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   getTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
+  getTasksForManager(filters?: ManagerTaskFilters, limit?: number): Promise<PlexusTask[]>;
   getUrgentTasks(): Promise<PlexusTask[]>;
   getOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
+  claimTeamTask(id: number, teamId: number, userId: string): Promise<PlexusTask | undefined>;
+  transitionTaskStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
 
   addCollaborator(record: InsertPlexusTaskCollaborator): Promise<PlexusTaskCollaborator>;
   getCollaborators(taskId: number): Promise<PlexusTaskCollaborator[]>;
@@ -330,6 +340,7 @@ export class DatabaseStorage implements IStorage {
   getAllUsers() { return usersRepository.listAll(); }
   getUsersByRole(role: string) { return usersRepository.listByRole(role); }
   deactivateUser(id: string) { return usersRepository.deactivate(id); }
+  reactivateUser(id: string) { return usersRepository.reactivate(id); }
   deleteUser(id: string) { return usersRepository.remove(id); }
 
   // Screening batches + patient screenings
@@ -428,6 +439,7 @@ export class DatabaseStorage implements IStorage {
 
   createOutreachCall(record: InsertOutreachCall) { return outreachRepository.createCall(record); }
   createOutreachCallAtomic(record: InsertOutreachCall, desiredStatus: string) { return outreachRepository.createCallAtomic(record, desiredStatus); }
+  findOutreachCallByExternalId(externalCallId: string) { return outreachRepository.findCallByExternalId(externalCallId); }
   listOutreachCallsForPatient(patientScreeningId: number) { return outreachRepository.listCallsForPatient(patientScreeningId); }
   listOutreachCallsForPatients(patientScreeningIds: number[]) { return outreachRepository.listCallsForPatients(patientScreeningIds); }
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string) { return outreachRepository.listCallsForSchedulerToday(schedulerUserId, todayIso); }
@@ -441,6 +453,7 @@ export class DatabaseStorage implements IStorage {
     return schedulerAssignmentsRepository.applyDiff(releaseIds, drafts, reason);
   }
   listActiveSchedulerAssignments(filters: { schedulerId?: number; asOfDate?: string } = {}) { return schedulerAssignmentsRepository.listActive(filters); }
+  listSchedulerAssignmentsForSchedulerOnDate(schedulerId: number, asOfDate: string) { return schedulerAssignmentsRepository.listForSchedulerOnDate(schedulerId, asOfDate); }
   getActiveAssignmentForPatient(patientScreeningId: number) { return schedulerAssignmentsRepository.getActiveForPatient(patientScreeningId); }
   getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string) { return schedulerAssignmentsRepository.getActiveForPatientOnDate(patientScreeningId, asOfDate); }
   releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string) { return schedulerAssignmentsRepository.releaseForScheduler(schedulerId, asOfDate, reason); }
@@ -478,13 +491,19 @@ export class DatabaseStorage implements IStorage {
   getTaskById(id: number) { return plexusRepository.getTask(id); }
   getTasksByProject(projectId: number) { return plexusRepository.listTasksByProject(projectId); }
   getTasksByAssignee(userId: string) { return plexusRepository.listTasksByAssignee(userId); }
+  getOpenTasksByAssignee(userId: string) { return plexusRepository.listOpenTasksByAssignee(userId); }
+  releaseTeamTasksForUser(userId: string) { return plexusRepository.releaseTeamTasksForUser(userId); }
   getTasksByCreator(userId: string) { return plexusRepository.listTasksByCreator(userId); }
   getTasksByCreatorWithActivity(userId: string) { return plexusRepository.listTasksByCreatorWithActivity(userId); }
   getTasksByPatient(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
+  getTasksForManager(filters?: ManagerTaskFilters, limit?: number) { return plexusRepository.listTasksForManager(filters, limit); }
+  getTeamPoolTasks(teamIds: number[], includeClaimed?: boolean) { return plexusRepository.listTeamPoolTasks(teamIds, includeClaimed); }
   getTasksByPatientScreeningId(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
   getUrgentTasks() { return plexusRepository.listUrgentTasks(); }
   getOverdueTasksForUser(userId: string) { return plexusRepository.listOverdueTasksForUser(userId); }
   updateTask(id: number, updates: Partial<InsertPlexusTask>) { return plexusRepository.updateTask(id, updates); }
+  claimTeamTask(id: number, teamId: number, userId: string) { return plexusRepository.claimTeamTask(id, teamId, userId); }
+  transitionTaskStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsertPlexusTask>) { return plexusRepository.transitionTaskStatus(id, fromStatus, toStatus, extra); }
   deleteTask(id: number) { return plexusRepository.deleteTask(id); }
 
   addCollaborator(record: InsertPlexusTaskCollaborator) { return plexusRepository.addCollaborator(record); }

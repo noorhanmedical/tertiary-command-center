@@ -39,10 +39,15 @@ const WORKSPACE_LABEL: Record<WorkspaceRole, string | undefined> = {
   patientCareSpecialist: "Patient Care Specialist Workspace",
 };
 
+// Role → default right-rail mode. ACS defaults to the Ancillary Schedule
+// (their clinic-day execution surface); PCS defaults to the Call List.
+// This is the STATIC fallback only — TeamPortalShell still applies the
+// stored workspaceProfile.defaultMode override on top of this when present,
+// so an explicit user/profile preference always wins.
 const DEFAULT_MODE: Record<WorkspaceRole, TeamMemberWorkspaceMode> = {
   technician: "clinicSchedule",
   liaison: "callList",
-  ancillaryCareSpecialist: "clinicSchedule",
+  ancillaryCareSpecialist: "ancillarySchedule",
   patientCareSpecialist: "callList",
 };
 

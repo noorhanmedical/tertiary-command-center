@@ -20,6 +20,42 @@ export const READY_BILLING = new Set([
   "sent_to_billing",
 ]);
 
+// ─── Slice B-minimal — derived Order Note portal state (pure) ────────────────
+export const ORDER_NOTE_PORTAL_STATES = [
+  "awaiting_screening",
+  "ready_for_review",
+  "updated_review_required",
+  "signed",
+  "pending",
+] as const;
+export type OrderNotePortalState = (typeof ORDER_NOTE_PORTAL_STATES)[number];
+
+export type OrderNotePortalContext = {
+  requireScreening: boolean;
+  screeningComplete: boolean;
+  currentScreeningVersion: string | null;
+};
+
+/** Derive the clinician-portal-facing state of an Order Note from canonical
+ *  facts (no new persistent enum). */
+export function deriveOrderNotePortalState(
+  note: ProcedureNote,
+  ctx: OrderNotePortalContext,
+): OrderNotePortalState {
+  if (note.signatureStatus === "signed") return "signed";
+  const hasBody =
+    !!note.generatedText &&
+    SIGNABLE_GEN_STATUSES.includes(note.generationStatus as (typeof SIGNABLE_GEN_STATUSES)[number]);
+  if (!hasBody) return "awaiting_screening";
+  if (ctx.requireScreening) {
+    if (!ctx.screeningComplete) return "awaiting_screening";
+    if (!note.evaluatedScreeningEvidenceVersion || note.evaluatedScreeningEvidenceVersion !== ctx.currentScreeningVersion) {
+      return "updated_review_required";
+    }
+  }
+  return "ready_for_review";
+}
+
 // ─── Client-facing signature-item shape ──────────────────────────────────────
 
 export type PhysicianSignatureItem = {
@@ -47,6 +83,12 @@ export type PhysicianSignatureItem = {
     notSignable: boolean;
     billingBlocked: boolean;
   };
+  // Slice B-minimal — Order Note lifecycle (order_note rows only; else null).
+  orderNotePortalState: OrderNotePortalState | null;
+  screeningComplete: boolean | null;
+  // Version tokens the client MUST echo on sign (Slice C stale-client guard).
+  expectedEvidenceFingerprint: string | null;
+  expectedScreeningVersion: string | null;
 };
 
 // Shape of a joined row from the physicianPortal repository. Kept
@@ -67,7 +109,61 @@ export type SignatureCandidateRow = ProcedureNote & {
 
 export type SignEligibility =
   | { ok: true }
-  | { ok: false; code: 404 | 409; error: string };
+  | { ok: false; code: 403 | 404 | 409; error: string; reason?: string };
+
+// ─── Slice C — Order Note signing gate (pure) ────────────────────────────────
+// Additional, order-note-specific eligibility beyond eligibleForSign. Enforces
+// current-version, required-screening completeness, screening-version currency
+// (the note must have been evaluated against the CURRENT completed screening),
+// optional client version tokens (stale-client protection), and signer
+// authorization. Purely functional; the workflow gathers the gate context.
+export type OrderNoteSignGate = {
+  // BW/VW require current structured screening before signing.
+  requireScreening: boolean;
+  // A current completed structured screening exists for the case+service.
+  screeningComplete: boolean;
+  // The current FULL screening evidence version (A0).
+  currentScreeningVersion: string | null;
+  // Optional client-submitted tokens proving they viewed the current doc.
+  expectedEvidenceFingerprint?: string | null;
+  expectedScreeningVersion?: string | null;
+  // Whether the authenticated clinician is authorized to sign this note.
+  authorizedSigner: boolean;
+};
+
+export function orderNoteSigningEligibility(
+  note: ProcedureNote,
+  gate: OrderNoteSignGate,
+): SignEligibility {
+  // Must be the CURRENT (non-superseded) version.
+  if (note.supersededAt != null) {
+    return { ok: false, code: 409, reason: "ORDER_NOTE_STALE", error: "A newer version of this Order Note exists. Please review the current Order Note before signing." };
+  }
+  if (note.ancillaryCaseId == null) {
+    return { ok: false, code: 409, reason: "ORDER_NOTE_NOT_READY", error: "Order Note is not linked to an ancillary case." };
+  }
+  if (gate.requireScreening) {
+    if (!gate.screeningComplete) {
+      return { ok: false, code: 409, reason: "REQUIRED_SCREENING_INCOMPLETE", error: "Required screening is not complete." };
+    }
+    // The note must have been evaluated against the CURRENT screening version.
+    if (!note.evaluatedScreeningEvidenceVersion || note.evaluatedScreeningEvidenceVersion !== gate.currentScreeningVersion) {
+      return { ok: false, code: 409, reason: "ORDER_NOTE_STALE", error: "Clinical information has changed. Please review the current Order Note before signing." };
+    }
+  }
+  // Stale-client protection: reject a signature against a version the client no
+  // longer reflects.
+  if (gate.expectedScreeningVersion != null && gate.expectedScreeningVersion !== gate.currentScreeningVersion) {
+    return { ok: false, code: 409, reason: "ORDER_NOTE_STALE", error: "Clinical information has changed. Please review the current Order Note before signing." };
+  }
+  if (gate.expectedEvidenceFingerprint != null && gate.expectedEvidenceFingerprint !== (note.evidenceFingerprint ?? null)) {
+    return { ok: false, code: 409, reason: "ORDER_NOTE_STALE", error: "This Order Note was updated. Please review the current version before signing." };
+  }
+  if (!gate.authorizedSigner) {
+    return { ok: false, code: 403, reason: "CLINICIAN_NOT_AUTHORIZED", error: "You are not authorized to sign this Order Note." };
+  }
+  return { ok: true };
+}
 
 /**
  * Can this procedure_notes row transition to `signed` right now?
@@ -103,6 +199,7 @@ export function computeSignatureItem(
   row: SignatureCandidateRow,
   reportUploaded: boolean,
   billingStatus: string,
+  orderNoteCtx?: OrderNotePortalContext | null,
 ): PhysicianSignatureItem {
   const signatureStatus = (row.signatureStatus ??
     "needs_signature") as SignatureStatus;
@@ -112,10 +209,23 @@ export function computeSignatureItem(
       row.generationStatus as (typeof SIGNABLE_GEN_STATUSES)[number],
     );
   const reportRequired = row.noteType === "post_procedure_note";
-  const signable =
-    hasBody && (!reportRequired || reportUploaded) && signatureStatus !== "signed";
+  const isOrderNote = row.noteType === "order_note";
+  // Order Note lifecycle state (only when we have the screening context).
+  const orderNotePortalState =
+    isOrderNote && orderNoteCtx ? deriveOrderNotePortalState(row, orderNoteCtx) : null;
+  const signable = isOrderNote && orderNoteCtx
+    // Canonical Order Note: signable in the UI only when READY FOR REVIEW
+    // (current screening + evaluated against current version). The server C
+    // gate is authoritative; this keeps the button honest. Legacy/flag-off
+    // order notes (no context) keep the original body-based rule.
+    ? orderNotePortalState === "ready_for_review"
+    : hasBody && (!reportRequired || reportUploaded) && signatureStatus !== "signed";
   const billingBlocked = !READY_BILLING.has(billingStatus);
   return {
+    orderNotePortalState,
+    screeningComplete: isOrderNote && orderNoteCtx ? orderNoteCtx.screeningComplete : null,
+    expectedEvidenceFingerprint: isOrderNote ? (row.evidenceFingerprint ?? null) : null,
+    expectedScreeningVersion: isOrderNote && orderNoteCtx ? orderNoteCtx.currentScreeningVersion : null,
     id: row.id,
     patientScreeningId: row.patientScreeningId,
     executionCaseId: row.executionCaseId,

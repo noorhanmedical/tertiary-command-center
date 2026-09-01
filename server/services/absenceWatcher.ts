@@ -14,7 +14,7 @@
 
 import { storage } from "../storage";
 import { withAdvisoryLock } from "../lib/advisoryLock";
-import { releaseAndRedistribute } from "./callListEngine";
+import { releaseAndRedistributeCanonical } from "./engagement/absenceRedistribution";
 import { openai, withRetry } from "./aiClient";
 import {
   classifyLogSafeError,
@@ -147,7 +147,7 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
             (now.getTime() - new Date(existingAlert.createdAt as unknown as string).getTime()) / 60_000;
           if (alertAgeMin >= AUTO_EXECUTE_MIN) {
             try {
-              await releaseAndRedistribute(storage, sc.id, today, "absence_auto_execute");
+              await releaseAndRedistributeCanonical(sc.id, "absence_auto_execute");
               await storage.updateTask(existingAlert.id, { status: "resolved" });
             } catch (error: unknown) {
               errorPhiSafe({

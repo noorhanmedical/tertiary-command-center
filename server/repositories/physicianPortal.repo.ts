@@ -16,7 +16,13 @@ import { SIGNABLE_GEN_STATUSES } from "../services/physicianPortal/signatureRule
 // Imported here only so the WHERE-clause filter matches the client-side
 // eligibility rule.
 
+export type ClinicScope = number | "all";
+
 export type PhysicianSignatureListFilters = {
+  // Authenticated clinic scope — derived from req.clinicId / the guard, never a
+  // request payload. A numeric clinic filters to that clinic; "all" is the admin
+  // cross-clinic super-user scope (no clinic filter).
+  clinicId: ClinicScope;
   limit?: number;
   serviceType?: string;
   signatureStatus?: string;
@@ -51,6 +57,11 @@ export async function listSignatureCandidateRows(
     inArray(procedureNotes.generationStatus, [...SIGNABLE_GEN_STATUSES]),
     sql`COALESCE(${procedureNotes.signatureStatus}, 'needs_signature') <> 'signed'`,
   ];
+  // Tenant isolation: a numeric scope lists only that clinic's notes. The admin
+  // "all" scope lists every clinic (cross-clinic super-user).
+  if (filters.clinicId !== "all") {
+    conditions.unshift(eq(procedureNotes.clinicId, filters.clinicId));
+  }
   if (filters.serviceType) {
     conditions.push(eq(procedureNotes.serviceType, filters.serviceType));
   }
@@ -78,6 +89,19 @@ export async function listSignatureCandidateRows(
       signedAt: procedureNotes.signedAt,
       signedByUserId: procedureNotes.signedByUserId,
       returnReason: procedureNotes.returnReason,
+      // Phase 2E-A2 canonical Order Note identity columns.
+      ancillaryCaseId: procedureNotes.ancillaryCaseId,
+      globalPlexusPatientId: procedureNotes.globalPlexusPatientId,
+      patientClinicMembershipId: procedureNotes.patientClinicMembershipId,
+      qualifyingGlobalScheduleEventId: procedureNotes.qualifyingGlobalScheduleEventId,
+      adminReviewEventId: procedureNotes.adminReviewEventId,
+      effectiveClinicalDate: procedureNotes.effectiveClinicalDate,
+      supersedesNoteId: procedureNotes.supersedesNoteId,
+      supersededAt: procedureNotes.supersededAt,
+      reportDocumentReferenceId: procedureNotes.reportDocumentReferenceId,
+      // Slice A1 canonical Order Note evidence fingerprint columns (migration 0076).
+      evidenceFingerprint: procedureNotes.evidenceFingerprint,
+      evaluatedScreeningEvidenceVersion: procedureNotes.evaluatedScreeningEvidenceVersion,
       createdAt: procedureNotes.createdAt,
       updatedAt: procedureNotes.updatedAt,
       patientName: patientScreenings.name,
@@ -111,9 +135,15 @@ export async function listSignatureCandidateRows(
  */
 export async function listReportUploadedKeys(
   patientScreeningIds: number[],
+  clinicId: ClinicScope,
 ): Promise<Set<string>> {
   const keys = new Set<string>();
   if (patientScreeningIds.length === 0) return keys;
+  // Screening ids already come from clinic-scoped notes; the clinic guard
+  // (tolerating legacy NULL clinic_id for those screenings) keeps a
+  // mislabeled cross-clinic readiness row from leaking a flag. Admin "all"
+  // scope drops the clinic constraint entirely.
+  const clinicClause = clinicId === "all" ? sql`` : sql`AND (clinic_id = ${clinicId} OR clinic_id IS NULL)`;
   const rows = await db.execute<{
     patient_screening_id: number;
     service_type: string;
@@ -122,6 +152,7 @@ export async function listReportUploadedKeys(
       FROM case_document_readiness
      WHERE document_type = 'report'
        AND document_status IN ('uploaded', 'approved', 'completed')
+       ${clinicClause}
        AND patient_screening_id IN (${sql.join(patientScreeningIds, sql`, `)})
   `);
   for (const r of rows.rows) {
@@ -138,9 +169,11 @@ export async function listReportUploadedKeys(
  */
 export async function listLatestBillingReadinessStatuses(
   patientScreeningIds: number[],
+  clinicId: ClinicScope,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (patientScreeningIds.length === 0) return out;
+  const clinicClause = clinicId === "all" ? sql`` : sql`AND (clinic_id = ${clinicId} OR clinic_id IS NULL)`;
   const rows = await db.execute<{
     patient_screening_id: number;
     service_type: string;
@@ -150,6 +183,7 @@ export async function listLatestBillingReadinessStatuses(
            patient_screening_id, service_type, readiness_status
       FROM billing_readiness_checks
      WHERE patient_screening_id IN (${sql.join(patientScreeningIds, sql`, `)})
+       ${clinicClause}
      ORDER BY patient_screening_id, service_type, updated_at DESC
   `);
   for (const r of rows.rows) {
@@ -158,14 +192,21 @@ export async function listLatestBillingReadinessStatuses(
   return out;
 }
 
-/** Load a single procedure_notes row by id. Returns undefined when absent. */
-export async function getProcedureNoteById(
-  id: number,
-): Promise<ProcedureNote | undefined> {
-  const [note] = await db
-    .select()
-    .from(procedureNotes)
-    .where(eq(procedureNotes.id, id))
-    .limit(1);
+/**
+ * Load a single procedure_notes row scoped to the authenticated clinic.
+ * Requires BOTH id and clinicId. Returns undefined for both an absent id
+ * and an other-clinic id — the caller maps both to the same not-found
+ * response, so tenant existence is never disclosed.
+ */
+export async function getProcedureNoteByIdForClinic(args: {
+  id: number;
+  clinicId: ClinicScope;
+}): Promise<ProcedureNote | undefined> {
+  // Admin "all" resolves the row by id across clinics (cross-clinic super-user);
+  // a numeric clinic keeps strict tenant isolation (other-clinic id → undefined).
+  const where = args.clinicId === "all"
+    ? eq(procedureNotes.id, args.id)
+    : and(eq(procedureNotes.id, args.id), eq(procedureNotes.clinicId, args.clinicId));
+  const [note] = await db.select().from(procedureNotes).where(where).limit(1);
   return note;
 }

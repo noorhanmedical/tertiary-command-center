@@ -1,4 +1,4 @@
-import { sql, pgTable, serial, text, integer, timestamp, index, createInsertSchema, z } from "./_common";
+import { sql, pgTable, serial, text, integer, boolean, timestamp, index, createInsertSchema, z } from "./_common";
 import { clinics } from "./clinics";
 
 export const patientTestHistory = pgTable("patient_test_history", {
@@ -12,6 +12,19 @@ export const patientTestHistory = pgTable("patient_test_history", {
   insuranceType: text("insurance_type").notNull().default("ppo"),
   clinic: text("clinic").notNull().default("NWPG"),
   notes: text("notes"),
+  // ── Additive provenance / linkage columns (migration 0061) ────────────
+  // Tie a historical test to the ancillary service, its episode ordinal, the
+  // result summary, and the canonical objects (report/procedure-note/screening/
+  // execution-case) so the Ancillary Journey "Previous Tests" and Plexus Notes
+  // "Previous Episodes" can render + open the real documents.
+  serviceType: text("service_type"),
+  episodeSequence: integer("episode_sequence"),
+  resultSummary: text("result_summary"),
+  reportAvailable: boolean("report_available").notNull().default(false),
+  reportDocumentReferenceId: integer("report_document_reference_id"),
+  procedureNoteId: integer("procedure_note_id"),
+  patientScreeningId: integer("patient_screening_id"),
+  executionCaseId: integer("execution_case_id"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_patient_test_history_patient_name").on(table.patientName),

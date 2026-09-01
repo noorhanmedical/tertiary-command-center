@@ -50,6 +50,9 @@ import {
   warnPhiSafe,
 } from "../../lib/phiSafeLogger";
 import { invalidatePatientDatabase } from "../../routes/patientDatabase";
+// Phase 2B — canonical ancillary-case reconciliation. No-op with
+// FEATURE_ANCILLARY_CASE_WRITE=OFF (default).
+import { reconcileAncillaryCaseForService } from "../ancillaryCases/reconciliation";
 import {
   buildAdminReviewEvidence,
   evidenceForUltrasoundTest,
@@ -158,6 +161,12 @@ function deterministicEntry(
 export async function addAdminReviewAncillary(
   patientId: number,
   body: Record<string, unknown> | undefined | null,
+  /**
+   * Phase 2B — passed through from the route so ancillary-case
+   * journey events attribute correctly. Optional; when omitted the
+   * event `actorUserId` is null (still valid — the schema allows NULL).
+   */
+  actorUserId: string | null = null,
 ): Promise<AddAdminReviewAncillaryOutcome> {
   if (Number.isNaN(patientId)) {
     return { ok: false, error: { kind: "invalid_id" } };
@@ -468,6 +477,43 @@ export async function addAdminReviewAncillary(
     qualifyingTests: nextTests,
     reasoning: existingReasoning,
   });
+
+  // Phase 2B — ensure a canonical ancillary case exists for every
+  // freshly-added test. No-op with FEATURE_ANCILLARY_CASE_WRITE=OFF.
+  // Failure is logged non-PHI and does not disturb the admin-review
+  // workflow (the reconciler already emits a structured audit event
+  // on integrity / missing-links failures).
+  const clinicId = (updated as { clinicId?: number | null } | null)?.clinicId ?? null;
+  const globalPlexusPatientId = (updated as { globalPlexusPatientId?: number | null } | null)?.globalPlexusPatientId ?? null;
+  const patientClinicMembershipId = (updated as { patientClinicMembershipId?: number | null } | null)?.patientClinicMembershipId ?? null;
+  if (clinicId && globalPlexusPatientId && patientClinicMembershipId) {
+    for (const testName of addedTests) {
+      try {
+        await reconcileAncillaryCaseForService({
+          clinicId,
+          globalPlexusPatientId,
+          patientClinicMembershipId,
+          originatingScreeningId: patientId,
+          serviceType: testName,
+          qualificationStatus: "qualified",
+          adminReviewStatus: "approved",
+          source: "admin_review_add_ancillary",
+          actorUserId,
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(JSON.stringify({
+          level: "error",
+          source: "ancillary_case_reconciliation",
+          site: "adminReviewAddService",
+          patientId,
+          serviceType: testName,
+          code: (e as { code?: string })?.code,
+          message: (e as Error)?.message ?? String(e),
+        }));
+      }
+    }
+  }
 
   invalidatePatientDatabase();
   return {

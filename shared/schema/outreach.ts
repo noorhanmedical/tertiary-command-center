@@ -40,6 +40,12 @@ export const OUTREACH_CALL_OUTCOMES = [
 ] as const;
 export type OutreachCallOutcome = typeof OUTREACH_CALL_OUTCOMES[number];
 
+// Communication channels + directions (canonical comms — migration 0063).
+export const COMMUNICATION_CHANNELS = ["phone", "sms", "email", "portal"] as const;
+export type CommunicationChannel = typeof COMMUNICATION_CHANNELS[number];
+export const COMMUNICATION_DIRECTIONS = ["outbound", "inbound"] as const;
+export type CommunicationDirection = typeof COMMUNICATION_DIRECTIONS[number];
+
 export const outreachCalls = pgTable("outreach_calls", {
   id: serial("id").primaryKey(),
   patientScreeningId: integer("patient_screening_id")
@@ -52,11 +58,44 @@ export const outreachCalls = pgTable("outreach_calls", {
   callbackAt: timestamp("callback_at"),
   attemptNumber: integer("attempt_number").notNull().default(1),
   durationSeconds: integer("duration_seconds"),
+  // ── Canonical communication columns (additive, migration 0063) ────────
+  // Multi-channel patient/service communication record. All nullable/defaulted
+  // so existing outreach-call writes keep working unchanged.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
+  patientName: text("patient_name"),
+  patientDob: text("patient_dob"),
+  /** Optional service-level association (null = patient-level communication). */
+  ancillaryCaseId: integer("ancillary_case_id"),
+  serviceType: text("service_type"),
+  channel: text("channel").notNull().default("phone"),
+  direction: text("direction").notNull().default("outbound"),
+  destination: text("destination"),
+  staffName: text("staff_name"),
+  staffRole: text("staff_role"),
+  endedAt: timestamp("ended_at"),
+  disposition: text("disposition"),
+  nextAction: text("next_action"),
+  sourceSystem: text("source_system").default("plexus"),
+  externalCallId: text("external_call_id"),
+  recordingRef: text("recording_ref"),
+  transcriptRef: text("transcript_ref"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_outreach_calls_patient").on(table.patientScreeningId),
   index("idx_outreach_calls_scheduler").on(table.schedulerUserId),
   index("idx_outreach_calls_started_at").on(table.startedAt),
   index("idx_outreach_calls_callback_at").on(table.callbackAt),
+  index("idx_outreach_calls_ancillary_case").on(table.ancillaryCaseId),
+  index("idx_outreach_calls_channel").on(table.channel),
+  // Idempotency key for the canonical call-attempt record. When a caller
+  // supplies a stable external_call_id (client-minted UUID or provider
+  // session id), the same real call attempt maps to exactly ONE outreach_calls
+  // row across retries and across surfaces. Partial (WHERE NOT NULL) so legacy
+  // rows without a key are unaffected. Mirrors uq_cpa_idempotency.
+  uniqueIndex("uq_outreach_calls_external_call_id")
+    .on(table.externalCallId)
+    .where(sql`external_call_id IS NOT NULL`),
 ]);
 
 export const insertOutreachCallSchema = createInsertSchema(outreachCalls).omit({

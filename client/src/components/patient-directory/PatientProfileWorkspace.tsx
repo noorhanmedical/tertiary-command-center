@@ -6,7 +6,10 @@ import {
   buildEmrChart, type RawExecutionCase, type RawCooldownRecord,
   type RawInsuranceReview, type RawAppointment, type RawCall,
   type RawDocument, type RawBillingRow, type RawScreeningDetail,
+  type RawClinicalData, type RawAncillaryCase, type RawCanonicalNote, type RawPriorTest,
 } from "./emrModel";
+import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
 
 // Patient-tab cache: keep a profile's data fresh for a minute and resident for
 // five so re-opening the same patient (tab switch / call-list re-click) paints
@@ -29,6 +32,8 @@ export function PatientProfileWorkspace({
   seedName,
   onBack,
   onSchedule,
+  focusSection,
+  focusToken,
 }: {
   encodedKey: string;
   representativeScreeningId: number | null;
@@ -37,6 +42,9 @@ export function PatientProfileWorkspace({
   onBack?: () => void;
   /** Opens the in-portal scheduling dialog (calendar popup) for this patient. */
   onSchedule?: () => void;
+  /** Service-focus: section to scroll/highlight on a one-shot focus request. */
+  focusSection?: string | null;
+  focusToken?: number;
 }) {
   // Heavy, cleanly-independent sections fetch only once scrolled into view.
   const [documentsWanted, setDocumentsWanted] = useState(false);
@@ -72,11 +80,11 @@ export function PatientProfileWorkspace({
   });
 
   const callsQuery = useQuery<RawCall[]>({
-    queryKey: ["/api/portal/calls", { patientScreeningId: psid }],
+    queryKey: ["/api/patients", psid, "communications"],
     queryFn: () =>
       fetchJsonOrEmpty<RawCall[]>(
-        `/api/portal/calls?patientScreeningId=${psid}`,
-        (d) => (Array.isArray(d) ? d : d.calls ?? d.rows ?? []),
+        `/api/patients/${psid}/communications`,
+        (d) => (Array.isArray(d) ? d : d.rows ?? []),
         [],
       ),
     enabled: !!psid,
@@ -114,7 +122,7 @@ export function PatientProfileWorkspace({
   // The provider (clinician) name + the report batch id live on the schedule
   // batch, not on the patient_screening row. Use the representative screening's
   // batch so the header can show a provider and the Documents section can link
-  // the Clinician/Plexus PDFs.
+  // the Clinician/Plexus Atlass.
   const repBatchId = useMemo(() => {
     const screenings = profile?.screenings ?? [];
     if (!screenings.length) return null;
@@ -170,6 +178,23 @@ export function PatientProfileWorkspace({
     ...CACHE,
   });
 
+  // Phase 2D — canonical per-service appointment projection for the
+  // patient chart. Only fetched when the client flag is ON (enabled:false
+  // otherwise → no request; the legacy scheduling section renders). This
+  // is the full patient record, so all of the patient's ancillary-case
+  // appointments are shown (not eligibility-gated like the queue).
+  const canonicalApptQuery = useQuery<Record<string, AncillaryAppointmentProjection>>({
+    queryKey: ["/api/canonical-appointments", "byService", psid],
+    queryFn: () =>
+      fetchJsonOrEmpty<Record<string, AncillaryAppointmentProjection>>(
+        `/api/canonical-appointments?patientScreeningId=${psid}&byService=true&includeHistory=true`,
+        (d) => (d && typeof d === "object" && (d as { appointmentByService?: Record<string, AncillaryAppointmentProjection> }).appointmentByService) || {},
+        {},
+      ),
+    enabled: isCanonicalAppointmentUiEnabled() && !!psid,
+    ...CACHE,
+  });
+
   const screeningDetailQuery = useQuery<RawScreeningDetail>({
     queryKey: ["/api/patients", psid],
     queryFn: () =>
@@ -177,6 +202,61 @@ export function PatientProfileWorkspace({
         `/api/patients/${psid}`,
         (d) => d ?? null,
         null,
+      ),
+    enabled: !!psid,
+    ...CACHE,
+  });
+
+  // Phase 11 — canonical clinical reference domains (providers/allergies/
+  // labs/imaging/vitals/encounters). Real DB rows replace the client-side
+  // demo enrichment for these six sections.
+  const clinicalDataQuery = useQuery<RawClinicalData>({
+    queryKey: ["/api/patients", psid, "clinical-data"],
+    queryFn: () =>
+      fetchJsonOrEmpty<RawClinicalData>(
+        `/api/patients/${psid}/clinical-data`,
+        (d) => (d && typeof d === "object" ? d : null),
+        null,
+      ),
+    enabled: !!psid,
+    ...CACHE,
+  });
+
+  // Canonical per-service state: ancillary cases (admin review status drives
+  // the single serviceEpisodes projection), order/procedure notes, and prior
+  // test episodes. An Admin Review decision invalidates these so the whole
+  // chart re-derives from the authoritative state.
+  const ancillaryCasesQuery = useQuery<RawAncillaryCase[]>({
+    queryKey: ["/api/patients", psid, "admin-review", "cases"],
+    queryFn: () =>
+      fetchJsonOrEmpty<RawAncillaryCase[]>(
+        `/api/patients/${psid}/admin-review`,
+        (d) => (d && Array.isArray(d.services) ? d.services : []),
+        [],
+      ),
+    enabled: !!psid,
+    ...CACHE,
+  });
+
+  const canonicalNotesQuery = useQuery<RawCanonicalNote[]>({
+    queryKey: ["/api/procedure-notes", { patientScreeningId: psid }],
+    queryFn: () =>
+      fetchJsonOrEmpty<RawCanonicalNote[]>(
+        `/api/procedure-notes?patientScreeningId=${psid}`,
+        (d) => (Array.isArray(d) ? d : []),
+        [],
+      ),
+    enabled: !!psid,
+    ...CACHE,
+  });
+
+  const priorTestsQuery = useQuery<RawPriorTest[]>({
+    queryKey: ["/api/patients", psid, "prior-tests"],
+    queryFn: () =>
+      fetchJsonOrEmpty<RawPriorTest[]>(
+        `/api/patients/${psid}/prior-tests`,
+        (d) => (Array.isArray(d) ? d : []),
+        [],
       ),
     enabled: !!psid,
     ...CACHE,
@@ -197,12 +277,18 @@ export function PatientProfileWorkspace({
       screeningDetail: screeningDetailQuery.data ?? null,
       provider: batchQuery.data?.provider ?? null,
       reportBatchId: batchQuery.data?.batchId ?? repBatchId,
+      canonicalAppointmentByService: canonicalApptQuery.data ?? null,
+      clinicalData: clinicalDataQuery.data ?? null,
+      ancillaryCases: ancillaryCasesQuery.data ?? [],
+      canonicalNotes: canonicalNotesQuery.data ?? [],
+      priorTests: priorTestsQuery.data ?? [],
     });
   }, [
     profile, psid, executionCasesQuery.data, cooldownRecordsQuery.data,
     insuranceQuery.data, appointmentsQuery.data, callsQuery.data,
     documentsQuery.data, billingQuery.data, screeningDetailQuery.data,
-    batchQuery.data, repBatchId,
+    batchQuery.data, repBatchId, canonicalApptQuery.data, clinicalDataQuery.data,
+    ancillaryCasesQuery.data, canonicalNotesQuery.data, priorTestsQuery.data,
   ]);
 
   // Per-section skeletons: a section shows a placeholder until its own backing
@@ -216,12 +302,15 @@ export function PatientProfileWorkspace({
     if (insuranceQuery.isLoading) s.add("insurance");
     if (cooldownRecordsQuery.isLoading) s.add("cooldown");
     if (screeningDetailQuery.isLoading) s.add("plexus-iq");
+    if (clinicalDataQuery.isLoading) {
+      for (const id of ["providers", "allergies", "labs", "imaging", "vitals", "encounters"]) s.add(id);
+    }
     if (documentsWanted && !documentsQuery.isFetched) s.add("documents");
     return s;
   }, [
     executionCasesQuery.isLoading, callsQuery.isLoading, appointmentsQuery.isLoading,
     billingQuery.isLoading, insuranceQuery.isLoading, cooldownRecordsQuery.isLoading,
-    screeningDetailQuery.isLoading, documentsWanted, documentsQuery.isFetched,
+    screeningDetailQuery.isLoading, clinicalDataQuery.isLoading, documentsWanted, documentsQuery.isFetched,
   ]);
 
   // No full-page spinner: paint the chart frame immediately with the seeded
@@ -244,6 +333,8 @@ export function PatientProfileWorkspace({
       onSchedule={onSchedule}
       loadingSections={loadingSections}
       onVisibleSectionsChange={handleVisible}
+      focusSection={focusSection}
+      focusToken={focusToken}
     />
   );
 }

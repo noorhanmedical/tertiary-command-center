@@ -214,6 +214,11 @@ export async function importPlexusIqClinicalRows(
     // Optional. When omitted the server defaults to `append`
     // (preserves today's find-or-create on facility + scheduleDate).
     placement?: PlexusIqBatchPlacement;
+    // Batch clinician attribution (Option A). Applied by the server ONLY to
+    // batches whose resolved facility matches the resolved defaultFacility.
+    clinicianId?: number | null;
+    clinicianName?: string | null;
+    clinicianSource?: "facility_clinician" | "free_text" | null;
   } = {},
 ): Promise<ClinicalImportResponse> {
   return postJson<ClinicalImportResponse>("/api/plexus-iq/clinical-import", {
@@ -222,6 +227,9 @@ export async function importPlexusIqClinicalRows(
     defaultScheduleDate: defaults.scheduleDate,
     defaultPatientType: defaults.patientType,
     placement: defaults.placement,
+    defaultClinicianId: defaults.clinicianId ?? undefined,
+    defaultClinicianName: defaults.clinicianName ?? undefined,
+    defaultClinicianSource: defaults.clinicianSource ?? undefined,
   });
 }
 

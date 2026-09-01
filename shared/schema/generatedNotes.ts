@@ -1,5 +1,5 @@
 import {
-  sql, pgTable, serial, text, varchar, integer, timestamp, jsonb, boolean, index, uniqueIndex,
+  sql, pgTable, serial, text, varchar, integer, timestamp, jsonb, boolean, index,
   createInsertSchema, z,
 } from "./_common";
 import { patientExecutionCases } from "./executionCase";
@@ -17,6 +17,10 @@ export const NOTE_GENERATION_STATUSES = [
   "generated",
   "failed",
   "approved",
+  // Phase 2F-B — an unsigned note voided because its procedure became invalid
+  // (cancelled/no_show/unable_to_complete) or its report was superseded. The
+  // generated body is retained for audit; the note is superseded (not current).
+  "voided",
 ] as const;
 export type NoteGenerationStatus = typeof NOTE_GENERATION_STATUSES[number];
 
@@ -51,6 +55,38 @@ export const procedureNotes = pgTable("procedure_notes", {
   signedAt: timestamp("signed_at"),
   signedByUserId: varchar("signed_by_user_id").references(() => users.id, { onDelete: "set null" }),
   returnReason: text("return_reason"),
+  // ── Phase 2E-A2 canonical Order Note identity (migration 0053) ──
+  // Case-scoped identity + evidence + supersession. FKs are declared in
+  // the migration only (a reverse import of patientAncillaryCases /
+  // globalScheduleEvents / adminReviewEvents here would risk a schema
+  // import cycle — same pattern as patientAncillaryCases' own screening /
+  // execution-case links). All nullable so legacy rows stay valid until
+  // the dry-run-first backfill deterministically links them.
+  ancillaryCaseId: integer("ancillary_case_id"),
+  globalPlexusPatientId: integer("global_plexus_patient_id"),
+  patientClinicMembershipId: integer("patient_clinic_membership_id"),
+  qualifyingGlobalScheduleEventId: integer("qualifying_global_schedule_event_id"),
+  adminReviewEventId: integer("admin_review_event_id"),
+  // Timeless clinical date, distinct from the server-owned createdAt.
+  effectiveClinicalDate: timestamp("effective_clinical_date"),
+  // Correction/version foundation only (no correction UI in this phase).
+  supersedesNoteId: integer("supersedes_note_id"),
+  supersededAt: timestamp("superseded_at"),
+  // ── Phase 2F canonical Procedure Note report evidence (migration 0054) ──
+  // The immutable ancillary_document_references row (documentKind='report')
+  // that satisfied the second Procedure Note eligibility condition. Nullable;
+  // only the canonical post_procedure_note path writes it. FK declared in
+  // migration 0054 only (peer schema module — avoids a schema import cycle).
+  reportDocumentReferenceId: integer("report_document_reference_id"),
+  // ── Slice A1 canonical Order Note evidence fingerprint (migration 0076) ──
+  // evidenceFingerprint: hash of the PROJECTED clinical evidence rendered into
+  // the Order Note body (distinct from the FULL screening evidence version).
+  // evaluatedScreeningEvidenceVersion: the current completed screening version
+  // this note was last evaluated against — the signing gate (Slice C) requires
+  // it to match the current screening. Both nullable + server-owned; only the
+  // canonical Order Note refresh writes them; legacy rows stay NULL.
+  evidenceFingerprint: text("evidence_fingerprint"),
+  evaluatedScreeningEvidenceVersion: text("evaluated_screening_evidence_version"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -61,13 +97,52 @@ export const procedureNotes = pgTable("procedure_notes", {
   index("idx_pn_note_type").on(table.noteType),
   index("idx_pn_generation_status").on(table.generationStatus),
   index("idx_pn_signature_status").on(table.signatureStatus),
-  uniqueIndex("idx_pn_unique_note").on(table.patientScreeningId, table.serviceType, table.noteType),
+  index("idx_pn_ancillary_case").on(table.ancillaryCaseId),
+  index("idx_pn_supersedes_note").on(table.supersedesNoteId),
+  index("idx_pn_superseded_at").on(table.supersededAt),
+  index("idx_pn_report_doc_ref").on(table.reportDocumentReferenceId),
+  // NOTE: the pre-2E `idx_pn_unique_note` global unique
+  // (patient_screening_id, service_type, note_type) is REPLACED in
+  // migration 0053 by three partial unique indexes that Drizzle's table
+  // API cannot model (partial WHERE clauses):
+  //   uq_pn_order_note_active_case  (ancillary_case_id, note_type)  — canonical current
+  //   uq_pn_order_note_legacy       (screening, service, note_type) — legacy unlinked
+  // Migration 0054 REPLACES the single uq_pn_post_procedure_note with two
+  // disjoint partial unique indexes (same shape as the order_note treatment):
+  //   uq_pn_post_procedure_note_active_case (ancillary_case_id, note_type)  — canonical current
+  //   uq_pn_post_procedure_note_legacy      (screening, service, note_type) — legacy unlinked
 ]);
 
+// General client-input insert/create validation. This is the CREATE
+// contract only — it deliberately omits BOTH the server-owned canonical
+// Order Note identity/evidence/supersession fields AND the signature
+// fields (signatureStatus / signedAt / signedByUserId). Signature is NOT
+// part of note creation or a general update: it flows exclusively through
+// dedicated, server-owned, clinic-scoped signing commands in the
+// repository layer (signProcedureNoteRow / returnProcedureNoteRow) so a
+// client body can NEVER seed a signer, a signed-at instant, or a
+// signature status. There is deliberately NO exported shared schema that
+// carries signedAt or signedByUserId — those two fields are stamped
+// exclusively at the repository boundary (server time + authenticated
+// session user), never accepted from any request payload.
 export const insertProcedureNoteSchema = createInsertSchema(procedureNotes).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  signatureStatus: true,
+  signedAt: true,
+  signedByUserId: true,
+  ancillaryCaseId: true,
+  globalPlexusPatientId: true,
+  patientClinicMembershipId: true,
+  qualifyingGlobalScheduleEventId: true,
+  adminReviewEventId: true,
+  effectiveClinicalDate: true,
+  supersedesNoteId: true,
+  supersededAt: true,
+  reportDocumentReferenceId: true,
+  evidenceFingerprint: true,
+  evaluatedScreeningEvidenceVersion: true,
 });
 
 export type ProcedureNote = typeof procedureNotes.$inferSelect;

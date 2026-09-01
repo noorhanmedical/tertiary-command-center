@@ -1,14 +1,20 @@
 import { db } from "../db";
-import { eq, and, or, desc, gte, lte, ilike, inArray } from "drizzle-orm";
+import { eq, and, or, desc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
 import {
   procedureEvents,
   type ProcedureEvent,
   type InsertProcedureEvent,
 } from "@shared/schema/procedureEvents";
+export type { ProcedureEvent } from "@shared/schema/procedureEvents";
 import { upsertCaseDocumentReadinessForProcedureComplete } from "./documentReadiness.repo";
 import { createPendingProcedureNotes } from "./generatedNotes.repo";
 import { evaluateBillingReadinessForProcedure } from "./billingReadiness.repo";
 import { upsertProcedureCompleteEvent, clearProcedureCompleteEvent } from "./globalSchedule.repo";
+import { featureFlags, procedureNoteRuntimeEnabled } from "../lib/featureFlags";
+
+const PG_UNDEFINED_TABLE = "42P01";
+const PG_UNDEFINED_COLUMN = "42703";
+const PG_UNIQUE_VIOLATION = "23505";
 
 export type ListProcedureEventsFilters = {
   executionCaseId?: number;
@@ -52,6 +58,22 @@ export async function updateProcedureEvent(
     });
   }
 
+  // Phase 2F Hook A: a procedure transitioned INTO "complete" via a generic
+  // update. Run the canonical orchestration AWAITED (flag-gated; OFF ⇒ zero
+  // Phase 2F reads/writes) so no async DB task escapes the caller. Non-throwing:
+  // never reverses this already-committed update.
+  if (result && updates.procedureStatus === "complete" && featureFlags.canonicalProcedureLifecycle) {
+    try {
+      const { onProcedureCompleted } = await import(
+        "../services/procedureLifecycle/procedureLifecycleOrchestration"
+      );
+      // Pass the committed event's clinic as the expected clinic scope.
+      await onProcedureCompleted({ procedureEventId: id, expectedClinicId: result.clinicId ?? null });
+    } catch (err) {
+      console.error("[procedureEvents.repo] onProcedureCompleted failed:", err);
+    }
+  }
+
   return result;
 }
 
@@ -60,6 +82,32 @@ export async function getProcedureEventById(id: number): Promise<ProcedureEvent 
     .select()
     .from(procedureEvents)
     .where(eq(procedureEvents.id, id))
+    .limit(1);
+  return result;
+}
+
+/**
+ * EXACT-ownership procedure-event lookup (§5). The WHERE requires the id AND a
+ * non-null clinic / ancillary case / service equal to the caller's — SQL `=`
+ * against a NULL column yields UNKNOWN, so a clinicless/caseless/serviceless
+ * event NEVER matches (fails closed). Returns the row only when every ownership
+ * dimension is exact; otherwise undefined. No mutation.
+ */
+export async function getProcedureEventForExactClinicCase(args: {
+  procedureEventId: number;
+  clinicId: number;
+  ancillaryCaseId: number;
+  serviceType: string;
+}): Promise<ProcedureEvent | undefined> {
+  const [result] = await db
+    .select()
+    .from(procedureEvents)
+    .where(and(
+      eq(procedureEvents.id, args.procedureEventId),
+      eq(procedureEvents.clinicId, args.clinicId),
+      eq(procedureEvents.ancillaryCaseId, args.ancillaryCaseId),
+      eq(procedureEvents.serviceType, args.serviceType),
+    ))
     .limit(1);
   return result;
 }
@@ -135,6 +183,359 @@ export async function listUltrasoundTechCompletedProcedures(
     .where(and(...conditions))
     .orderBy(desc(procedureEvents.completedAt))
     .limit(safeLimit);
+}
+
+// ─── Phase 2F — tenant-scoped reads (clinic from request context only) ──────
+
+/** Single procedure event scoped to (id, clinicId). Another clinic's row (or a
+ *  clinic-less legacy row) reads as not-found — never disclosed. */
+export async function getProcedureEventByIdForClinic(
+  id: number,
+  clinicId: number,
+): Promise<ProcedureEvent | undefined> {
+  const [row] = await db
+    .select()
+    .from(procedureEvents)
+    .where(and(eq(procedureEvents.id, id), eq(procedureEvents.clinicId, clinicId)))
+    .limit(1);
+  return row;
+}
+
+/** Clinic-scoped procedure-event list — clinic_id is always in the predicate. */
+export async function listProcedureEventsForClinic(
+  clinicId: number,
+  filters: ListProcedureEventsFilters = {},
+  limit = 100,
+): Promise<ProcedureEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [eq(procedureEvents.clinicId, clinicId)];
+  if (filters.executionCaseId != null) conditions.push(eq(procedureEvents.executionCaseId, filters.executionCaseId));
+  if (filters.patientScreeningId != null) conditions.push(eq(procedureEvents.patientScreeningId, filters.patientScreeningId));
+  if (filters.globalScheduleEventId != null) conditions.push(eq(procedureEvents.globalScheduleEventId, filters.globalScheduleEventId));
+  if (filters.facilityId) conditions.push(eq(procedureEvents.facilityId, filters.facilityId));
+  if (filters.serviceType) conditions.push(eq(procedureEvents.serviceType, filters.serviceType));
+  if (filters.procedureStatus) conditions.push(eq(procedureEvents.procedureStatus, filters.procedureStatus));
+  return db.select().from(procedureEvents).where(and(...conditions)).orderBy(desc(procedureEvents.createdAt)).limit(safeLimit);
+}
+
+/** Clinic-scoped Ultrasound-Tech completed procedures list. */
+export async function listUltrasoundTechCompletedProceduresForClinic(
+  clinicId: number,
+  filters: ListUltrasoundTechCompletedProceduresFilters = {},
+  limit = 100,
+): Promise<ProcedureEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [eq(procedureEvents.clinicId, clinicId)];
+  if (filters.serviceType) {
+    conditions.push(eq(procedureEvents.serviceType, filters.serviceType));
+  } else {
+    const ultrasoundFilter = or(
+      ilike(procedureEvents.serviceType, "%ultrasound%"),
+      inArray(procedureEvents.serviceType, [...ULTRASOUND_TECH_SPECIFIC_SERVICE_NAMES]),
+    );
+    if (ultrasoundFilter) conditions.push(ultrasoundFilter);
+  }
+  conditions.push(eq(procedureEvents.procedureStatus, filters.procedureStatus ?? "complete"));
+  if (filters.completedByUserId) conditions.push(eq(procedureEvents.completedByUserId, filters.completedByUserId));
+  if (filters.facilityId) conditions.push(eq(procedureEvents.facilityId, filters.facilityId));
+  if (filters.startDate) conditions.push(gte(procedureEvents.completedAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(procedureEvents.completedAt, filters.endDate));
+  return db.select().from(procedureEvents).where(and(...conditions)).orderBy(desc(procedureEvents.completedAt)).limit(safeLimit);
+}
+
+// ─── Phase 2F — canonical, case-scoped procedure lifecycle commands ─────────
+
+/** The canonical procedure-event row(s) for an ancillary case (clinic-scoped).
+ *  The migration-0054 partial unique guarantees ≤1; more than one signals
+ *  pre-backfill corruption and is surfaced to the caller, never hidden. */
+export async function findCanonicalProcedureEventsByCase(
+  clinicId: number,
+  ancillaryCaseId: number,
+): Promise<ProcedureEvent[]> {
+  return db
+    .select()
+    .from(procedureEvents)
+    .where(and(eq(procedureEvents.clinicId, clinicId), eq(procedureEvents.ancillaryCaseId, ancillaryCaseId)))
+    .orderBy(desc(procedureEvents.completedAt))
+    .limit(5);
+}
+
+/**
+ * INTERNAL canonical lookup that can find a same-case row whose clinic is the
+ * authenticated clinic OR NULL (a clinicless row awaiting synchronization) —
+ * never another non-null clinic's row. NOT exposed through any clinic-facing
+ * API. Used before a duplicate insert so corruption is never hidden behind the
+ * unique-violation path.
+ */
+export async function findCanonicalProcedureEventsByCaseInternal(
+  clinicId: number,
+  ancillaryCaseId: number,
+): Promise<ProcedureEvent[]> {
+  const rows = await db
+    .select()
+    .from(procedureEvents)
+    .where(and(
+      eq(procedureEvents.ancillaryCaseId, ancillaryCaseId),
+      or(isNull(procedureEvents.clinicId), eq(procedureEvents.clinicId, clinicId)),
+    ))
+    .orderBy(desc(procedureEvents.completedAt))
+    .limit(5);
+  // Defensive: never a row belonging to another non-null clinic.
+  return rows.filter((r) => r.clinicId == null || r.clinicId === clinicId);
+}
+
+export type CanonicalProcedureEventInput = {
+  clinicId: number;
+  ancillaryCaseId: number;
+  globalPlexusPatientId?: number | null;
+  patientClinicMembershipId?: number | null;
+  executionCaseId?: number | null;
+  patientScreeningId?: number | null;
+  globalScheduleEventId?: number | null;
+  patientName?: string | null;
+  patientDob?: string | null;
+  facilityId?: string | null;
+  serviceType: string;
+  completedByUserId?: string | null;
+  completedAt: Date;
+  note?: string | null;
+};
+
+/** Insert a new canonical, case-linked completed procedure event (server-owned
+ *  ownership fields). Throws PG unique-violation (23505) on a concurrent
+ *  case-scoped insert so the caller can reselect the exact winner. */
+export async function insertCanonicalProcedureEvent(
+  input: CanonicalProcedureEventInput,
+): Promise<ProcedureEvent> {
+  const [row] = await db
+    .insert(procedureEvents)
+    .values({
+      clinicId: input.clinicId,
+      ancillaryCaseId: input.ancillaryCaseId,
+      globalPlexusPatientId: input.globalPlexusPatientId ?? null,
+      patientClinicMembershipId: input.patientClinicMembershipId ?? null,
+      executionCaseId: input.executionCaseId ?? null,
+      patientScreeningId: input.patientScreeningId ?? null,
+      globalScheduleEventId: input.globalScheduleEventId ?? null,
+      patientName: input.patientName ?? null,
+      patientDob: input.patientDob ?? null,
+      facilityId: input.facilityId ?? null,
+      serviceType: input.serviceType,
+      procedureStatus: "complete",
+      completedByUserId: input.completedByUserId ?? null,
+      completedAt: input.completedAt,
+      note: input.note ?? null,
+    })
+    .returning();
+  return row;
+}
+
+/**
+ * Insert a canonical procedure event that STARTS in_progress — a single write.
+ * NEVER inserts a completed row: procedure_status='in_progress', started_at +
+ * last_transition_at stamped, completed_at / completed_by NULL. Throws PG unique
+ * violation (23505) on a concurrent case-scoped start so the caller reselects
+ * the exact winner. No completion side effects are triggered by this insert.
+ */
+export async function insertStartedCanonicalProcedureEvent(
+  input: Omit<CanonicalProcedureEventInput, "completedAt" | "completedByUserId"> & { startedAt: Date },
+): Promise<ProcedureEvent> {
+  const [row] = await db
+    .insert(procedureEvents)
+    .values({
+      clinicId: input.clinicId,
+      ancillaryCaseId: input.ancillaryCaseId,
+      globalPlexusPatientId: input.globalPlexusPatientId ?? null,
+      patientClinicMembershipId: input.patientClinicMembershipId ?? null,
+      executionCaseId: input.executionCaseId ?? null,
+      patientScreeningId: input.patientScreeningId ?? null,
+      globalScheduleEventId: input.globalScheduleEventId ?? null,
+      patientName: input.patientName ?? null,
+      patientDob: input.patientDob ?? null,
+      facilityId: input.facilityId ?? null,
+      serviceType: input.serviceType,
+      procedureStatus: "in_progress",
+      startedAt: input.startedAt,
+      lastTransitionAt: input.startedAt,
+      completedByUserId: null,
+      completedAt: null,
+      note: input.note ?? null,
+    })
+    .returning();
+  return row;
+}
+
+export type CompleteExistingOutcome =
+  | { outcome: "completed"; procedureEvent: ProcedureEvent }
+  | { outcome: "already_complete_preserved"; procedureEvent: ProcedureEvent }
+  | { outcome: "timestamp_conflict"; procedureEvent: ProcedureEvent }
+  | { outcome: "zero_row_conflict" };
+
+/**
+ * Mark an existing canonical procedure event complete. FULLY scoped: the
+ * update WHERE requires the exact id + clinic + ancillary case + service. The
+ * canonical completedAt is IMMUTABLE — the first transition to complete owns
+ * it. A repeated idempotent completion preserves the existing completedAt /
+ * completedByUserId / note (no silent rewrite); an EXPLICIT, different
+ * completedAt on an already-complete event returns timestamp_conflict (reviewed
+ * correction is out of scope). `.returning()` requires exactly one affected row.
+ */
+export async function completeExistingProcedureEvent(
+  existing: ProcedureEvent,
+  expected: { clinicId: number; ancillaryCaseId: number; serviceType: string },
+  patch: { completedAt: Date; explicit: boolean; completedByUserId?: string | null; note?: string | null },
+): Promise<CompleteExistingOutcome> {
+  const alreadyComplete = existing.procedureStatus === "complete" && existing.completedAt != null;
+  if (alreadyComplete) {
+    if (patch.explicit && existing.completedAt != null && existing.completedAt.getTime() !== patch.completedAt.getTime()) {
+      return { outcome: "timestamp_conflict", procedureEvent: existing };
+    }
+    // Idempotent repeat — preserve the original completion instant + fields.
+    return { outcome: "already_complete_preserved", procedureEvent: existing };
+  }
+  const rows = await db
+    .update(procedureEvents)
+    .set({
+      procedureStatus: "complete",
+      completedAt: patch.completedAt,
+      completedByUserId: patch.completedByUserId ?? undefined,
+      note: patch.note ?? undefined,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(procedureEvents.id, existing.id),
+      eq(procedureEvents.clinicId, expected.clinicId),
+      eq(procedureEvents.ancillaryCaseId, expected.ancillaryCaseId),
+      eq(procedureEvents.serviceType, expected.serviceType),
+    ))
+    .returning();
+  if (rows.length !== 1) return { outcome: "zero_row_conflict" };
+  return { outcome: "completed", procedureEvent: rows[0] };
+}
+
+/** Server-owned sync of a NULL qualifying schedule-event id onto an existing
+ *  canonical event. Exact clinic/case scoped; only fills a currently-NULL id. */
+export async function setProcedureEventScheduleId(
+  id: number, clinicId: number, ancillaryCaseId: number, scheduleEventId: number,
+): Promise<void> {
+  await db
+    .update(procedureEvents)
+    .set({ globalScheduleEventId: scheduleEventId, updatedAt: new Date() })
+    .where(and(
+      eq(procedureEvents.id, id),
+      eq(procedureEvents.clinicId, clinicId),
+      eq(procedureEvents.ancillaryCaseId, ancillaryCaseId),
+      isNull(procedureEvents.globalScheduleEventId),
+    ));
+}
+
+export type LinkProcedureEventOutcome =
+  | { outcome: "linked"; procedureEvent: ProcedureEvent }
+  | { outcome: "already_linked_same_case_and_synced"; procedureEvent: ProcedureEvent }
+  | { outcome: "ownership_conflict" }
+  | { outcome: "identity_conflict" }
+  | { outcome: "zero_row_conflict" }
+  | { outcome: "migration_missing" };
+
+/**
+ * Link a procedure event to its ancillary case — server-owned ownership write.
+ * NEVER re-homes an event from one case to another. Requires: the event's
+ * clinic is the same clinic OR NULL (unassigned legacy row being adopted); and
+ * its ancillary_case_id is NULL or already equal to the target case.
+ *
+ * When ALREADY the same case, this SYNCHRONIZES rather than short-circuiting:
+ * it fills a NULL clinic (eligibility requires clinic + case) and fills NULL
+ * canonical identity (global patient / membership) when tenant-consistent. A
+ * conflicting NON-NULL identity is `identity_conflict` (never overwritten). All
+ * writes are exact-ownership scoped and `.returning()` affected-row checked — a
+ * zero-row race is `zero_row_conflict`, never reported as linked/synced.
+ */
+export async function linkProcedureEventToAncillaryCase(input: {
+  procedureEventId: number;
+  clinicId: number;
+  ancillaryCaseId: number;
+  globalPlexusPatientId?: number | null;
+  patientClinicMembershipId?: number | null;
+}): Promise<LinkProcedureEventOutcome> {
+  try {
+    const [pe] = await db
+      .select()
+      .from(procedureEvents)
+      .where(eq(procedureEvents.id, input.procedureEventId))
+      .limit(1);
+    if (!pe) return { outcome: "zero_row_conflict" };
+    if (pe.clinicId != null && pe.clinicId !== input.clinicId) return { outcome: "ownership_conflict" };
+    if (pe.ancillaryCaseId != null && pe.ancillaryCaseId !== input.ancillaryCaseId) return { outcome: "ownership_conflict" };
+
+    if (pe.ancillaryCaseId === input.ancillaryCaseId) {
+      // Same case — validate + synchronize; never overwrite a conflicting non-null.
+      if (pe.globalPlexusPatientId != null && input.globalPlexusPatientId != null && pe.globalPlexusPatientId !== input.globalPlexusPatientId) return { outcome: "identity_conflict" };
+      if (pe.patientClinicMembershipId != null && input.patientClinicMembershipId != null && pe.patientClinicMembershipId !== input.patientClinicMembershipId) return { outcome: "identity_conflict" };
+      const patch: Record<string, unknown> = {};
+      if (pe.clinicId == null) patch.clinicId = input.clinicId;
+      if (pe.globalPlexusPatientId == null && input.globalPlexusPatientId != null) patch.globalPlexusPatientId = input.globalPlexusPatientId;
+      if (pe.patientClinicMembershipId == null && input.patientClinicMembershipId != null) patch.patientClinicMembershipId = input.patientClinicMembershipId;
+      if (Object.keys(patch).length === 0) return { outcome: "already_linked_same_case_and_synced", procedureEvent: pe };
+      const rows = await db
+        .update(procedureEvents)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(
+          eq(procedureEvents.id, input.procedureEventId),
+          eq(procedureEvents.ancillaryCaseId, input.ancillaryCaseId),
+          or(isNull(procedureEvents.clinicId), eq(procedureEvents.clinicId, input.clinicId)),
+        ))
+        .returning();
+      if (rows.length !== 1) return { outcome: "zero_row_conflict" };
+      return { outcome: "already_linked_same_case_and_synced", procedureEvent: rows[0] };
+    }
+
+    const rows = await db
+      .update(procedureEvents)
+      .set({
+        ancillaryCaseId: input.ancillaryCaseId,
+        clinicId: input.clinicId,
+        globalPlexusPatientId: input.globalPlexusPatientId ?? pe.globalPlexusPatientId ?? null,
+        patientClinicMembershipId: input.patientClinicMembershipId ?? pe.patientClinicMembershipId ?? null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(procedureEvents.id, input.procedureEventId),
+        isNull(procedureEvents.ancillaryCaseId),
+        or(isNull(procedureEvents.clinicId), eq(procedureEvents.clinicId, input.clinicId)),
+      ))
+      .returning();
+    if (rows.length !== 1) return { outcome: "zero_row_conflict" };
+    return { outcome: "linked", procedureEvent: rows[0] };
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === PG_UNDEFINED_TABLE || code === PG_UNDEFINED_COLUMN) return { outcome: "migration_missing" };
+    throw e;
+  }
+}
+
+/**
+ * Apply an exact procedure-event state transition. The WHERE requires the exact
+ * id + clinic + a CURRENT status in `fromStatuses`, and `.returning()` must
+ * affect exactly one row — an invalid/racing transition affects zero rows and
+ * returns null (the caller reports a conflict, never a false success). Never
+ * touches ownership identity. `patch.procedureStatus` is the target state.
+ */
+export async function applyProcedureTransition(
+  id: number,
+  clinicId: number,
+  fromStatuses: readonly string[],
+  patch: Record<string, unknown>,
+): Promise<ProcedureEvent | null> {
+  const rows = await db
+    .update(procedureEvents)
+    .set({ ...patch, lastTransitionAt: new Date(), updatedAt: new Date() })
+    .where(and(
+      eq(procedureEvents.id, id),
+      eq(procedureEvents.clinicId, clinicId),
+      inArray(procedureEvents.procedureStatus, fromStatuses as string[]),
+    ))
+    .returning();
+  return rows.length === 1 ? rows[0] : null;
 }
 
 export type MarkProcedureCompleteInput = {
@@ -230,14 +631,21 @@ export async function markProcedureComplete(
     serviceType: input.serviceType,
   });
 
-  void createPendingProcedureNotes({
-    executionCaseId: input.executionCaseId ?? null,
-    patientScreeningId: input.patientScreeningId ?? null,
-    procedureEventId: procedureEvent.id,
-    serviceType: input.serviceType,
-  }).catch((err) => {
-    console.error("[procedureEvents.repo] createPendingProcedureNotes failed:", err);
-  });
+  // Legacy post-procedure-note writer. Phase 2F: suppress ONLY when the FULL
+  // canonical Procedure Note runtime is enabled (all three flags) — then the
+  // two-condition canonical service is the only post_procedure_note creator.
+  // Partial enablement preserves the legacy writer so the workflow is never
+  // stranded with neither a legacy nor a canonical note.
+  if (!procedureNoteRuntimeEnabled()) {
+    void createPendingProcedureNotes({
+      executionCaseId: input.executionCaseId ?? null,
+      patientScreeningId: input.patientScreeningId ?? null,
+      procedureEventId: procedureEvent.id,
+      serviceType: input.serviceType,
+    }).catch((err) => {
+      console.error("[procedureEvents.repo] createPendingProcedureNotes failed:", err);
+    });
+  }
 
   void evaluateBillingReadinessForProcedure({
     executionCaseId: input.executionCaseId ?? null,

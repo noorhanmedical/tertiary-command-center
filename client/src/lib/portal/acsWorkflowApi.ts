@@ -2,6 +2,8 @@
 //
 // Thin client over /api/acs-workflow/:executionCaseId.
 
+import type { AncillaryAppointmentProjection } from "@shared/types/canonicalAppointment";
+
 export type AcsWorkflowStatus =
   | "assigned"
   | "scheduled"
@@ -44,6 +46,10 @@ export type AcsWorkflowSnapshot = {
     startsAt: string;
     serviceType: string | null;
   } | null;
+  // Phase 2D-C2 — canonical per-service appointment projection. Present
+  // only when the server FEATURE_CANONICAL_APPOINTMENT flag is ON.
+  appointmentByService?: Record<string, AncillaryAppointmentProjection>;
+  appointmentEligibleForOrderNote?: boolean;
 };
 
 export async function fetchAcsWorkflowSnapshot(executionCaseId: number): Promise<AcsWorkflowSnapshot | null> {

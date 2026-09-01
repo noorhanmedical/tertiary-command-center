@@ -16,6 +16,13 @@ export function registerAcsWorkflowRoutes(app: Express) {
       if (!snap) return res.status(404).json({ error: "Execution case not found" });
       return res.json(snap);
     } catch (error: any) {
+      const code = (error as { code?: string })?.code;
+      if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+        return res.status(503).json({
+          error: "canonical appointment schema unavailable — apply migration 0052",
+          code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+        });
+      }
       return res.status(500).json({ error: error.message });
     }
   });

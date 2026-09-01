@@ -1,15 +1,12 @@
 import { useMemo, useState } from "react";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
 import { Loader2, Search, FileText, ExternalLink, BookOpen } from "lucide-react";
+import {
+  SketchSurface,
+  SketchInput,
+  SketchButton,
+  SketchBadge,
+} from "@/components/playground/sketch/SketchPrimitives";
+import { SketchSelect } from "@/components/playground/sketch/SketchSelect";
 import {
   useDocumentLibrary,
   useDocumentLibraryMeta,
@@ -52,10 +49,10 @@ export function PortalDocumentLibraryTab() {
 
   return (
     <div
-      className="flex h-full w-full flex-col gap-3 overflow-hidden p-4"
+      className="flex h-full w-full flex-col gap-3 overflow-hidden bg-transparent p-4"
       data-testid="portal-document-library"
     >
-      <Card className="p-3 bg-white">
+      <SketchSurface seedId="doclib-header">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <BookOpen className="h-4 w-4 text-slate-500" />
           Document Library
@@ -66,57 +63,48 @@ export function PortalDocumentLibraryTab() {
           management lives in the admin Document Library page. Patient-
           facing brochures live in the separate Marketing tool.
         </div>
-      </Card>
+      </SketchSurface>
 
-      <Card className="p-3 bg-white">
+      <SketchSurface seedId="doclib-filters">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 flex-1 min-w-[160px]">
-            <Search className="h-4 w-4 text-slate-400" />
-            <Input
+            <Search className="h-4 w-4 text-slate-400 shrink-0" />
+            <SketchInput
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Filter title / description / filename"
-              className="h-8 text-xs"
+              containerClassName="flex-1"
               data-testid="portal-document-library-search"
             />
           </div>
-          <Select value={kind} onValueChange={setKind}>
-            <SelectTrigger
-              className="h-8 w-[160px] text-xs"
-              data-testid="portal-document-library-kind"
-            >
-              <SelectValue placeholder="Kind" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All kinds</SelectItem>
-              {(meta?.kinds ?? []).map((k) => (
-                <SelectItem key={k} value={k}>
-                  {k}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={surface} onValueChange={setSurface}>
-            <SelectTrigger
-              className="h-8 w-[160px] text-xs"
-              data-testid="portal-document-library-surface"
-            >
-              <SelectValue placeholder="Surface" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All surfaces</SelectItem>
-              {(meta?.surfaces ?? []).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SketchSelect
+            seedId="doclib-kind"
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            data-testid="portal-document-library-kind"
+          >
+            <option value="all">All kinds</option>
+            {(meta?.kinds ?? []).map((k) => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </SketchSelect>
+          <SketchSelect
+            seedId="doclib-surface"
+            value={surface}
+            onChange={(e) => setSurface(e.target.value)}
+            data-testid="portal-document-library-surface"
+          >
+            <option value="all">All surfaces</option>
+            {(meta?.surfaces ?? []).map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </SketchSelect>
         </div>
-      </Card>
+      </SketchSurface>
 
-      <Card
-        className="flex-1 min-h-0 bg-white overflow-y-auto p-3"
+      <SketchSurface
+        seedId="doclib-list"
+        className="flex-1 min-h-0 overflow-y-auto"
         data-testid="portal-document-library-list"
       >
         {isLoading ? (
@@ -132,11 +120,11 @@ export function PortalDocumentLibraryTab() {
             No documents match the current filter.
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="divide-y divide-slate-200/60">
             {filtered.map((d) => (
               <li
                 key={d.id}
-                className="rounded border border-slate-100 bg-slate-50/40 p-3"
+                className="px-1 py-2.5"
                 data-testid={`portal-document-library-row-${d.id}`}
               >
                 <div className="flex items-start gap-3">
@@ -150,9 +138,7 @@ export function PortalDocumentLibraryTab() {
                         {d.kind}
                       </span>
                       {!d.isCurrent && (
-                        <span className="rounded bg-amber-100 px-1.5 text-[9px] font-medium text-amber-900">
-                          superseded
-                        </span>
+                        <SketchBadge tone="gold">superseded</SketchBadge>
                       )}
                     </div>
                     {d.description && (
@@ -164,29 +150,24 @@ export function PortalDocumentLibraryTab() {
                       {d.filename} · {d.contentType}
                     </div>
                   </div>
-                  <Button
-                    asChild
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2 text-[10px] gap-1 shrink-0"
+                  <a
+                    href={d.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0"
                     data-testid={`portal-document-library-open-${d.id}`}
                   >
-                    <a
-                      href={d.downloadUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
+                    <SketchButton type="button" variant="secondary" size="sm" seedId={`doc-open-${d.id}`}>
                       <ExternalLink className="h-3 w-3" />
                       Open
-                    </a>
-                  </Button>
+                    </SketchButton>
+                  </a>
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </Card>
+      </SketchSurface>
     </div>
   );
 }

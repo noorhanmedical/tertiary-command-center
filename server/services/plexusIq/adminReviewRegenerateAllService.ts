@@ -263,6 +263,37 @@ export async function regenerateAdminReviewAll(
 
   const updated = await storage.updatePatientScreening(patientId, updatePayload);
 
+  // Phase 2B — sync canonical ancillary cases when qualifyingTests
+  // was persisted. No-op with FEATURE_ANCILLARY_CASE_WRITE=OFF. Missing
+  // Phase 2A identity → durable retry rows recorded.
+  if (updated && "qualifyingTests" in updatePayload) {
+    try {
+      const { syncScreeningAncillaryCases } = await import(
+        "../ancillaryCases/screeningSync"
+      );
+      await syncScreeningAncillaryCases({
+        screening: updated,
+        executionCaseId: null,
+        actorUserId: null,
+        requestedServices: Array.isArray((updatePayload as { qualifyingTests?: string[] }).qualifyingTests)
+          ? ((updatePayload as { qualifyingTests: string[] }).qualifyingTests)
+          : [],
+        requestedServicesDefined: Array.isArray((updatePayload as { qualifyingTests?: string[] }).qualifyingTests),
+        source: "admin_review_regenerate_all",
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        level: "error",
+        source: "ancillary_case_sync",
+        site: "adminReviewRegenerateAllService",
+        patientId,
+        code: (e as { code?: string })?.code,
+        message: (e as Error)?.message ?? String(e),
+      }));
+    }
+  }
+
   invalidatePatientDatabase();
   return { ok: true, patient: updated };
 }

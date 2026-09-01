@@ -1,0 +1,5 @@
+.venv-export/
+__pycache__/
+*.pyc
+*.ts
+*.sh

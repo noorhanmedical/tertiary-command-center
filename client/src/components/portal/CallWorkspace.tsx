@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useSketchEnv } from "@/components/playground/sketch/PlaygroundSketchProvider";
+import { SketchAwareButton } from "@/components/playground/sketch/SketchAwareButton";
+import { SketchSurface, SketchBadge, SketchButton } from "@/components/playground/sketch/SketchPrimitives";
 import {
   Phone,
   PhoneOff,
@@ -31,9 +33,22 @@ import {
   type CallCaseContext,
   type CaseProofDoc,
 } from "@/components/portal/caseWorkspace";
-import { ringCentralProvider } from "@/features/command-center/providers/ringCentralProvider";
+import {
+  resolvePhoneProvider,
+  getClientPhoneProviderPreferences,
+  setTeamMemberPhoneProviderOverride,
+  AVAILABLE_PROVIDER_IDS,
+} from "@/features/command-center/providers/phoneProviderResolver";
+import {
+  usePhoneProviderPreferences,
+  useSavePhoneProviderDefault,
+} from "@/features/command-center/providers/phoneProviderSettingsApi";
+import { isSelectablePhoneProviderId } from "@shared/phoneProvider";
+import type { PhoneProviderId } from "@/features/command-center/providers/phoneProviderTypes";
 import type { PhoneCallSession } from "@/features/command-center/providers/phoneProviderTypes";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
+import { getScriptForTest, fillScript } from "@/lib/outreachScripts";
+import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import type { OutreachCallOutcome } from "@shared/schema";
 
 export type CallWorkspaceProps = {
@@ -44,6 +59,16 @@ export type CallWorkspaceProps = {
   onOpenCase: () => void;
   /** Close this Call tab. */
   onClose: () => void;
+  /** Optional — bubbled from the disposition sheet's unsaved-draft state. */
+  onDraftChange?: (dirty: boolean, description?: string) => void;
+  /** Optional — fired after a call is successfully logged (canonical save). */
+  onLogged?: () => void;
+  /**
+   * Optional one-shot signal: when this number increases, the disposition
+   * sheet is opened. Lets a host (Playground "Save & Close") route the user to
+   * complete the canonical disposition instead of silently persisting.
+   */
+  requestOpenDisposition?: number;
 };
 
 // Quick-disposition shortcuts. Each pre-selects an outcome in the
@@ -72,6 +97,99 @@ const TONE_CLASS: Record<string, string> = {
   slate: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
 };
 
+// Context-aware panel: a SketchSurface inside the Playground canvas, a plain
+// Card everywhere else (e.g. the non-Playground quick-dial Dialog). Keeps ONE
+// CallWorkspace implementation while honoring the visual-split contract.
+function Panel({
+  children,
+  seedId,
+  className,
+  testId,
+}: {
+  children: ReactNode;
+  seedId: string;
+  className?: string;
+  testId?: string;
+}) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    return (
+      <SketchSurface seedId={seedId} className={className} data-testid={testId}>
+        {children}
+      </SketchSurface>
+    );
+  }
+  return (
+    <Card className={`p-4 bg-white ${className ?? ""}`} data-testid={testId}>
+      {children}
+    </Card>
+  );
+}
+
+// Quick-outcome shortcut — SketchButton inside the Playground, the original
+// tone-classed button in the non-Playground quick-dial Dialog.
+function QuickOutcomeButton({
+  value,
+  label,
+  tone,
+  disabled,
+  onSelect,
+}: {
+  value: string;
+  label: string;
+  tone: "emerald" | "amber" | "slate" | "rose";
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    const variant = tone === "rose" ? "danger" : "secondary";
+    return (
+      <SketchButton
+        type="button"
+        variant={variant}
+        size="sm"
+        seedId={`quick-outcome-${value}`}
+        onClick={onSelect}
+        disabled={disabled}
+        className="justify-start"
+        data-testid={`call-quick-outcome-${value}`}
+      >
+        {label}
+      </SketchButton>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      className={`rounded-md border px-3 py-2 text-left text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${TONE_CLASS[tone]}`}
+      data-testid={`call-quick-outcome-${value}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+// Target-service chip — SketchBadge inside the Playground, shadcn Badge in the
+// non-Playground quick-dial Dialog.
+function TargetChip({ label }: { label: string }) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    return (
+      <span data-testid={`call-target-${label}`}>
+        <SketchBadge tone="blue">{label}</SketchBadge>
+      </span>
+    );
+  }
+  return (
+    <Badge variant="secondary" data-testid={`call-target-${label}`}>
+      {label}
+    </Badge>
+  );
+}
+
 function StatusPill({
   label,
   tone = "slate",
@@ -79,6 +197,11 @@ function StatusPill({
   label: string;
   tone?: "slate" | "emerald" | "amber" | "rose" | "sky";
 }) {
+  const { isSketch } = useSketchEnv();
+  if (isSketch) {
+    const map = { slate: "graphite", emerald: "green", amber: "gold", rose: "red", sky: "blue" } as const;
+    return <SketchBadge tone={map[tone]}>{label}</SketchBadge>;
+  }
   const tones: Record<string, string> = {
     slate: "bg-slate-100 text-slate-700",
     emerald: "bg-emerald-100 text-emerald-700",
@@ -134,14 +257,14 @@ function ProofDocRow({
               rel="noreferrer"
               data-testid={`call-proof-open-${testKey}`}
             >
-              <Button size="sm" variant="outline" type="button">
+              <SketchAwareButton size="sm" variant="outline" type="button" seedId={`proof-open-${testKey}`}>
                 <ExternalLink className="mr-1 h-3.5 w-3.5" /> Open
-              </Button>
+              </SketchAwareButton>
             </a>
             <a href={doc.downloadUrl} download data-testid={`call-proof-download-${testKey}`}>
-              <Button size="sm" variant="ghost" type="button">
+              <SketchAwareButton size="sm" variant="ghost" type="button" seedId={`proof-dl-${testKey}`}>
                 <Download className="h-3.5 w-3.5" />
-              </Button>
+              </SketchAwareButton>
             </a>
           </>
         ) : (
@@ -159,6 +282,9 @@ export function CallWorkspace({
   onScheduleCase,
   onOpenCase,
   onClose,
+  onDraftChange,
+  onLogged,
+  requestOpenDisposition,
 }: CallWorkspaceProps) {
   const { toast } = useToast();
   const screeningId = ctx.patientScreeningId;
@@ -169,9 +295,37 @@ export function CallWorkspace({
   );
   const [callSession, setCallSession] = useState<PhoneCallSession | null>(null);
   const [dialing, setDialing] = useState(false);
-  const [ringCentralUnwired, setRingCentralUnwired] = useState(false);
+  // Compact call-script panel (parity with the legacy console's Current Call
+  // script). Content is the shared static source from @/lib/outreachScripts —
+  // no new script is authored here. Collapsed by default so the dialer stays
+  // the primary focus.
+  const [scriptOpen, setScriptOpen] = useState(false);
+  // The resolved provider reported a not-live/"pending" session (e.g. RingCentral
+  // with no credentials) — surface the honest manual-dial boundary.
+  const [providerUnwired, setProviderUnwired] = useState(false);
 
   const ringCentralEnabled = isRingCentralClickToCallEnabled();
+
+  // Per-call provider switch (null → use the precedence-resolved default).
+  // A per-call switch NEVER persists; making it the saved default is an
+  // explicit action (the "Make default" control below).
+  const [providerOverride, setProviderOverride] = useState<PhoneProviderId | null>(null);
+
+  // Persisted defaults (admin_settings-backed) are the source of truth;
+  // localStorage/env are fallback only. Scope the facility layer to this case.
+  const { data: persistedPrefs } = usePhoneProviderPreferences(ctx.facilityId ?? null);
+  const saveDefault = useSavePhoneProviderDefault(ctx.facilityId ?? null);
+  const providerPrefs = getClientPhoneProviderPreferences(persistedPrefs ?? null);
+  // Effective provider by precedence (team-member → facility → org → manual),
+  // with an optional per-call switch. The UI NEVER hard-wires RingCentral.
+  const resolvedProvider = resolvePhoneProvider(providerPrefs, {
+    ringCentralEnabled,
+    explicitProviderId: providerOverride,
+  });
+  // The provider currently shown in the switcher (per-call override wins).
+  const activeProviderId = providerOverride ?? resolvedProvider.providerId;
+  // Is the shown provider already the persisted team-member default?
+  const isSavedTeamMemberDefault = persistedPrefs?.teamMemberProviderId === activeProviderId;
 
   const commandEnabled = typeof screeningId === "number" && screeningId > 0;
   const { data, isLoading, isError, error } = useQuery<CommandCenterResponse>({
@@ -193,6 +347,18 @@ export function CallWorkspace({
     setDispositionOpen(true);
   };
 
+  // Host-driven open: when the Playground "Save & Close" flow bumps
+  // requestOpenDisposition, surface the disposition sheet so the user can
+  // complete the canonical log (we never silently persist a clinical call).
+  const lastOpenReq = useRef<number | undefined>(requestOpenDisposition);
+  useEffect(() => {
+    if (requestOpenDisposition == null) return;
+    if (lastOpenReq.current !== requestOpenDisposition) {
+      lastOpenReq.current = requestOpenDisposition;
+      setDispositionOpen(true);
+    }
+  }, [requestOpenDisposition]);
+
   async function startCall() {
     if (!phone) {
       toast({
@@ -202,27 +368,34 @@ export function CallWorkspace({
       });
       return;
     }
+    // If the resolved provider isn't live (e.g. RingCentral with no
+    // credentials), don't even attempt — show the manual-dial boundary.
+    if (!resolvedProvider.live) {
+      setProviderUnwired(true);
+      setCallSession(null);
+      return;
+    }
     setDialing(true);
     try {
-      const session = await ringCentralProvider.startCall({
+      const session = await resolvedProvider.adapter.startCall({
         phoneNumber: phone,
         patientName: ctx.patientName,
         patientUuid: screeningId != null ? String(screeningId) : undefined,
       });
-      // The RingCentral adapter is dormant in this environment: it returns a
-      // synthetic "pending" session instead of placing a real call. Never
-      // present that as a live call — surface the honest connection boundary.
+      // A dormant adapter returns a synthetic "pending" session instead of
+      // placing a real call. Never present that as a live call — surface the
+      // honest connection boundary.
       if (!session?.callId || session.callId.includes("pending")) {
-        setRingCentralUnwired(true);
+        setProviderUnwired(true);
         setCallSession(null);
         return;
       }
-      setRingCentralUnwired(false);
+      setProviderUnwired(false);
       setCallSession(session);
     } catch (e) {
       toast({
         title: "Could not start call",
-        description: e instanceof Error ? e.message : "RingCentral call failed.",
+        description: e instanceof Error ? e.message : `${resolvedProvider.adapter.label} call failed.`,
         variant: "destructive",
       });
     } finally {
@@ -233,7 +406,7 @@ export function CallWorkspace({
   async function endCall() {
     if (callSession) {
       try {
-        await ringCentralProvider.endCall(callSession.callId);
+        await resolvedProvider.adapter.endCall(callSession.callId);
       } catch {
         /* ignore — the provider end is best-effort */
       }
@@ -249,7 +422,7 @@ export function CallWorkspace({
       data-testid="call-workspace"
     >
       {/* ─── Header ─────────────────────────────────────────────── */}
-      <Card className="p-4 bg-white">
+      <Panel seedId="call-header">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div
@@ -301,37 +474,89 @@ export function CallWorkspace({
         {ctx.targetServices.filter(Boolean).length > 1 ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {ctx.targetServices.filter(Boolean).map((s) => (
-              <Badge key={s} variant="secondary" data-testid={`call-target-${s}`}>
-                {s}
-              </Badge>
+              <TargetChip key={s} label={s} />
             ))}
           </div>
         ) : null}
-      </Card>
+      </Panel>
 
       {/* ─── RingCentral dialer panel ───────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-dialer">
+      <Panel seedId="call-dialer" testId="call-workspace-dialer">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-slate-900">RingCentral dialer</div>
-          {ringCentralEnabled && !ringCentralUnwired ? (
-            <StatusPill label="Click-to-call enabled" tone="emerald" />
-          ) : (
-            <StatusPill label="Integration required" tone="amber" />
-          )}
+          <div className="text-sm font-semibold text-slate-900">Dialer</div>
+          <div className="flex items-center gap-1.5">
+            {/* Provider switcher — pick which calling method to use for this
+                call. Default comes from the precedence chain (team-member →
+                facility → org → manual). Persisting the choice sets the
+                team-member override. */}
+            <select
+              value={activeProviderId}
+              onChange={(e) => {
+                // Per-call switch ONLY — does NOT overwrite the saved default.
+                // Making it the default is the explicit "Make default" action.
+                const v = e.target.value as PhoneProviderId;
+                setProviderOverride(v);
+                setProviderUnwired(false);
+              }}
+              className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-700"
+              data-testid="call-provider-select"
+              title="Calling method (this call only)"
+            >
+              {AVAILABLE_PROVIDER_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {id === "ringcentral" ? "RingCentral" : id === "manual" ? "Manual" : id}
+                </option>
+              ))}
+            </select>
+            {/* Explicit make-default: persists the shown provider as this
+                team member's saved default (does not affect other users).
+                Also mirrors to localStorage so the offline fallback agrees. */}
+            {isSavedTeamMemberDefault ? (
+              <span
+                className="text-[10px] font-medium text-emerald-600"
+                data-testid="call-provider-default-badge"
+              >
+                Default
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isSelectablePhoneProviderId(activeProviderId)) return;
+                  saveDefault.mutate({ scope: "team_member", providerId: activeProviderId });
+                  setTeamMemberPhoneProviderOverride(activeProviderId);
+                }}
+                disabled={saveDefault.isPending}
+                className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                data-testid="call-provider-make-default"
+                title="Save as my default calling method"
+              >
+                Make default
+              </button>
+            )}
+            {resolvedProvider.live ? (
+              <StatusPill label="Ready" tone="emerald" />
+            ) : (
+              <StatusPill label="Integration required" tone="amber" />
+            )}
+          </div>
         </div>
 
-        {!ringCentralEnabled || ringCentralUnwired ? (
+        {!resolvedProvider.live || providerUnwired ? (
           <div
             className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-3 text-[12px] text-amber-900"
-            data-testid="call-ringcentral-boundary"
+            data-testid="call-provider-boundary"
           >
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <div className="font-semibold">RingCentral connection required</div>
+              <div className="font-semibold">
+                {resolvedProvider.adapter.label} connection required
+              </div>
               <p className="mt-0.5 text-amber-800">
-                Click-to-call is not connected for this environment. Place the call
-                manually{phone ? ` to ${phone}` : ""}, then log the outcome below. No
-                call is placed from here until RingCentral is connected.
+                {resolvedProvider.adapter.label} click-to-call is not connected for
+                this environment. Place the call manually{phone ? ` to ${phone}` : ""},
+                then log the outcome below. No call is placed from here until a live
+                calling provider is connected.
               </p>
             </div>
           </div>
@@ -355,10 +580,11 @@ export function CallWorkspace({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {!callSession ? (
-                <Button
+                <SketchAwareButton
                   type="button"
                   onClick={startCall}
                   disabled={dialing || !phone}
+                  seedId="call-start"
                   data-testid="call-ringcentral-start"
                 >
                   {dialing ? (
@@ -367,16 +593,17 @@ export function CallWorkspace({
                     <PhoneCall className="mr-1 h-4 w-4" />
                   )}
                   {dialing ? "Dialing…" : "Start call"}
-                </Button>
+                </SketchAwareButton>
               ) : (
-                <Button
+                <SketchAwareButton
                   type="button"
                   variant="destructive"
                   onClick={endCall}
+                  seedId="call-end"
                   data-testid="call-ringcentral-end"
                 >
                   <PhoneOff className="mr-1 h-4 w-4" /> End call
-                </Button>
+                </SketchAwareButton>
               )}
               <span className="text-[11px] text-slate-500">
                 Disposition is logged below — a placed call is never marked complete
@@ -385,10 +612,71 @@ export function CallWorkspace({
             </div>
           </div>
         )}
-      </Card>
+      </Panel>
+
+      {/* ─── Call script ────────────────────────────────────────── */}
+      {targetService ? (
+        <Panel seedId="call-script" testId="call-workspace-script">
+          <button
+            type="button"
+            onClick={() => setScriptOpen((v) => !v)}
+            className="flex w-full items-center gap-2 text-left"
+            aria-expanded={scriptOpen}
+            aria-controls="call-workspace-script-body"
+            data-testid="call-script-toggle"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+            <span className="text-sm font-semibold text-slate-900">
+              Call script · {targetService}
+            </span>
+            <span className="ml-auto text-slate-400">
+              {scriptOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </span>
+          </button>
+          {scriptOpen
+            ? (() => {
+                const script = getScriptForTest(targetService);
+                const firstName = (ctx.patientName || "").split(" ")[0] || undefined;
+                return (
+                  <div
+                    id="call-workspace-script-body"
+                    className="mt-2 space-y-2 text-[12px] text-slate-700"
+                    data-testid="call-script-body"
+                  >
+                    <div className="rounded-md bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Intro</p>
+                      <p className="mt-1 leading-relaxed">
+                        {fillScript(script.intro, {
+                          name: firstName,
+                          clinic: ctx.facilityId ?? undefined,
+                        })}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Why this matters</p>
+                      <p className="mt-1 leading-relaxed">{script.whyThisMatters}</p>
+                    </div>
+                    {script.objections.length > 0 ? (
+                      <div className="rounded-md bg-slate-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">If they say…</p>
+                        <ul className="mt-1 space-y-1">
+                          {script.objections.map((o, i) => (
+                            <li key={i} className="leading-relaxed">
+                              <span className="font-semibold text-slate-600">"{o.objection}"</span> → <span>{o.response}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()
+            : null}
+        </Panel>
+      ) : null}
 
       {/* ─── Proof documents ────────────────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-proof">
+      <Panel seedId="call-proof" testId="call-workspace-proof">
         <div className="mb-2">
           <div className="text-sm font-semibold text-slate-900">Why this patient?</div>
           <div className="text-[11px] text-slate-500">
@@ -398,13 +686,13 @@ export function CallWorkspace({
         </div>
         <div className="space-y-2">
           <ProofDocRow
-            label="Clinician PDF"
+            label="Clinician Atlas"
             icon={<FileText className="h-4 w-4" />}
             doc={proof.clinicianPdf}
             isLoading={proof.isLoading}
           />
           <ProofDocRow
-            label="Plexus PDF"
+            label="Plexus Atlas"
             icon={<FileBarChart className="h-4 w-4" />}
             doc={proof.plexusPdf}
             isLoading={proof.isLoading}
@@ -431,10 +719,10 @@ export function CallWorkspace({
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading patient context…
           </div>
         ) : null}
-      </Card>
+      </Panel>
 
       {/* ─── Disposition logging ────────────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-disposition">
+      <Panel seedId="call-disposition" testId="call-workspace-disposition">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <div className="text-sm font-semibold text-slate-900">Log call outcome</div>
@@ -445,55 +733,56 @@ export function CallWorkspace({
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {QUICK_OUTCOMES.map((o) => (
-            <button
+            <QuickOutcomeButton
               key={o.value}
-              type="button"
-              onClick={() => openDisposition(o.value)}
+              value={o.value}
+              label={o.label}
+              tone={o.tone}
               disabled={screeningId == null}
-              className={`rounded-md border px-3 py-2 text-left text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${TONE_CLASS[o.tone]}`}
-              data-testid={`call-quick-outcome-${o.value}`}
-            >
-              {o.label}
-            </button>
+              onSelect={() => openDisposition(o.value)}
+            />
           ))}
         </div>
         <div className="mt-3">
-          <Button
+          <SketchAwareButton
             type="button"
             variant="outline"
             onClick={() => openDisposition(undefined)}
             disabled={screeningId == null}
+            seedId="call-open-disposition"
             data-testid="call-open-disposition"
           >
             <Phone className="mr-1 h-4 w-4" /> Full disposition sheet
-          </Button>
+          </SketchAwareButton>
         </div>
-      </Card>
+      </Panel>
 
       {/* ─── Quick navigation ───────────────────────────────────── */}
-      <Card className="p-4 bg-white" data-testid="call-workspace-actions">
+      <Panel seedId="call-actions" testId="call-workspace-actions">
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={onScheduleCase} data-testid="call-open-schedule">
+          <SketchAwareButton type="button" onClick={onScheduleCase} seedId="call-open-schedule" data-testid="call-open-schedule">
             <CalendarDays className="mr-1 h-4 w-4" /> Open Schedule
-          </Button>
-          <Button
+          </SketchAwareButton>
+          <SketchAwareButton
             type="button"
             variant="outline"
             onClick={onOpenCase}
+            seedId="call-open-case"
             data-testid="call-open-case"
           >
             <Maximize2 className="mr-1 h-4 w-4" /> Open Case
-          </Button>
-          <Button
+          </SketchAwareButton>
+          <SketchAwareButton
             type="button"
             variant="ghost"
             onClick={onClose}
+            seedId="call-close-tab"
             data-testid="call-close-tab"
           >
             Close tab
-          </Button>
+          </SketchAwareButton>
         </div>
-      </Card>
+      </Panel>
 
       <DispositionSheet
         open={dispositionOpen}
@@ -503,6 +792,8 @@ export function CallWorkspace({
         schedulerUserId={null}
         priorAttempts={priorAttempts}
         defaultOutcome={defaultOutcome}
+        onDraftChange={onDraftChange}
+        onLogged={onLogged}
       />
     </div>
   );

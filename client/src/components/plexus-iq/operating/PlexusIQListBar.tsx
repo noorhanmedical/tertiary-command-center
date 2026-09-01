@@ -191,8 +191,8 @@ export function PlexusIQListBar({
           className={iconBtn}
           disabled={patientCount === 0}
           onClick={onClinicianPdf}
-          aria-label="Clinician PDF"
-          title="Clinician PDF"
+          aria-label="Clinician Atlas"
+          title="Clinician Atlas"
           data-testid="button-list-bar-clinician-pdf"
         >
           <ClipboardList className="h-4 w-4" />
@@ -202,8 +202,8 @@ export function PlexusIQListBar({
           className={iconBtn}
           disabled={patientCount === 0}
           onClick={onPlexusPdf}
-          aria-label="Plexus PDF"
-          title="Plexus PDF"
+          aria-label="Plexus Atlas"
+          title="Plexus Atlas"
           data-testid="button-list-bar-plexus-pdf"
         >
           <Network className="h-4 w-4" />

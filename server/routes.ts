@@ -15,11 +15,13 @@ import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssi
 import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
 import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
 import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
+import { registerCallHandoffRoutes } from "./routes/callHandoffs";
 import { registerEngagementTeamMetricsRoutes } from "./routes/engagementTeamMetrics";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
 import { registerEmailRoutes } from "./routes/email";
+import { registerNotificationRoutes } from "./routes/notifications";
 import { registerPtoRoutes } from "./routes/pto";
 import { registerSchedulerAssignmentRoutes } from "./routes/schedulerAssignments";
 import { registerSchedulerAiRoutes } from "./routes/schedulerAi";
@@ -28,6 +30,7 @@ import { registerAppointmentRoutes } from "./routes/appointments";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
+import { registerClinicalDataRoutes } from "./routes/clinicalData";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
 import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
@@ -56,6 +59,11 @@ import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
 // default; when the flag is off the routes 501 back and the client
 // keeps using mockPortalMessages local state.
 import { registerDirectMessagesRoutes } from "./routes/directMessages";
+// Phase 1 (Team Ops) — first-class internal team messaging. The ONE
+// canonical messaging backend (conversations + members + team_messages).
+// Not feature-flagged; supersedes the flag-gated /api/internal-messages
+// path and the mock inbox.
+import { registerMessagingRoutes } from "./routes/messaging";
 import { registerPortalAssistantRoutes } from "./routes/portalAssistant";
 // Phase 4C — Clinical Intelligence live persistence deferred. The
 // canonical schema `shared/schema/clinicalIntelligence.ts` is already
@@ -97,6 +105,12 @@ import { registerHomeStatsRoutes } from "./routes/homeStats";
 import { registerMissionControlRoutes } from "./routes/missionControl";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { registerFhirImportRoutes } from "./routes/fhirImportSync";
+import { registerPlexusClinicalFindingsRoutes } from "./routes/plexusClinicalFindings";
+import { registerAncillaryServiceRegistryRoutes } from "./routes/ancillaryServiceRegistry";
+import { registerOrderNoteLifecycleRoutes } from "./routes/orderNoteLifecycle";
+import { registerScreeningEvidenceRoutes } from "./routes/screeningEvidence";
+import { registerPlexusBankRoutes } from "./routes/plexusBank";
+import { registerPlexusEhrAddPatientRoutes } from "./routes/plexusEhrAddPatient";
 // import { registerClinicalIntelligenceRoutes } from "./routes/clinicalIntelligence";
 // import { seedCiRulesIfEmpty } from "./repositories/clinicalIntelligence.repo";
 import { setupVite } from "./vite";
@@ -278,6 +292,9 @@ export async function registerRoutes(
   // `/api/patients/:id` parameterised handler.
   registerPatientDatabaseRoutes(app);
   registerPatientRoutes(app);
+  // Canonical clinical reference domains (providers/allergies/labs/imaging/
+  // vitals/encounters). Deeper path than /api/patients/:id so no collision.
+  registerClinicalDataRoutes(app);
   // Patient EHR routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
@@ -290,11 +307,15 @@ export async function registerRoutes(
   registerEngagementBasketsRoutes(app);
   registerEngagementCallSettingsRoutes(app, requireRole);
   registerEngagementDistributionRoutes(app, requireRole);
+  registerCallHandoffRoutes(app);
+  (await import("./routes/teams")).registerTeamRoutes(app, requireRole);
   registerEngagementTeamMetricsRoutes(app, requireRole);
+  (await import("./routes/organizationSettings")).registerOrganizationSettingsRoutes(app, requireRole);
   registerBillingRoutes(app);
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);
   registerEmailRoutes(app);
+  registerNotificationRoutes(app);
   registerPtoRoutes(app);
   registerSchedulerAssignmentRoutes(app);
   registerSchedulerAiRoutes(app);
@@ -317,6 +338,8 @@ export async function registerRoutes(
   registerPortalPrefsRoutes(app);
   // Phase 4 — internal direct messages (feature-flagged OFF by default).
   registerDirectMessagesRoutes(app);
+  // Phase 1 (Team Ops) — first-class internal team messaging (canonical).
+  registerMessagingRoutes(app);
   // Phase 4 — Portal Assistant (AI, feature-flagged OFF by default).
   registerPortalAssistantRoutes(app);
   // Phase 4C — Clinical Intelligence live persistence deferred (see
@@ -332,6 +355,12 @@ export async function registerRoutes(
   registerBillingReportsRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerEmrScheduleSyncRoutes(app);
+  // Capacity-aware scheduling: per-facility equipment capacity config +
+  // temporary outage overrides, and the ONE availability engine endpoint that
+  // both the full UnifiedScheduler and Quick Schedule popover consume.
+  (await import("./routes/schedulingCapacity")).registerSchedulingCapacityRoutes(app);
+  (await import("./routes/schedulingAvailability")).registerSchedulingAvailabilityRoutes(app);
+  (await import("./routes/schedulingVisit")).registerSchedulingVisitRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);
   registerCooldownRoutes(app);
@@ -354,6 +383,48 @@ export async function registerRoutes(
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
   registerFhirImportRoutes(app);
+  // Phase 3 — Plexus Clinical Findings CRUD + review.
+  registerPlexusClinicalFindingsRoutes(app);
+  // Phase 4 — Ancillary Service Registry.
+  registerAncillaryServiceRegistryRoutes(app);
+  // Phase 5 — Order Note Lifecycle + Note Addenda.
+  registerOrderNoteLifecycleRoutes(app);
+  // Slice A0 — Structured ACS/PCS screening evidence contract (validate/log +
+  // persistence into case_document_readiness.metadata). No signing behavior.
+  registerScreeningEvidenceRoutes(app);
+  // Phase 10 — Plexus Bank.
+  registerPlexusBankRoutes(app);
+  // Plexus EHR — Direct patient add.
+  registerPlexusEhrAddPatientRoutes(app);
+  // Phase 2H — canonical Clinician Portal overview (read-only). Registered
+  // unconditionally; returns an explicit disabled contract when
+  // FEATURE_CLINICIAN_PORTAL_CANONICAL_DATA is OFF (zero canonical reads).
+  (await import("./routes/clinicianPortalCanonical")).registerClinicianPortalCanonicalRoutes(app);
+  // Phase 2I — canonical PCS/ACS stage-vector read models. Registered
+  // unconditionally; each returns an explicit disabled contract when its own
+  // FEATURE_PCS_CANONICAL_VIEW / FEATURE_ACS_CANONICAL_VIEW flag is OFF (zero
+  // canonical reads).
+  (await import("./routes/pcsAcsCanonical")).registerPcsAcsCanonicalRoutes(app);
+  // Phase 2J — canonical claim/invoice/payment read model. Registered
+  // unconditionally; returns an explicit disabled contract when all three
+  // FEATURE_CANONICAL_CLAIMS/INVOICES/PAYMENTS flags are OFF (zero migration-0056
+  // reads). READ-ONLY; no external financial operation is ever executed.
+  (await import("./routes/canonicalFinancial")).registerCanonicalFinancialRoutes(app);
+  // Phase 2C — Engagement Repository + service-specific Admin Review.
+  // Both route files are registered unconditionally. Each handler
+  // returns 404 when its feature flag is OFF, preserving previous
+  // "route does not exist" behavior for any consumer.
+  (await import("./routes/engagementRepository")).registerEngagementRepositoryRoutes(app);
+  (await import("./routes/adminReviewEvents")).registerAdminReviewEventsRoutes(app);
+  // Phase 2E — clinic-scoped Ancillary Documents read APIs. Registered
+  // unconditionally; handlers return an explicit disabled contract when
+  // FEATURE_UNIFIED_ANCILLARY_DOCUMENTS is OFF (zero migration-0053 reads).
+  (await import("./routes/ancillaryDocuments")).registerAncillaryDocumentsRoutes(app);
+  // Phase 2G — canonical billing readiness + Billing Document APIs. Registered
+  // unconditionally; handlers return an explicit disabled contract when the
+  // Phase 2G flags are OFF (zero migration-0055 reads).
+  (await import("./routes/canonicalBilling")).registerCanonicalBillingRoutes(app);
+>>>>>>> integrate/merge-2l-ui-plus-ancillary
   // Priority 4 — clinical intelligence backend deferred; UI runs on local
   // storage prototype. Enable route + seed when schema is approved.
   // registerClinicalIntelligenceRoutes(app, requireRole);
@@ -430,7 +501,64 @@ export async function registerRoutes(
       return res.status(404).json({ error: "User not found" });
     }
     await storage.deactivateUser(String(id));
-    return res.json({ ok: true });
+
+    // Phase 3E — canonically release + redistribute the deactivated user's
+    // active call cases immediately (do not wait for absenceWatcher). Anything
+    // that cannot be re-placed lands in structured NEEDS COVERAGE
+    // (deactivated_owner). Non-blocking: a recovery hiccup never blocks the
+    // deactivation itself.
+    let recovery: unknown = null;
+    try {
+      const { recoverDeactivatedUser } = await import(
+        "./services/engagement/deactivatedUserRecovery"
+      );
+      recovery = await recoverDeactivatedUser(String(id), req.session.userId ?? null);
+    } catch (recErr) {
+      console.error(
+        "[users:deactivate] canonical recovery failed (user still deactivated):",
+        recErr instanceof Error ? recErr.message : recErr,
+      );
+    }
+    // Relationship-change audit (K25).
+    try {
+      const { teamsRepository } = await import("./repositories/teams.repo");
+      await teamsRepository.recordEvent({
+        eventType: "user_deactivated", actorUserId: req.session.userId ?? null, subjectUserId: String(id),
+        summary: `User ${target.username} deactivated`, metadata: { recovery },
+      });
+    } catch { /* best-effort */ }
+    return res.json({ ok: true, recovery });
+  });
+
+  // Phase 4E — reactivate a user. Restores operational eligibility (users.active
+  // + engagement_call_settings.active) but NEVER resurrects historical ownership
+  // — the user starts with an empty live queue and receives new work via the
+  // normal distribution path. Team memberships / coverage history stand as-is.
+  app.patch("/api/users/:id/reactivate", requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const target = await storage.getUser(String(id));
+    if (!target) return res.status(404).json({ error: "User not found" });
+    await storage.reactivateUser(String(id));
+    let eligibility: unknown = null;
+    try {
+      const { reactivateUserEligibility } = await import(
+        "./services/engagement/reactivateUser"
+      );
+      eligibility = await reactivateUserEligibility(String(id));
+    } catch (err) {
+      console.error(
+        "[users:reactivate] eligibility restore failed (user still reactivated):",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    try {
+      const { teamsRepository } = await import("./repositories/teams.repo");
+      await teamsRepository.recordEvent({
+        eventType: "user_reactivated", actorUserId: req.session.userId ?? null, subjectUserId: String(id),
+        summary: `User ${target.username} reactivated`, metadata: { eligibility },
+      });
+    } catch { /* best-effort */ }
+    return res.json({ ok: true, eligibility });
   });
 
   app.patch("/api/users/:id/role", requireAdmin, async (req, res) => {

@@ -58,6 +58,14 @@ export type EngagementCallResultInput = {
   assignedRole?: string | null;
   forceReassign?: boolean;
   /**
+   * Canonical call-record closeout. When true, the engagement surface creates
+   * the ONE durable outreach_calls record for this real call attempt (the
+   * `outreachCallCreated` step is un-suppressed and the caller's injected
+   * createOutreachCall writer runs). When false/undefined (default), the
+   * legacy behavior applies and no call record is created here.
+   */
+  createDurableCallRecord?: boolean;
+  /**
    * Journey-event metadata extension (Batch 3 of arg-extensions run).
    * Forwarded through to the appendJourneyEvent dep so the route can
    * preserve the legacy metadata bag byte-equivalent under future
@@ -169,8 +177,19 @@ export async function recordEngagementCallResult(
   }
 
   const sourceSurface: CallResultSourceSurface = "engagement_center_route";
+  // Canonical call-record closeout: when the caller opts in
+  // (createDurableCallRecord), the engagement surface DOES own the durable
+  // outreach_calls record so every real PCS call attempt appears in Call
+  // Results exactly once. `outreachCallCreated` is then un-suppressed and the
+  // caller injects a createOutreachCall writer (insert-only, idempotent, no
+  // appointmentStatus mutation). `assignmentCompleted` stays suppressed — the
+  // engagement surface never closes scheduler assignments. Default (opt-out)
+  // preserves the legacy suppression of both steps.
+  const engagementSuppressed = input.createDurableCallRecord
+    ? ENGAGEMENT_SUPPRESSED_STEPS.filter((s) => s !== "outreachCallCreated")
+    : ENGAGEMENT_SUPPRESSED_STEPS;
   const mergedSuppressed: ReadonlyArray<CallResultExecutionStep> = [
-    ...ENGAGEMENT_SUPPRESSED_STEPS,
+    ...engagementSuppressed,
     ...(options?.suppressedSteps ?? []),
   ];
 

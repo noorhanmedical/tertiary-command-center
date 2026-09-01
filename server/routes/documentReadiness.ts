@@ -243,6 +243,52 @@ export function registerDocumentReadinessRoutes(app: Express) {
         });
       }
 
+      // Phase 2E-B — index the canonical document reference (report /
+      // consent / screening_form) from this readiness completion. Never
+      // copies bytes; deterministic case resolution only; best-effort with
+      // durable retry inside. Order/post-procedure notes are NOT indexed here
+      // (order_note has its own orchestration; post_procedure_note is 2F).
+      const REFERENCE_KIND_BY_DOC_TYPE: Record<string, "report" | "consent" | "screening_form"> = {
+        report: "report",
+        informed_consent: "consent",
+        screening_form: "screening_form",
+      };
+      const referenceKind = REFERENCE_KIND_BY_DOC_TYPE[data.documentType];
+      // Truthful indexing result surfaced in the response — the parent
+      // readiness write itself remains successful after its own commit.
+      let ancillaryDocumentIndex: { status: string; retryRecorded?: boolean; warnings?: string[] } | null = null;
+      if (referenceKind && row?.id != null) {
+        try {
+          const { ensureAncillaryDocumentReference } = await import(
+            "../services/ancillaryDocuments/documentReferenceWriter"
+          );
+          const indexResult = await ensureAncillaryDocumentReference({
+            documentKind: referenceKind,
+            sourceTable: "case_document_readiness",
+            sourceId: row.id,
+            serviceType: data.serviceType,
+            patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+            executionCaseId: executionCase.id,
+            expectedClinicId: (executionCase as { clinicId?: number | null }).clinicId ?? null,
+            documentStatus: finalStatus,
+            signedAt: referenceKind === "consent" && finalStatus === "completed" ? completedAt : null,
+            // Preserve the SOURCE readiness row's creation instant.
+            actualCreatedAt: row.createdAt ?? null,
+            downloadReference: data.documentId != null ? `documents:${data.documentId}` : null,
+            actorUserId,
+            source: "document_complete_action",
+          });
+          ancillaryDocumentIndex = {
+            status: indexResult.status,
+            retryRecorded: "retryRecorded" in indexResult ? indexResult.retryRecorded : undefined,
+            warnings: "warnings" in indexResult ? indexResult.warnings : undefined,
+          };
+        } catch (err: any) {
+          console.error("[case-document-readiness/complete] reference index failed:", err?.message ?? err);
+          ancillaryDocumentIndex = { status: "failed" };
+        }
+      }
+
       // Append journey event (best-effort)
       let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {
@@ -288,11 +334,103 @@ export function registerDocumentReadinessRoutes(app: Express) {
         console.error("[case-document-readiness/complete] billing readiness re-evaluation failed:", err.message);
       }
 
+      // Phase 7 — Screening Addendum trigger. When a screening_form is
+      // completed and the ancillary case has an active Order Note, create
+      // a traceable addendum. Best-effort: failure here never blocks the
+      // primary readiness completion.
+      let screeningAddendumResult: { status: string } | null = null;
+      if (data.documentType === "screening_form" && row?.id != null) {
+        try {
+          const { createScreeningAddendumForCase } = await import(
+            "../services/screeningAddendum"
+          );
+          // Resolve ancillary_case_id from the execution case or from
+          // the case_document_readiness row's metadata if available.
+          const ancillaryCaseId = (row as { ancillaryCaseId?: number | null }).ancillaryCaseId ??
+            (executionCase as { ancillaryCaseId?: number | null }).ancillaryCaseId ?? null;
+          // Try to resolve from patient_ancillary_cases if we have the right info
+          let resolvedAncillaryCaseId = ancillaryCaseId;
+          if (!resolvedAncillaryCaseId && patientScreeningId) {
+            try {
+              const { listAncillaryCasesForExecutionCase } = await import(
+                "../repositories/ancillaryCases.repo"
+              );
+              const cases = await listAncillaryCasesForExecutionCase(executionCase.id);
+              const match = cases.find((c) => c.serviceType === data.serviceType);
+              if (match) resolvedAncillaryCaseId = match.id;
+            } catch { /* best-effort */ }
+          }
+          if (resolvedAncillaryCaseId) {
+            const result = await createScreeningAddendumForCase({
+              ancillaryCaseId: resolvedAncillaryCaseId,
+              patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+              clinicId: (executionCase as { clinicId?: number | null }).clinicId ?? null,
+              sourceReadinessId: row.id,
+              serviceType: data.serviceType,
+              screeningMetadata: mergedMetadata,
+              actorUserId,
+            });
+            screeningAddendumResult = { status: result.status };
+          }
+        } catch (err: any) {
+          console.error("[case-document-readiness/complete] screening addendum creation failed:", err?.message ?? err);
+          screeningAddendumResult = { status: "failed" };
+        }
+      }
+
+      // Phase 8 — Procedure Note Generation trigger. When a report is
+      // uploaded and the ancillary case is resolved, generate a Procedure
+      // Note incorporating the Order Note + Screening Addendum + report.
+      // Best-effort: failure never blocks the primary report completion.
+      let procedureNoteGenerationResult: { status: string } | null = null;
+      if (data.documentType === "report" && row?.id != null) {
+        try {
+          const { generateProcedureNoteFromReport } = await import(
+            "../services/procedureNoteGenerator"
+          );
+          const ancillaryCaseId = (row as { ancillaryCaseId?: number | null }).ancillaryCaseId ??
+            (executionCase as { ancillaryCaseId?: number | null }).ancillaryCaseId ?? null;
+          let resolvedAncillaryCaseId = ancillaryCaseId;
+          if (!resolvedAncillaryCaseId && patientScreeningId) {
+            try {
+              const { listAncillaryCasesForExecutionCase } = await import(
+                "../repositories/ancillaryCases.repo"
+              );
+              const cases = await listAncillaryCasesForExecutionCase(executionCase.id);
+              const match = cases.find((c) => c.serviceType === data.serviceType);
+              if (match) resolvedAncillaryCaseId = match.id;
+            } catch { /* best-effort */ }
+          }
+          if (resolvedAncillaryCaseId) {
+            const result = await generateProcedureNoteFromReport({
+              ancillaryCaseId: resolvedAncillaryCaseId,
+              executionCaseId: executionCase.id,
+              patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+              clinicId: (executionCase as { clinicId?: number | null }).clinicId ?? null,
+              serviceType: data.serviceType,
+              reportReadinessId: row.id,
+              patientName: executionCase.patientName,
+              patientDob: executionCase.patientDob ?? null,
+              facilityId: executionCase.facilityId ?? null,
+              reportMetadata: mergedMetadata,
+              actorUserId,
+            });
+            procedureNoteGenerationResult = { status: result.status };
+          }
+        } catch (err: any) {
+          console.error("[case-document-readiness/complete] procedure note generation failed:", err?.message ?? err);
+          procedureNoteGenerationResult = { status: "failed" };
+        }
+      }
+
       return res.json({
         ok: true,
         caseDocumentReadiness: row,
         journeyEvent,
         billingReadinessCheck,
+        ancillaryDocumentIndex,
+        screeningAddendumResult,
+        procedureNoteGenerationResult,
       });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

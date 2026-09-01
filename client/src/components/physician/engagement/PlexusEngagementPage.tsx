@@ -19,6 +19,8 @@ import {
   type Qualification, type EngagementActivity, type Escalation,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+import { isClinicianPortalCanonicalDataEnabled } from "@/lib/clinicianPortalCanonicalFlag";
+import { CanonicalEngagementPage } from "../canonical/CanonicalEngagementPage";
 
 type CallOverlay = { status: CallStatus; lastOutcome: CallOutcome | "—"; history: CallTask["history"] };
 type EngagementStateResponse = {
@@ -38,6 +40,16 @@ const STATUS_TONE: Record<CallStatus, "gray" | "amber" | "blue" | "green" | "red
 const PRIORITY_TONE = { High: "red", Medium: "amber", Low: "gray" } as const;
 
 export function PlexusEngagementPage() {
+  // Phase 2H — flag ON replaces the entire mock-backed body with canonical
+  // ancillary-case + Engagement-list rows (no mock calls/conversions/outreach,
+  // no messaging). Flag OFF renders the exact pre-Phase-2H legacy body below.
+  if (isClinicianPortalCanonicalDataEnabled()) {
+    return <CanonicalEngagementPage />;
+  }
+  return <LegacyPlexusEngagementPage />;
+}
+
+function LegacyPlexusEngagementPage() {
   const { data } = usePortalData();
   const eng = data?.engagement;
   const QUALIFICATIONS: Qualification[] = eng?.qualifications ?? [];

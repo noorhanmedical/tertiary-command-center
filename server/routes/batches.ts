@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import multer from "multer";
-import * as XLSX from "xlsx";
 import { z } from "zod";
 import { storage } from "../storage";
 import { db } from "../db";
@@ -44,11 +43,17 @@ import {
   errorPhiSafe,
   logPhiSafe,
 } from "../lib/phiSafeLogger";
+import {
+  resolveAndLinkPlexusIdentityForScreening,
+  resolveAndLinkPlexusIdentityForScreeningsBulk,
+  recordScreeningIdentityLinkFailure,
+} from "../services/plexusIdentity/screeningIntegration";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import {
   findSchedulerForBatch,
   createAssignmentTask,
 } from "../services/schedulerAssignmentService";
+import { resolveCanonicalFacilityName } from "../services/facilityResolver";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -57,6 +62,19 @@ export function registerBatchRoutes(app: Express) {
     try {
       const parsed = createBatchSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+
+      // Resolve the facility against canonical clinics data (Admin Settings),
+      // unioned with legacy VALID_FACILITIES for back-compat. Batches store
+      // the canonical display name so historical attribution stays stable.
+      const canonicalFacility = await resolveCanonicalFacilityName(parsed.data.facility);
+      if (!canonicalFacility) {
+        return res.status(400).json({
+          error: `Unknown facility "${parsed.data.facility}". Add it in Admin Settings before importing.`,
+        });
+      }
+      // Use the canonical name everywhere downstream (name, sibling lookup,
+      // scheduler assignment, batch row, append validation).
+      const facilityName = canonicalFacility;
 
       // Plexus IQ runtime hardening — Routes step 4.
       // Placement is optional on the wire. When absent, default to
@@ -88,9 +106,9 @@ export function registerBatchRoutes(app: Express) {
             error: `targetBatchId ${placement.targetBatchId} not found`,
           });
         }
-        if (target.facility !== parsed.data.facility) {
+        if (target.facility !== facilityName) {
           return res.status(400).json({
-            error: `targetBatchId ${placement.targetBatchId} belongs to facility "${target.facility ?? ""}", expected "${parsed.data.facility}"`,
+            error: `targetBatchId ${placement.targetBatchId} belongs to facility "${target.facility ?? ""}", expected "${facilityName}"`,
           });
         }
         const expectedDate = parsed.data.scheduleDate ?? null;
@@ -125,27 +143,43 @@ export function registerBatchRoutes(app: Express) {
         const existing = await storage.getAllScreeningBatches();
         const siblings = existing.filter(
           (b) =>
-            b.facility === parsed.data.facility &&
+            b.facility === facilityName &&
             (b.scheduleDate ?? null) === (parsed.data.scheduleDate ?? null),
         );
         if (siblings.length > 0 && parsed.data.scheduleDate) {
-          name = `${parsed.data.facility} - ${parsed.data.scheduleDate} (Run ${siblings.length + 1})`;
+          name = `${facilityName} - ${parsed.data.scheduleDate} (Run ${siblings.length + 1})`;
         } else {
           name = `Batch - ${new Date().toLocaleDateString()}`;
         }
+      }
+
+      // Clinician attribution (Plexus IQ). Validate the free-text contract:
+      // when clinicianSource is "free_text" a non-blank clinicianName is
+      // required; when "facility_clinician" a clinicianId is required. Absent
+      // clinician context is fine (legacy / not recorded).
+      const clinicianSource = parsed.data.clinicianSource ?? null;
+      const clinicianNameTrimmed = parsed.data.clinicianName?.trim() || null;
+      if (clinicianSource === "free_text" && !clinicianNameTrimmed) {
+        return res.status(400).json({ error: "clinicianName is required when clinicianSource is 'free_text'" });
+      }
+      if (clinicianSource === "facility_clinician" && parsed.data.clinicianId == null) {
+        return res.status(400).json({ error: "clinicianId is required when clinicianSource is 'facility_clinician'" });
       }
 
       const batch = await storage.createScreeningBatch({
         name,
         patientCount: 0,
         status: "draft",
-        facility: parsed.data.facility || null,
+        facility: facilityName,
         scheduleDate: parsed.data.scheduleDate || null,
+        clinicianId: clinicianSource === "facility_clinician" ? (parsed.data.clinicianId ?? null) : null,
+        clinicianName: clinicianNameTrimmed,
+        clinicianSource,
       });
       void logAudit(req, "create", "batch", batch.id, { name: batch.name, facility: batch.facility });
 
       const assignment = await findSchedulerForBatch(
-        parsed.data.facility || null,
+        facilityName,
         parsed.data.scheduleDate || null,
       );
 
@@ -273,6 +307,42 @@ export function registerBatchRoutes(app: Express) {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
+      // Phase 2A — shared identity orchestration. No-op when
+      // FEATURE_PLEXUS_IDENTITY_WRITE is OFF (default). Awaited so any
+      // schema-configuration failure surfaces here rather than being
+      // dropped by a fire-and-forget promise. On failure we record a
+      // durable retry-ledger row so the failure survives process
+      // restarts and can be picked up by the reconciliation service.
+      try {
+        await resolveAndLinkPlexusIdentityForScreening({
+          screeningId: patient.id,
+          clinicId: patient.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_add_patient",
+          demographics: {
+            displayName: patient.name,
+            dob: patient.dob,
+            phone: patient.phoneNumber,
+            email: patient.email ?? null,
+          },
+        });
+      } catch (e) {
+        const errorCode = (e as { code?: string })?.code;
+        console.error(JSON.stringify({
+          level: "error",
+          source: "plexus_identity_integration",
+          route: "POST /api/batches/:id/patients",
+          screeningId: patient.id,
+          code: errorCode,
+          message: (e as Error)?.message ?? String(e),
+        }));
+        await recordScreeningIdentityLinkFailure({
+          screeningId: patient.id,
+          clinicId: patient.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_add_patient",
+          errorCode,
+        });
+      }
+
       void logAudit(req, "create", "patient", patient.id, { name: patient.name, batchId });
       invalidatePatientDatabase();
       res.json(patient);
@@ -347,6 +417,39 @@ export function registerBatchRoutes(app: Express) {
       const createdIds = new Set(created.map((p) => p.id));
       const enrichedPatients = created.filter((p) => createdIds.has(p.id));
 
+      // Phase 2A — bulk identity orchestration. Bulk helper short-
+      // circuits when FEATURE_PLEXUS_IDENTITY_WRITE is OFF, so this
+      // adds zero latency to the current import path.
+      const identityBulk = await resolveAndLinkPlexusIdentityForScreeningsBulk(
+        created.map((p) => ({
+          screeningId: p.id,
+          clinicId: p.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_import_file",
+          demographics: {
+            displayName: p.name,
+            dob: p.dob,
+            phone: p.phoneNumber,
+            email: p.email ?? null,
+          },
+        })),
+      );
+      for (const err of identityBulk.errors) {
+        console.error(JSON.stringify({
+          level: "error",
+          source: "plexus_identity_integration",
+          route: "POST /api/batches/:id/import-file",
+          screeningId: err.screeningId,
+          code: err.code,
+          message: err.message,
+        }));
+        await recordScreeningIdentityLinkFailure({
+          screeningId: err.screeningId,
+          clinicId: (created.find((p) => p.id === err.screeningId)?.clinicId ?? null),
+          sourceSystem: "batch_import_file",
+          errorCode: err.code,
+        });
+      }
+
       invalidatePatientDatabase();
       res.json({ imported: enrichedPatients.length, patients: enrichedPatients });
     } catch (error: any) {
@@ -395,6 +498,37 @@ export function registerBatchRoutes(app: Express) {
       await storage.updateScreeningBatch(batchId, {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
+
+      // Phase 2A — bulk identity orchestration (see import-file above).
+      const identityBulk2 = await resolveAndLinkPlexusIdentityForScreeningsBulk(
+        created2.map((p) => ({
+          screeningId: p.id,
+          clinicId: p.clinicId ?? req.clinicId ?? null,
+          sourceSystem: "batch_import_text",
+          demographics: {
+            displayName: p.name,
+            dob: p.dob,
+            phone: p.phoneNumber,
+            email: p.email ?? null,
+          },
+        })),
+      );
+      for (const err of identityBulk2.errors) {
+        console.error(JSON.stringify({
+          level: "error",
+          source: "plexus_identity_integration",
+          route: "POST /api/batches/:id/import-text",
+          screeningId: err.screeningId,
+          code: err.code,
+          message: err.message,
+        }));
+        await recordScreeningIdentityLinkFailure({
+          screeningId: err.screeningId,
+          clinicId: (created2.find((p) => p.id === err.screeningId)?.clinicId ?? null),
+          sourceSystem: "batch_import_text",
+          errorCode: err.code,
+        });
+      }
 
       invalidatePatientDatabase();
       res.json({ imported: created2.length, patients: created2 });
@@ -689,13 +823,22 @@ export function registerBatchRoutes(app: Express) {
   app.patch("/api/screening-batches/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { clinicianName, facility, scheduleDate } = req.body;
+      const { clinicianName, clinicianId, clinicianSource, facility, scheduleDate } = req.body;
       const batchUpdates: Partial<{
         clinicianName: string | null;
+        clinicianId: number | null;
+        clinicianSource: string | null;
         facility: string | null;
         scheduleDate: string | null;
       }> = {};
-      if (clinicianName !== undefined) batchUpdates.clinicianName = clinicianName ?? null;
+      if (clinicianName !== undefined) batchUpdates.clinicianName = (typeof clinicianName === "string" ? clinicianName.trim() : clinicianName) || null;
+      if (clinicianId !== undefined) batchUpdates.clinicianId = clinicianId ?? null;
+      if (clinicianSource !== undefined) {
+        if (clinicianSource !== null && clinicianSource !== "facility_clinician" && clinicianSource !== "free_text") {
+          return res.status(400).json({ error: "clinicianSource must be facility_clinician | free_text | null" });
+        }
+        batchUpdates.clinicianSource = clinicianSource ?? null;
+      }
       if (facility !== undefined) batchUpdates.facility = facility ?? null;
       if (scheduleDate !== undefined) {
         if (scheduleDate === null || scheduleDate === "") {

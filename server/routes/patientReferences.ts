@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import multer from "multer";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { storage } from "../storage";
 import { parseReferenceImportWithAI } from "../services/screening";
 
@@ -32,11 +32,18 @@ export function registerPatientReferenceRoutes(
       if (req.file) {
         const ext = req.file.originalname.toLowerCase();
         if (ext.endsWith(".xlsx") || ext.endsWith(".xls")) {
-          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-          for (const sheetName of workbook.SheetNames) {
-            const sheet = workbook.Sheets[sheetName];
-            text += sheetName + "\n" + XLSX.utils.sheet_to_csv(sheet) + "\n\n";
-          }
+          const workbook = new ExcelJS.Workbook();
+          await workbook.xlsx.load(req.file.buffer);
+          workbook.eachSheet((sheet) => {
+            const rows: string[][] = [];
+            sheet.eachRow({ includeEmpty: false }, (row) => {
+              const vals: string[] = [];
+              row.eachCell({ includeEmpty: true }, (cell) => vals.push(String(cell.value ?? "")));
+              rows.push(vals);
+            });
+            if (rows.length === 0) return;
+            text += sheet.name + "\n" + rows.map((r) => r.join(",")).join("\n") + "\n\n";
+          });
         } else if (ext.endsWith(".csv")) {
           text = req.file.buffer.toString("utf-8");
         } else {

@@ -23,6 +23,28 @@ import {
   applyScheduleTransition,
   type ScheduleTransition,
 } from "../services/scheduling/scheduleStatusService";
+import { featureFlags } from "../lib/featureFlags";
+import { scheduleCanonicalAncillaryAppointment } from "../services/canonicalAppointments/scheduleAncillaryOrchestrator";
+import { applyCanonicalAncillaryTransition } from "../services/canonicalAppointments/transitionOrchestrator";
+import {
+  getCanonicalAppointmentProjection,
+  getCanonicalAppointmentsByService,
+} from "../services/canonicalAppointments/appointmentProjection";
+
+const CANONICAL_ANCILLARY_CALENDAR_TYPES = new Set(["ancillary_appointment", "same_day_add"]);
+
+// Maps a controlled canonical read error to a 503; returns true if handled.
+function handleCanonicalReadError(res: Response, e: unknown): boolean {
+  const code = (e as { code?: string })?.code;
+  if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+    res.status(503).json({
+      error: "canonical appointment schema unavailable — apply migration 0052",
+      code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+    });
+    return true;
+  }
+  return false;
+}
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires the team-portal
 // feeds through the same role + facility access checks the rest of
 // the portal endpoints already use. Without this, an authenticated
@@ -70,10 +92,12 @@ async function resolvePhase1FacilityScope(
 }
 
 const transitionBodySchema = z.object({
-  transition: z.enum(["cancel", "reschedule", "no_show", "confirm"]),
+  transition: z.enum(["cancel", "reschedule", "no_show", "confirm", "complete"]),
   newStartsAt: z.string().optional().nullable(),
   newEndsAt: z.string().optional().nullable(),
   note: z.string().optional().nullable(),
+  // Phase 2D-B: canonical cancel/no_show require a nonblank reason.
+  reason: z.string().optional().nullable(),
 });
 
 const scheduleAncillaryBodySchema = z.object({
@@ -96,6 +120,72 @@ const scheduleAncillaryBodySchema = z.object({
 function sessionUserIdFromGlobalSchedule(req: Request): string | null {
   const sess = (req as Request & { session?: { userId?: string } }).session;
   return sess?.userId ?? null;
+}
+
+// Derive an appointment end from the service's configured resource duration so
+// the capacity engine sees a real occupancy interval. BrainWave/VitalWave use
+// their duration; ultrasound uses studyCount × minutesPerStudy. Returns null
+// when the service maps to no resource pool (leaves endsAt unset — legacy).
+async function deriveEndsAt(args: {
+  serviceType: string;
+  startsAt: Date;
+  facilityName: string | null;
+  ultrasoundStudyCount: number | null;
+}): Promise<Date | null> {
+  const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
+  const cat = getAncillaryCategory(args.serviceType);
+  if (cat === "other") return null;
+  const { createFacilityResolver } = await import("../services/facilityResolver");
+  const { getEffectiveCapacityConfig } = await import(
+    "../repositories/schedulingCapacity.repo"
+  );
+  const { serviceDurationMinutes } = await import(
+    "@shared/scheduling/availabilityEngine"
+  );
+  let clinicId: number | null = null;
+  if (args.facilityName) {
+    try {
+      const { resolve } = await createFacilityResolver();
+      clinicId = resolve(args.facilityName)?.clinicId ?? null;
+    } catch {
+      /* defaults apply */
+    }
+  }
+  const capacity = await getEffectiveCapacityConfig(clinicId);
+  const minutes = serviceDurationMinutes(
+    {
+      resourceType: cat,
+      studyCount: args.ultrasoundStudyCount ?? 1,
+    },
+    capacity,
+  );
+  return new Date(args.startsAt.getTime() + minutes * 60_000);
+}
+
+// Shared single-service scheduling core, exposed for the multi-service visit
+// orchestration so it writes through the EXACT same canonical path as the
+// route. Populated when the routes register (the implementation closes only
+// over module imports). Never call before routes are registered.
+export type ScheduleAncillaryCoreInput = z.infer<typeof scheduleAncillaryBodySchema>;
+export type ScheduleAncillaryCoreResult = { httpStatus: number; body: Record<string, unknown> };
+let _scheduleAncillaryCore:
+  | ((
+      data: ScheduleAncillaryCoreInput,
+      actorUserId: string | null,
+      reqClinicId: number | null,
+    ) => Promise<ScheduleAncillaryCoreResult>)
+  | null = null;
+export async function scheduleAncillaryCoreShared(
+  data: ScheduleAncillaryCoreInput,
+  actorUserId: string | null,
+  reqClinicId: number | null,
+): Promise<ScheduleAncillaryCoreResult> {
+  if (!_scheduleAncillaryCore) {
+    throw new Error(
+      "scheduleAncillaryCore not initialized — global schedule routes not registered",
+    );
+  }
+  return _scheduleAncillaryCore(data, actorUserId, reqClinicId);
 }
 
 export function registerGlobalScheduleRoutes(app: Express) {
@@ -131,8 +221,60 @@ export function registerGlobalScheduleRoutes(app: Express) {
       }
 
       const rows = await listGlobalScheduleEvents(filters, limit);
+
+      // Phase 2D-C1 — under the canonical flag, canonical ancillary
+      // events (ancillary_appointment / same_day_add) expose a stable
+      // globalScheduleEventId + ancillaryCaseId/serviceType so calendar
+      // surfaces read the same canonical identity everyone else does.
+      // doctor_visit and every general event pass through unchanged.
+      if (featureFlags.canonicalAppointment) {
+        return res.json(
+          rows.map((r) =>
+            CANONICAL_ANCILLARY_CALENDAR_TYPES.has(r.eventType)
+              ? { ...r, globalScheduleEventId: r.id, canonicalAncillary: true }
+              : r,
+          ),
+        );
+      }
       res.json(rows);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/canonical-appointments — Phase 2D-C1 shared reader.
+  // The single canonical appointment projection every clinic-facing
+  // surface (Patient EHR, Engagement, PCS, ACS, scheduler) consumes.
+  // Query by ancillaryCaseId | patientScreeningId | executionCaseId,
+  // ?includeHistory=true, ?byService=true. Tenant-scoped from session.
+  app.get("/api/canonical-appointments", async (req, res) => {
+    try {
+      const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+      if (!featureFlags.canonicalAppointment) {
+        return res.json({ enabled: false, activeAppointment: null, appointmentHistory: [] });
+      }
+      if (clinicId == null) {
+        return res.status(400).json({ error: "clinic scope is required" });
+      }
+      const q = req.query as Record<string, string | undefined>;
+      const num = (v: string | undefined) => (v != null && /^\d+$/.test(v) ? parseInt(v, 10) : undefined);
+      const ancillaryCaseId = num(q.ancillaryCaseId);
+      const patientScreeningId = num(q.patientScreeningId);
+      const executionCaseId = num(q.executionCaseId);
+      const includeHistory = q.includeHistory === "true";
+      if (ancillaryCaseId == null && patientScreeningId == null && executionCaseId == null) {
+        return res.status(400).json({ error: "one of ancillaryCaseId, patientScreeningId, executionCaseId is required" });
+      }
+      if (q.byService === "true" && (patientScreeningId != null || executionCaseId != null)) {
+        const byService = await getCanonicalAppointmentsByService({ clinicId, patientScreeningId, executionCaseId, includeHistory });
+        return res.json({ enabled: true, appointmentByService: byService });
+      }
+      const projection = await getCanonicalAppointmentProjection({
+        clinicId, ancillaryCaseId, patientScreeningId, executionCaseId, includeHistory,
+      });
+      return res.json({ enabled: true, ...projection });
+    } catch (error: any) {
+      if (handleCanonicalReadError(res, error)) return;
       res.status(500).json({ error: error.message });
     }
   });
@@ -202,6 +344,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
           executionCaseId: r.executionCaseId ?? null,
           patientScreeningId: r.patientScreeningId ?? null,
           serviceType: r.serviceType ?? null,
+          // The appointment's scheduled day drives the dated consent guard
+          // (mirrors the clinic-portal consentForTest rule): a completion
+          // recorded BEFORE this visit's scheduled date does not count.
+          scheduledDate: r.startsAt
+            ? new Date(r.startsAt).toISOString().slice(0, 10)
+            : null,
         })),
       );
       const enriched = rows.map((r) => ({
@@ -279,21 +427,54 @@ export function registerGlobalScheduleRoutes(app: Express) {
   // scheduled_ancillary patient journey event, and advances the execution
   // case to engagementStatus=scheduled with nextActionAt=startsAt.
   app.post("/api/global-schedule-events/schedule-ancillary", async (req, res) => {
-    try {
-      const parsed = scheduleAncillaryBodySchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
-      }
-      const data = parsed.data;
-      const actorUserId = sessionUserIdFromGlobalSchedule(req);
+    const parsed = scheduleAncillaryBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    }
+    const actorUserId = sessionUserIdFromGlobalSchedule(req);
+    const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+    const result = await scheduleAncillaryCore(parsed.data, actorUserId, reqClinicId);
+    return res.status(result.httpStatus).json(result.body);
+  });
+  // Expose the core for the multi-service visit orchestration.
+  _scheduleAncillaryCore = scheduleAncillaryCore;
 
+  // Shared core for scheduling ONE ancillary service. Used by the route above
+  // and by the multi-service visit orchestration so both write through the
+  // exact same canonical path (identity/stub resolution, endsAt derivation,
+  // canonical vs legacy write, journey + execution-case advancement). Returns
+  // an HTTP status + body rather than touching res, so callers can aggregate.
+  async function scheduleAncillaryCore(
+    data: z.infer<typeof scheduleAncillaryBodySchema>,
+    actorUserId: string | null,
+    reqClinicIdIn: number | null,
+  ): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
+    try {
       const startsAt = new Date(data.startsAt);
       if (isNaN(startsAt.getTime())) {
-        return res.status(400).json({ error: "startsAt is not a valid datetime" });
+        return { httpStatus: 400, body: { error: "startsAt is not a valid datetime" } };
       }
-      const endsAt = data.endsAt ? new Date(data.endsAt) : null;
+      let endsAt = data.endsAt ? new Date(data.endsAt) : null;
       if (endsAt && isNaN(endsAt.getTime())) {
-        return res.status(400).json({ error: "endsAt is not a valid datetime" });
+        return { httpStatus: 400, body: { error: "endsAt is not a valid datetime" } };
+      }
+      // Capacity engine needs real occupancy intervals. When the client does
+      // not send endsAt, derive it from the service's configured duration
+      // (ultrasound = studyCount × minutesPerStudy) so the appointment blocks
+      // its machine for the correct span. Never overrides a client-sent end.
+      if (!endsAt) {
+        try {
+          endsAt = await deriveEndsAt({
+            serviceType: data.serviceType,
+            startsAt,
+            facilityName: data.facilityId ?? null,
+            ultrasoundStudyCount:
+              (data.metadata as { ultrasoundStudyCount?: number } | undefined)
+                ?.ultrasoundStudyCount ?? null,
+          });
+        } catch {
+          /* fall through — endsAt stays null (legacy behavior) */
+        }
       }
 
       // Resolve patient context — must be able to identify the case
@@ -324,9 +505,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
         // "Jon Smith" (matching stays case-insensitive in the repo).
         const stubName = (data.patientName ?? "").trim().replace(/\s+/g, " ");
         if (!stubName) {
-          return res.status(404).json({
-            error: "Could not resolve an execution case from executionCaseId or patientScreeningId (provide patientName to quick-schedule a new patient)",
-          });
+          return {
+            httpStatus: 404,
+            body: {
+              error: "Could not resolve an execution case from executionCaseId or patientScreeningId (provide patientName to quick-schedule a new patient)",
+            },
+          };
         }
         const stubDob = (data.patientDob ?? "").trim() || null;
         const stubFacility = data.facilityId ?? null;
@@ -351,10 +535,138 @@ export function registerGlobalScheduleRoutes(app: Express) {
           });
           executionCaseId = executionCase.id;
           createdStubCase = true;
+
+          // Phase 2B (hardened) — quick-schedule creates a walk-in
+          // execution case WITHOUT Phase 2A identity. If
+          // FEATURE_ANCILLARY_CASE_WRITE is ON, record durable retry
+          // work so a future Phase 2A identity completion (or the
+          // backfill) creates the canonical ancillary case for this
+          // service. Never fabricates identity ids. No-op with flag OFF.
+          try {
+            const reqClinicId = reqClinicIdIn;
+            if (reqClinicId) {
+              const { featureFlags: ff } = await import("../lib/featureFlags");
+              if (ff.ancillaryCaseWrite) {
+                const { recordAncillaryReconciliationFailure } = await import(
+                  "../repositories/ancillaryCases.repo"
+                );
+                await recordAncillaryReconciliationFailure({
+                  patientScreeningId: null,
+                  executionCaseId: executionCase.id,
+                  clinicId: reqClinicId,
+                  globalPlexusPatientId: null,
+                  patientClinicMembershipId: null,
+                  serviceType: data.serviceType,
+                  requestedAction: "ensure_active",
+                  sourceSystem: "quick_schedule_walk_in",
+                  errorCode: "MISSING_IDENTITY_LINKS_QUICK_SCHEDULE",
+                });
+              }
+            }
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error(JSON.stringify({
+              level: "warn",
+              source: "ancillary_case_retry",
+              site: "quick_schedule_deferred",
+              executionCaseId: executionCase.id,
+              code: (e as { code?: string })?.code,
+              message: (e as Error)?.message ?? String(e),
+            }));
+          }
         }
       }
 
       const facilityId = data.facilityId ?? executionCase.facilityId ?? null;
+
+      // ── Phase 2D-B: canonical path ─────────────────────────────
+      // When FEATURE_CANONICAL_APPOINTMENT is ON the canonical service
+      // owns ancillary appointment truth. The legacy null-case upsert
+      // below cannot run (migration 0052's CHECK forbids an ancillary
+      // event without an ancillary_case_id), so we route through the
+      // orchestrator. Deferred (walk-in / no identity) returns 202 with
+      // the provisional stub preserved. Missing migration → 503.
+      if (featureFlags.canonicalAppointment) {
+        // Resolve the clinic tenancy for the canonical write. Non-admin
+        // sessions carry req.clinicId. An admin session is org-wide
+        // (req.clinicId === null), so we resolve the clinic from the SELECTED
+        // facility name in the request (the Team Portal's one selected clinic).
+        // Without this, admin scheduling silently defers ("no_clinic") and the
+        // appointment never persists.
+        let reqClinicId = reqClinicIdIn;
+        if (reqClinicId == null && facilityId) {
+          try {
+            const { createFacilityResolver } = await import("../services/facilityResolver");
+            const { resolve } = await createFacilityResolver();
+            reqClinicId = resolve(facilityId)?.clinicId ?? null;
+          } catch {
+            /* fall through — deferred path still applies if unresolved */
+          }
+        }
+        try {
+          const canonical = await scheduleCanonicalAncillaryAppointment({
+            clinicId: reqClinicId,
+            executionCaseId: executionCase.id,
+            patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+            serviceType: data.serviceType,
+            startsAt,
+            endsAt,
+            eventType: "ancillary_appointment",
+            facilityId,
+            assignedUserId: data.assignedUserId ?? null,
+            actorUserId,
+            source: "scheduler_portal",
+            metadata: data.metadata ?? {},
+          });
+          if (canonical.status === "created" || canonical.status === "reused") {
+            return {
+              httpStatus: 200,
+              body: {
+                ok: true,
+                canonical: true,
+                event: canonical.event,
+                created: canonical.status === "created",
+                createdStubCase,
+                globalScheduleEventId: canonical.globalScheduleEventId,
+                ancillaryCaseId: canonical.ancillaryCaseId,
+                projectionDeferred: canonical.projectionDeferred,
+                executionCase,
+              },
+            };
+          }
+          if (canonical.status === "deferred") {
+            return {
+              httpStatus: 202,
+              body: {
+                ok: true,
+                canonical: true,
+                deferred: true,
+                reason: canonical.reason,
+                createdStubCase,
+                executionCase,
+              },
+            };
+          }
+          return {
+            httpStatus: 503,
+            body: {
+              error: canonical.status === "error" ? canonical.message : "canonical scheduling unavailable",
+            },
+          };
+        } catch (e) {
+          const code = (e as { code?: string })?.code;
+          if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+            return {
+              httpStatus: 503,
+              body: {
+                error: "canonical appointment schema unavailable — apply migration 0052",
+                code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+              },
+            };
+          }
+          throw e;
+        }
+      }
 
       // Upsert ancillary appointment (dedup happens inside the repo helper)
       const { event, created } = await upsertAncillaryScheduleEvent({
@@ -419,18 +731,21 @@ export function registerGlobalScheduleRoutes(app: Express) {
         console.error("[schedule-ancillary] execution case update failed:", err.message);
       }
 
-      return res.json({
-        ok: true,
-        event,
-        created,
-        createdStubCase,
-        executionCase: updatedExecutionCase,
-        journeyEvent,
-      });
+      return {
+        httpStatus: 200,
+        body: {
+          ok: true,
+          event,
+          created,
+          createdStubCase,
+          executionCase: updatedExecutionCase,
+          journeyEvent,
+        },
+      };
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return { httpStatus: 500, body: { error: error.message } };
     }
-  });
+  }
 
   // POST /api/global-schedule-events/:id/transition  — PR 2.4
   //
@@ -450,6 +765,42 @@ export function registerGlobalScheduleRoutes(app: Express) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
       }
       const actorUserId = sessionUserIdFromGlobalSchedule(req);
+
+      // Phase 2D-B: route canonical ancillary transitions through the
+      // domain service when the flag is ON. doctor_visit / general
+      // events and flag-OFF fall through to the legacy writer unchanged.
+      const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+      try {
+        const canonical = await applyCanonicalAncillaryTransition({
+          eventId: id,
+          transition: parsed.data.transition,
+          clinicId: reqClinicId,
+          reason: parsed.data.reason ?? parsed.data.note ?? null,
+          newStartsAt: parsed.data.newStartsAt ? new Date(parsed.data.newStartsAt) : null,
+          newEndsAt: parsed.data.newEndsAt ? new Date(parsed.data.newEndsAt) : null,
+          actorUserId,
+          source: "scheduler_portal",
+        });
+        if (canonical.handled) {
+          if (!canonical.ok) return res.status(canonical.status).json({ error: canonical.error });
+          return res.json(canonical.body);
+        }
+      } catch (e) {
+        const code = (e as { code?: string })?.code;
+        if (code === "42P01" || code === "42703" || code === "CANONICAL_APPOINTMENT_MIGRATION_MISSING") {
+          return res.status(503).json({
+            error: "canonical appointment schema unavailable — apply migration 0052",
+            code: "CANONICAL_APPOINTMENT_MIGRATION_MISSING",
+          });
+        }
+        throw e;
+      }
+
+      // "complete" is a canonical-only transition; the legacy writer
+      // has no mapping for it.
+      if (parsed.data.transition === "complete") {
+        return res.status(400).json({ error: "complete is only supported for canonical ancillary events" });
+      }
       const result = await applyScheduleTransition({
         eventId: id,
         transition: parsed.data.transition as ScheduleTransition,

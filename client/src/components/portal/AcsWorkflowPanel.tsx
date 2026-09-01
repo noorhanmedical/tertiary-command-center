@@ -15,6 +15,8 @@ import {
   type AcsWorkflowSnapshot,
   type AcsWorkflowStatus,
 } from "@/lib/portal/acsWorkflowApi";
+import { isCanonicalAppointmentUiEnabled } from "@/lib/canonicalAppointmentUiFlag";
+import { CanonicalAppointmentSummary } from "@/components/canonical/CanonicalAppointmentSummary";
 
 type Props = { executionCaseId: number };
 
@@ -99,13 +101,28 @@ export function AcsWorkflowPanel({ executionCaseId }: Props) {
         </div>
       </div>
 
-      {data.nextScheduleEvent ? (
-        <div className="mt-3 text-[11px] text-slate-600">
-          Next: {data.nextScheduleEvent.serviceType ?? "ancillary"} ·{" "}
-          {data.nextScheduleEvent.status} ·{" "}
-          {new Date(data.nextScheduleEvent.startsAt).toLocaleString()}
-        </div>
-      ) : null}
+      {/* Phase 2D-C2 — canonical per-service appointment (flag ON). The
+          server projection is the source of truth; a cancelled/no_show/
+          rescheduled prior event never shows as active. Falls back to
+          the legacy nextScheduleEvent line when the UI flag is OFF. */}
+      {isCanonicalAppointmentUiEnabled() && data.appointmentByService
+        ? Object.entries(data.appointmentByService).map(([serviceType, projection]) => (
+            <div className="mt-3" key={serviceType}>
+              <CanonicalAppointmentSummary
+                projection={projection}
+                serviceType={serviceType}
+                showHistory
+                data-testid={`acs-canonical-appointment-${serviceType}`}
+              />
+            </div>
+          ))
+        : data.nextScheduleEvent ? (
+          <div className="mt-3 text-[11px] text-slate-600">
+            Next: {data.nextScheduleEvent.serviceType ?? "ancillary"} ·{" "}
+            {data.nextScheduleEvent.status} ·{" "}
+            {new Date(data.nextScheduleEvent.startsAt).toLocaleString()}
+          </div>
+        ) : null}
 
       {/* Phase 2 hardening item 4 — explicit physician-signing
           pending block. When the workflow surfaces the
