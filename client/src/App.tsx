@@ -57,6 +57,13 @@ import TeamPortalGlassPreviewPage from "@/pages/team-portal-glass-preview";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
 import EngagementCenterPage from "@/pages/engagement-center";
+// Preview-only route — isolated Plexus winter design-system gallery. Uses the
+// production primitives under client/src/components/plexus-ui; scoped by the
+// `.plexus-ui` wrapper so no live page is affected. Not production.
+import UiSystemPreviewPage from "@/pages/ui-system-preview";
+// Design mockup (static sample data) — pixel-faithful Ancillary Documents
+// reference. Not production, not wired to live data.
+import AncillaryDocumentsMockupPage from "@/pages/ancillary-documents-mockup";
 // Slice 1.5: PatientDirectoryLiveRoute import removed — the
 // /patient-directory/live route now redirects to /patient-directory.
 
@@ -119,6 +126,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 {/* iOS-frosted rails preview on the real Team Portal (not production). */}
                 <Route path="/team-portal-glass-preview" component={TeamPortalGlassPreviewPage} />
+                {/* Plexus winter design-system gallery (§78). Route-isolated preview. */}
+                <Route path="/ui-system-preview" component={UiSystemPreviewPage} />
+                {/* Pixel-faithful design mockup (static data). Not production. */}
+                <Route path="/ancillary-documents-mockup" component={AncillaryDocumentsMockupPage} />
                 <Route path="/mission-control">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <MissionControlPage />

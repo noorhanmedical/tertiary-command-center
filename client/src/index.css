@@ -1121,3 +1121,481 @@
     inset: -1px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   PLEXUS WINTER UI/UX SYSTEM — reusable primitive surface (§3–§13, §70)
+   ──────────────────────────────────────────────────────────────────────
+   Scoped strictly under `.plexus-ui`. This is the production-intended
+   design-system scope consumed by the components in
+   client/src/components/plexus-ui/*. It is ADDITIVE and route-isolated:
+   nothing here changes the live semantic tokens (--background, --card,
+   --primary, etc.) or the existing `.winter-home` / `.finance-*` /
+   `.preview-*` / `.rail-glass-preview` scopes.
+
+   The token set is the exact Plexus winter palette (§3). It intentionally
+   mirrors the `--w-*` names already used by `.winter-home` so the two
+   scopes share one vocabulary, but the declaration lives here so the
+   primitives resolve their tokens without depending on the home scope.
+   ══════════════════════════════════════════════════════════════════════ */
+@layer components {
+  .plexus-ui {
+    /* Shell (§3) */
+    --w-shell: #070a10;
+    --w-shell-2: #0b0f17;
+    --w-navy-deep: #111a2e;
+    --w-navy: #18243b;
+    --w-navy-light: #25344f;
+    /* Typography (§3) */
+    --w-text: #182234;
+    --w-text-2: #5f6f86;
+    --w-text-muted: #7e8ca1;
+    --w-text-disabled: #a7b2c1;
+    /* Winter backgrounds (§3) */
+    --w-bg: #edf5fc;
+    --w-bg-light: #f4f8fc;
+    --w-bg-highlight: #f8fbfe;
+    --w-icy: #e4effa;
+    --w-cool: #d8e8f7;
+    /* Frost + borders (§3, §9) */
+    --w-frost: rgba(255, 255, 255, 0.74);
+    --w-frost-2: rgba(255, 255, 255, 0.58);
+    --w-frost-strong: rgba(255, 255, 255, 0.84);
+    --w-frost-dark: rgba(10, 15, 25, 0.8);
+    --w-frost-border: rgba(255, 255, 255, 0.48);
+    --w-edge: #e8eef5;
+    --w-divider: #e3eaf2;
+    --w-divider-dark: rgba(255, 255, 255, 0.1);
+    /* Blue (§3) */
+    --w-blue: #5f7eea;
+    --w-blue-hover: #4e6ed9;
+    --w-blue-soft: #e9effd;
+    --w-steel: #6d8fbf;
+    /* Purple (§3) */
+    --w-purple: #7564d8;
+    --w-purple-soft: #eeeafb;
+    /* Success / Warning / Error (§3) */
+    --w-green: #1fa870;
+    --w-green-soft: #eaf7f1;
+    --w-warning: #c58a36;
+    --w-warning-soft: #fff5e7;
+    --w-error: #d9545d;
+    --w-error-soft: #fbecef;
+    /* Radii (§12) */
+    --w-r-panel: 20px;
+    --w-r-card: 16px;
+    --w-r-tile: 14px;
+    --w-r-input: 12px;
+    --w-r-button: 10px;
+    --w-r-pill: 999px;
+    /* Shadows (§13) */
+    --w-shadow-panel: 0 16px 40px rgba(24, 34, 52, 0.08);
+    --w-shadow-card: 0 6px 18px rgba(24, 34, 52, 0.05);
+    --w-shadow-hover: 0 10px 28px rgba(24, 34, 52, 0.08);
+    --w-shadow-dark: 0 16px 34px rgba(5, 8, 14, 0.22);
+    --w-shadow-menu: 0 12px 32px rgba(24, 34, 52, 0.12);
+    /* Focus ring (§15, §76) */
+    --w-ring: 0 0 0 3px rgba(95, 126, 234, 0.22);
+    /* Motion (§70) */
+    --w-motion-fast: 140ms;
+    --w-motion-normal: 200ms;
+    --w-motion-slow: 280ms;
+
+    font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+    color: var(--w-text);
+  }
+
+  /* ── Level 1: winter page canvas (§8, §10) ─────────────────────────── */
+  .plexus-canvas {
+    position: relative;
+    background:
+      linear-gradient(
+        180deg,
+        rgba(237, 245, 252, 0.2) 0%,
+        rgba(244, 248, 252, 0.5) 45%,
+        rgba(248, 251, 254, 0.82) 100%
+      ),
+      radial-gradient(130% 90% at 50% -12%, var(--w-cool), transparent 60%),
+      var(--w-bg);
+  }
+
+  /* ── Level 2: frosted surfaces (§9, §10) ───────────────────────────── */
+  .plexus-frost {
+    background: var(--w-frost);
+    border: 1px solid var(--w-frost-border);
+    border-radius: var(--w-r-panel);
+    box-shadow: var(--w-shadow-panel);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+  .plexus-frost-secondary {
+    background: var(--w-frost-2);
+    border: 1px solid rgba(255, 255, 255, 0.44);
+    border-radius: var(--w-r-card);
+    box-shadow: var(--w-shadow-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  .plexus-frost-strong {
+    background: var(--w-frost-strong);
+    border: 1px solid var(--w-frost-border);
+    border-radius: var(--w-r-panel);
+    box-shadow: var(--w-shadow-panel);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+
+  /* ── Level 3: light / white surfaces (§10, §28) ────────────────────── */
+  .plexus-card {
+    background: #ffffff;
+    border: 1px solid var(--w-edge);
+    border-radius: var(--w-r-panel);
+    box-shadow: var(--w-shadow-card);
+  }
+  .plexus-card-secondary {
+    background: var(--w-bg-light);
+    border: 1px solid var(--w-edge);
+    border-radius: var(--w-r-card);
+  }
+  .plexus-tile {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: var(--w-r-tile);
+    box-shadow: 0 4px 12px rgba(24, 34, 52, 0.04);
+    transition: transform var(--w-motion-normal) ease,
+      background var(--w-motion-normal) ease, box-shadow var(--w-motion-normal) ease;
+  }
+  .plexus-tile-interactive:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: var(--w-shadow-hover);
+  }
+
+  /* ── Level 4: dark feature surface (§10, §28) ──────────────────────── */
+  .plexus-feature {
+    position: relative;
+    background: linear-gradient(135deg, rgba(7, 10, 16, 0.96), rgba(17, 26, 46, 0.92));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--w-r-panel);
+    box-shadow: var(--w-shadow-dark);
+    color: #fff;
+    overflow: hidden;
+  }
+
+  /* ── Dark structural header (§6) ───────────────────────────────────── */
+  .plexus-structural-header {
+    background: var(--w-navy-deep);
+    color: #ffffff;
+    border-radius: var(--w-r-card);
+  }
+
+  /* ── Frosted icon circle (§13, §31) ────────────────────────────────── */
+  .plexus-icon-frost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: 0 4px 12px rgba(24, 34, 52, 0.05);
+    border-radius: var(--w-r-pill);
+  }
+
+  /* ── Consistent focus ring for all interactive elements (§69, §76) ─── */
+  .plexus-ui a:focus-visible,
+  .plexus-ui button:focus-visible,
+  .plexus-ui [role="button"]:focus-visible,
+  .plexus-ui input:focus-visible,
+  .plexus-ui textarea:focus-visible,
+  .plexus-ui select:focus-visible,
+  .plexus-ui [tabindex]:focus-visible {
+    outline: none;
+    box-shadow: var(--w-ring);
+  }
+
+  /* ── Route-scoped winter shell chrome (§7) ─────────────────────────── */
+  .plexus-topbar {
+    height: 72px;
+    background: linear-gradient(90deg, #070a10 0%, #0b1020 60%, #111a2e 100%);
+  }
+  .plexus-sidebar {
+    width: 244px;
+    background: var(--w-shell-2);
+  }
+  .plexus-nav-item {
+    height: 40px;
+    border-radius: var(--w-r-button);
+    color: #8e9aaf;
+    transition: background var(--w-motion-fast) ease, color var(--w-motion-fast) ease;
+  }
+  .plexus-nav-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+  }
+  .plexus-nav-item[data-active="true"] {
+    background: rgba(95, 126, 234, 0.18);
+    color: #fff;
+  }
+}
+
+/* Winter canvas snow layers reuse the shared keyframes defined above; the
+   .plexus-canvas surface deliberately omits drifting snow for interior
+   (operational) pages per §8 — snow stays on login/home only. */
+
+/* Plexus indeterminate progress track (§50). */
+@keyframes plexus-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plexus-ui *[class*="animate-[plexus-indeterminate"] {
+    animation: none !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PLEXUS WINTER UI — operational workspace (§13, Phase B2)
+   Sharper, denser interior surface for master-detail workspaces (e.g. the
+   Ancillary Documents Clinic→Patient→Document layout). Scoped strictly under
+   `.plexus-ui .plexus-workspace`; it does NOT change the softer design-system
+   defaults used by home/login or the gallery. Additive only.
+   ══════════════════════════════════════════════════════════════════════ */
+@layer components {
+  /* Flat, white, sharp operational workspace — matches the approved second
+     reference (clean/white, not a frosted-card showcase). Restrained radii,
+     hairline edges, pale-blue selection with a thin LEFT accent. */
+  .plexus-ui .plexus-workspace {
+    --pw-blue: #5f7eea;
+    --pw-blue-sel: #eef4ff;
+    --pw-edge: #e6ecf3;
+    --pw-edge-soft: #eef2f7;
+    --pw-text: #182234;
+    --pw-text-2: #5b6b82;
+    --pw-muted: #8a97ab;
+  }
+  /* Left container = Clinics | Patients (one panel, internal divider).
+     Clinics column = navy; Patients column = white (set per-column below). */
+  .plexus-ui .plexus-nav-panel {
+    display: flex;
+    border: 1px solid #d6dfec;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(11, 18, 32, 0.10);
+    overflow: hidden;
+  }
+  /* Clinics column — navy winter surface. */
+  .plexus-ui .plexus-col-clinics-navy {
+    background: linear-gradient(180deg, #1b2b48 0%, #16233c 100%);
+  }
+  /* Patients column — white. */
+  .plexus-ui .plexus-col-patients-white {
+    background: #ffffff;
+  }
+  /* Column header on the navy clinics surface. */
+  .plexus-ui .plexus-col-clinics-navy .plexus-col-head {
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+    color: #93a4c2;
+  }
+  /* Column header on the white patients surface. */
+  .plexus-ui .plexus-col-patients-white .plexus-col-head {
+    border-bottom-color: #eef2f7;
+    color: #8a97ab;
+  }
+  /* Nav rows on the WHITE patients column — pale-blue selection. */
+  .plexus-ui .plexus-col-patients-white .plexus-nav-row:hover {
+    background: #f6f9fd;
+  }
+  .plexus-ui .plexus-col-patients-white .plexus-nav-row[data-selected="true"] {
+    background: #eef4ff;
+    box-shadow: inset 3px 0 0 var(--pw-blue);
+  }
+  /* Right container = document detail. */
+  .plexus-ui .plexus-doc-panel {
+    background: #ffffff;
+    border: 1px solid var(--pw-edge);
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(20, 30, 50, 0.05);
+  }
+  /* Column header — small uppercase label, hairline underline. */
+  .plexus-ui .plexus-col-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--pw-edge-soft);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--pw-muted);
+  }
+  /* Selectable nav row — flat, compact, thin blue LEFT accent when selected.
+     Tuned for the darker icy nav surface. */
+  .plexus-ui .plexus-nav-row {
+    border-radius: 5px;
+    box-shadow: inset 0 0 0 0 transparent;
+    transition: background var(--w-motion-fast) ease, box-shadow var(--w-motion-fast) ease;
+  }
+  .plexus-ui .plexus-nav-row:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .plexus-ui .plexus-nav-row[data-selected="true"] {
+    background: rgba(95, 126, 234, 0.22);
+    box-shadow: inset 3px 0 0 #7f9cf0;
+  }
+  /* Internal divider between clinics/patients on the navy surface. */
+  .plexus-ui .plexus-nav-divider {
+    width: 1px;
+    background: rgba(255, 255, 255, 0.09);
+  }
+  /* Compact service tab chip. */
+  .plexus-ui .plexus-svc-tab {
+    border-radius: 6px;
+    border: 1px solid var(--pw-edge);
+    background: #ffffff;
+    color: var(--pw-text-2);
+    transition: all var(--w-motion-fast) ease;
+  }
+  .plexus-ui .plexus-svc-tab[data-selected="true"] {
+    border-color: var(--pw-blue);
+    background: var(--pw-blue-sel);
+    color: #2f62c9;
+  }
+  /* Document type card — small radius, thin blue outline when selected. */
+  .plexus-ui .plexus-doc-card {
+    border-radius: 8px;
+    border: 1px solid var(--pw-edge);
+    background: #ffffff;
+    transition: border-color var(--w-motion-fast) ease, background var(--w-motion-fast) ease, box-shadow var(--w-motion-fast) ease;
+  }
+  .plexus-ui .plexus-doc-card:hover {
+    background: #f9fbfe;
+  }
+  .plexus-ui .plexus-doc-card[data-selected="true"] {
+    border-color: var(--pw-blue);
+    background: #f7faff;
+    box-shadow: 0 0 0 2px rgba(95, 126, 234, 0.18);
+  }
+  /* Control zone — the band that holds the doc-type cards + action tabs.
+     A subtle icy tint separates the "chrome" from the document sheet below. */
+  .plexus-ui .plexus-control-zone {
+    background: linear-gradient(180deg, #f4f7fc 0%, #eef3f9 100%);
+    border: 1px solid #e3e9f2;
+    border-radius: 10px;
+    padding: 14px;
+  }
+  /* Document "editor" surface — a grey desk that a white paper page sits on,
+     like the Microsoft Word editing canvas. Desk shows on ALL sides of the
+     page so it reads as a sheet of paper, not a full-bleed white box. */
+  .plexus-ui .plexus-reader {
+    border: 1px solid #d3dbe6;
+    border-radius: 6px;
+    background: #dfe4ec;
+    padding: 32px 24px;
+  }
+  /* The white paper page — narrower than the desk so grey shows around it;
+     ~1in margins, crisp page drop shadow, document typography. */
+  .plexus-ui .plexus-page-sheet {
+    width: 100%;
+    max-width: 620px;
+    margin: 0 auto;
+    background: #ffffff;
+    padding: 56px 64px;
+    box-shadow: 0 1px 2px rgba(24, 36, 59, 0.12), 0 8px 28px rgba(24, 36, 59, 0.16);
+    /* Refined serif document face — reads like a printed clinical letter. */
+    font-family: "Georgia", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Times New Roman", serif;
+    color: #1a1a1a;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-kerning: normal;
+  }
+  .plexus-ui .plexus-page-sheet .doc-title {
+    font-size: 15.5pt;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #16233c;
+    text-align: center;
+    margin: 0 0 5pt;
+  }
+  .plexus-ui .plexus-page-sheet .doc-rule {
+    height: 1.5px;
+    background: #16233c;
+    margin: 8pt 0 20pt;
+  }
+  .plexus-ui .plexus-page-sheet .doc-section {
+    margin-bottom: 20pt;
+  }
+  .plexus-ui .plexus-page-sheet .doc-heading {
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #16233c;
+    padding-bottom: 4pt;
+    margin-bottom: 9pt;
+    border-bottom: 1px solid #dbe1eb;
+  }
+  .plexus-ui .plexus-page-sheet .doc-body {
+    font-size: 11pt;
+    line-height: 1.65;
+    color: #242830;
+    margin: 0 0 10pt;
+    text-align: justify;
+    hyphens: auto;
+  }
+  .plexus-ui .plexus-page-sheet .doc-body:last-child { margin-bottom: 0; }
+  /* Key/value block (PATIENT INFORMATION) — one row per field; label has a
+     fixed width so values align in a clean column. */
+  .plexus-ui .plexus-page-sheet .doc-kv {
+    display: flex;
+    flex-direction: column;
+    row-gap: 4pt;
+  }
+  .plexus-ui .plexus-page-sheet .doc-kv-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10pt;
+  }
+  .plexus-ui .plexus-page-sheet .doc-kv-label {
+    flex: 0 0 140px;
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: #3a4a63;
+  }
+  .plexus-ui .plexus-page-sheet .doc-kv-value {
+    flex: 1;
+    font-size: 10.5pt;
+    color: #2a2a2a;
+  }
+  /* Signature ruled field. */
+  .plexus-ui .plexus-page-sheet .doc-sig-line {
+    display: flex;
+    align-items: flex-end;
+    gap: 10pt;
+    margin: 14pt 0 4pt;
+  }
+  .plexus-ui .plexus-page-sheet .doc-sig-label {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: #3a4a63;
+    white-space: nowrap;
+  }
+  .plexus-ui .plexus-page-sheet .doc-sig-rule {
+    flex: 1;
+    border-bottom: 1px solid #6b7890;
+    height: 14pt;
+  }
+  /* Doc-type card sitting IN the control zone — white pops against the icy
+     band; selected gets a navy-blue emphasis. */
+  .plexus-ui .plexus-control-zone .plexus-doc-card {
+    background: #ffffff;
+    border-color: #dfe6f0;
+    box-shadow: 0 1px 2px rgba(24, 36, 59, 0.04);
+  }
+  .plexus-ui .plexus-control-zone .plexus-doc-card:hover { background: #ffffff; border-color: #c3d0e6; }
+  .plexus-ui .plexus-control-zone .plexus-doc-card[data-selected="true"] {
+    border-color: #18243b;
+    background: #ffffff;
+    box-shadow: 0 0 0 2px rgba(24, 36, 59, 0.14), 0 4px 12px rgba(24, 36, 59, 0.10);
+  }
+}
