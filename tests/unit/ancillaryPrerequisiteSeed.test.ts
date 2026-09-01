@@ -15,6 +15,7 @@ import { join } from "node:path";
 
 const ROOT = process.cwd();
 const SEED = readFileSync(join(ROOT, "migrations/0077_seed_ancillary_prerequisite_config.sql"), "utf8");
+const SEED_PROC = readFileSync(join(ROOT, "migrations/0078_seed_procedure_start_signed_order_prereq.sql"), "utf8");
 const EVALUATOR = readFileSync(join(ROOT, "server/services/billingLifecycle/billingReadinessEvaluator.ts"), "utf8");
 const SCHEMA = readFileSync(join(ROOT, "shared/schema/procedurePrerequisites.ts"), "utf8");
 
@@ -23,6 +24,8 @@ function sqlBody(src: string): string {
 }
 const BODY = sqlBody(SEED);
 const BODY_UP = BODY.toUpperCase();
+const PROC = sqlBody(SEED_PROC);
+const PROC_UP = PROC.toUpperCase();
 
 const SERVICES = [
   "BrainWave",
@@ -103,6 +106,40 @@ test("stage + requirement code match the billing-readiness evaluator", () => {
 
 test("schema enum documents the billing_readiness stage", () => {
   assert.match(SCHEMA, /"billing_readiness"/);
+});
+
+// ── 0078 — procedure-start signed-order eligibility gate ──
+test("0078 seeds order_note_signature at the procedure_start stage for all canonical services", () => {
+  assert.match(PROC, /'order_note_signature'/);
+  assert.match(PROC, /'procedure_start'/);
+  assert.match(PROC, /'hard_procedure_blocker'/);
+  // The 7 headline services plus the rest of the canonical catalog.
+  for (const s of [...SERVICES, "Upper Extremity Arterial Doppler", "Upper Extremity Venous Duplex", "Stress Echocardiogram", "Abdominal Aortic Aneurysm Duplex"]) {
+    assert.ok(PROC.includes(`('${s}')`), `0078 missing procedure_start row for ${s}`);
+  }
+});
+
+test("0078 is idempotent, platform-default, and non-destructive", () => {
+  assert.match(PROC, /ON CONFLICT\s*\(\s*service_type,\s*requirement_code,\s*blocks_stage\s*\)/i);
+  assert.match(PROC, /WHERE\s+clinic_id\s+IS\s+NULL/i);
+  assert.match(PROC, /DO NOTHING/i);
+  assert.match(PROC, /SELECT NULL,\s*s,\s*'order_note_signature'/i);
+  assert.ok(!/\bDELETE\s+FROM\b/.test(PROC_UP), "no DELETE FROM");
+  assert.ok(!/DROP\s+TABLE/.test(PROC_UP), "no DROP TABLE");
+  assert.ok(!/TRUNCATE/.test(PROC_UP), "no TRUNCATE");
+  assert.ok(!/\bUPDATE\b/.test(PROC_UP), "no UPDATE");
+  assert.ok(!/\bALTER\b/.test(PROC_UP), "0078 needs no constraint change (procedure_start already allowed)");
+});
+
+test("0078 does NOT touch migration 0077 (different stage → disjoint key)", () => {
+  // 0078 seeds procedure_start; 0077 seeds billing_readiness. They coexist.
+  assert.ok(!PROC.includes("'billing_readiness'"), "0078 must not seed billing_readiness rows");
+});
+
+test("procedure prerequisites resolve order_note_signature semantically (signed only)", () => {
+  const rules = readFileSync(join(ROOT, "server/services/procedureLifecycle/procedurePrerequisiteRules.ts"), "utf8");
+  assert.match(rules, /currentOrderNoteSigned/);
+  assert.match(rules, /order_note_signature/);
 });
 
 let failed = 0;

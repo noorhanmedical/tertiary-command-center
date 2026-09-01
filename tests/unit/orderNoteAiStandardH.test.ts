@@ -239,24 +239,30 @@ test("BrainWave/VitalWave DO require structured screening — declared by config
 });
 
 // ── Procedure signed-order prerequisite (separate concept, config-driven) ──
-test("BrainWave/VitalWave require a signed Order Note for the Procedure Note — by config", () => {
-  assert.equal(procedureRequiresSignedOrderNote("BrainWave"), true);
-  assert.equal(procedureRequiresSignedOrderNote("VitalWave"), true);
-});
-test("vascular/ultrasound services do NOT require a signed Order Note for the Procedure Note", () => {
-  for (const s of ["Bilateral Carotid Duplex", "Echocardiogram TTE", "Renal Artery Doppler", "Lower Extremity Arterial Doppler", "Lower Extremity Venous Duplex", "Some Unknown Study"]) {
-    assert.equal(procedureRequiresSignedOrderNote(s), false, `${s} must not require a signed order for the procedure note`);
+// CANONICAL RULE: a signed Order Note is the clinician authorization for the
+// procedure and is REQUIRED for ALL canonical ordered ancillary services.
+test("ALL canonical ordered services require a signed Order Note for the procedure — by config", () => {
+  for (const s of [
+    "BrainWave", "VitalWave", "Echocardiogram TTE", "Bilateral Carotid Duplex",
+    "Renal Artery Doppler", "Lower Extremity Arterial Doppler", "Lower Extremity Venous Duplex",
+  ]) {
+    assert.equal(procedureRequiresSignedOrderNote(s), true, `${s} must require a signed Order Note for the procedure`);
   }
 });
+test("unmatched/other canonical ordered service also requires a signed Order Note (generic default)", () => {
+  // An Order Note is part of every canonical ordered ancillary lifecycle.
+  assert.equal(procedureRequiresSignedOrderNote("Upper Extremity Venous Duplex"), true);
+  assert.equal(procedureRequiresSignedOrderNote("Abdominal Aortic Aneurysm Duplex"), true);
+});
 test("structured-screening and signed-order prerequisites are SEPARATE concepts", () => {
-  // A hypothetical service could require one without the other; the two helpers
-  // read independent config fields.
+  // Screening is service-specific; signed-order is universal for ordered services.
   const bw = orderNoteServiceConfig("BrainWave").requiredEvidence ?? {};
   assert.equal(bw.structuredScreening, true);
   assert.equal(bw.signedOrderNoteForProcedure, true);
   const carotid = orderNoteServiceConfig("Bilateral Carotid Duplex").requiredEvidence ?? {};
+  // Carotid does NOT require screening, but DOES require a signed order.
   assert.notEqual(carotid.structuredScreening, true);
-  assert.notEqual(carotid.signedOrderNoteForProcedure, true);
+  assert.equal(carotid.signedOrderNoteForProcedure, true);
 });
 
 let failed = 0;

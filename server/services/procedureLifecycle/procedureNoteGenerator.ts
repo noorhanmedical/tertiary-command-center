@@ -36,6 +36,7 @@ import { syncProcedureNoteReferenceSignature } from "./procedureNoteService";
 import { renderProcedureNoteBody } from "./procedureNoteBody";
 import { resolveProcedureNoteContext, loadProcedureComponents, procedureServiceLabel } from "./procedureNoteContext";
 import { procedureRequiresSignedOrderNote } from "../ancillaryDocuments/orderNoteServiceConfig";
+import { serviceKeyForComponents } from "@shared/schema/procedureComponents";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
@@ -341,16 +342,27 @@ async function buildCanonicalProcedureNoteBody(
   const ctx = await resolveProcedureNoteContext(clinicId, ancillaryCaseId);
   if (!ctx) return { ok: false, code: "procedure_note_context_unresolved" };
 
-  // Config-driven (never service-name inference): whether this service requires
-  // an exact current SIGNED Order Note + validated component evidence before a
-  // Procedure Note may be generated. Declared per service in
-  // orderNoteServiceConfig.requiredEvidence.signedOrderNoteForProcedure.
+  // Config-driven (never service-name inference): whether an exact current
+  // SIGNED Order Note is REQUIRED before a Procedure Note may be generated.
+  // The signed Order Note is the clinician authorization for the procedure and
+  // is required for ALL canonical ordered ancillary services (declared per
+  // service in orderNoteServiceConfig.requiredEvidence.signedOrderNoteForProcedure).
+  // resolveProcedureNoteContext only populates ctx.associatedOrder when the
+  // EXACT current, non-superseded, same-clinic Order Note is SIGNED, so this
+  // fails closed on: no signed order, superseded/invalid note, wrong case, or
+  // cross-clinic. The rendered body then references that exact signed note id.
   const requiresSignedOrder = procedureRequiresSignedOrderNote(note.serviceType ?? "");
-  // Exact current SIGNED Order Note relationship is REQUIRED when configured.
   if (requiresSignedOrder && !ctx.associatedOrder) return { ok: false, code: "missing_signed_order_note" };
-  // Validated component evidence is REQUIRED when configured (invalid/missing → fail-closed).
+
+  // Validated component evidence is a SEPARATE requirement that applies only to
+  // services that HAVE a structured component contract (BrainWave/VitalWave).
+  // This is determined by the existence of a component schema for the service
+  // (serviceKeyForComponents), not by the signed-order requirement — a vascular
+  // service requires a signed order but has no component schema, so it renders
+  // its modular body without component evidence.
   const components = await loadProcedureComponents(pe.id, note.serviceType);
-  if (requiresSignedOrder && !components) return { ok: false, code: "invalid_or_missing_component_evidence" };
+  const requiresComponentEvidence = serviceKeyForComponents(note.serviceType ?? "") != null;
+  if (requiresComponentEvidence && !components) return { ok: false, code: "invalid_or_missing_component_evidence" };
 
   const rendered = renderProcedureNoteBody({
     service: note.serviceType,

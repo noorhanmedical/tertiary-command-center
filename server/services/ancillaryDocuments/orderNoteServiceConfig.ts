@@ -89,6 +89,10 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("stress echo"),
     config: {
       serviceLabel: "Stress Echocardiogram",
+      // A signed Order Note is the clinician authorization for the procedure.
+      // Required for ALL canonical ordered ancillary services (structured
+      // screening is separate and NOT required for this service).
+      requiredEvidence: { signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "restingEcho", label: "Resting transthoracic echocardiographic imaging", clinicalPurpose: "baseline assessment of cardiac structure and function" },
         { key: "stressImaging", label: "Stress echocardiographic imaging", clinicalPurpose: "assessment of cardiac function under stress" },
@@ -100,6 +104,9 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("echo") || s.includes("tte"),
     config: {
       serviceLabel: "Complete Transthoracic Echocardiogram",
+      // Signed Order Note = clinician procedure authorization (required for all
+      // canonical ordered services). Structured screening is NOT required here.
+      requiredEvidence: { signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "twoDImaging", label: "Two-dimensional transthoracic imaging", clinicalPurpose: "evaluation of cardiac anatomy, chamber dimensions, and ventricular function" },
         { key: "spectralDoppler", label: "Spectral Doppler assessment", clinicalPurpose: "assessment of intracardiac blood flow and valvular hemodynamics" },
@@ -111,6 +118,9 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("carotid"),
     config: {
       serviceLabel: "Bilateral Carotid Duplex",
+      // Signed Order Note = clinician procedure authorization (required for all
+      // canonical ordered services). Structured screening is NOT required here.
+      requiredEvidence: { signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "grayscaleImaging", label: "Grayscale duplex imaging of the carotid arteries", clinicalPurpose: "evaluation of the carotid vessel walls and lumen" },
         { key: "dopplerVelocities", label: "Spectral Doppler velocity measurements", clinicalPurpose: "objective assessment for hemodynamically significant stenosis" },
@@ -122,6 +132,9 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("renal"),
     config: {
       serviceLabel: "Renal Artery Duplex",
+      // Signed Order Note = clinician procedure authorization (required for all
+      // canonical ordered services). Structured screening is NOT required here.
+      requiredEvidence: { signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "renalGrayscale", label: "Grayscale imaging of the renal arteries and kidneys", clinicalPurpose: "evaluation of renal vascular anatomy" },
         { key: "renalDoppler", label: "Spectral Doppler velocity assessment", clinicalPurpose: "objective assessment for renal artery stenosis" },
@@ -133,6 +146,9 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("lower extremity arterial") || (s.includes("arterial") && s.includes("doppler")),
     config: {
       serviceLabel: "Lower Extremity Arterial Duplex",
+      // Signed Order Note = clinician procedure authorization (required for all
+      // canonical ordered services). Structured screening is NOT required here.
+      requiredEvidence: { signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "segmentalPressures", label: "Segmental pressure measurements", clinicalPurpose: "objective characterization of lower-extremity arterial perfusion at multiple levels" },
         { key: "waveformAnalysis", label: "Arterial waveform analysis", clinicalPurpose: "characterization of arterial physiologic waveforms" },
@@ -144,6 +160,9 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("lower extremity venous") || (s.includes("venous") && s.includes("duplex")),
     config: {
       serviceLabel: "Lower Extremity Venous Duplex",
+      // Signed Order Note = clinician procedure authorization (required for all
+      // canonical ordered services). Structured screening is NOT required here.
+      requiredEvidence: { signedOrderNoteForProcedure: true },
       orderedComponents: [
         { key: "venousCompression", label: "Compression duplex imaging", clinicalPurpose: "assessment for deep venous thrombosis" },
         { key: "venousDoppler", label: "Venous Doppler with augmentation", clinicalPurpose: "assessment of venous flow and valvular competence" },
@@ -155,6 +174,10 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
 
 const GENERIC_CONFIG = (serviceType: string): OrderNoteServiceConfig => ({
   serviceLabel: serviceType,
+  // A signed Order Note is the clinician authorization for the procedure and is
+  // part of every canonical ordered ancillary lifecycle, so it is required by
+  // default. Structured screening is NOT required by default (service-specific).
+  requiredEvidence: { signedOrderNoteForProcedure: true },
   orderedComponents: [
     { key: "study", label: `${serviceType} study`, clinicalPurpose: "objective diagnostic evaluation per the approved protocol" },
   ],
