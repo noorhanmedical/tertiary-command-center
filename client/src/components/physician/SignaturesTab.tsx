@@ -16,7 +16,8 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { PenLine, Undo2, AlertTriangle, FileWarning, Loader2 } from "lucide-react";
+import { PenLine, Undo2, AlertTriangle, FileWarning, Loader2, Eye } from "lucide-react";
+import { CANONICAL_OVERVIEW_QUERY_KEY } from "./useCanonicalOverview";
 
 interface SignatureItem {
   id: number;
@@ -74,6 +75,11 @@ export function SignaturesTab() {
   const [returnTarget, setReturnTarget] = useState<SignatureItem | null>(null);
   const [returnReason, setReturnReason] = useState("");
   const [busy, setBusy] = useState(false);
+  // Read-only "View Order Note" — fetches the current note body so the clinician
+  // reviews the patient-specific note before signing. No signature state here.
+  const [viewTarget, setViewTarget] = useState<SignatureItem | null>(null);
+  const [viewBody, setViewBody] = useState<string | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
 
   const queryParams = new URLSearchParams();
   if (serviceFilter !== "all") queryParams.set("serviceType", serviceFilter);
@@ -100,6 +106,26 @@ export function SignaturesTab() {
     queryClient.invalidateQueries({ queryKey: ["/api/physician-portal/signature-items"] });
     queryClient.invalidateQueries({ queryKey: ["/api/physician-portal/summary"] });
     queryClient.invalidateQueries({ queryKey: ["/api/physician-portal/financial-health"] });
+    // Keep the read-only canonical Orders & Notes overview in sync so a signed
+    // note flips to Signed there too (server remains the source of truth).
+    queryClient.invalidateQueries({ queryKey: CANONICAL_OVERVIEW_QUERY_KEY });
+  }
+
+  async function openView(item: SignatureItem) {
+    setViewTarget(item);
+    setViewBody(null);
+    setViewLoading(true);
+    try {
+      const res = await fetch(`/api/procedure-notes/${item.id}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load note");
+      const note = await res.json();
+      setViewBody(note.generatedText ?? note.generated_text ?? "(no note body generated yet)");
+    } catch (e: any) {
+      setViewBody(null);
+      toast({ title: "Could not load note", description: e?.message ?? "", variant: "destructive" });
+    } finally {
+      setViewLoading(false);
+    }
   }
 
   async function signOne(item: SignatureItem) {
@@ -286,6 +312,15 @@ export function SignaturesTab() {
                   <div className="flex justify-end gap-2">
                     <Button
                       size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => openView(item)}
+                      data-testid={`button-view-${item.id}`}
+                    >
+                      <Eye className="w-3.5 h-3.5 mr-1" />View
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="outline"
                       disabled={busy}
                       onClick={() => { setReturnTarget(item); setReturnReason(""); }}
@@ -329,6 +364,34 @@ export function SignaturesTab() {
             <Button onClick={submitReturn} disabled={busy || !returnReason.trim()} data-testid="button-confirm-return">
               Return note
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewTarget} onOpenChange={(o) => { if (!o) { setViewTarget(null); setViewBody(null); } }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Order Note — {viewTarget?.patientName ?? "Patient"} · {viewTarget?.serviceType}</DialogTitle>
+          </DialogHeader>
+          <div className="text-xs text-muted-foreground" data-testid="view-note-state">
+            Status: {ORDER_NOTE_STATE_LABELS[viewTarget?.orderNotePortalState ?? ""] ?? viewTarget?.orderNotePortalState ?? "—"}
+          </div>
+          {viewLoading ? (
+            <div className="py-8 text-center text-muted-foreground"><Loader2 className="w-4 h-4 mr-2 inline animate-spin" />Loading…</div>
+          ) : (
+            <pre data-testid="view-note-body" className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md border bg-slate-50 p-3 text-sm text-slate-800">{viewBody ?? "(no note body)"}</pre>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setViewTarget(null); setViewBody(null); }} data-testid="button-close-view">Close</Button>
+            {viewTarget?.signable && (
+              <Button
+                disabled={busy}
+                onClick={() => { const t = viewTarget; setViewTarget(null); setViewBody(null); if (t) void signOne(t); }}
+                data-testid="button-view-sign"
+              >
+                <PenLine className="w-3.5 h-3.5 mr-1" />Sign
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
