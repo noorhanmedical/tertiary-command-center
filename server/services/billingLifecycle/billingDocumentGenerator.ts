@@ -24,6 +24,10 @@ import { ancillaryDocumentReferences, BILLING_DOCUMENT_SOURCE_TABLE } from "@sha
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { createReference, recordAncillaryDocumentFailure } from "../../repositories/ancillaryDocuments.repo";
 import { billingDocumentRuntimeEnabled, billingDocumentGeneratorEnabled } from "../../lib/featureFlags";
+// Slice G — CPT/ICD selection (performed-component × approved-code intersection).
+import { selectBillingDocumentCodes, approvedCptCatalogForService, extractApprovedIcd10FromReasoning } from "@shared/schema/billingCodeMap";
+import { loadProcedureComponents } from "../procedureLifecycle/procedureNoteContext";
+import { patientScreenings } from "@shared/schema/screening";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 const GENERATION_VERSION = "billing_packet_v1";
@@ -176,6 +180,27 @@ async function finalizeBillingDocument(input: GenInput, readiness: ReadinessRow)
   const dos = snapshot.procedure_completed_at ?? null; // PERSISTED procedure time — never retry time.
   const claimBlockers = (readiness.claimBlockers ?? []) as unknown[];
   const warnings = (readiness.warnings ?? []) as unknown[];
+
+  // Slice G — select ICD/CPT for the packet. CPT is billed ONLY when the code
+  // is in the approved canonical service catalog AND the mapped procedure
+  // component was actually performed. ICD comes ONLY from the admin-approved
+  // qualification reasoning for this exact case. No code is invented; 93040 is
+  // de-duplicated. Sources are resolved here (the readiness snapshot does not
+  // carry approved codes) — no permissive fallback: absent evidence ⇒ no code.
+  const approvedCptCodes = approvedCptCatalogForService(readiness.serviceType);
+  let approvedIcd10Codes: string[] = [];
+  if (readiness.patientScreeningId != null) {
+    const [ps] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, readiness.patientScreeningId)).limit(1);
+    approvedIcd10Codes = extractApprovedIcd10FromReasoning((ps?.reasoning as Record<string, unknown> | null) ?? null, readiness.serviceType);
+  }
+  const procedureEventId = (snapshot.procedure_event_id ?? readiness.procedureEventId) as number | null | undefined;
+  const components = procedureEventId != null ? await loadProcedureComponents(Number(procedureEventId), readiness.serviceType) : null;
+  const codeSelection = selectBillingDocumentCodes({
+    serviceType: readiness.serviceType,
+    components,
+    approvedCptCodes,
+    approvedIcd10Codes,
+  });
   // EXACT facts only — no invented CPT/HCPCS/ICD/modifier/unit/POS/NPI/payer.
   const sourceData = {
     document_kind: "billing_packet", generation_version: GENERATION_VERSION, generated_by_ai: false,
@@ -186,6 +211,12 @@ async function finalizeBillingDocument(input: GenInput, readiness: ReadinessRow)
     procedure_note_reference_id: snapshot.procedure_note_reference_id ?? null, procedure_note_status: snapshot.procedure_note_status ?? null, procedure_note_signed_at: snapshot.procedure_note_signed_at ?? null,
     billing_readiness_check_id: readiness.id, evidence_fingerprint: readiness.evidenceFingerprint,
     claim_blockers: claimBlockers, warnings, billing_blockers: [],
+    // Slice G — the ONLY document that carries ICD/CPT.
+    icd10_codes: codeSelection.icd10,
+    cpt_codes: codeSelection.cpt,
+    cpt_excluded_not_performed: codeSelection.excludedNotPerformed,
+    cpt_excluded_not_approved: codeSelection.excludedNotApproved,
+    code_warnings: codeSelection.warnings,
   };
   const body = renderPacket(sourceData);
   const [done] = await db.update(billingDocumentRequests)
@@ -284,7 +315,9 @@ function renderPacket(d: Record<string, unknown>): string {
     `Operational Billing Packet — ${d.service_type}.`,
     `Case ${d.ancillary_case_id} (clinic ${d.clinic_id}). Date of service: ${dos}.`,
     `Evidence: procedure event #${d.procedure_event_id ?? "-"}, report reference #${d.report_reference_id ?? "-"}, Order Note reference #${d.order_note_reference_id ?? "-"} (${d.order_note_status ?? "-"}), Procedure Note reference #${d.procedure_note_reference_id ?? "-"} (${d.procedure_note_status ?? "-"}).`,
-    `This is an operational billing packet only — NOT a claim, invoice, remittance, or payment, and NOT proof of payer coverage or prior authorization. Billing codes and payer data are included ONLY when present in approved canonical data; none are invented.`,
+    `Diagnoses (ICD-10): ${((d.icd10_codes as string[]) ?? []).join(", ") || "none approved"}.`,
+    `Procedures (CPT): ${((d.cpt_codes as string[]) ?? []).join(", ") || "none billable"}.`,
+    `This is an operational billing packet only — NOT a claim, invoice, remittance, or payment, and NOT proof of payer coverage or prior authorization. Billing codes and payer data are included ONLY when present in approved canonical data AND supported by performed procedure components; none are invented.`,
     `Claim-submission blockers (carried to Phase 2J): ${(d.claim_blockers as unknown[]).length}.`,
   ].join("\n");
 }

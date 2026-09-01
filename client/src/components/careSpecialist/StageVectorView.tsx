@@ -4,10 +4,18 @@
 // status). No data fetching, no context, no mock/portalData source. Exported for
 // behavioral component tests (rendered with a crafted DTO). Read-only; no actions.
 
+import { Link } from "wouter";
 import {
   CANONICAL_STAGE_ORDER, CANONICAL_FINANCIAL_STAGE_KEYS,
   type CaseStageVector, type StageStatus, type CanonicalStageKey,
 } from "@shared/canonicalStageVector";
+
+// A0-UI entry — BW/VW cases expose the structured screening workflow from the
+// real ACS case surface (no standalone navigation path).
+function isStructuredScreeningService(serviceType: string | null | undefined): boolean {
+  const s = (serviceType ?? "").toLowerCase();
+  return s.includes("brain") || s.includes("vital");
+}
 
 const STAGE_LABELS: Record<CanonicalStageKey, string> = {
   adminReview: "Admin Review", engagement: "Engagement", appointment: "Appointment",
@@ -54,6 +62,15 @@ export function StageVectorView({ v }: { v: CaseStageVector }) {
         <span data-testid={`episode-case-${v.ancillaryCaseId}`} className="font-semibold text-slate-700">Case #{v.ancillaryCaseId}</span>
         <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-700">{v.serviceType}</span>
         {v.lifecycleStatus && <span className="text-slate-500">{v.lifecycleStatus}</span>}
+        {isStructuredScreeningService(v.serviceType) && (
+          <Link
+            href={`/ancillary-screening/${v.ancillaryCaseId}`}
+            data-testid={`screening-link-${v.ancillaryCaseId}`}
+            className="rounded bg-indigo-600 px-1.5 py-0.5 text-white hover:bg-indigo-700"
+          >
+            Screening
+          </Link>
+        )}
         <span data-testid={`current-stage-${v.ancillaryCaseId}`} className="ml-auto rounded bg-indigo-100 px-1.5 py-0.5 text-indigo-700">
           {v.currentStage ? `current: ${STAGE_LABELS[v.currentStage]}` : v.currentStageIntegrity === "conflicting" ? "current: (integrity)" : "current: —"}
         </span>

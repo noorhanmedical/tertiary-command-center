@@ -78,6 +78,15 @@ export const procedureNotes = pgTable("procedure_notes", {
   // only the canonical post_procedure_note path writes it. FK declared in
   // migration 0054 only (peer schema module — avoids a schema import cycle).
   reportDocumentReferenceId: integer("report_document_reference_id"),
+  // ── Slice A1 canonical Order Note evidence fingerprint (migration 0076) ──
+  // evidenceFingerprint: hash of the PROJECTED clinical evidence rendered into
+  // the Order Note body (distinct from the FULL screening evidence version).
+  // evaluatedScreeningEvidenceVersion: the current completed screening version
+  // this note was last evaluated against — the signing gate (Slice C) requires
+  // it to match the current screening. Both nullable + server-owned; only the
+  // canonical Order Note refresh writes them; legacy rows stay NULL.
+  evidenceFingerprint: text("evidence_fingerprint"),
+  evaluatedScreeningEvidenceVersion: text("evaluated_screening_evidence_version"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -132,6 +141,8 @@ export const insertProcedureNoteSchema = createInsertSchema(procedureNotes).omit
   supersedesNoteId: true,
   supersededAt: true,
   reportDocumentReferenceId: true,
+  evidenceFingerprint: true,
+  evaluatedScreeningEvidenceVersion: true,
 });
 
 export type ProcedureNote = typeof procedureNotes.$inferSelect;

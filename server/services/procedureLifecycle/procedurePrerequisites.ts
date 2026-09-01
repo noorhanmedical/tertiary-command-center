@@ -21,6 +21,10 @@ import { featureFlags } from "../../lib/featureFlags";
 import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
 import { listActivePrerequisiteConfigs } from "../../repositories/procedurePrerequisites.repo";
 import { isOrderNoteAppointmentEligible } from "../canonicalAppointments/canonicalAppointmentService";
+import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
+import { getActiveOrderNoteForCase } from "../../repositories/orderNoteLifecycle.repo";
+import { applySemanticPrerequisites } from "./procedurePrerequisiteRules";
+export { applySemanticPrerequisites, type SemanticPrereqContext } from "./procedurePrerequisiteRules";
 
 const ACTIVE_LIFECYCLE = new Set(["new", "active", "on_hold"]);
 const SATISFIED_DOC_STATUSES = new Set(["uploaded", "generated", "approved", "completed", "signed"]);
@@ -111,7 +115,34 @@ export async function evaluateProcedurePrerequisites(
     // ── Configured, service-specific requirements ──
     const configs = await listActivePrerequisiteConfigs(input.clinicId, acase.serviceType, input.stage);
     if (configs.length > 0) {
-      const satisfied = await loadSatisfiedDocumentTypes(acase);
+      const rawSatisfied = await loadSatisfiedDocumentTypes(acase);
+      // Slice E — resolve semantic prerequisites (structured screening + signed
+      // Order Note) rather than trusting raw document-type presence. The extra
+      // reads run ONLY when the corresponding requirement is configured, so
+      // unrelated services/tests incur no new DB access and no behavior change.
+      const codes = new Set(configs.map((c) => c.requirementCode));
+      const svc = (acase.serviceType || "").toLowerCase();
+      const requiresStructuredScreening = (svc.includes("brain") || svc.includes("vital")) && codes.has("screening_form");
+      let structuredScreeningComplete = false;
+      if (requiresStructuredScreening) {
+        const structured = await getCurrentScreeningEvidence({
+          clinicId: input.clinicId,
+          ancillaryCaseId: acase.id,
+          serviceType: acase.serviceType,
+        });
+        structuredScreeningComplete = !!structured;
+      }
+      let currentOrderNoteSigned = false;
+      if (codes.has("order_note_signature")) {
+        const currentOrderNote = await getActiveOrderNoteForCase(acase.id);
+        currentOrderNoteSigned =
+          !!currentOrderNote && currentOrderNote.signatureStatus === "signed" && currentOrderNote.clinicId === input.clinicId;
+      }
+      const satisfied = applySemanticPrerequisites(rawSatisfied, {
+        requiresStructuredScreening,
+        structuredScreeningComplete,
+        currentOrderNoteSigned,
+      });
       const roles = (input.actorRole ?? "").trim();
       const req = input.override ?? null;
       const reasonOk = req != null && typeof req.reason === "string" && req.reason.trim().length > 0;

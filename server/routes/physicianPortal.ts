@@ -89,8 +89,13 @@ export function registerPhysicianPortalRoutes(app: Express) {
           id,
           clinicId,
           authenticatedSignerUserId: req.session.userId ?? null,
+          // Slice C — optional stale-client protection tokens.
+          expectedEvidenceFingerprint:
+            typeof req.body?.expectedEvidenceFingerprint === "string" ? req.body.expectedEvidenceFingerprint : null,
+          expectedScreeningVersion:
+            typeof req.body?.expectedScreeningVersion === "string" ? req.body.expectedScreeningVersion : null,
         });
-        if (!outcome.ok) return res.status(outcome.code).json({ error: outcome.error });
+        if (!outcome.ok) return res.status(outcome.code).json({ error: outcome.error, reason: outcome.reason });
         void logAudit(req, "sign", "procedure_note", id, {
           serviceType: outcome.note.serviceType,
           noteType: outcome.note.noteType,

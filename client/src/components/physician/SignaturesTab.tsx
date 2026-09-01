@@ -36,7 +36,20 @@ interface SignatureItem {
   signable: boolean;
   returnReason: string | null;
   flags: { missingReport: boolean; notSignable: boolean; billingBlocked: boolean };
+  // Slice B-minimal / C — Order Note lifecycle state + version tokens.
+  orderNotePortalState: string | null;
+  screeningComplete: boolean | null;
+  expectedEvidenceFingerprint: string | null;
+  expectedScreeningVersion: string | null;
 }
+
+const ORDER_NOTE_STATE_LABELS: Record<string, string> = {
+  awaiting_screening: "Awaiting Screening",
+  ready_for_review: "Ready for Review",
+  updated_review_required: "Updated — Review Required",
+  signed: "Signed",
+  pending: "Pending",
+};
 
 const SERVICE_TYPES = ["BrainWave", "VitalWave", "Ultrasound", "PGx"];
 const STATUS_LABELS: Record<string, string> = {
@@ -92,16 +105,32 @@ export function SignaturesTab() {
   async function signOne(item: SignatureItem) {
     setBusy(true);
     try {
-      const res = await apiRequest("POST", `/api/physician-portal/signature-items/${item.id}/sign`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to sign");
-      }
+      // Slice C — echo the current document/version tokens so a stale client
+      // copy is rejected server-side.
+      await apiRequest("POST", `/api/physician-portal/signature-items/${item.id}/sign`, {
+        expectedEvidenceFingerprint: item.expectedEvidenceFingerprint,
+        expectedScreeningVersion: item.expectedScreeningVersion,
+      });
       toast({ title: "Note signed", description: `${item.patientName ?? "Patient"} · ${item.serviceType}` });
       setSelected((s) => { const n = new Set(s); n.delete(item.id); return n; });
       invalidate();
     } catch (e: any) {
-      toast({ title: "Sign failed", description: e.message, variant: "destructive" });
+      let reason: string | undefined;
+      let msg: string = e?.message ?? "Failed to sign";
+      try {
+        const body = JSON.parse(e?.body ?? "{}");
+        reason = body?.reason;
+        if (body?.error) msg = body.error;
+      } catch { /* non-JSON error body */ }
+      if (reason === "ORDER_NOTE_STALE") {
+        toast({ title: "Order Note updated", description: "Clinical information has changed. Please review the current Order Note before signing.", variant: "destructive" });
+        invalidate();
+      } else if (reason === "REQUIRED_SCREENING_INCOMPLETE") {
+        toast({ title: "Screening incomplete", description: "Required screening must be completed before this Order Note can be signed.", variant: "destructive" });
+        invalidate();
+      } else {
+        toast({ title: "Sign failed", description: msg, variant: "destructive" });
+      }
     } finally {
       setBusy(false);
     }

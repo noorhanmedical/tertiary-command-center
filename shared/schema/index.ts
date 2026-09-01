@@ -130,6 +130,18 @@ export * from "./schedulingCapacity";
 // Phase 5 — Note Addenda (traceable addenda for signed clinical documents).
 // Migration 0059.
 export * from "./noteAddenda";
+// Slice A0 — Structured ACS/PCS screening evidence contract (pinned BW/VW
+// question registries + evidence taxonomy + capture/provenance + validator +
+// completion policy + full screening version). No migration: the validated
+// payload is stored in the existing case_document_readiness.metadata JSONB.
+export * from "./screeningEvidence";
+// Slice F — typed procedure component evidence (stored in
+// procedure_events.metadata.components; validated at write time). Governs
+// which components the Procedure Note may claim were performed.
+export * from "./procedureComponents";
+// Slice G — Billing Document CPT/ICD selection (performed-component ×
+// approved-code intersection; ICD from approved case diagnoses only).
+export * from "./billingCodeMap";
 // Phase 10 — Plexus Bank Events (append-only financial reconciliation ledger).
 // Migration 0060.
 export * from "./plexusBankEvents";

@@ -56,6 +56,7 @@ import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import TeamPortalGlassPreviewPage from "@/pages/team-portal-glass-preview";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
+import AncillaryScreeningPage from "@/pages/ancillary-screening";
 import EngagementCenterPage from "@/pages/engagement-center";
 // Slice 1.5: PatientDirectoryLiveRoute import removed — the
 // /patient-directory/live route now redirects to /patient-directory.
@@ -119,6 +120,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 {/* iOS-frosted rails preview on the real Team Portal (not production). */}
                 <Route path="/team-portal-glass-preview" component={TeamPortalGlassPreviewPage} />
+                <Route path="/ancillary-screening/:ancillaryCaseId" component={AncillaryScreeningPage} />
                 <Route path="/mission-control">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <MissionControlPage />

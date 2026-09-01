@@ -105,6 +105,7 @@ import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { registerPlexusClinicalFindingsRoutes } from "./routes/plexusClinicalFindings";
 import { registerAncillaryServiceRegistryRoutes } from "./routes/ancillaryServiceRegistry";
 import { registerOrderNoteLifecycleRoutes } from "./routes/orderNoteLifecycle";
+import { registerScreeningEvidenceRoutes } from "./routes/screeningEvidence";
 import { registerPlexusBankRoutes } from "./routes/plexusBank";
 import { registerPlexusEhrAddPatientRoutes } from "./routes/plexusEhrAddPatient";
 // import { registerClinicalIntelligenceRoutes } from "./routes/clinicalIntelligence";
@@ -383,6 +384,9 @@ export async function registerRoutes(
   registerAncillaryServiceRegistryRoutes(app);
   // Phase 5 — Order Note Lifecycle + Note Addenda.
   registerOrderNoteLifecycleRoutes(app);
+  // Slice A0 — Structured ACS/PCS screening evidence contract (validate/log +
+  // persistence into case_document_readiness.metadata). No signing behavior.
+  registerScreeningEvidenceRoutes(app);
   // Phase 10 — Plexus Bank.
   registerPlexusBankRoutes(app);
   // Plexus EHR — Direct patient add.

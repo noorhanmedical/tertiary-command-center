@@ -93,6 +93,9 @@ export async function listSignatureCandidateRows(
       supersedesNoteId: procedureNotes.supersedesNoteId,
       supersededAt: procedureNotes.supersededAt,
       reportDocumentReferenceId: procedureNotes.reportDocumentReferenceId,
+      // Slice A1 canonical Order Note evidence fingerprint columns (migration 0076).
+      evidenceFingerprint: procedureNotes.evidenceFingerprint,
+      evaluatedScreeningEvidenceVersion: procedureNotes.evaluatedScreeningEvidenceVersion,
       createdAt: procedureNotes.createdAt,
       updatedAt: procedureNotes.updatedAt,
       patientName: patientScreenings.name,

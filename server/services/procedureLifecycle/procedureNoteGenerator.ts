@@ -32,6 +32,9 @@ import { getProcedureEventById } from "../../repositories/procedureEvents.repo";
 import { recordAncillaryDocumentFailure, getUnresolvedAncillaryDocumentFailureById } from "../../repositories/ancillaryDocuments.repo";
 import { evaluateProcedureNoteEligibility, classifyGeneratorEligibilityDeferral } from "./procedureNoteEligibility";
 import { syncProcedureNoteReferenceSignature } from "./procedureNoteService";
+// Slice F — canonical component-aware body + exact signed Order Note association.
+import { renderProcedureNoteBody } from "./procedureNoteBody";
+import { resolveProcedureNoteContext, loadProcedureComponents, procedureServiceLabel } from "./procedureNoteContext";
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
@@ -176,17 +179,40 @@ async function finalizeGeneratedBody(input: GenInput, note: NoteRow): Promise<Ge
     const recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, "report_content_unavailable");
     return { status: recorded ? "report_content_unavailable_retry_recorded" : "report_content_unavailable_retry_not_recorded" };
   }
-  // Preserve a pre-existing generated body; otherwise render the certification.
-  const body = (typeof note.generatedText === "string" && note.generatedText.length > 0)
-    ? note.generatedText
-    : renderBody({ serviceType: note.serviceType, completedAt: pe.completedAt ?? null, reportReferenceId: report.referenceId, reportSourceId: report.sourceId });
+  // Slice F — render the canonical, component-aware Procedure Note body that
+  // references the EXACT signed Order Note (no embed) and claims only performed
+  // components. FAIL-CLOSED: if any REQUIRED canonical evidence cannot be
+  // resolved, DO NOT generate a substitute (no legacy certification fallback).
+  // Leave the note `failed` with a truthful code + durable retry so a transient
+  // cause self-heals and a permanent one stays visible — never a document that
+  // looks successful while required audit evidence is absent. Never uses retry
+  // time as the DOS.
+  let body: string;
+  let associatedOrderNoteId: number | null = null;
+  let componentsPresent = false;
+  if (typeof note.generatedText === "string" && note.generatedText.length > 0) {
+    body = note.generatedText; // preserve a pre-existing generated body (idempotent re-run)
+  } else {
+    const built = await buildCanonicalProcedureNoteBody(input.clinicId, input.ancillaryCaseId, note, pe);
+    if (!built.ok) {
+      // Do not mask a canonical generation failure with a certification substitute.
+      const recorded = await failNote(input.noteId, input.clinicId, input.ancillaryCaseId, built.code);
+      return { status: recorded ? "failed_retry_recorded" : "failed_retry_not_recorded" };
+    }
+    body = built.text;
+    associatedOrderNoteId = built.associatedOrderNoteId;
+    componentsPresent = built.componentsPresent;
+  }
   const sourceData = {
-    document_kind: "procedure_completion_certification",
+    document_kind: "procedure_note",
     template: GENERATOR_TEMPLATE_VERSION,
     procedure_event_id: pe.id, procedure_completed_at: pe.completedAt?.toISOString() ?? null,
     report_document_reference_id: report.referenceId, report_source_table: REPORT_SOURCE_TABLE, report_source_id: report.sourceId,
     report_document_status: report.documentStatus,
     ancillary_case_id: input.ancillaryCaseId, service_type: note.serviceType,
+    // Slice F — exact signed Order Note association + component-evidence presence.
+    associated_order_note_id: associatedOrderNoteId,
+    procedure_components_present: componentsPresent,
   };
   const [done] = await db.update(procedureNotes)
     .set({ generationStatus: "generated", generatedText: body, generatedByAi: false, sourceData: sourceData as never, errorMessage: null, updatedAt: new Date() })
@@ -293,14 +319,43 @@ async function loadReportEvidence(clinicId: number, ancillaryCaseId: number, ref
 
 const ACCEPTABLE_REPORT_SOURCE_STATUSES = new Set(["uploaded", "generated", "approved", "completed", "signed"]);
 
-/** Deterministic, timeless procedure-completion CERTIFICATION — evidence-only,
- *  explicitly NOT rendered from report content and asserting NO clinical findings. */
-function renderBody(args: { serviceType: string; completedAt: Date | null; reportReferenceId: number; reportSourceId: number }): string {
-  const when = args.completedAt ? args.completedAt.toISOString().slice(0, 10) : "the recorded procedure date";
-  return [
-    `Procedure Completion Certification — ${args.serviceType}.`,
-    `This certification records that the ${args.serviceType} procedure was completed on ${when} and that a current canonical diagnostic report is associated (report reference #${args.reportReferenceId}).`,
-    `This is an evidence-based completion certification only — it does not reproduce or interpret report content. Clinical findings are documented exclusively in the associated report.`,
-    `Prepared for physician review and signature.`,
-  ].join("\n");
+/** Slice F — build the canonical component-aware Procedure Note body from EXACT
+ *  evidence (patient/clinician, real completed_at, validated components, and the
+ *  exact signed Order Note association). FAIL-CLOSED: returns { ok:false, code }
+ *  when REQUIRED evidence is unresolved — the caller must NOT generate a
+ *  substitute. Never fabricates. Never uses now() as the DOS. */
+type CanonicalBodyResult =
+  | { ok: true; text: string; associatedOrderNoteId: number | null; componentsPresent: boolean }
+  | { ok: false; code: string };
+
+async function buildCanonicalProcedureNoteBody(
+  clinicId: number,
+  ancillaryCaseId: number,
+  note: NoteRow,
+  pe: { id: number; completedAt: Date | null },
+): Promise<CanonicalBodyResult> {
+  // Real completed_at is REQUIRED (never now()).
+  if (pe.completedAt == null) return { ok: false, code: "missing_procedure_completed_at" };
+  // Exact case + patient/clinician identity (cross-clinic/missing → fail-closed).
+  const ctx = await resolveProcedureNoteContext(clinicId, ancillaryCaseId);
+  if (!ctx) return { ok: false, code: "procedure_note_context_unresolved" };
+
+  const requiresSignedOrder = /brain|vital/i.test(note.serviceType ?? "");
+  // Exact current SIGNED Order Note relationship is REQUIRED for BW/VW.
+  if (requiresSignedOrder && !ctx.associatedOrder) return { ok: false, code: "missing_signed_order_note" };
+  // Validated component evidence is REQUIRED for BW/VW (invalid/missing → fail-closed).
+  const components = await loadProcedureComponents(pe.id, note.serviceType);
+  if (requiresSignedOrder && !components) return { ok: false, code: "invalid_or_missing_component_evidence" };
+
+  const rendered = renderProcedureNoteBody({
+    service: note.serviceType,
+    serviceLabel: procedureServiceLabel(note.serviceType),
+    patient: { name: ctx.patient.name, dob: ctx.patient.dob, plexusId: ctx.patient.plexusId },
+    orderingClinician: ctx.clinician,
+    dateOfService: pe.completedAt.toISOString(), // real procedure time, never now()
+    components,
+    procedureStatus: "complete",
+    associatedOrder: ctx.associatedOrder,
+  });
+  return { ok: true, text: rendered.text, associatedOrderNoteId: rendered.associatedOrderNoteId, componentsPresent: !!components };
 }

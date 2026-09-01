@@ -138,6 +138,16 @@ export const featureFlags = {
   unifiedAncillaryDocuments: readBool("FEATURE_UNIFIED_ANCILLARY_DOCUMENTS", false),
   canonicalOrderNote: readBool("FEATURE_CANONICAL_ORDER_NOTE", false),
 
+  // ─── Slice A1 — canonical Order Note generation / refresh / versioning ──
+  // Default OFF. Requires FEATURE_CANONICAL_ORDER_NOTE (the note identity) and
+  // migration 0076 (evidence_fingerprint + evaluated_screening_evidence_version)
+  // applied. When ON, completing structured BW/VW screening refreshes the
+  // current UNSIGNED canonical Order Note body from the projected evidence
+  // (populate-in-place for a body-less skeleton; supersede + new version on a
+  // material change to an already-bodied unsigned note). NEVER touches a signed
+  // note and NEVER auto-signs.
+  orderNoteRefresh: readBool("FEATURE_ORDER_NOTE_REFRESH", false),
+
   // ─── Phase 2F — Canonical procedure lifecycle + Procedure Note ─────
   // Both default OFF. Migration 0054 (procedure_events ancillary identity +
   // procedure_notes report evidence + case-scoped post_procedure_note

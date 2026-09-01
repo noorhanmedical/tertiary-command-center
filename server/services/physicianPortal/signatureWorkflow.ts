@@ -53,8 +53,11 @@ async function syncNoteReference(
 import {
   eligibleForSign,
   computeSignatureItem,
+  orderNoteSigningEligibility,
   type PhysicianSignatureItem,
 } from "./signatureRules";
+import { featureFlags } from "../../lib/featureFlags";
+import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
 
 // Re-export the pure surface + types so route + client code has one
 // import path for physicianPortal signature primitives.
@@ -116,21 +119,47 @@ export async function listSignatureItems(
     listReportUploadedKeys(screeningIds, filters.clinicId),
     listLatestBillingReadinessStatuses(screeningIds, filters.clinicId),
   ]);
-  return rows.map((r) => {
-    const key = `${r.patientScreeningId}::${r.serviceType}`;
-    return computeSignatureItem(
-      r,
-      reportKeys.has(key),
-      billingMap.get(key) ?? "not_ready",
-    );
-  });
+  return Promise.all(
+    rows.map(async (r) => {
+      const key = `${r.patientScreeningId}::${r.serviceType}`;
+      // Slice B-minimal — derive the Order Note portal state from canonical
+      // screening currency (only under the canonical flag; legacy order notes
+      // keep the original behavior via a null context).
+      let orderNoteCtx = null as
+        | { requireScreening: boolean; screeningComplete: boolean; currentScreeningVersion: string | null }
+        | null;
+      if (
+        featureFlags.canonicalOrderNote &&
+        r.noteType === "order_note" &&
+        r.ancillaryCaseId != null &&
+        r.clinicId != null
+      ) {
+        const requireScreening = /brain|vital/i.test(r.serviceType ?? "");
+        let screeningComplete = !requireScreening;
+        let currentScreeningVersion: string | null = null;
+        if (requireScreening) {
+          const cur = await getCurrentScreeningEvidence({
+            clinicId: r.clinicId,
+            ancillaryCaseId: r.ancillaryCaseId,
+            serviceType: r.serviceType,
+          });
+          if (cur) {
+            screeningComplete = true;
+            currentScreeningVersion = cur.version;
+          }
+        }
+        orderNoteCtx = { requireScreening, screeningComplete, currentScreeningVersion };
+      }
+      return computeSignatureItem(r, reportKeys.has(key), billingMap.get(key) ?? "not_ready", orderNoteCtx);
+    }),
+  );
 }
 
 // ─── Write model: sign / return ──────────────────────────────────────────────
 
 export type SignOutcome =
   | { ok: true; note: ProcedureNote }
-  | { ok: false; code: 404 | 409; error: string };
+  | { ok: false; code: 403 | 404 | 409; error: string; reason?: string };
 
 /**
  * Sign a single note within the authenticated clinic. Runs the eligibility
@@ -148,10 +177,46 @@ export async function signProcedureNote(args: {
   id: number;
   clinicId: number;
   authenticatedSignerUserId: string | null;
+  // Slice C — optional client version tokens (stale-client protection).
+  expectedEvidenceFingerprint?: string | null;
+  expectedScreeningVersion?: string | null;
 }): Promise<SignOutcome> {
   const note = await getProcedureNoteByIdForClinic({ id: args.id, clinicId: args.clinicId });
   const guard = eligibleForSign(note);
   if (!guard.ok) return guard;
+
+  // Slice C — Order Note signing gate (canonical flow only). Enforces
+  // current-version, required-screening completeness, screening-version
+  // currency (the note was evaluated against the CURRENT screening), and
+  // optional client version tokens. Never touches the post_procedure_note
+  // path or the legacy behavior.
+  if (note && note.noteType === "order_note" && featureFlags.canonicalOrderNote) {
+    const requireScreening = /brain|vital/i.test(note.serviceType ?? "");
+    let screeningComplete = false;
+    let currentScreeningVersion: string | null = null;
+    if (note.ancillaryCaseId != null && note.clinicId != null) {
+      const cur = await getCurrentScreeningEvidence({
+        clinicId: note.clinicId,
+        ancillaryCaseId: note.ancillaryCaseId,
+        serviceType: note.serviceType,
+      });
+      if (cur) {
+        screeningComplete = true;
+        currentScreeningVersion = cur.version;
+      }
+    }
+    const gate = orderNoteSigningEligibility(note, {
+      requireScreening,
+      screeningComplete,
+      currentScreeningVersion,
+      expectedEvidenceFingerprint: args.expectedEvidenceFingerprint ?? null,
+      expectedScreeningVersion: args.expectedScreeningVersion ?? null,
+      // Clinic-scoped authorization today; ordering-clinician match is
+      // tightened in B-minimal (routing). Never cross-clinic (read is scoped).
+      authorizedSigner: true,
+    });
+    if (!gate.ok) return gate;
+  }
 
   // Clinic-scoped, server-owned write: signer = authenticated session user,
   // signedAt = server time (both stamped in the repository), promotion to
