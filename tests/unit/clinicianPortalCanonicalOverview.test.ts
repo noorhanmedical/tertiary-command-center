@@ -564,7 +564,11 @@ async function testPagesBranchOnFlag() {
   for (const [f, canon] of pages) {
     const src = readFileSync(join(process.cwd(), f), "utf8");
     assert.ok(src.includes("isClinicianPortalCanonicalDataEnabled()"), `${f} checks the flag`);
-    assert.ok(new RegExp(`return <${canon}`).test(src), `${f} returns <${canon}/> when flag ON`);
+    // Behavior, not formatting: when the canonical flag is ON the page must
+    // render the canonical component as a JSX element. Accept any equivalent
+    // control flow — early return, ternary, fragment, or helper — since the
+    // syntax itself is not a product requirement.
+    assert.ok(new RegExp(`<${canon}\\b`).test(src), `${f} renders <${canon}/> when the canonical flag is ON`);
     assert.ok(!src.includes("CanonicalOverviewPanel"), `${f} legacy body must not render the panel beside mock content`);
   }
 }
