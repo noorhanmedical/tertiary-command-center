@@ -23,6 +23,16 @@ export type OrderNoteServiceConfig = {
   // canonical serviceType key match (lowercased substring test order matters)
   serviceLabel: string;
   orderedComponents: OrderedComponent[];
+  // Prerequisite / required-evidence declaration. Screening, labs, and imaging
+  // are EVIDENCE INPUTS, not universal prerequisites. A service only REQUIRES a
+  // structured A0 screening artifact when it explicitly declares it here. This
+  // is deliberately NOT inferred from the service name. Default: no artifact is
+  // required, so missing optional evidence never blocks order-note generation.
+  requiredEvidence?: {
+    // When true, a completed structured (A0) screening MUST exist before the
+    // deterministic/AI order-note body can be generated.
+    structuredScreening?: boolean;
+  };
 };
 
 // Ordered, most-specific-first so "stress echocardiogram" is matched before the
@@ -33,6 +43,10 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("brain") || s.includes("brainwave"),
     config: {
       serviceLabel: "BrainWave – Comprehensive Assessment",
+      // BrainWave is a structured-screening (A0) service: the completed
+      // questionnaire is a true clinical prerequisite for signing its Order
+      // Note. Declared explicitly here (not inferred from the service name).
+      requiredEvidence: { structuredScreening: true },
       orderedComponents: [
         { key: "neuropsychologicalTesting", label: "Neuropsychological testing", clinicalPurpose: "objective assessment of memory, attention, processing, and executive function" },
         { key: "eeg", label: "EEG acquisition", clinicalPurpose: "objective recording of cerebral electrical activity" },
@@ -47,6 +61,10 @@ const SERVICE_MATCHERS: Array<{ test: (s: string) => boolean; config: OrderNoteS
     test: (s) => s.includes("vital") || s.includes("vitalwave"),
     config: {
       serviceLabel: "VitalWave – Comprehensive Autonomic & Vascular Assessment",
+      // VitalWave is a structured-screening (A0) service: the completed
+      // questionnaire is a true clinical prerequisite for signing its Order
+      // Note. Declared explicitly here (not inferred from the service name).
+      requiredEvidence: { structuredScreening: true },
       orderedComponents: [
         { key: "autonomicTesting", label: "Autonomic nervous system testing (parasympathetic & sympathetic)", clinicalPurpose: "objective assessment of autonomic cardiovascular regulation" },
         { key: "tiltTable", label: "Tilt-table / positional evaluation", clinicalPurpose: "assessment of physiologic responses to positional change" },
@@ -144,4 +162,13 @@ export function orderNoteServiceConfig(serviceType: string): OrderNoteServiceCon
 /** The service label alone (deterministic; used by the renderer's ORDER/PLAN). */
 export function orderNoteServiceLabel(serviceType: string): string {
   return orderNoteServiceConfig(serviceType).serviceLabel;
+}
+
+/**
+ * Whether this service REQUIRES a completed structured (A0) screening as a true
+ * prerequisite for order-note generation. Config-driven only — never inferred
+ * from the service name. Defaults to false (screening is optional evidence).
+ */
+export function orderNoteRequiresStructuredScreening(serviceType: string): boolean {
+  return orderNoteServiceConfig(serviceType).requiredEvidence?.structuredScreening === true;
 }

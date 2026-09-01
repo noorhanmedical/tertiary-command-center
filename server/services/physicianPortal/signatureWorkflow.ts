@@ -58,6 +58,7 @@ import {
 } from "./signatureRules";
 import { featureFlags } from "../../lib/featureFlags";
 import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
+import { orderNoteRequiresStructuredScreening } from "../ancillaryDocuments/orderNoteServiceConfig";
 
 // Re-export the pure surface + types so route + client code has one
 // import path for physicianPortal signature primitives.
@@ -134,7 +135,7 @@ export async function listSignatureItems(
         r.ancillaryCaseId != null &&
         r.clinicId != null
       ) {
-        const requireScreening = /brain|vital/i.test(r.serviceType ?? "");
+        const requireScreening = orderNoteRequiresStructuredScreening(r.serviceType ?? "");
         let screeningComplete = !requireScreening;
         let currentScreeningVersion: string | null = null;
         if (requireScreening) {
@@ -195,7 +196,7 @@ export async function signProcedureNote(args: {
   // optional client version tokens. Never touches the post_procedure_note
   // path or the legacy behavior.
   if (note && note.noteType === "order_note" && featureFlags.canonicalOrderNote) {
-    const requireScreening = /brain|vital/i.test(note.serviceType ?? "");
+    const requireScreening = orderNoteRequiresStructuredScreening(note.serviceType ?? "");
     let screeningComplete = false;
     let currentScreeningVersion: string | null = null;
     if (note.ancillaryCaseId != null && note.clinicId != null) {

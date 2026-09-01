@@ -16,24 +16,26 @@
 // migration-0076-gated. NEVER throws when called as a hook: a failure is
 // reported, never reverses the screening completion. Adds NO signing behavior.
 
-import crypto from "node:crypto";
 import { db } from "../../db";
 import { and, eq, isNull } from "drizzle-orm";
 import { procedureNotes } from "@shared/schema/generatedNotes";
-import { patientScreenings, screeningBatches } from "@shared/schema/screening";
 import { featureFlags } from "../../lib/featureFlags";
-import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
-import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
 import {
-  resolveClinicianNpi,
-  resolveClinicForClinician,
-  DEFAULT_CLINIC,
-} from "../../../shared/plexus";
-import { renderOrderNoteBody, renderAiOrderNoteBody, ORDER_NOTE_AI_GENERATOR_VERSION } from "./orderNoteBody";
-import { canonicalOrderNoteEvidenceString } from "./orderNoteFingerprint";
-import type { OrderNoteEvidenceBundle, ChartDiagnosis } from "./orderNoteProjection";
-// Order Note standard — AI narrative pipeline (Slice AI-1..AI-4).
-import { assembleOrderNoteEvidenceBundle, orderNoteEvidenceBundleFingerprint } from "./orderNoteEvidenceBundle";
+  renderDeterministicOrderNoteBody,
+  renderAiOrderNoteBody,
+  ORDER_NOTE_AI_GENERATOR_VERSION,
+  ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION,
+} from "./orderNoteBody";
+import { orderNoteRequiresStructuredScreening } from "./orderNoteServiceConfig";
+// Order Note standard — ONE canonical evidence assembler shared by BOTH the
+// deterministic and the AI-assisted paths (Slice AI-1..AI-4). The deterministic
+// and AI paths differ ONLY in the render/synthesis layer, never in the evidence
+// sources available to them.
+import {
+  assembleOrderNoteEvidenceBundle,
+  orderNoteEvidenceBundleFingerprint,
+  type OrderNoteEvidenceBundle,
+} from "./orderNoteEvidenceBundle";
 import { generateOrderNoteNarrative } from "./orderNoteNarrativeAi";
 import { validateOrderNoteNarrative, complianceFeedback } from "./orderNoteComplianceValidator";
 
@@ -60,96 +62,41 @@ export type RefreshInput = {
   source: string;
 };
 
-function fingerprintHash(bundle: OrderNoteEvidenceBundle): string {
-  return crypto.createHash("sha256").update(canonicalOrderNoteEvidenceString(bundle)).digest("hex").slice(0, 40);
-}
-
-function serviceLabel(service: string): string {
-  const s = (service || "").toLowerCase();
-  if (s.includes("brain")) return "BrainWave – Comprehensive Assessment";
-  if (s.includes("vital")) return "VitalWave – Comprehensive Autonomic & Vascular Assessment";
-  return service;
-}
-
-function splitChartDiagnoses(diagnoses: string | null | undefined): ChartDiagnosis[] {
-  if (!diagnoses) return [];
-  return diagnoses
-    .split(/[\n;,]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .map((displayText) => ({ displayText, source: "chart_documented" as const }));
-}
-
-function reasoningForService(
-  reasoning: Record<string, unknown> | null | undefined,
-  service: string,
-): { factors: string[]; clinicianUnderstanding: string | null } {
-  if (!reasoning) return { factors: [], clinicianUnderstanding: null };
-  const s = (service || "").toLowerCase();
-  const key = Object.keys(reasoning).find((k) => {
-    const kl = k.toLowerCase();
-    return (s.includes("brain") && kl.includes("brain")) || (s.includes("vital") && kl.includes("vital")) || kl === s;
-  });
-  const r = key ? (reasoning[key] as Record<string, unknown> | undefined) : undefined;
-  if (!r || typeof r !== "object") return { factors: [], clinicianUnderstanding: null };
-  const factors = Array.isArray(r["qualifying_factors"]) ? (r["qualifying_factors"] as string[]) : [];
-  const cu = typeof r["clinician_understanding"] === "string" ? (r["clinician_understanding"] as string) : null;
-  return { factors, clinicianUnderstanding: cu };
-}
-
-/** Assemble the deterministic Order Note evidence bundle from canonical data. */
-async function assembleBundle(input: RefreshInput): Promise<OrderNoteEvidenceBundle | null> {
-  const acase = await getAncillaryCaseById(input.ancillaryCaseId);
-  if (!acase || acase.clinicId !== input.clinicId) return null;
-
-  const screeningId = (acase as { originatingScreeningId?: number | null }).originatingScreeningId ?? null;
-  let ps: typeof patientScreenings.$inferSelect | undefined;
-  if (screeningId != null) {
-    [ps] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, screeningId)).limit(1);
-  }
-
-  let clinicianName: string | null = null;
-  if (ps?.batchId != null) {
-    const [batch] = await db.select().from(screeningBatches).where(eq(screeningBatches.id, ps.batchId)).limit(1);
-    clinicianName = batch?.clinicianName ?? null;
-  }
-  const clinician = clinicianName
-    ? { name: clinicianName, npi: resolveClinicianNpi(clinicianName), id: null as string | null }
-    : { name: "Ordering Clinician", npi: null, id: null as string | null };
-  const clinic = clinicianName ? resolveClinicForClinician(clinicianName) : DEFAULT_CLINIC;
-
-  const current = await getCurrentScreeningEvidence({
-    clinicId: input.clinicId,
-    ancillaryCaseId: input.ancillaryCaseId,
-    serviceType: acase.serviceType,
-  });
-
-  const { factors, clinicianUnderstanding } = reasoningForService(
-    (ps?.reasoning as Record<string, unknown> | null) ?? null,
-    acase.serviceType,
-  );
-
+/**
+ * Build the deterministic Order Note sourceData with provenance equivalent to
+ * the AI path: source record ids, evidence bundle fingerprint/version, ordered
+ * components, screening reference (when used), and qualification references.
+ * Every substantive statement in the rendered body traces to these sources.
+ */
+function buildDeterministicSourceData(
+  bundle: OrderNoteEvidenceBundle,
+  rendered: { sections: unknown },
+  fingerprint: string,
+  screeningVersion: string,
+): Record<string, unknown> {
   return {
-    service: acase.serviceType,
-    serviceLabel: serviceLabel(acase.serviceType),
-    patient: {
-      name: ps?.name ?? "Patient",
-      dob: ps?.dob ?? null,
-      mrn: null,
-      plexusId: (acase as { globalPlexusPatientId?: number | null }).globalPlexusPatientId?.toString() ?? null,
-      clinicName: clinic?.name ?? null,
+    orderNoteBody: rendered.sections,
+    generatorVersion: ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION,
+    evidence: {
+      chartDiagnoses: bundle.diagnoses.map((d) => d.displayText),
+      qualificationFactors: bundle.qualification.factors,
     },
-    orderingClinician: clinician,
-    orderDate: null,
-    chartDiagnoses: splitChartDiagnoses(ps?.diagnoses ?? null),
-    qualificationFactors: factors,
-    clinicianUnderstanding,
-    screening: current
-      ? { questionnaire: current.evidence.questionnaire, version: current.version, responses: current.evidence.responses }
-      : null,
-    // carry the screening version out-of-band for the refresh writer
-    ...(current ? { __screeningVersion: current.version } : {}),
-  } as OrderNoteEvidenceBundle & { __screeningVersion?: string };
+    orderNoteDeterministic: {
+      generator: ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION,
+      evidenceBundleVersion: bundle.bundleVersion,
+      evidenceBundleFingerprint: fingerprint,
+      evidenceSourceIds: bundle.sourceRecordIds,
+      orderedComponents: bundle.orderedComponents.map((c) => c.key),
+      screeningEvidenceVersion: screeningVersion,
+      screeningReference: bundle.structuredScreening
+        ? { questionnaire: bundle.structuredScreening.questionnaire, version: bundle.structuredScreening.version }
+        : null,
+      qualificationFactors: bundle.qualification.factors,
+      clinicianUnderstanding: bundle.qualification.clinicianUnderstanding,
+    },
+    // Durable snapshot of the exact evidence the note was rendered from.
+    evidenceBundle: bundle,
+  };
 }
 
 export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Promise<OrderNoteRefreshResult> {
@@ -176,11 +123,17 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
       return await refreshOrderNoteViaAi(input, note);
     }
 
-    const bundle = await assembleBundle(input);
-    if (!bundle || !bundle.screening) return { status: "screening_incomplete" };
-    const screeningVersion = (bundle as { __screeningVersion?: string }).__screeningVersion ?? "";
-    const fingerprint = fingerprintHash(bundle);
-    const rendered = renderOrderNoteBody(bundle);
+    // Deterministic path — consumes the SAME canonical evidence bundle as the
+    // AI path. Screening is an OPTIONAL evidence input, NOT a universal gate:
+    // it is required only when the service config explicitly declares it.
+    const bundle = await assembleOrderNoteEvidenceBundle({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
+    if (!bundle) return { status: "no_current_note" };
+    if (orderNoteRequiresStructuredScreening(bundle.service) && !bundle.structuredScreening) {
+      return { status: "screening_incomplete" };
+    }
+    const screeningVersion = bundle.screeningEvidenceVersion ?? "";
+    const fingerprint = orderNoteEvidenceBundleFingerprint(bundle);
+    const rendered = renderDeterministicOrderNoteBody(bundle);
 
     // Case 1 — body-less pending skeleton → populate in place as v1.
     if (note.generationStatus === "pending" || !note.generatedText) {
@@ -190,7 +143,7 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
           generationStatus: "generated",
           generatedText: rendered.text,
           generatedByAi: false,
-          sourceData: { orderNoteBody: rendered.sections, evidence: { chartDiagnoses: bundle.chartDiagnoses, qualificationFactors: bundle.qualificationFactors } } as never,
+          sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion) as never,
           evidenceFingerprint: fingerprint,
           evaluatedScreeningEvidenceVersion: screeningVersion,
           updatedAt: new Date(),
@@ -237,7 +190,7 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
           generationStatus: "generated",
           generatedText: rendered.text,
           generatedByAi: false,
-          sourceData: { orderNoteBody: rendered.sections, evidence: { chartDiagnoses: bundle.chartDiagnoses, qualificationFactors: bundle.qualificationFactors } } as never,
+          sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion) as never,
           signatureStatus: "needs_signature",
           supersedesNoteId: note.id,
           evidenceFingerprint: fingerprint,
@@ -326,12 +279,13 @@ async function failOrderNoteAi(noteId: number, clinicId: number, code: string): 
 
 async function refreshOrderNoteViaAi(input: RefreshInput, note: ProcedureNoteRow): Promise<OrderNoteRefreshResult> {
   const bundle = await assembleOrderNoteEvidenceBundle({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
-  if (!bundle) return { status: "screening_incomplete" };
-  // BrainWave/VitalWave REQUIRE a completed A0 structured screening; other
-  // services (echo/ultrasound/vascular) qualify from chart + qualification
-  // evidence and have no A0 questionnaire.
-  const requiresStructuredScreening = /brain|vital/i.test(bundle.service);
-  if (requiresStructuredScreening && !bundle.structuredScreening) return { status: "screening_incomplete" };
+  if (!bundle) return { status: "no_current_note" };
+  // Structured screening is an OPTIONAL evidence input. It is REQUIRED only
+  // when the service config explicitly declares it (never inferred from the
+  // service name). Both deterministic and AI paths share this rule.
+  if (orderNoteRequiresStructuredScreening(bundle.service) && !bundle.structuredScreening) {
+    return { status: "screening_incomplete" };
+  }
 
   const screeningVersion = bundle.screeningEvidenceVersion ?? "";
   const fingerprint = orderNoteEvidenceBundleFingerprint(bundle);

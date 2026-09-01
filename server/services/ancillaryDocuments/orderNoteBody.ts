@@ -171,10 +171,183 @@ function stripHistoryPrefix(s: string): string {
 // identifiers, service, ordered components, attestation, and signature fields
 // are NEVER AI-generated.
 
-import type { OrderNoteEvidenceBundle as AiOrderNoteEvidenceBundle } from "./orderNoteEvidenceBundle";
+import type { OrderNoteEvidenceBundle as AiOrderNoteEvidenceBundle, EvidenceFact } from "./orderNoteEvidenceBundle";
 import type { OrderNoteNarrative } from "./orderNoteNarrativeAi";
 
 export const ORDER_NOTE_AI_GENERATOR_VERSION = "order_note_ai_v1";
+
+// ─── Canonical deterministic renderer (evidence-driven, all-service) ────────
+// Renders a deterministic Order Note body from the SHARED canonical evidence
+// bundle (the same bundle the AI path consumes). It is evidence-driven, NOT
+// screening-gated and NOT coupled to service names for its evidence model:
+// it selects the clinically relevant subset of whatever provenance-backed
+// evidence exists and renders it, omitting anything absent. It NEVER fabricates
+// findings and contains NO ICD/CPT.
+//
+// Selection principle: the assembler is comprehensive; this renderer is
+// selective. It surfaces (a) documented diagnoses + history, (b) qualification
+// reasoning for THIS service, (c) positive structured screening findings when
+// present, and (d) a bounded set of the most relevant supporting objective
+// evidence (abnormal/most-recent labs, recent vitals, final prior imaging,
+// clinician findings, encounter summaries) — each rendered with its evidence
+// class so certainty/provenance is preserved in the visible text.
+
+export const ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION = "order_note_deterministic_v2";
+
+// Per-section bounds so a rich chart does not dump into the note.
+const DET_MAX_DX = 8;
+const DET_MAX_HX = 6;
+const DET_MAX_LABS = 5;
+const DET_MAX_VITALS = 4;
+const DET_MAX_IMAGING = 3;
+const DET_MAX_FINDINGS = 5;
+const DET_MAX_NOTES = 2;
+const DET_MAX_MEDS = 8;
+
+/** True when a lab fact is flagged abnormal (rendered preferentially). */
+function isAbnormalLab(f: EvidenceFact): boolean {
+  return /\[(?!normal)[^\]]+\]/i.test(f.displayText);
+}
+
+export function renderDeterministicOrderNoteBody(
+  bundle: AiOrderNoteEvidenceBundle,
+): RenderedOrderNote {
+  const name = bundle.patient.name;
+  const fname = firstName(name);
+  const sections: OrderNoteSection[] = [];
+
+  // PATIENT INFORMATION (deterministic).
+  const info: string[] = [`Patient: ${name}`];
+  if (bundle.patient.dob) info.push(`Date of Birth: ${bundle.patient.dob}`);
+  if (bundle.patient.age != null) info.push(`Age: ${bundle.patient.age}`);
+  if (bundle.patient.sex) info.push(`Sex: ${bundle.patient.sex}`);
+  if (bundle.patient.plexusId) info.push(`Plexus ID: ${bundle.patient.plexusId}`);
+  if (bundle.patient.clinicName) info.push(`Clinic: ${bundle.patient.clinicName}`);
+  info.push(`Ordering Clinician: ${bundle.orderingClinician.name}`);
+  if (bundle.orderingClinician.npi) info.push(`NPI: ${bundle.orderingClinician.npi}`);
+  if (bundle.orderDate) info.push(`Order Date: ${bundle.orderDate}`);
+  sections.push({ heading: "PATIENT INFORMATION", body: info.join("\n") });
+
+  // CLINICAL HISTORY / INDICATION — documented diagnoses + history + the
+  // qualification rationale for THIS service. Only evidence that exists.
+  const dx = bundle.diagnoses.slice(0, DET_MAX_DX).map((f) => f.displayText);
+  const hx = bundle.history.slice(0, DET_MAX_HX).map((f) => f.displayText);
+  const indicationParts: string[] = [];
+  if (dx.length) {
+    indicationParts.push(
+      `${name} carries documented ${dx.length === 1 ? "diagnosis" : "diagnoses"} of ${joinList(dx)}.`,
+    );
+  }
+  if (hx.length) {
+    indicationParts.push(`Relevant documented history includes ${joinList(hx)}.`);
+  }
+  if (bundle.qualification.factors.length) {
+    indicationParts.push(
+      `${bundle.serviceLabel} was identified as clinically indicated based on ${joinList(bundle.qualification.factors.slice(0, 6))}.`,
+    );
+  }
+  if (bundle.qualification.clinicianUnderstanding) {
+    indicationParts.push(bundle.qualification.clinicianUnderstanding.trim());
+  }
+  if (indicationParts.length === 0) {
+    indicationParts.push(
+      `${name} is being evaluated with ${bundle.serviceLabel} in the context of documented clinical concerns.`,
+    );
+  }
+  sections.push({ heading: "CLINICAL HISTORY / INDICATION", body: indicationParts.join(" ") });
+
+  // SUPPORTING CLINICAL EVIDENCE — bounded, clinically relevant objective
+  // evidence, each line labeled by source class. Entire section omitted when
+  // no such evidence exists (missing optional evidence never blocks the note).
+  const supporting: string[] = [];
+  // Positive structured screening findings (when present).
+  const screeningFindings = bundle.structuredScreening?.findings ?? [];
+  if (screeningFindings.length) {
+    const items = screeningFindings.slice(0, 6).map((f) => f.displayText);
+    supporting.push(
+      `Structured ${bundle.structuredScreening!.questionnaire} screening — patient-reported: ${joinList(items)}.`,
+    );
+  }
+  // Clinician-entered findings.
+  for (const f of bundle.clinicianFindings.slice(0, DET_MAX_FINDINGS)) {
+    supporting.push(`Clinician finding: ${f.displayText}.`);
+  }
+  // Labs — abnormal first, bounded.
+  const labsSorted = [...bundle.labs].sort(
+    (a, b) => (isAbnormalLab(a) ? 0 : 1) - (isAbnormalLab(b) ? 0 : 1),
+  );
+  for (const f of labsSorted.slice(0, DET_MAX_LABS)) {
+    supporting.push(`Laboratory: ${f.displayText}.`);
+  }
+  // Vitals — most recent, bounded.
+  for (const f of bundle.vitals.slice(0, DET_MAX_VITALS)) {
+    supporting.push(`Vital sign: ${f.displayText}.`);
+  }
+  // Prior imaging / diagnostic results — attributed, bounded.
+  for (const f of bundle.priorImaging.slice(0, DET_MAX_IMAGING)) {
+    supporting.push(`Prior imaging/result: ${f.displayText}.`);
+  }
+  // Encounter/clinical-note summaries — bounded.
+  for (const f of bundle.clinicalNotes.slice(0, DET_MAX_NOTES)) {
+    supporting.push(`Clinical note: ${f.displayText}.`);
+  }
+  if (supporting.length) {
+    sections.push({
+      heading: "SUPPORTING CLINICAL EVIDENCE",
+      body: supporting.map((s) => `• ${s}`).join("\n"),
+    });
+  }
+
+  // MEDICATIONS (from chart) — context only, never converted to a diagnosis.
+  const meds = bundle.medications.slice(0, DET_MAX_MEDS).map((f) => f.displayText);
+  if (meds.length) {
+    sections.push({
+      heading: "MEDICATIONS (CHART)",
+      body: joinList(meds) + ".",
+    });
+  }
+
+  // MEDICAL NECESSITY — deterministic synthesis referencing ONLY the evidence
+  // above; no invented findings, no presumed abnormal result.
+  const necessityBits: string[] = [
+    `Based on ${fname}'s documented clinical information, ${bundle.serviceLabel} is clinically appropriate to obtain objective diagnostic information relevant to the concerns above.`,
+  ];
+  if (dx.length || bundle.qualification.factors.length) {
+    necessityBits.push(
+      `The ordered study is expected to characterize the clinical questions raised by ${joinList([...dx, ...bundle.qualification.factors.slice(0, 3)].slice(0, 4))}.`,
+    );
+  }
+  necessityBits.push(
+    `No specific abnormal result or final diagnosis is presumed by this order; the study has not yet been performed.`,
+  );
+  sections.push({ heading: "MEDICAL NECESSITY / QUALIFICATION", body: necessityBits.join(" ") });
+
+  // ORDER / PLAN — service + the canonical ordered components.
+  const componentLines = bundle.orderedComponents.map((c) => `• ${c.label} — ${c.clinicalPurpose}`);
+  sections.push({
+    heading: "ORDER / PLAN",
+    body: [
+      bundle.serviceLabel,
+      "",
+      "Proceed with the clinically applicable ordered components per the approved protocol and the patient-specific indications above:",
+      ...componentLines,
+    ].join("\n"),
+  });
+
+  // ORDERING CLINICIAN ATTESTATION (unsigned until the physician signs).
+  sections.push({
+    heading: "ORDERING CLINICIAN ATTESTATION",
+    body: [
+      `I have reviewed ${name}'s available clinical history, qualification rationale, and supporting evidence. Based on the patient-specific indications documented above, I am ordering ${bundle.serviceLabel} and its clinically applicable components. This order is medically necessary based on the documented clinical information.`,
+      `Ordering Clinician: ${bundle.orderingClinician.name}`,
+      `Signature: __________________________`,
+      `Date/Time: __________________________`,
+    ].join("\n"),
+  });
+
+  const text = sections.map((s) => `${s.heading}\n${"-".repeat(s.heading.length)}\n${s.body}`).join("\n\n");
+  return { sections, text };
+}
 
 export function renderAiOrderNoteBody(
   bundle: AiOrderNoteEvidenceBundle,
