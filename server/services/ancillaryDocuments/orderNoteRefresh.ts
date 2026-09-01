@@ -36,6 +36,10 @@ import {
   orderNoteEvidenceBundleFingerprint,
   type OrderNoteEvidenceBundle,
 } from "./orderNoteEvidenceBundle";
+// The persisted evidence_fingerprint + freshness signal is the AUTHORIZATION-
+// MATERIAL fingerprint (service-relevant projection). The full bundle
+// fingerprint is retained in source_data for audit only.
+import { materialOrderNoteEvidenceFingerprint } from "./orderNoteMateriality";
 import { generateOrderNoteNarrative } from "./orderNoteNarrativeAi";
 import { validateOrderNoteNarrative, complianceFeedback } from "./orderNoteComplianceValidator";
 
@@ -88,7 +92,11 @@ function buildDeterministicSourceData(
     orderNoteDeterministic: {
       generator: ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION,
       evidenceBundleVersion: bundle.bundleVersion,
+      // evidence_fingerprint column value = AUTHORIZATION-MATERIAL fingerprint.
       evidenceBundleFingerprint: fingerprint,
+      materialEvidenceFingerprint: fingerprint,
+      // Full-bundle fingerprint retained for audit ("what evidence did we have").
+      fullEvidenceFingerprint: orderNoteEvidenceBundleFingerprint(bundle),
       evidenceSourceIds: bundle.sourceRecordIds,
       orderedComponents: bundle.orderedComponents.map((c) => c.key),
       screeningEvidenceVersion: screeningVersion,
@@ -192,7 +200,7 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
       return { status: "screening_incomplete" };
     }
     const screeningVersion = bundle.screeningEvidenceVersion ?? "";
-    const fingerprint = orderNoteEvidenceBundleFingerprint(bundle);
+    const fingerprint = materialOrderNoteEvidenceFingerprint(bundle);
     const rendered = renderDeterministicOrderNoteBody(bundle);
 
     // Signed note — immutable. Preserve the signature/body; NEVER update in
@@ -309,7 +317,11 @@ function buildAiSourceData(
       promptVersion: gen.result.promptVersion,
       generatedAt: gen.result.generatedAt,
       evidenceBundleVersion: bundle.bundleVersion,
+      // evidence_fingerprint column value = AUTHORIZATION-MATERIAL fingerprint.
       evidenceBundleFingerprint: fingerprint,
+      materialEvidenceFingerprint: fingerprint,
+      // Full-bundle fingerprint retained for audit ("what evidence did we have").
+      fullEvidenceFingerprint: orderNoteEvidenceBundleFingerprint(bundle),
       evidenceSourceIds: bundle.sourceRecordIds,
       orderedComponents: bundle.orderedComponents.map((c) => c.key),
       screeningEvidenceVersion: screeningVersion,
@@ -340,7 +352,7 @@ async function refreshOrderNoteViaAi(input: RefreshInput, note: ProcedureNoteRow
   }
 
   const screeningVersion = bundle.screeningEvidenceVersion ?? "";
-  const fingerprint = orderNoteEvidenceBundleFingerprint(bundle);
+  const fingerprint = materialOrderNoteEvidenceFingerprint(bundle);
   const bodyless = note.generationStatus === "pending" || !note.generatedText;
   const changed = note.evidenceFingerprint !== fingerprint;
 

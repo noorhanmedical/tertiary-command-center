@@ -4,10 +4,13 @@
 // valid: if the material canonical evidence that justified the order changes
 // before the procedure, the signed note becomes STALE and must be re-reviewed.
 //
-// The authoritative freshness signal is the SAME canonical evidence fingerprint
-// the note was generated with — orderNoteEvidenceBundleFingerprint over
-// assembleOrderNoteEvidenceBundle (the one canonical evidence universe shared by
-// the deterministic and AI generators). It is:
+// The authoritative freshness signal is the SAME canonical fingerprint the note
+// was generated with and persisted in evidence_fingerprint — the AUTHORIZATION-
+// MATERIAL fingerprint (materialOrderNoteEvidenceFingerprint): a deterministic
+// service-relevant projection of assembleOrderNoteEvidenceBundle (the one shared
+// evidence universe). The FULL bundle snapshot/fingerprint is retained for audit
+// but is NOT the freshness signal (unrelated patient-level evidence must not
+// stale a signed order). It is:
 //   • service-agnostic — works for BrainWave, VitalWave, and every vascular /
 //     echo / renal / LE service (screening findings contribute WHEN present but
 //     are not the universal mechanism);
@@ -25,10 +28,8 @@
 import { db } from "../../db";
 import { and, eq, isNull } from "drizzle-orm";
 import { procedureNotes, type ProcedureNote } from "@shared/schema/generatedNotes";
-import {
-  assembleOrderNoteEvidenceBundle,
-  orderNoteEvidenceBundleFingerprint,
-} from "./orderNoteEvidenceBundle";
+import { assembleOrderNoteEvidenceBundle } from "./orderNoteEvidenceBundle";
+import { materialOrderNoteEvidenceFingerprint } from "./orderNoteMateriality";
 
 /**
  * Recompute the CURRENT canonical Order Note evidence fingerprint for an exact
@@ -43,7 +44,10 @@ export async function computeCurrentOrderNoteFingerprint(input: {
     clinicId: input.clinicId,
     ancillaryCaseId: input.ancillaryCaseId,
   });
-  return bundle ? orderNoteEvidenceBundleFingerprint(bundle) : null;
+  // The freshness signal is the AUTHORIZATION-MATERIAL fingerprint (service-
+  // relevant projection), NOT the full bundle fingerprint — unrelated
+  // patient-level evidence must not stale a signed order.
+  return bundle ? materialOrderNoteEvidenceFingerprint(bundle) : null;
 }
 
 export type SignedOrderNoteFreshness = {
