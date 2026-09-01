@@ -270,6 +270,7 @@ test.describe("Scheduler UI surfaces capacity", () => {
     // per-slot machine counts.
     await page.getByTestId("scheduler-service-dropdown").click();
     await page.getByTestId("scheduler-service-brainwave").click();
+    await page.getByTestId("scheduler-service-dropdown").click(); // close the menu
     await expect(page.getByTestId("scheduler-slot-08:00")).toBeVisible({ timeout: 8000 });
     await expect(page.getByTestId("scheduler-slot-08:15")).toBeVisible();
     // The equipment inventory is available on demand via the compact toggle.

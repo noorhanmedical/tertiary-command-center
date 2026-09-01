@@ -155,8 +155,8 @@ test.describe("Generic scheduling write", () => {
     await page.getByTestId("left-rail-tool-calendar").click();
     await expect(page.getByTestId("unified-scheduler")).toBeVisible();
 
-    // Patient search → pick a seeded patient; capture its screening id.
-    await page.getByTestId("scheduler-patient-search").fill("testguy");
+    // Patient search → pick a seeded Taylor patient; capture its screening id.
+    await page.getByTestId("scheduler-patient-search").fill("John Smith");
     const result = page.locator('[data-testid^="scheduler-patient-result-"]').first();
     await expect(result).toBeVisible({ timeout: 8000 });
     const rid = (await result.getAttribute("data-testid")) ?? "";
