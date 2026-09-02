@@ -108,6 +108,16 @@ export type PhysicianSignatureItem = {
   // Slice B-minimal — Order Note lifecycle (order_note rows only; else null).
   orderNotePortalState: OrderNotePortalState | null;
   screeningComplete: boolean | null;
+  // Whether this service actually requires structured screening as an Order
+  // Note prerequisite (canonical config via orderNoteRequiresStructuredScreening).
+  // Lets the clinician UI surface a screening step ONLY for services that need
+  // it (BW/VW), without any frontend service-name inference. Order notes only;
+  // else false.
+  requiresScreening: boolean;
+  // Canonical ancillary case this note belongs to (order/procedure notes carry
+  // it). Exposes exact case linkage so the UI can compose the canonical case
+  // lifecycle without regex/inference. Null when the row has no case link.
+  ancillaryCaseId: number | null;
   // Version tokens the client MUST echo on sign (Slice C stale-client guard).
   expectedEvidenceFingerprint: string | null;
   expectedScreeningVersion: string | null;
@@ -246,6 +256,10 @@ export function computeSignatureItem(
   return {
     orderNotePortalState,
     screeningComplete: isOrderNote && orderNoteCtx ? orderNoteCtx.screeningComplete : null,
+    // Expose canonical screening requirement + case linkage (additive; sourced
+    // entirely from server-side canonical config/row — no frontend inference).
+    requiresScreening: isOrderNote && orderNoteCtx ? orderNoteCtx.requireScreening : false,
+    ancillaryCaseId: row.ancillaryCaseId ?? null,
     expectedEvidenceFingerprint: isOrderNote ? (row.evidenceFingerprint ?? null) : null,
     expectedScreeningVersion: isOrderNote && orderNoteCtx ? orderNoteCtx.currentScreeningVersion : null,
     id: row.id,

@@ -99,6 +99,39 @@ async function testComputeSignatureItemOrderNoteIsSignable() {
   assert.equal(item.billingBlocked, false);
 }
 
+// Additive fields: requiresScreening + ancillaryCaseId are sourced from the
+// server-side canonical context/row (no frontend inference).
+async function testComputeSignatureItemExposesScreeningRequirementFromCtx() {
+  // No orderNoteCtx → requiresScreening defaults false (legacy/flag-off path).
+  const noCtx = computeSignatureItem(row(), false, "ready_to_generate");
+  assert.equal(noCtx.requiresScreening, false);
+
+  // Screening-required service (BW/VW) → surfaced true from ctx.requireScreening.
+  const required = computeSignatureItem(
+    row({ evaluatedScreeningEvidenceVersion: "v1" }),
+    false,
+    "ready_to_generate",
+    { requireScreening: true, screeningComplete: true, currentScreeningVersion: "v1" },
+  );
+  assert.equal(required.requiresScreening, true);
+
+  // Non-screening service → false even with ctx.
+  const notRequired = computeSignatureItem(
+    row(),
+    false,
+    "ready_to_generate",
+    { requireScreening: false, screeningComplete: false, currentScreeningVersion: null },
+  );
+  assert.equal(notRequired.requiresScreening, false);
+}
+
+async function testComputeSignatureItemExposesAncillaryCaseId() {
+  const linked = computeSignatureItem(row({ ancillaryCaseId: 4242 }), false, "ready_to_generate");
+  assert.equal(linked.ancillaryCaseId, 4242);
+  const unlinked = computeSignatureItem(row({ ancillaryCaseId: null }), false, "ready_to_generate");
+  assert.equal(unlinked.ancillaryCaseId, null);
+}
+
 async function testComputeSignatureItemPostProcNeedsReport() {
   const item = computeSignatureItem(
     row({ noteType: "post_procedure_note" }),
@@ -169,6 +202,8 @@ async function main() {
   await testEligibleForSignRejectsEmptyBody();
   await testEligibleForSignAcceptsApprovedGenStatus();
   await testComputeSignatureItemOrderNoteIsSignable();
+  await testComputeSignatureItemExposesScreeningRequirementFromCtx();
+  await testComputeSignatureItemExposesAncillaryCaseId();
   await testComputeSignatureItemPostProcNeedsReport();
   await testComputeSignatureItemPostProcSignableWithReport();
   await testComputeSignatureItemAlreadySignedNotSignable();
