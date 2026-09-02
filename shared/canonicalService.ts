@@ -150,3 +150,28 @@ export function resolveCanonicalServiceType(raw: string | null | undefined): str
 export function isCanonicalServiceType(raw: string | null | undefined): boolean {
   return CANONICAL_SET.has(resolveCanonicalServiceType(raw));
 }
+
+// ─── Structured-screening services (canonical identities) ─────────────────────
+// The EXPLICIT set of canonical services that require a completed structured
+// (A0) screening as an Order Note prerequisite. This MIRRORS the server-side
+// authority `orderNoteServiceConfig` (`requiredEvidence.structuredScreening ===
+// true`, currently BrainWave + VitalWave) and MUST be kept in sync with it — it
+// exists only so shared/client callers can resolve the requirement through the
+// canonical alias table instead of a fragile service-name substring regex. It is
+// an explicit canonical list, never inferred from the service string. The server
+// remains the authority for enforcement (signing gate / refresh); this is a
+// display/navigation aid only.
+export const STRUCTURED_SCREENING_SERVICE_TYPES: readonly CanonicalServiceType[] = [
+  "BrainWave",
+  "VitalWave",
+] as const;
+
+const STRUCTURED_SCREENING_SET = new Set<string>(STRUCTURED_SCREENING_SERVICE_TYPES);
+
+/** True when the raw/aliased service resolves to a canonical service that
+ *  requires structured screening. Resolves display-name drift via the alias
+ *  table first (so "brain wave" / "BrainWave – Comprehensive Assessment" all
+ *  match) — never a substring/regex check. */
+export function serviceRequiresStructuredScreening(raw: string | null | undefined): boolean {
+  return STRUCTURED_SCREENING_SET.has(resolveCanonicalServiceType(raw));
+}
