@@ -1,14 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="480" height="160" viewBox="0 0 480 160" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Burj Khalifa dominating the Dubai skyline">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0a1430"/>
-      <stop offset="0.55" stop-color="#213a63"/>
-      <stop offset="1" stop-color="#c98a55"/>
+      <stop offset="0" stop-color="#152449"/>
+      <stop offset="0.5" stop-color="#345989"/>
+      <stop offset="1" stop-color="#e0a061"/>
+    </linearGradient>
+    <linearGradient id="bldg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b4877"/>
+      <stop offset="1" stop-color="#0f2038"/>
+    </linearGradient>
+    <linearGradient id="burj" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9fc0ff"/>
+      <stop offset="0.5" stop-color="#3f5f96"/>
+      <stop offset="1" stop-color="#16294a"/>
     </linearGradient>
   </defs>
   <rect width="480" height="160" fill="url(#sky)"/>
-  <!-- lower skyline -->
-  <g fill="#0a1526">
+  <g fill="url(#bldg)">
     <rect x="120" y="118" width="22" height="42"/>
     <rect x="148" y="106" width="18" height="54"/>
     <rect x="238" y="112" width="20" height="48"/>
@@ -17,7 +25,7 @@
     <rect x="432" y="118" width="26" height="42"/>
   </g>
   <!-- Burj Khalifa: tapered tiered spire, right-of-center -->
-  <g fill="#0b1626">
+  <g fill="url(#burj)">
     <path d="M352 160 L352 60 L358 60 L360 40 L362 60 L368 60 L368 160 Z"/>
     <path d="M360 40 L360 8 L361 8 L361 40 Z"/>
     <rect x="344" y="96" width="8" height="64"/>
@@ -25,9 +33,9 @@
     <rect x="336" y="120" width="8" height="40"/>
     <rect x="376" y="120" width="8" height="40"/>
   </g>
-  <g fill="#5b8cff" opacity="0.55">
-    <rect x="358" y="70" width="4" height="7"/><rect x="358" y="88" width="4" height="7"/>
-    <rect x="358" y="106" width="4" height="7"/><rect x="358" y="124" width="4" height="7"/>
-    <rect x="346" y="110" width="3" height="5"/><rect x="371" y="110" width="3" height="5"/>
+  <g fill="#dce9ff" opacity="0.9">
+    <rect x="359" y="70" width="3" height="7"/><rect x="359" y="88" width="3" height="7"/>
+    <rect x="359" y="106" width="3" height="7"/><rect x="359" y="124" width="3" height="7"/>
+    <rect x="346" y="110" width="2" height="5"/><rect x="372" y="110" width="2" height="5"/>
   </g>
 </svg>

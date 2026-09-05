@@ -430,6 +430,7 @@ export function HomeWorldClocks({
               abbr={time.abbr}
               date={time.date}
               image={image}
+              localHour={time.hours}
               data-testid={`clock-${idBase}`}
             />
           );

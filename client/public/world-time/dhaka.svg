@@ -1,42 +1,47 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="480" height="160" viewBox="0 0 480 160" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Dhaka skyline with mosque domes and minarets">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#111a30"/>
-      <stop offset="0.55" stop-color="#243a4a"/>
-      <stop offset="1" stop-color="#4a6a55"/>
+      <stop offset="0" stop-color="#1c2947"/>
+      <stop offset="0.5" stop-color="#3a5566"/>
+      <stop offset="1" stop-color="#c79a63"/>
+    </linearGradient>
+    <linearGradient id="bldg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3a58"/>
+      <stop offset="1" stop-color="#121b2c"/>
+    </linearGradient>
+    <linearGradient id="mosque" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8d4a8"/>
+      <stop offset="1" stop-color="#8a6f52"/>
     </linearGradient>
   </defs>
   <rect width="480" height="160" fill="url(#sky)"/>
-  <!-- background city blocks -->
-  <g fill="#0d1522" opacity="0.9">
+  <g fill="url(#bldg)">
     <rect x="90" y="108" width="24" height="52"/>
     <rect x="120" y="96" width="20" height="64"/>
     <rect x="150" y="112" width="22" height="48"/>
     <rect x="404" y="100" width="22" height="60"/>
     <rect x="432" y="112" width="26" height="48"/>
   </g>
-  <!-- mosque: central dome + flanking minarets (right-biased) -->
-  <g fill="#0b1420">
-    <!-- minarets -->
+  <!-- mosque: warm-lit stone, central dome + flanking minarets (right-biased) -->
+  <g fill="url(#mosque)">
     <rect x="300" y="70" width="9" height="90"/>
     <path d="M300 70 a4.5 4.5 0 0 1 9 0 Z"/>
     <circle cx="304.5" cy="66" r="4"/>
     <rect x="392" y="70" width="9" height="90"/>
     <path d="M392 70 a4.5 4.5 0 0 1 9 0 Z"/>
     <circle cx="396.5" cy="66" r="4"/>
-    <!-- prayer hall -->
     <rect x="318" y="104" width="66" height="56"/>
-    <!-- central dome -->
     <path d="M322 104 a29 34 0 0 1 58 0 Z"/>
     <path d="M351 62 l3 8 h-6 Z"/>
-    <!-- small side domes -->
     <path d="M320 108 a10 12 0 0 1 20 0 Z"/>
     <path d="M362 108 a10 12 0 0 1 20 0 Z"/>
-    <!-- arched entrance -->
   </g>
-  <path d="M344 160 v-26 a7 9 0 0 1 14 0 v26 Z" fill="#152233"/>
-  <g fill="#5b8cff" opacity="0.5">
+  <path d="M344 160 v-26 a7 9 0 0 1 14 0 v26 Z" fill="#5a4636"/>
+  <g fill="#fff0cf" opacity="0.85">
     <rect x="303" y="96" width="3" height="5"/><rect x="395" y="96" width="3" height="5"/>
-    <rect x="326" y="118" width="3" height="4"/><rect x="372" y="118" width="3" height="4"/>
+    <rect x="326" y="120" width="3" height="4"/><rect x="372" y="120" width="3" height="4"/>
+  </g>
+  <g fill="#9fc0ff" opacity="0.8">
+    <rect x="98" y="116" width="3" height="4"/><rect x="126" y="104" width="3" height="4"/><rect x="410" y="110" width="3" height="4"/>
   </g>
 </svg>

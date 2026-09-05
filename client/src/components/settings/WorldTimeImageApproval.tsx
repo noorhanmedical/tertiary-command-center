@@ -154,20 +154,24 @@ function LocationApprovalRow({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-4 md:grid-cols-[220px_1fr]">
-        {/* Exact production card preview */}
+      <div className="mt-3 grid gap-4 md:grid-cols-[260px_1fr]">
+        {/* Exact production card preview (rendered on a dark mat so the card
+            reads the same way it does on the Home dashboard). */}
         <div>
-          <WorldTimeCard
-            label={city.label}
-            time={time.digital}
-            abbr={time.abbr}
-            date={time.date}
-            image={previewImage}
-            className="w-full"
-            data-testid={`wt-preview-${slug}`}
-          />
+          <div className="rounded-2xl bg-slate-900 p-3">
+            <WorldTimeCard
+              label={city.label}
+              time={time.digital}
+              abbr={time.abbr}
+              date={time.date}
+              image={previewImage}
+              localHour={time.hours}
+              className="w-full"
+              data-testid={`wt-preview-${slug}`}
+            />
+          </div>
           <p className="mt-1 text-center text-[11px] text-slate-400">
-            {previewImage ? "Candidate preview" : "Fallback (no image)"}
+            {previewImage ? "Live production preview" : "Fallback (no image)"}
           </p>
         </div>
 
