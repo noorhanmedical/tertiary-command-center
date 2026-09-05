@@ -3,8 +3,19 @@ import { withOpenAIConcurrencyLimit } from "../middleware/rateLimiter";
 
 const OpenAI = ((OpenAI_import as any).default ?? OpenAI_import) as typeof OpenAI_import;
 
+// The OpenAI client is constructed at import time and this module is pulled in
+// on nearly every startup path, so a missing key must NOT crash the server —
+// otherwise the whole app (including non-AI features) fails to boot locally.
+// We fall back to a placeholder key so construction succeeds; any actual AI
+// call still requires a real key (the request will fail at call time, as it
+// should) and non-AI features run normally.
+const OPENAI_API_KEY =
+  process.env.AI_INTEGRATIONS_OPENAI_API_KEY ??
+  process.env.OPENAI_API_KEY ??
+  "missing-openai-key";
+
 export const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  apiKey: OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
