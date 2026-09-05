@@ -92,13 +92,24 @@ function LocationApprovalRow({
   const status: WorldTimeImageStatus = record?.status ?? "no_image";
   const time = getZonedTime(city.timeZone, now);
 
+  // Persistent inline error so a failed request is always visible (a missed
+  // toast otherwise reads as "nothing happens"). Surfaces the HTTP status so an
+  // unregistered route (404 — dev server not restarted) is diagnosable.
+  const [error, setError] = useState<string | null>(null);
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/world-time/images"] });
     queryClient.invalidateQueries({ queryKey: ["/api/settings/world-time/images"] });
   };
+  const onErr = (title: string) => (e: any) => {
+    const msg = e?.message ?? "Request failed";
+    setError(`${title}: ${msg}`);
+    toast({ title, description: msg, variant: "destructive" });
+  };
 
   const propose = useMutation({
     mutationFn: async () => {
+      setError(null);
       const res = await apiRequest("PUT", `/api/admin/world-time/images/${slug}`, {
         assetUrl: assetUrl.trim(),
         landmarkName: landmarkName.trim(),
@@ -110,26 +121,47 @@ function LocationApprovalRow({
       invalidate();
       toast({ title: "Candidate saved", description: `${city.label} is pending approval.` });
     },
-    onError: (e: any) => toast({ title: "Could not save", description: e?.message, variant: "destructive" }),
+    onError: onErr("Could not save candidate"),
   });
 
   const approve = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/admin/world-time/images/${slug}/approve`, {})).json(),
+    mutationFn: async () => {
+      setError(null);
+      return (await apiRequest("POST", `/api/admin/world-time/images/${slug}/approve`, {})).json();
+    },
     onSuccess: () => {
       invalidate();
       toast({ title: "Image approved", description: `${city.label} now uses its approved image.` });
     },
-    onError: (e: any) => toast({ title: "Could not approve", description: e?.message, variant: "destructive" }),
+    onError: onErr("Could not approve"),
   });
 
   const reject = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/admin/world-time/images/${slug}/reject`, {})).json(),
+    mutationFn: async () => {
+      setError(null);
+      return (await apiRequest("POST", `/api/admin/world-time/images/${slug}/reject`, {})).json();
+    },
     onSuccess: () => {
       invalidate();
       toast({ title: "Image rejected", description: `${city.label} reverted to the fallback background.` });
     },
-    onError: (e: any) => toast({ title: "Could not reject", description: e?.message, variant: "destructive" }),
+    onError: onErr("Could not reject"),
   });
+
+  // Approve directly from the editor: if no candidate is persisted yet (e.g. a
+  // seeded city, or a fresh draft), save it first so the server has a record to
+  // approve — then approve. One click, no "propose first" dead-end.
+  const approveFlow = async () => {
+    setError(null);
+    try {
+      if (!record || record.assetUrl !== assetUrl.trim() || record.landmarkName !== landmarkName.trim()) {
+        await propose.mutateAsync();
+      }
+      await approve.mutateAsync();
+    } catch {
+      /* onError handlers already surfaced the failure */
+    }
+  };
 
   // The admin preview shows the CANDIDATE image (whatever is drafted/stored),
   // so the reviewer approves the final visual result. The production dashboard
@@ -233,8 +265,8 @@ function LocationApprovalRow({
               type="button"
               size="sm"
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
-              disabled={busy || !record || status === "approved"}
-              onClick={() => approve.mutate()}
+              disabled={busy || !assetUrl.trim() || status === "approved"}
+              onClick={() => approveFlow()}
               data-testid={`wt-approve-${slug}`}
             >
               <Check className="h-3.5 w-3.5" />
@@ -245,7 +277,7 @@ function LocationApprovalRow({
               variant="outline"
               size="sm"
               className="gap-1.5 text-rose-600 hover:text-rose-700"
-              disabled={busy || !record || status === "rejected" || status === "no_image"}
+              disabled={busy || status === "rejected" || status === "no_image"}
               onClick={() => reject.mutate()}
               data-testid={`wt-reject-${slug}`}
             >
@@ -253,6 +285,19 @@ function LocationApprovalRow({
               Reject
             </Button>
           </div>
+
+          {error && (
+            <p
+              className="flex items-start gap-1.5 rounded-md bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700"
+              data-testid={`wt-error-${slug}`}
+            >
+              <CircleAlert className="mt-px h-3 w-3 shrink-0" />
+              <span>
+                {error}
+                {/^Could not.*: 404/.test(error) ? " — the dev server likely needs a restart (npm run dev)." : ""}
+              </span>
+            </p>
+          )}
 
           {status !== "approved" && (
             <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
