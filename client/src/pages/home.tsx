@@ -1,5 +1,6 @@
 import { useLocation } from "wouter";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
   useScreeningBatches,
@@ -509,6 +510,12 @@ export default function Home() {
   // queue. Metrics with no verified source render "—" (see homeDashboardData).
   const { data: homeStats } = useHomeStats({ enabled: view === "home" });
   const { data: overdueTasks } = useOverdueTasks();
+  // Editable World Time locations — drives the World Time card row so cities
+  // can be added/removed from config (matches the admin approval surface).
+  const { data: worldClocksData } = useQuery<{ cities: { label: string; timeZone: string }[] }>({
+    queryKey: ["/api/settings/world-clocks"],
+    enabled: view === "home",
+  });
   // Minute ticker so the live global clocks stay current without a backend.
   const [clockTick, setClockTick] = useState(0);
   useEffect(() => {
@@ -524,9 +531,10 @@ export default function Home() {
         overdueTasks: overdueTasks
           ? { overdueCount: overdueTasks.overdueCount, dueTodayCount: overdueTasks.dueTodayCount }
           : undefined,
+        worldClockCities: worldClocksData?.cities,
       }),
     // clockTick intentionally in deps to re-derive live clock strings.
-    [homeStats, dashboardData, overdueTasks, clockTick],
+    [homeStats, dashboardData, overdueTasks, worldClocksData, clockTick],
   );
 
   return (

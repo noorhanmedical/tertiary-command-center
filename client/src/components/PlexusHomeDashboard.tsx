@@ -6,7 +6,6 @@ import {
   CalendarDays,
   CheckSquare,
   CircleDollarSign,
-  Clock3,
   CreditCard,
   FileText,
   HeartPulse,
@@ -21,6 +20,10 @@ import {
   Waves,
   ArrowRight,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { WorldTimeCard } from "@/components/world-time/WorldTimeCard";
+import { slugify } from "@/lib/worldTime/locations";
+import type { WorldTimeImagePublicMap } from "@/lib/worldTime/types";
 
 /*
 |--------------------------------------------------------------------------
@@ -50,6 +53,9 @@ export type ClockItem = {
   time: string;
   timezone: string;
   date: string;
+  /** Real local time in the zone, for the analog clock hands. */
+  hours: number;
+  minutes: number;
 };
 
 export type TaskItem = {
@@ -105,7 +111,8 @@ export type PlexusHomeDashboardProps = {
 export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPatient }: PlexusHomeDashboardProps) {
   return (
     <div className="min-h-full bg-[#f4f7fb] text-[#172033]">
-      <div className="mx-auto w-full max-w-[1600px] px-5 py-6 lg:px-8">
+      {/* pb-28 keeps the bottom Platform Apps row clear of the floating GlobalDock. */}
+      <div className="mx-auto w-full max-w-[1600px] px-5 pt-6 pb-28 lg:px-8">
         {/* PAGE HEADER */}
         <section className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
@@ -148,25 +155,8 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
           </div>
         </section>
 
-        {/* CLOCKS */}
-        <section className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {data.clocks.map((clock) => (
-            <div
-              key={clock.city}
-              className="flex min-h-[88px] items-center rounded-[12px] bg-gradient-to-br from-[#101b3e] to-[#071127] px-5 text-white shadow-sm"
-            >
-              <div className="mr-4 flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04]">
-                <Clock3 className="h-7 w-7 text-white/90" strokeWidth={1.4} />
-              </div>
-              <div>
-                <div className="text-[12px] font-medium">{clock.city}</div>
-                <div className="mt-0.5 text-[20px] font-medium text-[#73adff]">{clock.time}</div>
-                <div className="text-[10px] text-white/70">{clock.timezone}</div>
-                <div className="text-[10px] text-white/65">{clock.date}</div>
-              </div>
-            </div>
-          ))}
-        </section>
+        {/* WORLD TIME */}
+        <WorldTimeClocksRow clocks={data.clocks} />
 
         {/* MAIN DASHBOARD GRID */}
         <section className="mb-4 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
@@ -223,27 +213,51 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
             </DashboardPanel>
 
             {/* PLEXUS IQ */}
-            <section className="relative min-h-[180px] overflow-hidden rounded-[13px] bg-gradient-to-r from-[#050817] via-[#101443] to-[#182a75] p-7 text-white shadow-lg">
-              <div className="absolute inset-y-0 right-0 w-[48%] opacity-80">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(86,123,255,.55),transparent_45%)]" />
-                <div className="absolute left-[35%] top-[15%] h-[110px] w-[110px] rounded-full border border-[#789cff]/40 shadow-[0_0_50px_rgba(80,122,255,.7)]" />
-                <div className="absolute left-[45%] top-[25%] h-[70px] w-[70px] rounded-full border border-[#9bb4ff]/40" />
-                <div className="absolute left-[29%] top-[35%] h-[85px] w-[85px] rounded-full border border-[#718cff]/30" />
-              </div>
-              <div className="relative z-10 max-w-[470px]">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-white/55">Plexus Ancillary</div>
-                <h2 className="mt-1 text-[24px] font-medium">Plexus IQ</h2>
-                <p className="mt-2 max-w-[420px] text-[13px] leading-5 text-white/70">
-                  AI-powered insights to optimize operations, improve utilization, and elevate patient care.
-                </p>
-                <button
-                  className="mt-5 flex h-9 items-center gap-2 rounded-[8px] bg-[#5c58dc] px-4 text-[12px] font-semibold text-white"
-                  onClick={onOpenPlexusIq}
-                  data-testid="home-open-plexus-iq"
-                >
-                  Open Plexus IQ
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+            <section className="relative min-h-[180px] overflow-hidden rounded-[14px] bg-[#0a0f24] text-white shadow-lg ring-1 ring-white/5">
+              {/* Network art as a real foreground element on the right of the card. */}
+              <img
+                src="/plexus-iq-network.png"
+                alt=""
+                aria-hidden="true"
+                className="pointer-events-none absolute right-0 top-1/2 h-[150%] max-w-none -translate-y-1/2 object-contain"
+                style={{ filter: "brightness(1.35) saturate(1.15)" }}
+              />
+              {/* Left→center scrim so the heading/description stay readable while the
+                  art shows fully on the right. */}
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#05070f] via-[#05070f]/70 to-transparent" />
+
+              {/* Left content: icon tile + text + CTA */}
+              <div className="relative z-10 flex items-center gap-5 p-6 pl-7">
+                <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/[0.06] ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,.35)]">
+                  {/* Soft radial glow behind the mark so it reads as a lit star */}
+                  <span
+                    className="pointer-events-none absolute inset-0 rounded-2xl"
+                    style={{ background: "radial-gradient(circle at 50% 45%, rgba(147,180,255,.55), transparent 65%)" }}
+                    aria-hidden="true"
+                  />
+                  <Sparkles
+                    className="relative h-7 w-7 text-white"
+                    strokeWidth={1.6}
+                    style={{ filter: "drop-shadow(0 0 6px rgba(160,190,255,.95)) drop-shadow(0 0 12px rgba(120,150,255,.6))" }}
+                  />
+                </div>
+                <div className="max-w-[470px]">
+                  <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-white/45">
+                    Plexus Ancillary
+                  </div>
+                  <h2 className="mt-1 text-[24px] font-semibold leading-none tracking-[-0.01em]">Plexus IQ</h2>
+                  <p className="mt-2 max-w-[430px] text-[13px] leading-5 text-white/65">
+                    AI-powered insights to optimize operations, improve utilization, and elevate patient care.
+                  </p>
+                  <button
+                    className="mt-4 flex h-9 items-center gap-2 rounded-[9px] bg-[#5c58dc] px-4 text-[12px] font-semibold text-white shadow-sm transition hover:bg-[#6b67e6]"
+                    onClick={onOpenPlexusIq}
+                    data-testid="home-open-plexus-iq"
+                  >
+                    Open Plexus IQ
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </section>
           </div>
@@ -464,6 +478,44 @@ function PaginationButton({ children, active }: { children: React.ReactNode; act
     >
       {children}
     </button>
+  );
+}
+
+// World Time row — premium, location-aware image cards. Reads the approved
+// image registry (approved-only asset URLs) and matches each clock to its
+// landmark image by city slug; anything not approved renders the Plexus navy
+// fallback via WorldTimeCard.
+function WorldTimeClocksRow({ clocks }: { clocks: ClockItem[] }) {
+  const { data } = useQuery<{ images: WorldTimeImagePublicMap }>({
+    queryKey: ["/api/settings/world-time/images"],
+  });
+  const images = data?.images ?? {};
+
+  return (
+    <section
+      className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:flex lg:flex-nowrap"
+      data-testid="row-world-time"
+    >
+      {clocks.map((clock) => {
+        const rec = images[slugify(clock.city)];
+        const image =
+          rec?.status === "approved" && rec.assetUrl
+            ? { assetUrl: rec.assetUrl, imagePosition: rec.imagePosition, landmarkName: rec.landmarkName }
+            : null;
+        return (
+          <WorldTimeCard
+            key={clock.city}
+            label={clock.city}
+            time={clock.time}
+            abbr={clock.timezone}
+            date={clock.date}
+            image={image}
+            localHour={clock.hours}
+            data-testid={`world-time-${slugify(clock.city)}`}
+          />
+        );
+      })}
+    </section>
   );
 }
 
