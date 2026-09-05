@@ -16,24 +16,30 @@
 // migration-0076-gated. NEVER throws when called as a hook: a failure is
 // reported, never reverses the screening completion. Adds NO signing behavior.
 
-import crypto from "node:crypto";
 import { db } from "../../db";
 import { and, eq, isNull } from "drizzle-orm";
 import { procedureNotes } from "@shared/schema/generatedNotes";
-import { patientScreenings, screeningBatches } from "@shared/schema/screening";
 import { featureFlags } from "../../lib/featureFlags";
-import { getAncillaryCaseById } from "../../repositories/ancillaryCases.repo";
-import { getCurrentScreeningEvidence } from "../screening/screeningEvidenceService";
 import {
-  resolveClinicianNpi,
-  resolveClinicForClinician,
-  DEFAULT_CLINIC,
-} from "../../../shared/plexus";
-import { renderOrderNoteBody, renderAiOrderNoteBody, ORDER_NOTE_AI_GENERATOR_VERSION } from "./orderNoteBody";
-import { canonicalOrderNoteEvidenceString } from "./orderNoteFingerprint";
-import type { OrderNoteEvidenceBundle, ChartDiagnosis } from "./orderNoteProjection";
-// Order Note standard — AI narrative pipeline (Slice AI-1..AI-4).
-import { assembleOrderNoteEvidenceBundle, orderNoteEvidenceBundleFingerprint } from "./orderNoteEvidenceBundle";
+  renderDeterministicOrderNoteBody,
+  renderAiOrderNoteBody,
+  ORDER_NOTE_AI_GENERATOR_VERSION,
+  ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION,
+} from "./orderNoteBody";
+import { orderNoteRequiresStructuredScreening } from "./orderNoteServiceConfig";
+// Order Note standard — ONE canonical evidence assembler shared by BOTH the
+// deterministic and the AI-assisted paths (Slice AI-1..AI-4). The deterministic
+// and AI paths differ ONLY in the render/synthesis layer, never in the evidence
+// sources available to them.
+import {
+  assembleOrderNoteEvidenceBundle,
+  orderNoteEvidenceBundleFingerprint,
+  type OrderNoteEvidenceBundle,
+} from "./orderNoteEvidenceBundle";
+// The persisted evidence_fingerprint + freshness signal is the AUTHORIZATION-
+// MATERIAL fingerprint (service-relevant projection). The full bundle
+// fingerprint is retained in source_data for audit only.
+import { materialOrderNoteEvidenceFingerprint } from "./orderNoteMateriality";
 import { generateOrderNoteNarrative } from "./orderNoteNarrativeAi";
 import { validateOrderNoteNarrative, complianceFeedback } from "./orderNoteComplianceValidator";
 
@@ -47,6 +53,10 @@ export type OrderNoteRefreshResult =
   | { status: "migration_missing" }
   | { status: "populated_in_place"; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "versioned"; supersededNoteId: number; orderNoteId: number; fingerprint: string; screeningVersion: string }
+  // A SIGNED current note went materially stale: v1 is left immutable + signed
+  // in history (superseded), a new unsigned v2 is generated from current
+  // evidence and requires re-signature before the procedure may proceed.
+  | { status: "versioned_from_signed_stale"; supersededNoteId: number; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "reevaluated"; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "unchanged"; orderNoteId: number; fingerprint: string; screeningVersion: string }
   | { status: "ai_generation_failed"; orderNoteId: number }
@@ -60,96 +70,97 @@ export type RefreshInput = {
   source: string;
 };
 
-function fingerprintHash(bundle: OrderNoteEvidenceBundle): string {
-  return crypto.createHash("sha256").update(canonicalOrderNoteEvidenceString(bundle)).digest("hex").slice(0, 40);
-}
-
-function serviceLabel(service: string): string {
-  const s = (service || "").toLowerCase();
-  if (s.includes("brain")) return "BrainWave – Comprehensive Assessment";
-  if (s.includes("vital")) return "VitalWave – Comprehensive Autonomic & Vascular Assessment";
-  return service;
-}
-
-function splitChartDiagnoses(diagnoses: string | null | undefined): ChartDiagnosis[] {
-  if (!diagnoses) return [];
-  return diagnoses
-    .split(/[\n;,]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .map((displayText) => ({ displayText, source: "chart_documented" as const }));
-}
-
-function reasoningForService(
-  reasoning: Record<string, unknown> | null | undefined,
-  service: string,
-): { factors: string[]; clinicianUnderstanding: string | null } {
-  if (!reasoning) return { factors: [], clinicianUnderstanding: null };
-  const s = (service || "").toLowerCase();
-  const key = Object.keys(reasoning).find((k) => {
-    const kl = k.toLowerCase();
-    return (s.includes("brain") && kl.includes("brain")) || (s.includes("vital") && kl.includes("vital")) || kl === s;
-  });
-  const r = key ? (reasoning[key] as Record<string, unknown> | undefined) : undefined;
-  if (!r || typeof r !== "object") return { factors: [], clinicianUnderstanding: null };
-  const factors = Array.isArray(r["qualifying_factors"]) ? (r["qualifying_factors"] as string[]) : [];
-  const cu = typeof r["clinician_understanding"] === "string" ? (r["clinician_understanding"] as string) : null;
-  return { factors, clinicianUnderstanding: cu };
-}
-
-/** Assemble the deterministic Order Note evidence bundle from canonical data. */
-async function assembleBundle(input: RefreshInput): Promise<OrderNoteEvidenceBundle | null> {
-  const acase = await getAncillaryCaseById(input.ancillaryCaseId);
-  if (!acase || acase.clinicId !== input.clinicId) return null;
-
-  const screeningId = (acase as { originatingScreeningId?: number | null }).originatingScreeningId ?? null;
-  let ps: typeof patientScreenings.$inferSelect | undefined;
-  if (screeningId != null) {
-    [ps] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, screeningId)).limit(1);
-  }
-
-  let clinicianName: string | null = null;
-  if (ps?.batchId != null) {
-    const [batch] = await db.select().from(screeningBatches).where(eq(screeningBatches.id, ps.batchId)).limit(1);
-    clinicianName = batch?.clinicianName ?? null;
-  }
-  const clinician = clinicianName
-    ? { name: clinicianName, npi: resolveClinicianNpi(clinicianName), id: null as string | null }
-    : { name: "Ordering Clinician", npi: null, id: null as string | null };
-  const clinic = clinicianName ? resolveClinicForClinician(clinicianName) : DEFAULT_CLINIC;
-
-  const current = await getCurrentScreeningEvidence({
-    clinicId: input.clinicId,
-    ancillaryCaseId: input.ancillaryCaseId,
-    serviceType: acase.serviceType,
-  });
-
-  const { factors, clinicianUnderstanding } = reasoningForService(
-    (ps?.reasoning as Record<string, unknown> | null) ?? null,
-    acase.serviceType,
-  );
-
+/**
+ * Build the deterministic Order Note sourceData with provenance equivalent to
+ * the AI path: source record ids, evidence bundle fingerprint/version, ordered
+ * components, screening reference (when used), and qualification references.
+ * Every substantive statement in the rendered body traces to these sources.
+ */
+function buildDeterministicSourceData(
+  bundle: OrderNoteEvidenceBundle,
+  rendered: { sections: unknown },
+  fingerprint: string,
+  screeningVersion: string,
+): Record<string, unknown> {
   return {
-    service: acase.serviceType,
-    serviceLabel: serviceLabel(acase.serviceType),
-    patient: {
-      name: ps?.name ?? "Patient",
-      dob: ps?.dob ?? null,
-      mrn: null,
-      plexusId: (acase as { globalPlexusPatientId?: number | null }).globalPlexusPatientId?.toString() ?? null,
-      clinicName: clinic?.name ?? null,
+    orderNoteBody: rendered.sections,
+    generatorVersion: ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION,
+    evidence: {
+      chartDiagnoses: bundle.diagnoses.map((d) => d.displayText),
+      qualificationFactors: bundle.qualification.factors,
     },
-    orderingClinician: clinician,
-    orderDate: null,
-    chartDiagnoses: splitChartDiagnoses(ps?.diagnoses ?? null),
-    qualificationFactors: factors,
-    clinicianUnderstanding,
-    screening: current
-      ? { questionnaire: current.evidence.questionnaire, version: current.version, responses: current.evidence.responses }
-      : null,
-    // carry the screening version out-of-band for the refresh writer
-    ...(current ? { __screeningVersion: current.version } : {}),
-  } as OrderNoteEvidenceBundle & { __screeningVersion?: string };
+    orderNoteDeterministic: {
+      generator: ORDER_NOTE_DETERMINISTIC_GENERATOR_VERSION,
+      evidenceBundleVersion: bundle.bundleVersion,
+      // evidence_fingerprint column value = AUTHORIZATION-MATERIAL fingerprint.
+      evidenceBundleFingerprint: fingerprint,
+      materialEvidenceFingerprint: fingerprint,
+      // Full-bundle fingerprint retained for audit ("what evidence did we have").
+      fullEvidenceFingerprint: orderNoteEvidenceBundleFingerprint(bundle),
+      evidenceSourceIds: bundle.sourceRecordIds,
+      orderedComponents: bundle.orderedComponents.map((c) => c.key),
+      screeningEvidenceVersion: screeningVersion,
+      screeningReference: bundle.structuredScreening
+        ? { questionnaire: bundle.structuredScreening.questionnaire, version: bundle.structuredScreening.version }
+        : null,
+      qualificationFactors: bundle.qualification.factors,
+      clinicianUnderstanding: bundle.qualification.clinicianUnderstanding,
+    },
+    // Durable snapshot of the exact evidence the note was rendered from.
+    evidenceBundle: bundle,
+  };
+}
+
+/**
+ * Supersede the current note (audit-preserving: sets supersededAt only — never
+ * touches body/signature) and insert a NEW unsigned version carrying the same
+ * canonical identity + supersedesNoteId linkage. Atomic; the partial-unique
+ * active-case index is never left with two active rows. Shared by the unsigned
+ * material-change path and the signed-stale regeneration path.
+ */
+async function supersedeAndInsertOrderNoteVersion(
+  note: typeof procedureNotes.$inferSelect,
+  values: {
+    generatedText: string;
+    generatedByAi: boolean;
+    sourceData: Record<string, unknown>;
+    fingerprint: string;
+    screeningVersion: string;
+  },
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const superseded = await tx
+      .update(procedureNotes)
+      .set({ supersededAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(procedureNotes.id, note.id), isNull(procedureNotes.supersededAt)))
+      .returning({ id: procedureNotes.id });
+    if (superseded.length !== 1) throw new Error("concurrent_supersede");
+    const [created] = await tx
+      .insert(procedureNotes)
+      .values({
+        clinicId: note.clinicId,
+        executionCaseId: note.executionCaseId,
+        patientScreeningId: note.patientScreeningId,
+        ancillaryCaseId: note.ancillaryCaseId,
+        globalPlexusPatientId: note.globalPlexusPatientId,
+        patientClinicMembershipId: note.patientClinicMembershipId,
+        qualifyingGlobalScheduleEventId: note.qualifyingGlobalScheduleEventId,
+        adminReviewEventId: note.adminReviewEventId,
+        effectiveClinicalDate: note.effectiveClinicalDate,
+        serviceType: note.serviceType,
+        noteType: "order_note",
+        generationStatus: "generated",
+        generatedText: values.generatedText,
+        generatedByAi: values.generatedByAi,
+        sourceData: values.sourceData as never,
+        signatureStatus: "needs_signature",
+        supersedesNoteId: note.id,
+        evidenceFingerprint: values.fingerprint,
+        evaluatedScreeningEvidenceVersion: values.screeningVersion,
+      })
+      .returning({ id: procedureNotes.id });
+    return created.id;
+  });
 }
 
 export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Promise<OrderNoteRefreshResult> {
@@ -168,7 +179,11 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
       .limit(1);
     if (!note) return { status: "no_current_note" };
     if (note.clinicId != null && note.clinicId !== input.clinicId) return { status: "no_current_note" };
-    if (note.signatureStatus === "signed") return { status: "signed_no_refresh", orderNoteId: note.id };
+
+    // NOTE: signed notes are handled per-path below. A signed note is NEVER
+    // mutated: if its canonical evidence is unchanged it is left untouched
+    // (signed_no_refresh); if the evidence materially changed it is superseded
+    // (audit-preserving) and a new unsigned v2 is generated for re-signature.
 
     // Order Note standard — OpenAI-assisted narrative path. Fails HONESTLY
     // (no silent fallback to the deterministic template).
@@ -176,11 +191,35 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
       return await refreshOrderNoteViaAi(input, note);
     }
 
-    const bundle = await assembleBundle(input);
-    if (!bundle || !bundle.screening) return { status: "screening_incomplete" };
-    const screeningVersion = (bundle as { __screeningVersion?: string }).__screeningVersion ?? "";
-    const fingerprint = fingerprintHash(bundle);
-    const rendered = renderOrderNoteBody(bundle);
+    // Deterministic path — consumes the SAME canonical evidence bundle as the
+    // AI path. Screening is an OPTIONAL evidence input, NOT a universal gate:
+    // it is required only when the service config explicitly declares it.
+    const bundle = await assembleOrderNoteEvidenceBundle({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
+    if (!bundle) return { status: "no_current_note" };
+    if (orderNoteRequiresStructuredScreening(bundle.service) && !bundle.structuredScreening) {
+      return { status: "screening_incomplete" };
+    }
+    const screeningVersion = bundle.screeningEvidenceVersion ?? "";
+    const fingerprint = materialOrderNoteEvidenceFingerprint(bundle);
+    const rendered = renderDeterministicOrderNoteBody(bundle);
+
+    // Signed note — immutable. Preserve the signature/body; NEVER update in
+    // place. If current canonical evidence is unchanged, leave it untouched. If
+    // it materially changed (fingerprint drift), supersede v1 (audit-preserving)
+    // and generate a fresh unsigned v2 for clinician re-review/re-signature.
+    if (note.signatureStatus === "signed") {
+      if (note.evidenceFingerprint === fingerprint) {
+        return { status: "signed_no_refresh", orderNoteId: note.id };
+      }
+      const newId = await supersedeAndInsertOrderNoteVersion(note, {
+        generatedText: rendered.text,
+        generatedByAi: false,
+        sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion),
+        fingerprint,
+        screeningVersion,
+      });
+      return { status: "versioned_from_signed_stale", supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion };
+    }
 
     // Case 1 — body-less pending skeleton → populate in place as v1.
     if (note.generationStatus === "pending" || !note.generatedText) {
@@ -190,7 +229,7 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
           generationStatus: "generated",
           generatedText: rendered.text,
           generatedByAi: false,
-          sourceData: { orderNoteBody: rendered.sections, evidence: { chartDiagnoses: bundle.chartDiagnoses, qualificationFactors: bundle.qualificationFactors } } as never,
+          sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion) as never,
           evidenceFingerprint: fingerprint,
           evaluatedScreeningEvidenceVersion: screeningVersion,
           updatedAt: new Date(),
@@ -213,38 +252,12 @@ export async function refreshUnsignedOrderNoteForCase(input: RefreshInput): Prom
     }
 
     // Case 3 — material change → supersede current + insert new version (atomic).
-    const newId = await db.transaction(async (tx) => {
-      const superseded = await tx
-        .update(procedureNotes)
-        .set({ supersededAt: new Date(), updatedAt: new Date() })
-        .where(and(eq(procedureNotes.id, note.id), isNull(procedureNotes.supersededAt)))
-        .returning({ id: procedureNotes.id });
-      if (superseded.length !== 1) throw new Error("concurrent_supersede");
-      const [created] = await tx
-        .insert(procedureNotes)
-        .values({
-          clinicId: note.clinicId,
-          executionCaseId: note.executionCaseId,
-          patientScreeningId: note.patientScreeningId,
-          ancillaryCaseId: note.ancillaryCaseId,
-          globalPlexusPatientId: note.globalPlexusPatientId,
-          patientClinicMembershipId: note.patientClinicMembershipId,
-          qualifyingGlobalScheduleEventId: note.qualifyingGlobalScheduleEventId,
-          adminReviewEventId: note.adminReviewEventId,
-          effectiveClinicalDate: note.effectiveClinicalDate,
-          serviceType: note.serviceType,
-          noteType: "order_note",
-          generationStatus: "generated",
-          generatedText: rendered.text,
-          generatedByAi: false,
-          sourceData: { orderNoteBody: rendered.sections, evidence: { chartDiagnoses: bundle.chartDiagnoses, qualificationFactors: bundle.qualificationFactors } } as never,
-          signatureStatus: "needs_signature",
-          supersedesNoteId: note.id,
-          evidenceFingerprint: fingerprint,
-          evaluatedScreeningEvidenceVersion: screeningVersion,
-        })
-        .returning({ id: procedureNotes.id });
-      return created.id;
+    const newId = await supersedeAndInsertOrderNoteVersion(note, {
+      generatedText: rendered.text,
+      generatedByAi: false,
+      sourceData: buildDeterministicSourceData(bundle, rendered, fingerprint, screeningVersion),
+      fingerprint,
+      screeningVersion,
     });
 
     return { status: "versioned", supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion };
@@ -304,7 +317,11 @@ function buildAiSourceData(
       promptVersion: gen.result.promptVersion,
       generatedAt: gen.result.generatedAt,
       evidenceBundleVersion: bundle.bundleVersion,
+      // evidence_fingerprint column value = AUTHORIZATION-MATERIAL fingerprint.
       evidenceBundleFingerprint: fingerprint,
+      materialEvidenceFingerprint: fingerprint,
+      // Full-bundle fingerprint retained for audit ("what evidence did we have").
+      fullEvidenceFingerprint: orderNoteEvidenceBundleFingerprint(bundle),
       evidenceSourceIds: bundle.sourceRecordIds,
       orderedComponents: bundle.orderedComponents.map((c) => c.key),
       screeningEvidenceVersion: screeningVersion,
@@ -326,17 +343,26 @@ async function failOrderNoteAi(noteId: number, clinicId: number, code: string): 
 
 async function refreshOrderNoteViaAi(input: RefreshInput, note: ProcedureNoteRow): Promise<OrderNoteRefreshResult> {
   const bundle = await assembleOrderNoteEvidenceBundle({ clinicId: input.clinicId, ancillaryCaseId: input.ancillaryCaseId });
-  if (!bundle) return { status: "screening_incomplete" };
-  // BrainWave/VitalWave REQUIRE a completed A0 structured screening; other
-  // services (echo/ultrasound/vascular) qualify from chart + qualification
-  // evidence and have no A0 questionnaire.
-  const requiresStructuredScreening = /brain|vital/i.test(bundle.service);
-  if (requiresStructuredScreening && !bundle.structuredScreening) return { status: "screening_incomplete" };
+  if (!bundle) return { status: "no_current_note" };
+  // Structured screening is an OPTIONAL evidence input. It is REQUIRED only
+  // when the service config explicitly declares it (never inferred from the
+  // service name). Both deterministic and AI paths share this rule.
+  if (orderNoteRequiresStructuredScreening(bundle.service) && !bundle.structuredScreening) {
+    return { status: "screening_incomplete" };
+  }
 
   const screeningVersion = bundle.screeningEvidenceVersion ?? "";
-  const fingerprint = orderNoteEvidenceBundleFingerprint(bundle);
+  const fingerprint = materialOrderNoteEvidenceFingerprint(bundle);
   const bodyless = note.generationStatus === "pending" || !note.generatedText;
   const changed = note.evidenceFingerprint !== fingerprint;
+
+  // Signed note — immutable. If canonical evidence is unchanged, leave it
+  // untouched (never mutate a signed note, including its evaluated screening
+  // version). If it materially changed, fall through to generate a fresh
+  // unsigned v2 that supersedes the signed v1 (audit-preserving).
+  if (note.signatureStatus === "signed" && !changed) {
+    return { status: "signed_no_refresh", orderNoteId: note.id };
+  }
 
   // No new body needed — only reconcile the evaluated screening version.
   if (!bodyless && !changed) {
@@ -411,5 +437,8 @@ async function refreshOrderNoteViaAi(input: RefreshInput, note: ProcedureNoteRow
     }).returning({ id: procedureNotes.id });
     return created.id;
   });
-  return { status: "versioned", supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion };
+  return {
+    status: note.signatureStatus === "signed" ? "versioned_from_signed_stale" : "versioned",
+    supersededNoteId: note.id, orderNoteId: newId, fingerprint, screeningVersion,
+  };
 }

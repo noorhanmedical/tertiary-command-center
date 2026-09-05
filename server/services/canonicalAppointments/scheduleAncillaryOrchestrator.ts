@@ -36,6 +36,7 @@ import {
 import { reconcileAncillaryCaseForService } from "../ancillaryCases/reconciliation";
 import { resolveAncillaryReconciliationFailure } from "../../repositories/ancillaryCases.repo";
 import { reconcilePlexusIdentityForScreening } from "../plexusIdentity/reconciliation";
+import { resolveCanonicalServiceType } from "@shared/canonicalService";
 
 export type ScheduleCanonicalAncillaryInput = {
   clinicId: number | null;
@@ -95,6 +96,14 @@ export async function scheduleCanonicalAncillaryAppointment(
   if (!featureFlags.canonicalAppointment) return { status: "skipped_flag_off" };
   if (input.clinicId == null) return { status: "deferred", reason: "no_clinic" };
 
+  // Canonical service identity — normalize display-name drift (e.g. "…Venous
+  // Doppler" → "…Venous Duplex") to the stable registry internal_code BEFORE
+  // case lookup/creation and appointment linkage, so an alias never creates a
+  // separate clinical lifecycle. Explicit alias resolution only (never fuzzy);
+  // an unknown string passes through unchanged. Used for every downstream write
+  // (case reconcile + appointment linkage); deferral records carry no service.
+  const serviceType = resolveCanonicalServiceType(input.serviceType);
+
   // Walk-in / not-yet-screened: no identity anchor. Defer with durable
   // retry; the quick-schedule worker links it once a screening exists.
   if (input.patientScreeningId == null) {
@@ -133,7 +142,7 @@ export async function scheduleCanonicalAncillaryAppointment(
     patientClinicMembershipId: screening.patientClinicMembershipId,
     originatingScreeningId: input.patientScreeningId,
     executionCaseId: input.executionCaseId ?? null,
-    serviceType: input.serviceType,
+    serviceType,
     source: input.source,
     actorUserId: input.actorUserId ?? null,
   });
@@ -148,7 +157,7 @@ export async function scheduleCanonicalAncillaryAppointment(
     clinicId: input.clinicId,
     ancillaryCaseId,
     eventType: (input.eventType ?? "ancillary_appointment") as CanonicalAncillaryEventType,
-    serviceType: input.serviceType,
+    serviceType,
     startsAt: input.startsAt,
     endsAt: input.endsAt ?? null,
     facilityId: input.facilityId ?? null,
@@ -178,7 +187,7 @@ export async function scheduleCanonicalAncillaryAppointment(
       requestedAction: "link_quick_schedule",
     });
     await resolveAncillaryReconciliationFailure({
-      serviceType: input.serviceType,
+      serviceType,
       executionCaseId: input.executionCaseId ?? null,
     });
   } catch {

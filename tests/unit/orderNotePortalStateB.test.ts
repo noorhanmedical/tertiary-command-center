@@ -38,6 +38,42 @@ function candidate(o: Partial<ProcedureNote> = {}): SignatureCandidateRow {
 test("signed ⇒ signed", () => {
   assert.equal(deriveOrderNotePortalState(note({ signatureStatus: "signed" }), { requireScreening: true, screeningComplete: true, currentScreeningVersion: "v1" }), "signed");
 });
+test("signed + current fingerprint MATCHES frozen ⇒ signed (fresh)", () => {
+  assert.equal(
+    deriveOrderNotePortalState(
+      note({ signatureStatus: "signed", evidenceFingerprint: "fpA" }),
+      { requireScreening: false, screeningComplete: true, currentScreeningVersion: null, currentEvidenceFingerprint: "fpA" },
+    ),
+    "signed",
+  );
+});
+test("signed + current fingerprint DIFFERS from frozen ⇒ signed_stale_review_required", () => {
+  assert.equal(
+    deriveOrderNotePortalState(
+      note({ signatureStatus: "signed", evidenceFingerprint: "fpA" }),
+      { requireScreening: false, screeningComplete: true, currentScreeningVersion: null, currentEvidenceFingerprint: "fpB" },
+    ),
+    "signed_stale_review_required",
+  );
+});
+test("signed + no current fingerprint computed ⇒ signed (display fail-open; enforcement is server-side)", () => {
+  assert.equal(
+    deriveOrderNotePortalState(
+      note({ signatureStatus: "signed", evidenceFingerprint: "fpA" }),
+      { requireScreening: false, screeningComplete: true, currentScreeningVersion: null },
+    ),
+    "signed",
+  );
+});
+test("staleness applies to non-screening services too (service-agnostic)", () => {
+  assert.equal(
+    deriveOrderNotePortalState(
+      note({ signatureStatus: "signed", serviceType: "Bilateral Carotid Duplex", evidenceFingerprint: "carotidA" }),
+      { requireScreening: false, screeningComplete: true, currentScreeningVersion: null, currentEvidenceFingerprint: "carotidB" },
+    ),
+    "signed_stale_review_required",
+  );
+});
 test("body-less pending ⇒ awaiting_screening", () => {
   assert.equal(deriveOrderNotePortalState(note({ generationStatus: "pending", generatedText: null }), { requireScreening: true, screeningComplete: false, currentScreeningVersion: null }), "awaiting_screening");
 });

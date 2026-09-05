@@ -26,6 +26,11 @@ export const ORDER_NOTE_PORTAL_STATES = [
   "ready_for_review",
   "updated_review_required",
   "signed",
+  // A previously-signed Order Note whose material canonical evidence changed
+  // AFTER signature. The signed note remains immutable + in the audit trail,
+  // but it no longer authorizes the procedure: a re-reviewed/re-signed v2 is
+  // required. NEVER shown simply as "signed".
+  "signed_stale_review_required",
   "pending",
 ] as const;
 export type OrderNotePortalState = (typeof ORDER_NOTE_PORTAL_STATES)[number];
@@ -34,6 +39,11 @@ export type OrderNotePortalContext = {
   requireScreening: boolean;
   screeningComplete: boolean;
   currentScreeningVersion: string | null;
+  // Current canonical Order Note evidence fingerprint (recomputed from live
+  // evidence). When present and it differs from a SIGNED note's frozen
+  // fingerprint, the note is stale. Optional so legacy/flag-off callers that
+  // don't compute it keep the prior behavior.
+  currentEvidenceFingerprint?: string | null;
 };
 
 /** Derive the clinician-portal-facing state of an Order Note from canonical
@@ -42,7 +52,19 @@ export function deriveOrderNotePortalState(
   note: ProcedureNote,
   ctx: OrderNotePortalContext,
 ): OrderNotePortalState {
-  if (note.signatureStatus === "signed") return "signed";
+  if (note.signatureStatus === "signed") {
+    // A signed note is stale when current canonical evidence drifted from the
+    // fingerprint frozen at signature. Only assert staleness when we actually
+    // computed a current fingerprint (fail-open on display; the authoritative
+    // fail-closed enforcement is at procedure_start + procedure-note generation).
+    if (
+      ctx.currentEvidenceFingerprint != null &&
+      (note.evidenceFingerprint ?? null) !== ctx.currentEvidenceFingerprint
+    ) {
+      return "signed_stale_review_required";
+    }
+    return "signed";
+  }
   const hasBody =
     !!note.generatedText &&
     SIGNABLE_GEN_STATUSES.includes(note.generationStatus as (typeof SIGNABLE_GEN_STATUSES)[number]);
@@ -86,6 +108,16 @@ export type PhysicianSignatureItem = {
   // Slice B-minimal — Order Note lifecycle (order_note rows only; else null).
   orderNotePortalState: OrderNotePortalState | null;
   screeningComplete: boolean | null;
+  // Whether this service actually requires structured screening as an Order
+  // Note prerequisite (canonical config via orderNoteRequiresStructuredScreening).
+  // Lets the clinician UI surface a screening step ONLY for services that need
+  // it (BW/VW), without any frontend service-name inference. Order notes only;
+  // else false.
+  requiresScreening: boolean;
+  // Canonical ancillary case this note belongs to (order/procedure notes carry
+  // it). Exposes exact case linkage so the UI can compose the canonical case
+  // lifecycle without regex/inference. Null when the row has no case link.
+  ancillaryCaseId: number | null;
   // Version tokens the client MUST echo on sign (Slice C stale-client guard).
   expectedEvidenceFingerprint: string | null;
   expectedScreeningVersion: string | null;
@@ -224,6 +256,10 @@ export function computeSignatureItem(
   return {
     orderNotePortalState,
     screeningComplete: isOrderNote && orderNoteCtx ? orderNoteCtx.screeningComplete : null,
+    // Expose canonical screening requirement + case linkage (additive; sourced
+    // entirely from server-side canonical config/row — no frontend inference).
+    requiresScreening: isOrderNote && orderNoteCtx ? orderNoteCtx.requireScreening : false,
+    ancillaryCaseId: row.ancillaryCaseId ?? null,
     expectedEvidenceFingerprint: isOrderNote ? (row.evidenceFingerprint ?? null) : null,
     expectedScreeningVersion: isOrderNote && orderNoteCtx ? orderNoteCtx.currentScreeningVersion : null,
     id: row.id,

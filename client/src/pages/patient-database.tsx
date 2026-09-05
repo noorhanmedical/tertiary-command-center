@@ -8,7 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { VALID_FACILITIES } from "@shared/plexus";
 import {
   Loader2, Search, Database, Users, Building2, Clock, CheckCircle2,
   Upload, X, UserSearch, Plus, User as UserIcon, ChevronLeft, ChevronRight,
@@ -106,7 +111,25 @@ export default function PatientDatabasePage() {
   const [importText, setImportText] = useState("");
   const [addPatientOpen, setAddPatientOpen] = useState(false);
   const [addPatientText, setAddPatientText] = useState("");
+  const [addPatientFacility, setAddPatientFacility] = useState("");
   const [addPatientBusy, setAddPatientBusy] = useState(false);
+  // Two-step add flow: paste text -> Preview (parse) -> confirm popup -> commit.
+  type PreviewPatient = {
+    name: string;
+    dob: string | null;
+    gender: string | null;
+    phoneNumber: string | null;
+    email: string | null;
+    insurance: string | null;
+    diagnoses: string | null;
+    medications: string | null;
+    history: string | null;
+    notes: string | null;
+    confidence: "high" | "medium" | "low";
+  };
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewPatients, setPreviewPatients] = useState<PreviewPatient[]>([]);
+  const [previewCommitting, setPreviewCommitting] = useState(false);
 
   const PAGE_SIZE = 100;
   const rosterQuery = useInfiniteQuery<RosterResponse>({
@@ -333,28 +356,6 @@ export default function PatientDatabasePage() {
             {totalPatients} patient{totalPatients !== 1 ? "s" : ""}{loadedCount < totalPatients ? ` · showing ${loadedCount}` : ""}
           </p>
 
-          {/* Cooldown tiles (compact) */}
-          <div className="grid grid-cols-3 gap-2">
-            {([
-              { key: "1d" as const, label: "≤1 day", count: summaryQuery.data?.oneDay ?? 0, tone: "border-red-200 text-red-900 bg-red-50 dark:bg-red-900/20" },
-              { key: "1w" as const, label: "≤1 week", count: summaryQuery.data?.oneWeek ?? 0, tone: "border-amber-200 text-amber-900 bg-amber-50 dark:bg-amber-900/20" },
-              { key: "1m" as const, label: "≤1 month", count: summaryQuery.data?.oneMonth ?? 0, tone: "border-blue-200 text-blue-900 bg-blue-50 dark:bg-blue-900/20" },
-            ]).map((tile) => {
-              const active = windowFilter === tile.key;
-              return (
-                <button
-                  key={tile.key}
-                  onClick={() => setWindowFilter(active ? "" : tile.key)}
-                  className={`text-left rounded-lg border p-2 transition-all hover:shadow-sm ${tile.tone} ${active ? "ring-2 ring-offset-1 ring-slate-400" : ""}`}
-                  data-testid={`tile-cooldown-${tile.key}`}
-                >
-                  <div className="text-xl font-bold tabular-nums leading-none" data-testid={`text-cooldown-count-${tile.key}`}>{tile.count}</div>
-                  <div className="text-[10px] mt-1 opacity-80">{tile.label}</div>
-                </button>
-              );
-            })}
-          </div>
-
           {/* Search */}
           <div className="flex items-center gap-2">
             <Search className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -568,7 +569,7 @@ export default function PatientDatabasePage() {
       </Dialog>
 
       {/* Add Patient dialog */}
-      <Dialog open={addPatientOpen} onOpenChange={setAddPatientOpen}>
+      <Dialog open={addPatientOpen} onOpenChange={(v) => { setAddPatientOpen(v); if (!v) { setAddPatientText(""); setAddPatientFacility(""); } }}>
         <DialogContent className="sm:max-w-lg" data-testid="dialog-add-patient-ehr">
           <DialogHeader>
             <DialogTitle>Add Patient to Plexus EHR</DialogTitle>
@@ -577,6 +578,25 @@ export default function PatientDatabasePage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
+            <div>
+              <Label htmlFor="add-patient-facility" className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                Facility
+              </Label>
+              <Select value={addPatientFacility} onValueChange={setAddPatientFacility}>
+                <SelectTrigger
+                  id="add-patient-facility"
+                  className="mt-1 h-9"
+                  data-testid="select-add-patient-facility"
+                >
+                  <SelectValue placeholder="Select a facility…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {VALID_FACILITIES.map((f) => (
+                    <SelectItem key={f} value={f}>{f}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Textarea
               placeholder={"Example:\nTestguy Robot\nDOB: 1960-05-15\nM\nPhone: 555-000-1234\nInsurance: Medicare\nDx: Hypertension, Type 2 Diabetes, AFib, PAD\nMeds: Metformin 1000mg, Lisinopril 20mg, Warfarin 5mg, Cilostazol\nHx: Prior stroke 2022, CABG 2019\n\nOr just paste a free-form clinical note..."}
               value={addPatientText}
@@ -587,35 +607,155 @@ export default function PatientDatabasePage() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => { setAddPatientOpen(false); setAddPatientText(""); }}>Cancel</Button>
+            <Button variant="outline" size="sm" onClick={() => { setAddPatientOpen(false); setAddPatientText(""); setAddPatientFacility(""); }}>Cancel</Button>
             <Button
               size="sm"
-              disabled={!addPatientText.trim() || addPatientBusy}
+              disabled={!addPatientText.trim() || !addPatientFacility || addPatientBusy}
               onClick={async () => {
+                if (!addPatientFacility) {
+                  toast({ title: "Pick a facility", description: "Select which facility this patient belongs to.", variant: "destructive" });
+                  return;
+                }
                 setAddPatientBusy(true);
                 try {
-                  const resp = await apiRequest("POST", "/api/plexus-ehr/patients/parse-and-create", {
+                  const resp = await apiRequest("POST", "/api/plexus-ehr/patients/parse-preview", {
                     text: addPatientText,
                   });
                   const result = await resp.json();
-                  toast({ title: `Patient created: ${result.patient?.name ?? "Unknown"}` });
-                  setAddPatientOpen(false);
-                  setAddPatientText("");
-                  queryClient.invalidateQueries({ queryKey: ["/api/patients/database"] });
-                  // Navigate to the new patient
-                  if (result.patient?.id) {
-                    setLocation(`/patient-directory?patientId=${result.patient.id}`);
+                  const patients = Array.isArray(result.patients) ? result.patients : [];
+                  if (patients.length === 0) {
+                    toast({ title: "No patients found", description: "Couldn't detect any patient in the pasted text. Check the text and try again.", variant: "destructive" });
+                    return;
                   }
+                  setPreviewPatients(patients);
+                  setPreviewOpen(true);
                 } catch (err: any) {
-                  toast({ title: "Failed to create patient", description: err?.message ?? "Unknown error", variant: "destructive" });
+                  // AI unavailable / unusable — surface a clear message.
+                  const msg = err?.message ?? "Unknown error";
+                  toast({ title: "Couldn't parse automatically", description: `${msg}`, variant: "destructive" });
                 } finally {
                   setAddPatientBusy(false);
                 }
               }}
-              data-testid="button-add-patient-submit"
+              data-testid="button-add-patient-preview"
             >
-              {addPatientBusy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
-              Create Patient
+              {addPatientBusy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <UserSearch className="w-3 h-3 mr-1" />}
+              Preview Patients
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmation popup — review patients before they are added */}
+      <Dialog open={previewOpen} onOpenChange={(v) => { setPreviewOpen(v); if (!v) setPreviewPatients([]); }}>
+        <DialogContent className="sm:max-w-2xl" data-testid="dialog-add-patient-preview">
+          <DialogHeader>
+            <DialogTitle>
+              Review {previewPatients.length} patient{previewPatients.length === 1 ? "" : "s"} to add
+            </DialogTitle>
+            <DialogDescription>
+              These will be added to <span className="font-medium">{addPatientFacility || "the selected facility"}</span>. Review names and DOBs before confirming. You can edit a name or remove a row.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] overflow-y-auto space-y-2 py-1">
+            {previewPatients.map((p, idx) => (
+              <div key={idx} className="flex items-start gap-2 rounded-md border border-slate-200 p-2" data-testid={`preview-patient-row-${idx}`}>
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={p.name}
+                      onChange={(e) => setPreviewPatients((prev) => prev.map((x, i) => i === idx ? { ...x, name: e.target.value } : x))}
+                      className="h-8 text-sm font-medium"
+                      data-testid={`input-preview-name-${idx}`}
+                    />
+                    {p.confidence === "low" && (
+                      <Badge variant="outline" className="shrink-0 text-[10px] text-amber-600 border-amber-300">low confidence</Badge>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+                    <span>DOB:&nbsp;
+                      <Input
+                        value={p.dob ?? ""}
+                        placeholder="YYYY-MM-DD"
+                        onChange={(e) => setPreviewPatients((prev) => prev.map((x, i) => i === idx ? { ...x, dob: e.target.value || null } : x))}
+                        className="inline-block h-6 w-32 text-[11px]"
+                        data-testid={`input-preview-dob-${idx}`}
+                      />
+                    </span>
+                    {p.gender && <span>Sex: {p.gender}</span>}
+                    {p.phoneNumber && <span>Phone: {p.phoneNumber}</span>}
+                    {p.insurance && <span>Ins: {p.insurance}</span>}
+                    {p.diagnoses && <span className="w-full truncate">Dx: {p.diagnoses}</span>}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-slate-400 hover:text-red-500"
+                  onClick={() => setPreviewPatients((prev) => prev.filter((_, i) => i !== idx))}
+                  data-testid={`button-preview-remove-${idx}`}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            {previewPatients.length === 0 && (
+              <p className="py-6 text-center text-sm text-slate-500">All rows removed. Nothing to add.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => { setPreviewOpen(false); setPreviewPatients([]); }}>Back</Button>
+            <Button
+              size="sm"
+              disabled={previewCommitting || previewPatients.length === 0 || previewPatients.some((p) => !p.name.trim())}
+              onClick={async () => {
+                setPreviewCommitting(true);
+                let created = 0;
+                let firstId: number | null = null;
+                const failures: string[] = [];
+                for (const p of previewPatients) {
+                  try {
+                    const resp = await apiRequest("POST", "/api/plexus-ehr/patients", {
+                      name: p.name.trim(),
+                      dob: p.dob,
+                      gender: p.gender,
+                      phoneNumber: p.phoneNumber,
+                      email: p.email,
+                      insurance: p.insurance,
+                      diagnoses: p.diagnoses,
+                      medications: p.medications,
+                      history: p.history,
+                      notes: p.notes,
+                      facility: addPatientFacility,
+                    });
+                    const result = await resp.json();
+                    created += 1;
+                    if (firstId === null && result.patient?.id) firstId = result.patient.id;
+                  } catch (err: any) {
+                    failures.push(`${p.name}: ${err?.message ?? "error"}`);
+                  }
+                }
+                setPreviewCommitting(false);
+                queryClient.invalidateQueries({ queryKey: ["/api/patients/database"] });
+                if (created > 0) {
+                  toast({ title: `Added ${created} patient${created === 1 ? "" : "s"}${failures.length ? ` (${failures.length} failed)` : ""}` });
+                }
+                if (failures.length > 0) {
+                  toast({ title: `${failures.length} could not be added`, description: failures.slice(0, 3).join("; "), variant: "destructive" });
+                }
+                if (created > 0) {
+                  setPreviewOpen(false);
+                  setPreviewPatients([]);
+                  setAddPatientOpen(false);
+                  setAddPatientText("");
+                  setAddPatientFacility("");
+                  if (firstId !== null) setLocation(`/patient-directory?patientId=${firstId}`);
+                }
+              }}
+              data-testid="button-preview-confirm"
+            >
+              {previewCommitting ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+              Add {previewPatients.length} patient{previewPatients.length === 1 ? "" : "s"}
             </Button>
           </DialogFooter>
         </DialogContent>
