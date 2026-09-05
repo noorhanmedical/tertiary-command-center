@@ -69,6 +69,89 @@ function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.session?.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden — requires admin role" });
+  }
+  return next();
+}
+
+// ─── World Time image registry ──────────────────────────────────────────────
+// Backing store for the premium World Time card imagery + its approval state
+// machine. Runtime dashboard reads APPROVED images only; image discovery is an
+// admin/configuration workflow (never at render time). Stored as a single
+// JSON map under one settings key so no DB migration is required.
+const WORLD_TIME_IMAGES_SETTING_KEY = "world_time_images";
+
+type WorldTimeImageStatus =
+  | "no_image"
+  | "pending_approval"
+  | "approved"
+  | "rejected"
+  | "needs_replacement";
+
+type WorldTimeImageRecord = {
+  assetUrl: string;
+  landmarkName: string;
+  imagePosition: string;
+  sourceName?: string;
+  sourceReference?: string;
+  status: WorldTimeImageStatus;
+  proposedAt?: string;
+  proposedBy?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+};
+
+const wtSlugify = (label: string): string =>
+  label
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+// Seeded, pre-approved imagery for the currently-configured locations. These
+// are the operator-approved defaults; they render immediately and are only
+// overridden by explicit admin action persisted in the settings store.
+const DEFAULT_WORLD_TIME_IMAGES: Record<string, WorldTimeImageRecord> = {
+  arizona: { assetUrl: "/world-time/arizona.svg", landmarkName: "Sonoran Desert", imagePosition: "center 58%", status: "approved", approvedBy: "system", approvedAt: "2026-01-01T00:00:00.000Z" },
+  houston: { assetUrl: "/world-time/houston.svg", landmarkName: "Houston Skyline", imagePosition: "center 48%", status: "approved", approvedBy: "system", approvedAt: "2026-01-01T00:00:00.000Z" },
+  michigan: { assetUrl: "/world-time/michigan.svg", landmarkName: "Detroit Riverfront", imagePosition: "center 52%", status: "approved", approvedBy: "system", approvedAt: "2026-01-01T00:00:00.000Z" },
+  dhaka: { assetUrl: "/world-time/dhaka.svg", landmarkName: "Dhaka Skyline & Mosque", imagePosition: "center 45%", status: "approved", approvedBy: "system", approvedAt: "2026-01-01T00:00:00.000Z" },
+  manila: { assetUrl: "/world-time/manila.svg", landmarkName: "Manila Bay Skyline", imagePosition: "center 50%", status: "approved", approvedBy: "system", approvedAt: "2026-01-01T00:00:00.000Z" },
+};
+
+async function readWorldTimeRegistry(): Promise<Record<string, WorldTimeImageRecord>> {
+  const { getSetting } = await import("../dbSettings");
+  const merged: Record<string, WorldTimeImageRecord> = { ...DEFAULT_WORLD_TIME_IMAGES };
+  const raw = await getSetting(WORLD_TIME_IMAGES_SETTING_KEY);
+  if (raw) {
+    try {
+      const stored = JSON.parse(raw) as Record<string, WorldTimeImageRecord>;
+      // Stored entries win (admin edits/approvals override seeded defaults).
+      for (const [slug, rec] of Object.entries(stored)) merged[slug] = rec;
+    } catch {
+      /* corrupt value → fall back to seeded defaults */
+    }
+  }
+  return merged;
+}
+
+async function writeWorldTimeRegistry(reg: Record<string, WorldTimeImageRecord>): Promise<void> {
+  const { setSetting } = await import("../dbSettings");
+  await setSetting(WORLD_TIME_IMAGES_SETTING_KEY, JSON.stringify(reg));
+}
+
+const worldTimeImageProposalSchema = z.object({
+  assetUrl: z.string().trim().min(1).max(2048),
+  landmarkName: z.string().trim().min(1).max(120),
+  imagePosition: z.string().trim().max(40).optional(),
+  sourceName: z.string().trim().max(200).optional(),
+  sourceReference: z.string().trim().max(2048).optional(),
+});
+
 // Phone-provider default persistence. Org/facility scopes are admin-only;
 // team-member scope is the logged-in user's own preference.
 const phoneProviderSaveSchema = z.object({
@@ -272,6 +355,105 @@ export function registerSettingsRoutes(app: Express) {
       const key = userId ? worldClocksUserKey(userId) : WORLD_CLOCKS_SETTING_KEY;
       await setSetting(key, JSON.stringify(parsed.data.cities));
       res.json({ cities: parsed.data.cities });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─── World Time card imagery ──────────────────────────────────────────────
+  // Public (dashboard) read: returns each location's status but exposes the
+  // asset URL ONLY for APPROVED images. An unapproved/pending/rejected
+  // candidate can therefore never leak onto the production-facing card.
+  app.get("/api/settings/world-time/images", async (_req, res) => {
+    try {
+      const reg = await readWorldTimeRegistry();
+      const images: Record<string, unknown> = {};
+      for (const [slug, rec] of Object.entries(reg)) {
+        images[slug] =
+          rec.status === "approved"
+            ? {
+                status: rec.status,
+                landmarkName: rec.landmarkName,
+                imagePosition: rec.imagePosition,
+                assetUrl: rec.assetUrl,
+              }
+            : { status: rec.status, landmarkName: rec.landmarkName, imagePosition: rec.imagePosition };
+      }
+      res.json({ images });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin read: full registry INCLUDING pending candidate asset URLs, so the
+  // approval surface can render the exact production preview before approval.
+  app.get("/api/admin/world-time/images", requireAdmin, async (_req, res) => {
+    try {
+      res.json({ images: await readWorldTimeRegistry() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin propose/replace a candidate image for a location. Selecting/saving is
+  // NOT approval — this moves the record to PENDING_APPROVAL and records
+  // proposal audit metadata. The location's timezone card keeps working on the
+  // fallback gradient until an image is explicitly approved.
+  app.put("/api/admin/world-time/images/:id", requireAdmin, async (req, res) => {
+    try {
+      const id = wtSlugify(String(req.params.id ?? ""));
+      if (!id) return res.status(400).json({ error: "Invalid location id" });
+      const parsed = worldTimeImageProposalSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const reg = await readWorldTimeRegistry();
+      reg[id] = {
+        assetUrl: parsed.data.assetUrl,
+        landmarkName: parsed.data.landmarkName,
+        imagePosition: parsed.data.imagePosition || "center center",
+        sourceName: parsed.data.sourceName,
+        sourceReference: parsed.data.sourceReference,
+        status: "pending_approval",
+        proposedAt: new Date().toISOString(),
+        proposedBy: req.session?.userId ?? "unknown",
+      };
+      await writeWorldTimeRegistry(reg);
+      res.json({ id, record: reg[id] });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin APPROVE — the only action that makes an image operationally visible.
+  app.post("/api/admin/world-time/images/:id/approve", requireAdmin, async (req, res) => {
+    try {
+      const id = wtSlugify(String(req.params.id ?? ""));
+      const reg = await readWorldTimeRegistry();
+      const rec = reg[id];
+      if (!rec) return res.status(404).json({ error: "No image proposed for this location" });
+      rec.status = "approved";
+      rec.approvedAt = new Date().toISOString();
+      rec.approvedBy = req.session?.userId ?? "unknown";
+      reg[id] = rec;
+      await writeWorldTimeRegistry(reg);
+      res.json({ id, record: rec });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin REJECT — candidate stays unavailable; fallback gradient remains.
+  app.post("/api/admin/world-time/images/:id/reject", requireAdmin, async (req, res) => {
+    try {
+      const id = wtSlugify(String(req.params.id ?? ""));
+      const reg = await readWorldTimeRegistry();
+      const rec = reg[id];
+      if (!rec) return res.status(404).json({ error: "No image proposed for this location" });
+      rec.status = "rejected";
+      reg[id] = rec;
+      await writeWorldTimeRegistry(reg);
+      res.json({ id, record: rec });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

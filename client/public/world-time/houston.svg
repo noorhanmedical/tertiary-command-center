@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="160" viewBox="0 0 480 160" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Houston downtown skyline at dusk">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1533"/>
+      <stop offset="0.6" stop-color="#1b2a55"/>
+      <stop offset="1" stop-color="#324a86"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="160" fill="url(#sky)"/>
+  <!-- skyline, taller towers biased right -->
+  <g fill="#0a1330">
+    <rect x="150" y="96" width="26" height="64"/>
+    <rect x="182" y="80" width="22" height="80"/>
+    <rect x="210" y="104" width="28" height="56"/>
+    <rect x="244" y="70" width="26" height="90"/>
+    <rect x="276" y="88" width="20" height="72"/>
+    <!-- signature tapered tower -->
+    <path d="M306 56 L318 44 L330 56 L330 160 L306 160 Z"/>
+    <rect x="336" y="66" width="30" height="94"/>
+    <path d="M372 60 L386 48 L400 60 L400 160 L372 160 Z"/>
+    <rect x="406" y="84" width="24" height="76"/>
+    <rect x="436" y="98" width="26" height="62"/>
+    <rect x="112" y="110" width="22" height="50"/>
+    <rect x="80" y="120" width="20" height="40"/>
+  </g>
+  <!-- lit windows -->
+  <g fill="#5b8cff" opacity="0.5">
+    <rect x="250" y="82" width="3" height="5"/><rect x="258" y="94" width="3" height="5"/>
+    <rect x="312" y="72" width="3" height="5"/><rect x="320" y="92" width="3" height="5"/>
+    <rect x="344" y="80" width="3" height="5"/><rect x="352" y="100" width="3" height="5"/>
+    <rect x="380" y="76" width="3" height="5"/><rect x="388" y="96" width="3" height="5"/>
+  </g>
+</svg>

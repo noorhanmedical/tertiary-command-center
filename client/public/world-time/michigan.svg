@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="160" viewBox="0 0 480 160" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Detroit riverfront skyline">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a1730"/>
+      <stop offset="0.6" stop-color="#183050"/>
+      <stop offset="1" stop-color="#2b567a"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="160" fill="url(#sky)"/>
+  <!-- skyline with central cylindrical towers (RenCen-like), right-biased -->
+  <g fill="#0a1424">
+    <rect x="120" y="104" width="22" height="56"/>
+    <rect x="148" y="90" width="20" height="70"/>
+    <rect x="240" y="98" width="18" height="62"/>
+    <rect x="300" y="86" width="18" height="74"/>
+    <!-- central tall tower -->
+    <rect x="330" y="52" width="30" height="108" rx="4"/>
+    <circle cx="345" cy="52" r="15"/>
+    <!-- flanking round towers -->
+    <rect x="312" y="74" width="16" height="86" rx="8"/><circle cx="320" cy="74" r="8"/>
+    <rect x="362" y="74" width="16" height="86" rx="8"/><circle cx="370" cy="74" r="8"/>
+    <rect x="386" y="92" width="20" height="68"/>
+    <rect x="410" y="104" width="24" height="56"/>
+    <rect x="438" y="114" width="24" height="46"/>
+  </g>
+  <!-- river band + reflection -->
+  <rect y="138" width="480" height="22" fill="#0d1e33"/>
+  <g fill="#5b8cff" opacity="0.35">
+    <rect x="340" y="142" width="10" height="3"/><rect x="318" y="146" width="8" height="2"/>
+    <rect x="366" y="146" width="8" height="2"/><rect x="300" y="150" width="6" height="2"/>
+  </g>
+  <g fill="#5b8cff" opacity="0.5">
+    <rect x="341" y="66" width="3" height="6"/><rect x="349" y="80" width="3" height="6"/>
+    <rect x="304" y="94" width="3" height="5"/><rect x="392" y="100" width="3" height="5"/>
+  </g>
+</svg>
