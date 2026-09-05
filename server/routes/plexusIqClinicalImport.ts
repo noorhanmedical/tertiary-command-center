@@ -577,14 +577,12 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           })),
         );
         for (const err of identityBulk.errors) {
-          console.error(JSON.stringify({
-            level: "error",
-            source: "plexus_identity_integration",
+          errorPhiSafe("plexus_identity_integration_failed", {
             route: "POST /api/plexus-iq/clinical-import",
             screeningId: err.screeningId,
             code: err.code,
-            message: err.message,
-          }));
+            error: err.message,
+          });
           await recordScreeningIdentityLinkFailure({
             screeningId: err.screeningId,
             clinicId: (insertedRows.find((r) => r.id === err.screeningId)?.clinicId ?? null),

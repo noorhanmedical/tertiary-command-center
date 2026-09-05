@@ -48,6 +48,7 @@ import { getRequestId } from "../../middleware/requestObservability";
 import {
   classifyLogSafeProviderError,
   warnPhiSafe,
+  errorPhiSafe,
 } from "../../lib/phiSafeLogger";
 import { invalidatePatientDatabase } from "../../routes/patientDatabase";
 // Phase 2B — canonical ancillary-case reconciliation. No-op with
@@ -501,16 +502,12 @@ export async function addAdminReviewAncillary(
           actorUserId,
         });
       } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error(JSON.stringify({
-          level: "error",
-          source: "ancillary_case_reconciliation",
+        errorPhiSafe("ancillary_case_reconciliation_failed", {
           site: "adminReviewAddService",
-          patientId,
           serviceType: testName,
           code: (e as { code?: string })?.code,
-          message: (e as Error)?.message ?? String(e),
-        }));
+          error: (e as Error)?.message ?? String(e),
+        });
       }
     }
   }

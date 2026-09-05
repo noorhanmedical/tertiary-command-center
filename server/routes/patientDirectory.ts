@@ -28,6 +28,7 @@ import {
   getPatientDirectorySnapshot,
 } from "../services/patientDirectory/patientDirectoryService";
 import { createPatientDirectoryStorageDeps } from "../services/patientDirectory/patientDirectoryStorageDeps";
+import { startBatchAnalysis } from "../services/batchAnalysisRunner";
 import {
   classifyImportRows,
   detectSourceFields,
@@ -54,6 +55,7 @@ import {
   type ImportKind,
   type PendingImportPayload,
 } from "../services/patientDirectory/importSessions";
+import { errorPhiSafe } from "../lib/phiSafeLogger";
 
 export function registerPatientDirectoryRoutes(app: Express): void {
   if (!isPatientDirectoryActivationEnabled()) {
@@ -195,14 +197,12 @@ export function registerPatientDirectoryRoutes(app: Express): void {
         });
       } catch (e) {
         const errorCode = (e as { code?: string })?.code;
-        console.error(JSON.stringify({
-          level: "error",
-          source: "plexus_identity_integration",
+        errorPhiSafe("plexus_identity_integration_failed", {
           route: "POST /api/patient-directory",
           screeningId: result.patientScreeningId,
           code: errorCode,
-          message: (e as Error)?.message ?? String(e),
-        }));
+          error: (e as Error)?.message ?? String(e),
+        });
         await recordScreeningIdentityLinkFailure({
           screeningId: result.patientScreeningId,
           clinicId: (req as { clinicId?: number | null }).clinicId ?? null,
@@ -463,6 +463,39 @@ export function registerPatientDirectoryRoutes(app: Express): void {
         }
         created.push(patientScreeningId);
 
+        // Parse previousTests and create historical records
+        const previousTests = clinical?.previousTests;
+        const previousTestsDate = clinical?.previousTestsDate;
+        if (previousTests && typeof previousTests === 'string') {
+          // Parse previousTests: "BrainWave; VitalWave; Echo" or "BrainWave, VitalWave"
+          const testNames = previousTests
+            .split(/[;,]/)
+            .map(t => t.trim())
+            .filter(t => t.length > 0);
+          
+          const dateOfService = previousTestsDate || new Date().toISOString().slice(0, 10);
+          
+          for (const testName of testNames) {
+            try {
+              await addPriorTest(patientScreeningId, {
+                patientName: name,
+                testName,
+                dateOfService,
+                facility: row.identity?.facility ?? null,
+                source: "csv_import",
+                notes: `Imported from CSV on ${new Date().toISOString().slice(0, 10)}`,
+                actorUserId: actor,
+              });
+            } catch (e) {
+              errorPhiSafe("add_prior_test_failed", {
+                testName,
+                error: (e as Error)?.message ?? String(e),
+              });
+              // Don't fail the import if historical record creation fails
+            }
+          }
+        }
+
         // Phase 2A — shared identity orchestration. No-op with
         // FEATURE_PLEXUS_IDENTITY_WRITE=OFF. When ON, this links the
         // newly created screening to a global Plexus patient + clinic
@@ -485,14 +518,12 @@ export function registerPatientDirectoryRoutes(app: Express): void {
           });
         } catch (e) {
           const errorCode = (e as { code?: string })?.code;
-          console.error(JSON.stringify({
-            level: "error",
-            source: "plexus_identity_integration",
+          errorPhiSafe("plexus_identity_integration_failed", {
             route: "POST /api/patient-directory/import-confirm",
             screeningId: patientScreeningId,
             code: errorCode,
-            message: (e as Error)?.message ?? String(e),
-          }));
+            error: (e as Error)?.message ?? String(e),
+          });
           await recordScreeningIdentityLinkFailure({
             screeningId: patientScreeningId,
             clinicId: (req as { clinicId?: number | null }).clinicId ?? null,
@@ -542,7 +573,68 @@ export function registerPatientDirectoryRoutes(app: Express): void {
       if (hadPending) await setBatchPendingPayload(batchId, null);
       await syncImportBatchPatientCount(batchId);
 
-      res.json({ createdIds: created, linked, batchId, pending: false });
+      // Auto-qualify imported patients via Plexus IQ
+      // This runs the AI qualification logic on all newly imported patients
+      // and sets adminApprovalStatus='pending' for qualified patients so
+      // they appear in the Admin Review queue.
+      let qualificationJobId: number | null = null;
+      if (created.length > 0) {
+        try {
+          const qualifyResult = await startBatchAnalysis(batchId, actor, {});
+          qualificationJobId = qualifyResult.jobId;
+          
+          // After qualification completes, set adminApprovalStatus='pending'
+          // for patients with qualifyingTests.length > 0
+          // Note: This is fire-and-forget; the background job will handle it
+          void (async () => {
+            try {
+              // Poll for job completion (max 5 minutes)
+              const maxAttempts = 60; // 60 * 5s = 5 minutes
+              let attempts = 0;
+              let jobCompleted = false;
+              
+              while (attempts < maxAttempts && !jobCompleted) {
+                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+                const job = await storage.getActiveAnalysisJobByBatch(batchId);
+                if (!job || job.status === "completed" || job.status === "failed") {
+                  jobCompleted = true;
+                }
+                attempts++;
+              }
+              
+              // Set adminApprovalStatus='pending' for all qualified patients in this batch
+              if (jobCompleted) {
+                const patients = await storage.getPatientScreeningsByBatch(batchId);
+                for (const p of patients) {
+                  const hasQualification = Array.isArray(p.qualifyingTests) && p.qualifyingTests.length > 0;
+                  if (hasQualification && !p.adminApprovalStatus) {
+                    await storage.updatePatientScreening(p.id, {
+                      adminApprovalStatus: "pending",
+                    } as never);
+                  }
+                }
+              }
+            } catch (e) {
+              errorPhiSafe("auto_qualification_post_processing_failed", {
+                error: (e as Error)?.message ?? String(e),
+              });
+            }
+          })();
+        } catch (e) {
+          errorPhiSafe("auto_qualification_failed", {
+            error: (e as Error)?.message ?? String(e),
+          });
+          // Don't fail the import if qualification fails
+        }
+      }
+
+      res.json({ 
+        createdIds: created, 
+        linked, 
+        batchId, 
+        pending: false,
+        qualificationJobId 
+      });
     } catch (e: unknown) {
       res.status(500).json({ error: (e as Error)?.message ?? "import confirm failed" });
     }
