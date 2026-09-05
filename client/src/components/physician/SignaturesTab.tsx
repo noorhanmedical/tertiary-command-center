@@ -16,8 +16,17 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { PenLine, Undo2, AlertTriangle, FileWarning, Loader2, Eye } from "lucide-react";
+import { PenLine, Undo2, AlertTriangle, FileWarning, Loader2, Eye, Activity } from "lucide-react";
 import { CANONICAL_OVERVIEW_QUERY_KEY } from "./useCanonicalOverview";
+import { StatusPill } from "./ui/primitives";
+import { OrderNoteDocumentView } from "./OrderNoteDocumentView";
+import { CaseLifecycleDrawer, type CaseLifecycleTarget } from "./CaseLifecycleDrawer";
+import {
+  WORKLIST_FILTERS,
+  filterWorklist,
+  orderNoteStateLabel,
+  orderNoteStateTone,
+} from "./orderNoteLifecycle";
 
 interface SignatureItem {
   id: number;
@@ -40,17 +49,12 @@ interface SignatureItem {
   // Slice B-minimal / C — Order Note lifecycle state + version tokens.
   orderNotePortalState: string | null;
   screeningComplete: boolean | null;
+  // P1 additive canonical fields (server-sourced; no frontend inference).
+  requiresScreening: boolean;
+  ancillaryCaseId: number | null;
   expectedEvidenceFingerprint: string | null;
   expectedScreeningVersion: string | null;
 }
-
-const ORDER_NOTE_STATE_LABELS: Record<string, string> = {
-  awaiting_screening: "Awaiting Screening",
-  ready_for_review: "Ready for Review",
-  updated_review_required: "Updated — Review Required",
-  signed: "Signed",
-  pending: "Pending",
-};
 
 const SERVICE_TYPES = ["BrainWave", "VitalWave", "Ultrasound", "PGx"];
 const STATUS_LABELS: Record<string, string> = {
@@ -71,15 +75,21 @@ export function SignaturesTab() {
   const { toast } = useToast();
   const [serviceFilter, setServiceFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  // Canonical action-required worklist filter (client-side over the fetched
+  // items; server remains the source of truth for the data itself).
+  const [actionFilter, setActionFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [returnTarget, setReturnTarget] = useState<SignatureItem | null>(null);
   const [returnReason, setReturnReason] = useState("");
   const [busy, setBusy] = useState(false);
-  // Read-only "View Order Note" — fetches the current note body so the clinician
-  // reviews the patient-specific note before signing. No signature state here.
+  // Read-only "View Order Note" — fetches the current note so the clinician
+  // reviews the patient-specific structured document before signing. No
+  // signature state here.
   const [viewTarget, setViewTarget] = useState<SignatureItem | null>(null);
-  const [viewBody, setViewBody] = useState<string | null>(null);
+  const [viewNote, setViewNote] = useState<any | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
+  // Case Lifecycle drawer target (composes the canonical read endpoints).
+  const [caseTarget, setCaseTarget] = useState<CaseLifecycleTarget | null>(null);
 
   const queryParams = new URLSearchParams();
   if (serviceFilter !== "all") queryParams.set("serviceType", serviceFilter);
@@ -97,6 +107,8 @@ export function SignaturesTab() {
     },
   });
 
+  const visibleItems = useMemo(() => filterWorklist(items, actionFilter), [items, actionFilter]);
+
   const signableSelected = useMemo(
     () => items.filter((i) => selected.has(i.id) && i.signable).map((i) => i.id),
     [items, selected],
@@ -113,19 +125,35 @@ export function SignaturesTab() {
 
   async function openView(item: SignatureItem) {
     setViewTarget(item);
-    setViewBody(null);
+    setViewNote(null);
     setViewLoading(true);
     try {
       const res = await fetch(`/api/procedure-notes/${item.id}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load note");
       const note = await res.json();
-      setViewBody(note.generatedText ?? note.generated_text ?? "(no note body generated yet)");
+      setViewNote(note);
     } catch (e: any) {
-      setViewBody(null);
+      setViewNote(null);
       toast({ title: "Could not load note", description: e?.message ?? "", variant: "destructive" });
     } finally {
       setViewLoading(false);
     }
+  }
+
+  function openCase(item: SignatureItem) {
+    if (item.ancillaryCaseId == null) {
+      toast({ title: "No linked case", description: "This note is not linked to a canonical ancillary case yet." });
+      return;
+    }
+    setCaseTarget({
+      ancillaryCaseId: item.ancillaryCaseId,
+      patientScreeningId: item.patientScreeningId,
+      serviceType: item.serviceType,
+      patientName: item.patientName,
+      requiresScreening: item.requiresScreening,
+      screeningComplete: item.screeningComplete,
+      orderNotePortalState: item.orderNotePortalState,
+    });
   }
 
   async function signOne(item: SignatureItem) {
@@ -206,13 +234,23 @@ export function SignaturesTab() {
   }
 
   function toggleAll(checked: boolean) {
-    if (checked) setSelected(new Set(items.filter((i) => i.signable).map((i) => i.id)));
+    if (checked) setSelected(new Set(visibleItems.filter((i) => i.signable).map((i) => i.id)));
     else setSelected(new Set());
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
+        <Select value={actionFilter} onValueChange={setActionFilter}>
+          <SelectTrigger className="w-[220px]" data-testid="select-worklist-filter">
+            <SelectValue placeholder="Action required" />
+          </SelectTrigger>
+          <SelectContent>
+            {WORKLIST_FILTERS.map((f) => (
+              <SelectItem key={f.id} value={f.id} data-testid={`worklist-filter-${f.id}`}>{f.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={serviceFilter} onValueChange={setServiceFilter}>
           <SelectTrigger className="w-[180px]" data-testid="select-signature-service">
             <SelectValue placeholder="Service type" />
@@ -253,7 +291,7 @@ export function SignaturesTab() {
             <TableRow>
               <TableHead className="w-10">
                 <Checkbox
-                  checked={items.length > 0 && selected.size === items.filter((i) => i.signable).length && selected.size > 0}
+                  checked={visibleItems.length > 0 && selected.size === visibleItems.filter((i) => i.signable).length && selected.size > 0}
                   onCheckedChange={(c) => toggleAll(!!c)}
                   data-testid="checkbox-select-all"
                 />
@@ -261,6 +299,7 @@ export function SignaturesTab() {
               <TableHead>Patient</TableHead>
               <TableHead>Service</TableHead>
               <TableHead>Note</TableHead>
+              <TableHead>Order Note</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Flags</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -268,10 +307,10 @@ export function SignaturesTab() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-10 text-muted-foreground">Loading…</TableCell></TableRow>
-            ) : items.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-10 text-muted-foreground" data-testid="text-signatures-empty">No notes awaiting signature.</TableCell></TableRow>
-            ) : items.map((item) => (
+              <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground">Loading…</TableCell></TableRow>
+            ) : visibleItems.length === 0 ? (
+              <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground" data-testid="text-signatures-empty">No notes in this view.</TableCell></TableRow>
+            ) : visibleItems.map((item) => (
               <TableRow key={item.id} data-testid={`row-signature-${item.id}`}>
                 <TableCell>
                   <Checkbox
@@ -294,6 +333,17 @@ export function SignaturesTab() {
                 <TableCell><Badge variant="outline">{item.serviceType}</Badge></TableCell>
                 <TableCell className="text-sm text-muted-foreground">{item.noteType?.replace(/_/g, " ")}</TableCell>
                 <TableCell>
+                  {item.orderNotePortalState ? (
+                    <StatusPill
+                      label={orderNoteStateLabel(item.orderNotePortalState)}
+                      tone={orderNoteStateTone(item.orderNotePortalState)}
+                      testId={`order-note-state-${item.id}`}
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
                   <Badge variant={statusVariant(item.signatureStatus)} data-testid={`status-signature-${item.id}`}>
                     {STATUS_LABELS[item.signatureStatus] ?? item.signatureStatus}
                   </Badge>
@@ -310,6 +360,14 @@ export function SignaturesTab() {
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => openCase(item)}
+                      data-testid={`button-case-${item.id}`}
+                    >
+                      <Activity className="w-3.5 h-3.5 mr-1" />Case
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -368,25 +426,41 @@ export function SignaturesTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!viewTarget} onOpenChange={(o) => { if (!o) { setViewTarget(null); setViewBody(null); } }}>
+      <Dialog open={!!viewTarget} onOpenChange={(o) => { if (!o) { setViewTarget(null); setViewNote(null); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Order Note — {viewTarget?.patientName ?? "Patient"} · {viewTarget?.serviceType}</DialogTitle>
           </DialogHeader>
-          <div className="text-xs text-muted-foreground" data-testid="view-note-state">
-            Status: {ORDER_NOTE_STATE_LABELS[viewTarget?.orderNotePortalState ?? ""] ?? viewTarget?.orderNotePortalState ?? "—"}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="view-note-state">
+            <span>Status:</span>
+            {viewTarget?.orderNotePortalState ? (
+              <StatusPill
+                label={orderNoteStateLabel(viewTarget.orderNotePortalState)}
+                tone={orderNoteStateTone(viewTarget.orderNotePortalState)}
+              />
+            ) : "—"}
           </div>
           {viewLoading ? (
             <div className="py-8 text-center text-muted-foreground"><Loader2 className="w-4 h-4 mr-2 inline animate-spin" />Loading…</div>
           ) : (
-            <pre data-testid="view-note-body" className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md border bg-slate-50 p-3 text-sm text-slate-800">{viewBody ?? "(no note body)"}</pre>
+            <OrderNoteDocumentView
+              text={viewNote?.generatedText ?? viewNote?.generated_text ?? null}
+              testId="view-note-body"
+              audit={{
+                evidenceFingerprint: viewNote?.evidenceFingerprint,
+                evaluatedScreeningEvidenceVersion: viewNote?.evaluatedScreeningEvidenceVersion,
+                generatedByAi: viewNote?.generatedByAi,
+                signedAt: viewNote?.signedAt,
+                effectiveClinicalDate: viewNote?.effectiveClinicalDate,
+              }}
+            />
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setViewTarget(null); setViewBody(null); }} data-testid="button-close-view">Close</Button>
+            <Button variant="outline" onClick={() => { setViewTarget(null); setViewNote(null); }} data-testid="button-close-view">Close</Button>
             {viewTarget?.signable && (
               <Button
                 disabled={busy}
-                onClick={() => { const t = viewTarget; setViewTarget(null); setViewBody(null); if (t) void signOne(t); }}
+                onClick={() => { const t = viewTarget; setViewTarget(null); setViewNote(null); if (t) void signOne(t); }}
                 data-testid="button-view-sign"
               >
                 <PenLine className="w-3.5 h-3.5 mr-1" />Sign
@@ -395,6 +469,12 @@ export function SignaturesTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CaseLifecycleDrawer
+        target={caseTarget}
+        open={!!caseTarget}
+        onOpenChange={(o) => { if (!o) setCaseTarget(null); }}
+      />
     </div>
   );
 }

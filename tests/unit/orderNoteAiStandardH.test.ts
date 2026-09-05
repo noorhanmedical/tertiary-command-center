@@ -9,7 +9,8 @@ process.env.DATABASE_URL ??= "postgres://placeholder@localhost:5432/placeholder"
 import assert from "node:assert/strict";
 import { orderNoteServiceConfig, orderNoteServiceLabel } from "../../server/services/ancillaryDocuments/orderNoteServiceConfig";
 import { validateOrderNoteNarrative } from "../../server/services/ancillaryDocuments/orderNoteComplianceValidator";
-import { renderAiOrderNoteBody } from "../../server/services/ancillaryDocuments/orderNoteBody";
+import { renderAiOrderNoteBody, renderDeterministicOrderNoteBody } from "../../server/services/ancillaryDocuments/orderNoteBody";
+import { orderNoteRequiresStructuredScreening, procedureRequiresSignedOrderNote } from "../../server/services/ancillaryDocuments/orderNoteServiceConfig";
 import type { OrderNoteEvidenceBundle } from "../../server/services/ancillaryDocuments/orderNoteEvidenceBundle";
 import type { OrderNoteNarrative } from "../../server/services/ancillaryDocuments/orderNoteNarrativeAi";
 
@@ -164,6 +165,104 @@ test("renderer output contains NO ICD/CPT", () => {
   const r = renderAiOrderNoteBody(bundle(), goodNarrative);
   assert.ok(!/\b[A-TV-Z]\d[0-9A-Z](?:\.[0-9A-Z]{1,4})?\b/.test(r.text), "no ICD");
   assert.ok(!/\b\d{5}\b/.test(r.text), "no CPT");
+});
+
+// ── Deterministic renderer (shared canonical bundle) ──
+test("deterministic renderer produces standard sections incl. indication + necessity + order/plan + attestation", () => {
+  const r = renderDeterministicOrderNoteBody(bundle());
+  const headings = r.sections.map((s) => s.heading);
+  for (const h of ["PATIENT INFORMATION", "CLINICAL HISTORY / INDICATION", "MEDICAL NECESSITY / QUALIFICATION", "ORDER / PLAN", "ORDERING CLINICIAN ATTESTATION"]) {
+    assert.ok(headings.includes(h), `missing ${h}`);
+  }
+});
+test("deterministic renderer names patient/clinic/clinician + lists ordered components", () => {
+  const r = renderDeterministicOrderNoteBody(bundle());
+  assert.match(r.text, /Patient: Maria Lopez/);
+  assert.match(r.text, /Clinic: Taylor Family Practice/);
+  assert.match(r.text, /Ordering Clinician: Sarah Taylor, MD/);
+  const plan = r.sections.find((s) => s.heading === "ORDER / PLAN")!.body;
+  assert.match(plan, /Neuropsychological testing/);
+});
+test("deterministic renderer surfaces documented diagnosis + qualification factor in the indication", () => {
+  const r = renderDeterministicOrderNoteBody(bundle());
+  const ind = r.sections.find((s) => s.heading === "CLINICAL HISTORY / INDICATION")!.body;
+  assert.match(ind, /Hypertension/);
+  assert.match(ind, /memory difficulty/);
+});
+test("deterministic renderer OMITS supporting-evidence section when no labs/vitals/imaging/findings/screening exist", () => {
+  const b = bundle({ structuredScreening: null, labs: [], vitals: [], priorImaging: [], clinicalNotes: [], clinicianFindings: [] });
+  const r = renderDeterministicOrderNoteBody(b);
+  assert.ok(!r.sections.some((s) => s.heading === "SUPPORTING CLINICAL EVIDENCE"), "should omit empty supporting section");
+});
+test("deterministic renderer renders positive screening + abnormal lab in supporting evidence when present", () => {
+  const b = bundle({ labs: [{ factId: "lab_1", concept: "a1c", displayText: "A1c 9.1 % (ref 4-5.6) [high]", value: "9.1", date: "2026-08-01", sourceType: "patient_labs.Metabolic", sourceRecordId: "5", evidenceClass: "laboratory_result" }] });
+  const r = renderDeterministicOrderNoteBody(b);
+  const sup = r.sections.find((s) => s.heading === "SUPPORTING CLINICAL EVIDENCE");
+  assert.ok(sup, "supporting section present");
+  assert.match(sup!.body, /A1c 9\.1/);
+  assert.match(sup!.body, /Structured brainwave screening/i);
+});
+test("deterministic renderer bounds labs to a clinically-relevant subset (no chart dump)", () => {
+  const manyLabs = Array.from({ length: 40 }, (_, i) => ({
+    factId: `lab_${i}`, concept: `lab${i}`, displayText: `Lab${i} ${i}`, value: String(i), date: "2026-08-01",
+    sourceType: "patient_labs", sourceRecordId: String(i), evidenceClass: "laboratory_result" as const,
+  }));
+  const r = renderDeterministicOrderNoteBody(bundle({ labs: manyLabs }));
+  const sup = r.sections.find((s) => s.heading === "SUPPORTING CLINICAL EVIDENCE")!.body;
+  const labLines = sup.split("\n").filter((l) => /^• Laboratory:/.test(l));
+  assert.ok(labLines.length <= 5, `expected <=5 labs, got ${labLines.length}`);
+});
+test("deterministic renderer output contains NO ICD/CPT", () => {
+  const b = bundle({
+    labs: [{ factId: "lab_1", concept: "a1c", displayText: "A1c 9.1 % (ref 4-5.6) [high]", value: "9.1", date: null, sourceType: "patient_labs", sourceRecordId: "5", evidenceClass: "laboratory_result" }],
+    priorImaging: [{ factId: "img_1", concept: "brain mri", displayText: "Brain MRI — impression: chronic small-vessel ischemic changes", value: null, date: null, sourceType: "patient_imaging_studies", sourceRecordId: "9", evidenceClass: "prior_imaging_result" }],
+  });
+  const r = renderDeterministicOrderNoteBody(b);
+  assert.ok(!/\b[A-TV-Z]\d[0-9A-Z](?:\.[0-9A-Z]{1,4})?\b/.test(r.text), "no ICD");
+  assert.ok(!/\b\d{5}\b/.test(r.text), "no CPT");
+});
+test("deterministic renderer does not presume a result for the ordered study", () => {
+  const r = renderDeterministicOrderNoteBody(bundle());
+  const nec = r.sections.find((s) => s.heading === "MEDICAL NECESSITY / QUALIFICATION")!.body;
+  assert.match(nec, /No specific abnormal result or final diagnosis is presumed/);
+});
+
+// ── Config-driven screening requirement (NOT name-based) ──
+test("vascular/ultrasound services do NOT require structured screening (it is optional evidence)", () => {
+  for (const s of ["Bilateral Carotid Duplex", "Echocardiogram TTE", "Renal Artery Doppler", "Lower Extremity Arterial Doppler", "Lower Extremity Venous Duplex", "Some Unknown Study"]) {
+    assert.equal(orderNoteRequiresStructuredScreening(s), false, `${s} must not require screening`);
+  }
+});
+test("BrainWave/VitalWave DO require structured screening — declared by config, not name inference", () => {
+  assert.equal(orderNoteRequiresStructuredScreening("BrainWave"), true);
+  assert.equal(orderNoteRequiresStructuredScreening("VitalWave"), true);
+});
+
+// ── Procedure signed-order prerequisite (separate concept, config-driven) ──
+// CANONICAL RULE: a signed Order Note is the clinician authorization for the
+// procedure and is REQUIRED for ALL canonical ordered ancillary services.
+test("ALL canonical ordered services require a signed Order Note for the procedure — by config", () => {
+  for (const s of [
+    "BrainWave", "VitalWave", "Echocardiogram TTE", "Bilateral Carotid Duplex",
+    "Renal Artery Doppler", "Lower Extremity Arterial Doppler", "Lower Extremity Venous Duplex",
+  ]) {
+    assert.equal(procedureRequiresSignedOrderNote(s), true, `${s} must require a signed Order Note for the procedure`);
+  }
+});
+test("unmatched/other canonical ordered service also requires a signed Order Note (generic default)", () => {
+  // An Order Note is part of every canonical ordered ancillary lifecycle.
+  assert.equal(procedureRequiresSignedOrderNote("Upper Extremity Venous Duplex"), true);
+  assert.equal(procedureRequiresSignedOrderNote("Abdominal Aortic Aneurysm Duplex"), true);
+});
+test("structured-screening and signed-order prerequisites are SEPARATE concepts", () => {
+  // Screening is service-specific; signed-order is universal for ordered services.
+  const bw = orderNoteServiceConfig("BrainWave").requiredEvidence ?? {};
+  assert.equal(bw.structuredScreening, true);
+  assert.equal(bw.signedOrderNoteForProcedure, true);
+  const carotid = orderNoteServiceConfig("Bilateral Carotid Duplex").requiredEvidence ?? {};
+  // Carotid does NOT require screening, but DOES require a signed order.
+  assert.notEqual(carotid.structuredScreening, true);
+  assert.equal(carotid.signedOrderNoteForProcedure, true);
 });
 
 let failed = 0;

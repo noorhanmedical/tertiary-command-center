@@ -9,24 +9,21 @@ import {
   CANONICAL_STAGE_ORDER, CANONICAL_FINANCIAL_STAGE_KEYS,
   type CaseStageVector, type StageStatus, type CanonicalStageKey,
 } from "@shared/canonicalStageVector";
+import { serviceRequiresStructuredScreening } from "@shared/canonicalService";
+import { STAGE_LABELS, nextActionForCase, caseBlockers, type OperationalTone } from "./caseStageOperational";
 
-// A0-UI entry — BW/VW cases expose the structured screening workflow from the
-// real ACS case surface (no standalone navigation path).
-function isStructuredScreeningService(serviceType: string | null | undefined): boolean {
-  const s = (serviceType ?? "").toLowerCase();
-  return s.includes("brain") || s.includes("vital");
-}
-
-const STAGE_LABELS: Record<CanonicalStageKey, string> = {
-  adminReview: "Admin Review", engagement: "Engagement", appointment: "Appointment",
-  orderNote: "Order Note", procedure: "Procedure", report: "Report",
-  procedureNote: "Procedure Note", signature: "Signature",
-  billingReadiness: "Billing Readiness", billingDocument: "Billing Document",
-  claim: "Claim", invoice: "Invoice", payment: "Payment",
-};
 // Phase 2J financial stages render only when their 2J flag is ON. While
 // `upstream_flag_off` they are hidden, so with 2J OFF this surface is unchanged.
 const FINANCIAL_STAGES = new Set<CanonicalStageKey>(CANONICAL_FINANCIAL_STAGE_KEYS);
+
+// Tone → tailwind classes for the NEXT ACTION badge.
+const ACTION_TONE: Record<OperationalTone, string> = {
+  green: "bg-emerald-100 text-emerald-700",
+  amber: "bg-amber-100 text-amber-800",
+  blue: "bg-blue-100 text-blue-700",
+  red: "bg-rose-100 text-rose-700",
+  gray: "bg-slate-100 text-slate-600",
+};
 
 function fmt(ts: string | null): string {
   if (!ts) return "";
@@ -54,15 +51,21 @@ function StageCell({ label, s, testId }: { label: string; s: StageStatus; testId
   );
 }
 
-/** Render one episode's 10-stage vector + its deterministic currentStage. */
+/** Render one episode's 10-stage vector + its deterministic currentStage, the
+ *  explicit server-derived NEXT ACTION, and any canonical blockers. */
 export function StageVectorView({ v }: { v: CaseStageVector }) {
+  const action = nextActionForCase(v);
+  const blockers = caseBlockers(v);
+  // Screening deep-link decision uses the canonical alias-resolved service
+  // identity (never a service-name substring/regex).
+  const showScreeningLink = serviceRequiresStructuredScreening(v.serviceType);
   return (
     <div data-testid={`stage-vector-${v.ancillaryCaseId}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
         <span data-testid={`episode-case-${v.ancillaryCaseId}`} className="font-semibold text-slate-700">Case #{v.ancillaryCaseId}</span>
         <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-700">{v.serviceType}</span>
         {v.lifecycleStatus && <span className="text-slate-500">{v.lifecycleStatus}</span>}
-        {isStructuredScreeningService(v.serviceType) && (
+        {showScreeningLink && (
           <Link
             href={`/ancillary-screening/${v.ancillaryCaseId}`}
             data-testid={`screening-link-${v.ancillaryCaseId}`}
@@ -75,6 +78,32 @@ export function StageVectorView({ v }: { v: CaseStageVector }) {
           {v.currentStage ? `current: ${STAGE_LABELS[v.currentStage]}` : v.currentStageIntegrity === "conflicting" ? "current: (integrity)" : "current: —"}
         </span>
       </div>
+
+      {/* Explicit NEXT ACTION — the server-decided currentStage rendered as a
+          human instruction (never a client-recomputed lifecycle decision). */}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Next action</span>
+        <span data-testid={`next-action-${v.ancillaryCaseId}`} className={`rounded px-1.5 py-0.5 text-xs font-medium ${ACTION_TONE[action.tone]}`}>
+          {action.label}
+        </span>
+      </div>
+
+      {blockers.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1" data-testid={`blockers-${v.ancillaryCaseId}`}>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Blockers</span>
+          {blockers.map((b, i) => (
+            <span
+              key={`${b.source}-${b.code}-${i}`}
+              data-testid={`blocker-${v.ancillaryCaseId}-${b.code}`}
+              className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] text-rose-700"
+              title={`${b.source} blocker`}
+            >
+              {b.code.replace(/_/g, " ")}{b.count > 1 ? ` ×${b.count}` : ""}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
         {CANONICAL_STAGE_ORDER.filter((k) => {
           if (!FINANCIAL_STAGES.has(k)) return true;                 // core stages always render
