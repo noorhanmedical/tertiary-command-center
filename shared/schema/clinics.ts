@@ -20,6 +20,11 @@ export const clinics = pgTable("clinics", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
+  // Owning organization (access-control Phase 1). NULLABLE + no inline FK
+  // reference in the ORM to avoid a circular import (organizations lives in
+  // access.ts which imports clinics). The FK is declared in the SQL migration.
+  // Backfilled so every existing clinic belongs to the Default Organization.
+  organizationId: integer("organization_id"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   // Pre-existing live columns (declared so the ORM is aware of them).
   timezone: text("timezone").default("America/Chicago"),

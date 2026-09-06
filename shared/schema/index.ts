@@ -25,6 +25,10 @@ export * from "./appSettings";
 export * from "./session";
 export * from "./clinics";
 export * from "./users";
+// Plexus OS Access Control (Phase 1) — organizations, roles, permissions,
+// role_permissions, user_roles, user_permission_overrides, user_organizations,
+// user_clinics, role/user service access. Additive; migration 0079.
+export * from "./access";
 export * from "./screening";
 export * from "./patientHistory";
 export * from "./notes";
