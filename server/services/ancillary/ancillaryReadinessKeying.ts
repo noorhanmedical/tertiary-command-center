@@ -30,6 +30,7 @@ export type ResolutionScope = "service" | "category";
 export type IndexableReadinessRow = {
   executionCaseId?: number | null;
   patientScreeningId?: number | null;
+  ancillaryCaseId?: number | null;
   serviceType?: string | null;
   documentType: string;
   metadata?: unknown;
@@ -49,9 +50,11 @@ export function svcKey(raw: string | null | undefined): string {
   return resolveCanonicalServiceType(raw ?? "").toLowerCase();
 }
 
-/** Reads the durable per-occurrence id (patient_ancillary_cases.id) that the
- *  write path stamps into the readiness row's metadata, when present. */
-export function readinessRowAncillaryCaseId(r: { metadata?: unknown }): number | null {
+/** Reads the durable per-occurrence id (patient_ancillary_cases.id). Prefers the
+ *  canonical `ancillary_case_id` column (migration 0081); falls back to the id
+ *  the legacy write path stamped into metadata.ancillaryCaseId for older rows. */
+export function readinessRowAncillaryCaseId(r: { ancillaryCaseId?: number | null; metadata?: unknown }): number | null {
+  if (typeof r.ancillaryCaseId === "number" && Number.isFinite(r.ancillaryCaseId)) return r.ancillaryCaseId;
   const meta = (r.metadata ?? null) as Record<string, unknown> | null;
   const v = meta?.ancillaryCaseId;
   return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -64,17 +67,21 @@ export function consentScopeForCategory(category: string): ResolutionScope {
 }
 
 /**
- * The persistence uniqueness tuple the write path (portalCaseReadiness.ts
- * upsertReadiness) keys on TODAY. Exposed so tests can document precisely which
- * distinct occurrences collapse onto a single persisted row. This is NOT
- * ancillaryCaseId-aware — that is the known limitation.
+ * The persistence uniqueness tuple the write path (portalCaseReadiness.ts /
+ * documentReadiness.ts upsert) keys on. Occurrence-aware since migration 0081:
+ * the canonical occurrence id (ancillary_case_id) participates in the key, so
+ * two occurrences of the same service on one execution case get DISTINCT keys
+ * and are persisted as independent readiness rows (no collapse). Occurrence-
+ * less (legacy) rows use a null occurrence segment and keep single-occurrence
+ * behavior.
  */
 export function readinessUpsertKey(row: {
   executionCaseId?: number | null;
+  ancillaryCaseId?: number | null;
   serviceType?: string | null;
   documentType: string;
 }): string {
-  return `${row.executionCaseId ?? "null"}:${svcKey(row.serviceType)}:${row.documentType}`;
+  return `${row.executionCaseId ?? "null"}:${row.ancillaryCaseId ?? "null"}:${svcKey(row.serviceType)}:${row.documentType}`;
 }
 
 /**
@@ -123,9 +130,14 @@ export function resolveReadinessRow<T extends IndexableReadinessRow>(
   const cat = getAncillaryCategory(row.serviceType ?? "");
   const svc = svcKey(row.serviceType);
   if (scope === "service") {
+    // Occurrence-scoped (P0, migration 0081): when the row being resolved
+    // carries a canonical occurrence id, ONLY that occurrence's readiness row
+    // may satisfy it. Do NOT fall back to the occurrence-agnostic
+    // execution-case/screening service key — a sibling occurrence's completion
+    // (same execution case + same service, different ancillary_case_id) would
+    // otherwise leak in and mark a distinct occurrence complete.
     if (row.ancillaryCaseId != null) {
-      const exact = index.get(`ac:${row.ancillaryCaseId}:${svc}:${docType}`);
-      if (exact) return exact;
+      return index.get(`ac:${row.ancillaryCaseId}:${svc}:${docType}`);
     }
     if (row.executionCaseId != null) {
       return index.get(`ecs:${row.executionCaseId}:${svc}:${docType}`);

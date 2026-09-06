@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import {
@@ -74,6 +74,10 @@ function resolveServiceType(
 async function upsertReadiness(params: {
   executionCaseId: number;
   patientScreeningId: number | null;
+  /** Canonical procedure OCCURRENCE id (patient_ancillary_cases.id). When
+   *  supplied, readiness is keyed to THIS occurrence so two occurrences of the
+   *  same service on one execution case never collide (migration 0081). */
+  ancillaryCaseId?: number | null;
   patientName: string | null;
   patientDob: string | null;
   facilityId: string | null;
@@ -84,6 +88,10 @@ async function upsertReadiness(params: {
   uploadedByUserId?: string | null;
   metadata?: Record<string, unknown>;
 }) {
+  // Occurrence-aware dedup: with an occurrence id, match ONLY that occurrence's
+  // row; without one, match ONLY legacy NULL-occurrence rows so an occurrence-
+  // keyed row is never overwritten by an occurrence-less write (and vice versa).
+  const occurrenceId = params.ancillaryCaseId ?? null;
   const [existing] = await db
     .select()
     .from(caseDocumentReadiness)
@@ -92,6 +100,9 @@ async function upsertReadiness(params: {
         eq(caseDocumentReadiness.executionCaseId, params.executionCaseId),
         eq(caseDocumentReadiness.serviceType, params.serviceType),
         eq(caseDocumentReadiness.documentType, params.documentType),
+        occurrenceId != null
+          ? eq(caseDocumentReadiness.ancillaryCaseId, occurrenceId)
+          : isNull(caseDocumentReadiness.ancillaryCaseId),
       ),
     )
     .limit(1);
@@ -114,6 +125,7 @@ async function upsertReadiness(params: {
   }
   return createCaseDocumentReadiness({
     executionCaseId: params.executionCaseId,
+    ancillaryCaseId: occurrenceId ?? undefined,
     patientScreeningId: params.patientScreeningId ?? undefined,
     patientName: params.patientName ?? undefined,
     patientDob: params.patientDob ?? undefined,
@@ -252,6 +264,7 @@ export function registerPortalCaseReadinessRoutes(app: Express) {
 
         const row = await upsertReadiness({
           executionCaseId,
+          ancillaryCaseId: parsed.data.ancillaryCaseId ?? null,
           patientScreeningId: ec.patientScreeningId ?? null,
           patientName: ec.patientName,
           patientDob: ec.patientDob ?? null,
@@ -353,6 +366,7 @@ export function registerPortalCaseReadinessRoutes(app: Express) {
 
         const row = await upsertReadiness({
           executionCaseId,
+          ancillaryCaseId: bodyAncillaryCaseId ?? null,
           patientScreeningId: ec.patientScreeningId ?? null,
           patientName: ec.patientName,
           patientDob: ec.patientDob ?? null,

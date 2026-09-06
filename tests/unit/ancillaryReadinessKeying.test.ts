@@ -106,14 +106,13 @@ check("2: VitalWave consent isolated by ancillaryCaseId within same case", () =>
   const c301: ResolvableAncillaryRow = { executionCaseId: 30, ancillaryCaseId: 301, serviceType: "VitalWave" };
   const c302: ResolvableAncillaryRow = { executionCaseId: 30, ancillaryCaseId: 302, serviceType: "VitalWave" };
   assert.equal(consentState(rows, c301), "complete");
-  // 302 prefers ac:302 (absent) then falls back to ecs:<30> which resolves to
-  // the SAME persisted row → complete. This documents that TRUE per-occurrence
-  // isolation for same-service/same-case depends on TWO persisted rows existing
-  // (see the persistence-limitation test below).
+  // FIXED (migration 0081 + resolver): 302 carries an occurrence id, so it is
+  // resolved ONLY by ac:302 (absent) and NEVER falls back to the occurrence-
+  // agnostic executionCase+service key. 301's row can no longer leak into 302.
   assert.equal(
     consentState(rows, c302),
-    "complete",
-    "fallback to executionCase+serviceType makes 302 resolve the 301 row when only one row exists",
+    "missing",
+    "occurrence 302 has no row of its own → missing (no fallback to 301's row)",
   );
 
   // When BOTH occurrences have their own stamped readiness rows (the resolver's
@@ -170,12 +169,12 @@ check("6: BrainWave report isolation depends on distinct persisted rows", () => 
   const bw801: ResolvableAncillaryRow = { executionCaseId: 80, ancillaryCaseId: 801, serviceType: "BrainWave" };
   const bw802: ResolvableAncillaryRow = { executionCaseId: 80, ancillaryCaseId: 802, serviceType: "BrainWave" };
   assert.equal(stateOf(rows, bw801, BRAINWAVE_PDF, "service"), "complete");
-  // KNOWN LIMITATION: with only ONE persisted row (executionCase+serviceType),
-  // 802 falls back to ecs:<80> and resolves 801's row → complete.
+  // FIXED (migration 0081 + resolver): 802 is resolved ONLY by ac:802 (absent),
+  // never falling back to 801's occurrence-agnostic row → correctly missing.
   assert.equal(
     stateOf(rows, bw802, BRAINWAVE_PDF, "service"),
-    "complete",
-    "single persisted row is shared via executionCase+serviceType fallback",
+    "missing",
+    "occurrence 802 has no row of its own → missing (no executionCase+service fallback)",
   );
   // With two distinct stamped rows, resolution is isolated:
   const rows2 = [
@@ -246,25 +245,28 @@ check("10: cross-category / cross-service completions never satisfy each other",
   assert.equal(stateOf(rows, carotidOcc, REPORT, "service"), "missing", "Echo report must not satisfy Carotid report");
 });
 
-// ── LIMITATION: same executionCase + same serviceType + same docType,
-//    different ancillaryCaseId — can the PERSISTENCE layer hold two rows? ────
-check("LIMITATION: write-path upsert key collapses two same-service occurrences", () => {
-  // The write path (portalCaseReadiness.ts upsertReadiness) upserts on
-  // (executionCaseId, serviceType, documentType) — NOT ancillaryCaseId. So two
-  // BrainWave occurrences in one execution case produce the SAME upsert key and
-  // cannot be persisted as two independent readiness rows.
-  const occA = { executionCaseId: 900, serviceType: "BrainWave", documentType: REPORT };
-  const occB = { executionCaseId: 900, serviceType: "BrainWave", documentType: REPORT };
-  assert.equal(
+// ── FIXED: same executionCase + same serviceType + same docType, DIFFERENT
+//    ancillaryCaseId — the occurrence-aware upsert key keeps them distinct ────
+check("FIXED: occurrence-aware upsert key isolates two same-service occurrences", () => {
+  // Migration 0081 + the occurrence-aware writers key readiness on the canonical
+  // occurrence id (ancillary_case_id). Two BrainWave occurrences in one
+  // execution case now produce DISTINCT upsert keys → two independent rows.
+  const occA = { executionCaseId: 900, ancillaryCaseId: 901, serviceType: "BrainWave", documentType: REPORT };
+  const occB = { executionCaseId: 900, ancillaryCaseId: 902, serviceType: "BrainWave", documentType: REPORT };
+  assert.notEqual(
     readinessUpsertKey(occA),
     readinessUpsertKey(occB),
-    "same executionCase+service+docType → identical upsert key → single persisted row (occurrence B overwrites A)",
+    "distinct ancillaryCaseId → distinct upsert key → independent persisted rows",
   );
-  // Distinct services DO get distinct upsert keys (why the Echo/Carotid report
-  // isolation in test 5 works today without a schema change).
+  // The SAME occurrence maps to the SAME key (idempotent upsert for one occurrence).
+  assert.equal(
+    readinessUpsertKey(occA),
+    readinessUpsertKey({ executionCaseId: 900, ancillaryCaseId: 901, serviceType: "BrainWave", documentType: REPORT }),
+  );
+  // Distinct services still get distinct keys.
   assert.notEqual(
-    readinessUpsertKey({ executionCaseId: 900, serviceType: "Echocardiogram TTE", documentType: REPORT }),
-    readinessUpsertKey({ executionCaseId: 900, serviceType: "Bilateral Carotid Duplex", documentType: REPORT }),
+    readinessUpsertKey({ executionCaseId: 900, ancillaryCaseId: 901, serviceType: "Echocardiogram TTE", documentType: REPORT }),
+    readinessUpsertKey({ executionCaseId: 900, ancillaryCaseId: 902, serviceType: "Bilateral Carotid Duplex", documentType: REPORT }),
   );
 });
 

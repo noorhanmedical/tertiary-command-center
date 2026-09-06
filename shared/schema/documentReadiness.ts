@@ -1,5 +1,5 @@
 import {
-  sql, pgTable, serial, text, varchar, boolean, integer, timestamp, jsonb, index,
+  sql, pgTable, serial, text, varchar, boolean, integer, timestamp, jsonb, index, uniqueIndex,
   createInsertSchema, z,
 } from "./_common";
 import { users } from "./users";
@@ -73,6 +73,12 @@ export const caseDocumentReadiness = pgTable("case_document_readiness", {
   // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
   clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   executionCaseId: integer("execution_case_id").references(() => patientExecutionCases.id, { onDelete: "set null" }),
+  // Canonical procedure OCCURRENCE id (patient_ancillary_cases.id). Makes
+  // readiness occurrence-aware so two occurrences of the same service on one
+  // execution case never share a readiness row. Nullable: legacy/single-
+  // occurrence rows keep the execution_case + service + document_type key. No
+  // inline FK ref (the FK lives in migration 0081) to avoid a circular import.
+  ancillaryCaseId: integer("ancillary_case_id"),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   patientName: text("patient_name"),
   patientDob: text("patient_dob"),
@@ -91,6 +97,12 @@ export const caseDocumentReadiness = pgTable("case_document_readiness", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_cdr_execution_case_id").on(table.executionCaseId),
+  index("idx_cdr_ancillary_case_id").on(table.ancillaryCaseId),
+  // One readiness row per (execution case, OCCURRENCE, service, doc type) for
+  // occurrence-keyed rows only. Legacy NULL-occurrence rows are unaffected.
+  uniqueIndex("uq_cdr_occurrence")
+    .on(table.executionCaseId, table.ancillaryCaseId, table.serviceType, table.documentType)
+    .where(sql`ancillary_case_id IS NOT NULL`),
   index("idx_cdr_patient_screening_id").on(table.patientScreeningId),
   index("idx_cdr_facility_id").on(table.facilityId),
   index("idx_cdr_service_type").on(table.serviceType),
