@@ -62,6 +62,10 @@ const { procedureEvents } = await import("@shared/schema/procedureEvents");
 const { procedureNotes } = await import("@shared/schema/generatedNotes");
 const { globalPlexusPatients, patientClinicMemberships } = await import("@shared/schema/plexusIdentity");
 const { patientAncillaryCases } = await import("@shared/schema/ancillaryCases");
+const { caseDocumentReadiness } = await import("@shared/schema/documentReadiness");
+const { ancillaryDocumentReferences } = await import("@shared/schema/ancillaryDocuments");
+const { canonicalBillingReadinessChecks } = await import("@shared/schema/billingReadiness");
+const { computeCurrentOrderNoteFingerprint } = await import("../../server/services/ancillaryDocuments/orderNoteFreshness");
 const peRoutes = await import("../../server/routes/procedureEvents");
 
 const CLINIC_A = 1;
@@ -113,6 +117,9 @@ const created = {
   globalPatients: [] as number[],
   procedureEvents: [] as number[],
   notes: [] as number[],
+  readiness: [] as number[],
+  docRefs: [] as number[],
+  billingChecks: [] as number[],
 };
 
 let failures = 0;
@@ -177,7 +184,32 @@ async function seedCase(serviceType: string, clinicianName: string) {
   } as typeof procedureNotes.$inferInsert).returning({ id: procedureNotes.id });
   created.notes.push(order.id);
 
-  return { gppId: gpp.id, screeningId: ps.id, execCaseId: ec.id, ancillaryCaseId: ac.id, orderNoteId: order.id, patientName: `${TAG}_pt_${serviceType}` };
+  // Canonical report evidence — the second of the two Procedure Note conditions
+  // (procedure complete AND current report). A readiness source row + a
+  // non-superseded 'report' document reference pointing at it.
+  const [readiness] = await db.insert(caseDocumentReadiness).values({
+    clinicId: CLINIC_A, executionCaseId: ec.id, patientScreeningId: ps.id,
+    serviceType, documentType: "report", documentStatus: "uploaded",
+    patientName: `${TAG}_pt_${serviceType}`,
+  } as typeof caseDocumentReadiness.$inferInsert).returning({ id: caseDocumentReadiness.id });
+  created.readiness.push(readiness.id);
+
+  const [ref] = await db.insert(ancillaryDocumentReferences).values({
+    clinicId: CLINIC_A, executionCaseId: ec.id, ancillaryCaseId: ac.id,
+    globalPlexusPatientId: gpp.id, documentKind: "report",
+    sourceTable: "case_document_readiness", sourceId: readiness.id,
+    serviceType, documentStatus: "uploaded",
+  } as typeof ancillaryDocumentReferences.$inferInsert).returning({ id: ancillaryDocumentReferences.id });
+  created.docRefs.push(ref.id);
+
+  // Make the signed Order Note provably FRESH (fingerprint === current) so the
+  // generator's freshness backstop does not block note generation.
+  const fp = await computeCurrentOrderNoteFingerprint({ clinicId: CLINIC_A, ancillaryCaseId: ac.id });
+  if (fp != null) {
+    await db.update(procedureNotes).set({ evidenceFingerprint: fp } as never).where(eq(procedureNotes.id, order.id));
+  }
+
+  return { gppId: gpp.id, screeningId: ps.id, execCaseId: ec.id, ancillaryCaseId: ac.id, orderNoteId: order.id, reportReadinessId: readiness.id, patientName: `${TAG}_pt_${serviceType}` };
 }
 
 // ICD-10 (e.g. G93.1, I10) + CPT (5-digit) detectors for note ICD/CPT-free assertion.
@@ -240,6 +272,14 @@ async function runServiceLifecycle(
   check(`${label}: completion committed a procedure event`, eventId > 0);
   check(`${label}: completion resolved THIS ancillary case`, firstBody?.ancillaryCaseId === c.ancillaryCaseId);
   console.log(`     note lifecycle status = ${firstBody?.status ?? "?"} (noteId=${firstBody?.procedureNoteId ?? "none"})`);
+  // Two-condition flow satisfied (complete + current report) → the canonical
+  // Procedure Note is created/reused (never "waiting_for_report" here).
+  check(
+    `${label}: Procedure Note generated on completion`,
+    firstBody?.status === "completed_note_created" || firstBody?.status === "completed_note_reused",
+    firstBody?.status,
+  );
+  if (firstBody?.procedureNoteId && !created.notes.includes(firstBody.procedureNoteId)) created.notes.push(firstBody.procedureNoteId);
 
   // 4. Canonical event now reads `complete` (clinic-scoped list + by-id).
   {
@@ -317,12 +357,40 @@ async function runServiceLifecycle(
     const order = notes.find((n) => n.noteType === "order_note");
     const proc = notes.find((n) => n.noteType === "post_procedure_note");
     assertNoCodes(`${label} Order Note`, order?.generatedText ?? null);
+    // Completion CREATES + links the canonical Procedure Note to the exact
+    // procedure event, keeps it UNSIGNED (signing is Clinician-Portal-only), and
+    // NEVER fabricates a body. In this harness there is no uploaded report
+    // byte-store (report file upload is out of scope for this pass), so the
+    // readiness projection reports the report source as "missing" and the
+    // generator FAILS CLOSED (report_content_unavailable, empty body,
+    // generatedByAi=false) — the required "never fabricate findings" guarantee.
+    check(`${label}: a canonical Procedure Note row exists`, !!proc, firstBody?.status);
     if (proc) {
-      assertNoCodes(`${label} Procedure Note`, proc.generatedText ?? null);
-      check(`${label}: Procedure Note references THIS procedure event`, proc.procedureEventId === eventId || proc.procedureEventId == null);
-    } else {
-      console.log(`     (no canonical Procedure Note row persisted — lifecycle status ${firstBody?.status})`);
+      check(`${label}: Procedure Note references THIS procedure event`, proc.procedureEventId === eventId);
+      check(`${label}: Procedure Note is UNSIGNED (signing stays in Clinician Portal)`, proc.signatureStatus !== "signed");
+      check(`${label}: Procedure Note not machine-authored`, proc.generatedByAi === false);
+      const body = proc.generatedText ?? "";
+      // Either a real rendered body (ICD/CPT-free) OR a fail-closed empty body —
+      // never a fabricated body. Whatever body exists must be ICD/CPT-free.
+      assertNoCodes(`${label} Procedure Note`, body);
+      const failedClosed = proc.generationStatus === "failed" && body.length === 0;
+      const generatedClean = (proc.generationStatus === "generated" || proc.generationStatus === "approved") && body.length > 0;
+      check(`${label}: Procedure Note is generated-clean OR fail-closed (no fabrication)`, failedClosed || generatedClean, `gs=${proc.generationStatus} len=${body.length} err=${proc.errorMessage}`);
+      if (failedClosed) check(`${label}: fail-closed reason is report_content_unavailable`, proc.errorMessage === "report_content_unavailable", String(proc.errorMessage));
     }
+  }
+
+  // 11. Billing readiness (section H) — completion is a billing-eligibility
+  //     boundary; a canonical readiness check must have been evaluated for the
+  //     case. It is NOT expected to be fully "ready" (physician signature is a
+  //     Clinician-Portal-only step outside ACS), so we verify evaluation ran
+  //     and report its truthful status.
+  {
+    const rows = await db.select().from(canonicalBillingReadinessChecks).where(eq(canonicalBillingReadinessChecks.ancillaryCaseId, c.ancillaryCaseId));
+    for (const r of rows) if (!created.billingChecks.includes(r.id)) created.billingChecks.push(r.id);
+    check(`${label}: canonical billing readiness evaluated`, rows.length >= 1, `rows=${rows.length}`);
+    const latest = rows[rows.length - 1];
+    if (latest) console.log(`     billing readiness = ${latest.canonicalStatus ?? latest.readinessStatus} (blockers=${JSON.stringify(latest.billingBlockers ?? latest.missingRequirements)})`);
   }
 }
 
@@ -364,7 +432,16 @@ try {
   );
 } finally {
   // Cleanup — children first (FK-safe).
+  // Completion side-effects also write readiness/billing rows keyed by
+  // executionCaseId (not captured in the id ledgers) — sweep those too.
+  try { if (created.execCases.length) await db.delete(canonicalBillingReadinessChecks).where(inArray(canonicalBillingReadinessChecks.executionCaseId, created.execCases)); } catch (e) { console.error("cleanup billing by ec", e); }
+  try { if (created.billingChecks.length) await db.delete(canonicalBillingReadinessChecks).where(inArray(canonicalBillingReadinessChecks.id, created.billingChecks)); } catch (e) { console.error("cleanup billing", e); }
+  try { if (created.ancillaryCases.length) await db.delete(ancillaryDocumentReferences).where(inArray(ancillaryDocumentReferences.ancillaryCaseId, created.ancillaryCases)); } catch (e) { console.error("cleanup docrefs by ac", e); }
+  try { if (created.docRefs.length) await db.delete(ancillaryDocumentReferences).where(inArray(ancillaryDocumentReferences.id, created.docRefs)); } catch (e) { console.error("cleanup docrefs", e); }
+  try { if (created.execCases.length) await db.delete(caseDocumentReadiness).where(inArray(caseDocumentReadiness.executionCaseId, created.execCases)); } catch (e) { console.error("cleanup readiness by ec", e); }
+  try { if (created.readiness.length) await db.delete(caseDocumentReadiness).where(inArray(caseDocumentReadiness.id, created.readiness)); } catch (e) { console.error("cleanup readiness", e); }
   try { if (created.procedureEvents.length) await db.delete(procedureEvents).where(inArray(procedureEvents.id, created.procedureEvents)); } catch (e) { console.error("cleanup pe", e); }
+  try { if (created.ancillaryCases.length) await db.delete(procedureNotes).where(inArray(procedureNotes.ancillaryCaseId, created.ancillaryCases)); } catch (e) { console.error("cleanup notes by ac", e); }
   try { if (created.notes.length) await db.delete(procedureNotes).where(inArray(procedureNotes.id, created.notes)); } catch (e) { console.error("cleanup notes", e); }
   try { if (created.ancillaryCases.length) await db.delete(patientAncillaryCases).where(inArray(patientAncillaryCases.id, created.ancillaryCases)); } catch (e) { console.error("cleanup ac", e); }
   try { if (created.execCases.length) await db.delete(patientExecutionCases).where(inArray(patientExecutionCases.id, created.execCases)); } catch (e) { console.error("cleanup ec", e); }
