@@ -20,6 +20,10 @@ import {
 } from "../repositories/documentLibraryLegacy.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import {
+  isImmutableClinicalDocument,
+  IMMUTABLE_CLINICAL_DOCUMENT_ERROR,
+} from "../services/documents/clinicalDocumentImmutability";
+import {
   type Document,
   DOCUMENT_KINDS,
   DOCUMENT_SIGNATURE_REQUIREMENTS,
@@ -529,6 +533,15 @@ function mountRoutes(app: Express, basePath: string) {
       if (oldDoc.supersededByDocumentId !== null) {
         return res.status(409).json({ error: "Document is already superseded" });
       }
+      // P0 — a signed per-patient clinical record is immutable. It may not be
+      // superseded in place; corrections are a NEW record (preserving the
+      // original + its audit trail). Templates (no patientScreeningId) are
+      // freely versionable and unaffected.
+      if (isImmutableClinicalDocument(oldDoc)) {
+        return res
+          .status(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.status)
+          .json(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.body);
+      }
       if (!req.file) return res.status(400).json({ error: "file is required" });
 
       const contentType: string = req.file.mimetype || "application/octet-stream";
@@ -772,6 +785,13 @@ function mountRoutes(app: Express, basePath: string) {
         return res.status(409).json({
           error: "Cannot delete a superseded version. Delete the current version instead.",
         });
+      }
+      // P0 — a signed per-patient clinical record is immutable and cannot be
+      // deleted through the ordinary admin route (templates are unaffected).
+      if (isImmutableClinicalDocument(doc)) {
+        return res
+          .status(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.status)
+          .json(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.body);
       }
       await storage.softDeleteDocument(id);
       res.status(204).end();
