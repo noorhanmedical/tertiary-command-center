@@ -75,4 +75,16 @@ export const qk = {
   marketingMaterials: {
     all: () => ["/api/marketing-materials"] as const,
   },
+  access: {
+    users: (filtersKey: string) => ["/api/access/users", filtersKey] as const,
+    user: (id: string) => ["/api/access/users", id, "detail"] as const,
+    organizations: () => ["/api/access/organizations"] as const,
+    organization: (id: number) => ["/api/access/organizations", id] as const,
+    clinics: () => ["/api/access/clinics"] as const,
+    roles: () => ["/api/access/roles"] as const,
+    role: (key: string) => ["/api/access/roles", key] as const,
+    permissions: () => ["/api/access/permissions"] as const,
+    services: () => ["/api/access/services"] as const,
+    audit: () => ["/api/access/audit"] as const,
+  },
 } as const;
