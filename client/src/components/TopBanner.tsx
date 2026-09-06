@@ -217,27 +217,19 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
       </div>
       <div className="relative h-full px-6 flex items-center justify-between">
         <div className="flex items-center">
-          <img
-            src="/plexus-logo.png"
-            alt="Plexus Clinical"
-            className="h-10 w-auto object-contain"
-            data-testid="img-banner-logo"
-          />
+          <span
+            className="text-2xl font-light tracking-tight text-white"
+            style={{ textShadow: "0 1px 8px rgba(0,0,0,0.4)" }}
+            data-testid="text-banner-brand"
+          >
+            Plexus OS
+          </span>
         </div>
 
         <div className="flex items-center gap-2">
-          {user && !onHome && (
-            <Link
-              href="/home"
-              className="inline-flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-white/15 border border-white/15 hover:border-white/25 px-3 py-1 text-[12px] font-medium text-white transition-colors"
-              data-testid="link-banner-home"
-              aria-label="Back to Home"
-              title="Back to Home"
-            >
-              <Home className="w-3.5 h-3.5" />
-              <span>Home</span>
-            </Link>
-          )}
+          {/* Contextual "Home" back-link removed: the persistent GlobalNav
+              and WorkspaceTabBar now own navigation, so the structural header
+              stays stable across workspace changes instead of mutating. */}
           {user && (
             <>
               <span
