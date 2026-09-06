@@ -132,20 +132,37 @@ if (!trayTabsMatch) {
     );
   }
 
-  // §5 — dialog offers exactly two tray-tab SelectItem values.
-  const dialogOptions = Array.from(
-    dialog.matchAll(/<SelectItem\s+value="([^"]+)">[^<]+<\/SelectItem>/g),
-  ).map((m) => m[1]);
-  const dialogTrayValues = dialogOptions.filter((v) =>
-    ["patients", "direct", "team"].includes(v),
+  // §5 — the dialog's tray-tab dropdown offers exactly two values: direct + team.
+  //
+  // CANONICAL IMPLEMENTATION NOTE: the Team Portal "Workspace Settings" dialog
+  // is built entirely on the portal Sketch design system (SketchDialog /
+  // SketchSelect), NOT the shadcn Select/SelectItem primitives — every dropdown
+  // in it (default left tab, tray tab, calendar behavior, playground layout)
+  // renders as a native <option> inside <SketchSelect>. This assertion therefore
+  // validates the REAL element, scoped to the tray-tab select
+  // (data-testid="setting-default-tray-tab"), rather than a stale <SelectItem>
+  // matcher. The functional contract is unchanged and still locked: exactly
+  // "direct" + "team", never "patients".
+  const trayBlockMatch = dialog.match(
+    /data-testid="setting-default-tray-tab"[\s\S]*?<\/SketchSelect>/,
   );
-  for (const required of ["direct", "team"]) {
-    if (!dialogTrayValues.includes(required)) {
-      fail(`§5 WorkspaceSettingsDialog missing SelectItem value="${required}"`);
+  if (!trayBlockMatch) {
+    fail(`§5 WorkspaceSettingsDialog tray-tab select (setting-default-tray-tab) not found`);
+  } else {
+    const dialogTrayValues = Array.from(
+      trayBlockMatch[0].matchAll(/<option\s+value="([^"]+)">/g),
+    ).map((m) => m[1]);
+    for (const required of ["direct", "team"]) {
+      if (!dialogTrayValues.includes(required)) {
+        fail(`§5 WorkspaceSettingsDialog tray-tab missing option value="${required}"`);
+      }
     }
-  }
-  if (dialogTrayValues.includes("patients")) {
-    fail(`§5 WorkspaceSettingsDialog still exposes Patient Messages`);
+    if (dialogTrayValues.includes("patients")) {
+      fail(`§5 WorkspaceSettingsDialog tray-tab still exposes Patient Messages`);
+    }
+    if (dialogTrayValues.length !== 2) {
+      fail(`§5 WorkspaceSettingsDialog tray-tab has ${dialogTrayValues.length} options (expected exactly 2)`);
+    }
   }
 
   // §6 — flushPersist wiring.
