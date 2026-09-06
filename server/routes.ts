@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db, pool } from "./db";
+import { requirePermission, legacyRequireAdmin } from "./middleware/accessControl";
+import { registerAccessAdminRoutes } from "./routes/accessAdmin";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
@@ -159,30 +161,60 @@ export async function registerRoutes(
   // Error responses use the standard `{ error }` shape (see middleware/errorHandler.ts).
   const { z } = await import("zod");
   const loginSchema = z.object({
-    username: z.string().min(1, "Username is required"),
+    // `username` carries either a work email (preferred) or a legacy username.
+    // Kept as `username` for backward field compatibility with existing clients.
+    username: z.string().min(1, "Work email or username is required"),
     password: z.string().min(1, "Password is required"),
+    // Presentation-only UI hint from the login screen. NON-AUTHORITATIVE:
+    // it never grants privileges; authorization is decided from the access
+    // context. Recorded only for auditing which login surface was used.
+    adminMode: z.boolean().optional(),
   });
+
+  const { resolveAccessContext } = await import("./services/access/accessContextService");
 
   app.post("/api/auth/login", async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      // Keep validation errors generic; never reveal which field/account failed.
+      return res.status(400).json({ error: "Invalid work email or password" });
     }
-    const { username, password } = parsed.data;
-    const user = await storage.validateUserPassword(username, password);
+    const { username: identifier, password, adminMode } = parsed.data;
+    // Resolve by email (case-insensitive) OR username, then verify password.
+    const user = await storage.validateUserPasswordByIdentifier(identifier, password);
+    // Uniform 401 for BOTH unknown identifier and bad password — never disclose
+    // whether an account (or an administrator account) exists.
     if (!user) {
-      return res.status(401).json({ error: "Invalid username or password" });
+      return res.status(401).json({ error: "Invalid work email or password" });
     }
-    if (user.active === false) {
-      return res.status(403).json({ error: "This account has been deactivated. Contact your administrator." });
+    // Per-request account-state gate. Do NOT leak that the account exists but is
+    // disabled — return the same generic message as a bad credential.
+    const status = (user.status ?? (user.active ? "active" : "inactive"));
+    if (user.active === false || status !== "active") {
+      return res.status(401).json({ error: "Invalid work email or password" });
     }
+
+    // Session stores IDENTITY only. `role`/`clinicId` remain for legacy
+    // middleware compatibility but are NOT authoritative — authorization is
+    // resolved from the DB-derived access context on every request.
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.role = user.role;
-    // Store clinicId in session so clinicContext middleware can populate req.clinicId.
-    // Admin role ignores this value (clinicContext forces null for admins).
     req.session.clinicId = user.clinicId ?? null;
-    return res.json({ id: user.id, username: user.username, role: user.role, clinicId: user.clinicId ?? null });
+
+    // Best-effort last-login stamp; never block login on it.
+    storage.touchUserLastLogin(user.id).catch(() => { /* non-fatal */ });
+
+    // Note the login surface for audit (Administrator Access vs Team Access).
+    // This is a UI hint only and confers nothing.
+    if (adminMode) {
+      console.log(`[auth] login via Administrator Access surface: user=${user.id}`);
+    }
+
+    // Return the authoritative access context so the client can route to the
+    // correct workspace. This is the SAME resolver used by /api/auth/context.
+    const ctx = await resolveAccessContext(user.id);
+    return res.json(ctx);
   });
 
   app.post("/api/auth/logout", (req, res) => {
@@ -192,11 +224,66 @@ export async function registerRoutes(
     });
   });
 
-  app.get("/api/auth/me", (req, res) => {
+  // DB-backed current-user. Re-reads authoritative state EVERY call so a role
+  // change or a deactivation takes effect immediately — a disabled user with a
+  // live session is rejected here without needing to log out first.
+  //
+  // BACKWARD-COMPATIBLE SHAPE: the existing client + ~20 components read
+  // { id, username, role, clinicId } off this endpoint. We keep that contract
+  // (sourcing `role`/`clinicId` authoritatively from the DB user, NOT the
+  // session) and additively include the richer access-context fields
+  // (roles[], permissions[], scope, serviceAccess, defaultWorkspace) so new
+  // code can migrate to them without a second round-trip. Frontend guard
+  // rework to permissions is a later phase.
+  app.get("/api/auth/me", async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
-    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician", clinicId: req.session.clinicId ?? null });
+    const ctx = await resolveAccessContext(req.session.userId);
+    if (!ctx || !ctx.isActive) {
+      // User gone or deactivated/suspended mid-session → revoke immediately.
+      req.session.destroy(() => {});
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+    // Legacy `role`/`clinicId`: source from the DB-fresh access context (the
+    // current users row), NOT the session. This ensures a changed legacy role
+    // or clinic takes effect without requiring re-login. The session copies
+    // remain only for legacy backend middleware during the transition; they
+    // are no longer what the frontend receives. Authoritative authority is
+    // ctx.roles / ctx.permissions (Phase 3 will enforce those server-side).
+    const legacyRole = ctx.legacyRole ?? "clinician";
+    const legacyClinicId = ctx.legacyClinicId ?? null;
+    return res.json({
+      // legacy contract
+      id: ctx.id,
+      username: ctx.username,
+      role: legacyRole,
+      clinicId: legacyClinicId,
+      // additive access-context fields
+      email: ctx.email,
+      displayName: ctx.displayName,
+      jobTitle: ctx.jobTitle,
+      accountStatus: ctx.accountStatus,
+      roles: ctx.roles,
+      permissions: ctx.permissions,
+      scope: ctx.scope,
+      serviceAccess: ctx.serviceAccess,
+      defaultWorkspace: ctx.defaultWorkspace,
+    });
+  });
+
+  // Full access context (identity + roles + effective permissions + scope +
+  // service access + default workspace). Same authoritative resolver as /me.
+  app.get("/api/auth/context", async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+    const ctx = await resolveAccessContext(req.session.userId);
+    if (!ctx || !ctx.isActive) {
+      req.session.destroy(() => {});
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+    return res.json(ctx);
   });
 
   // ─── /api/healthz — pool telemetry (exempt from auth, debug-friendly) ────
@@ -253,7 +340,12 @@ export async function registerRoutes(
   app.use("/api", requireAuth);
 
   // ─── Audit log query endpoints ─────────────────────────────────────────────
-  app.get("/api/audit-log", async (req, res) => {
+  // Phase 3: security-sensitive. Migrated to require the `platform.audit.view`
+  // permission. Legacy fallback (enforcement OFF) tightens the previously
+  // UNGATED endpoint to admin-only via session.role. NOTE: this returns the
+  // full cross-tenant audit trail; organization-scoped audit is a Phase 4 gap
+  // (do not fake it with platform.audit.view).
+  app.get("/api/audit-log", requirePermission("platform.audit.view", { legacy: legacyRequireAdmin }), async (req, res) => {
     try {
       const { userId, entityType, fromDate, toDate, limit } = req.query as Record<string, string | undefined>;
       const logs = await storage.getAuditLogs({
@@ -269,7 +361,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/audit-log/users", async (_req, res) => {
+  app.get("/api/audit-log/users", requirePermission("platform.audit.view", { legacy: legacyRequireAdmin }), async (_req, res) => {
     try {
       const users = await storage.getAllUsers();
       res.json(users.map((u) => ({ id: u.id, username: u.username })));
@@ -279,6 +371,8 @@ export async function registerRoutes(
   });
 
   // ─── Domain route registrations ────────────────────────────────────────────
+  // Phase 4A — access-management control plane (Settings backend).
+  registerAccessAdminRoutes(app);
   registerTestHistoryRoutes(app);
   registerPatientReferenceRoutes(app);
   registerGeneratedNotesRoutes(app);
@@ -443,7 +537,7 @@ export async function registerRoutes(
   // middleware so they are cheap and unauthenticated for the load balancer.
 
   // ─── User management (admin-only) ─────────────────────────────────────────
-  app.get("/api/users", requireAdmin, async (_req, res) => {
+  app.get("/api/users", requirePermission("users.view", { platform: true, legacy: legacyRequireAdmin }), async (_req, res) => {
     const allUsers = await storage.getAllUsers();
     return res.json(allUsers.map((u) => ({ id: u.id, username: u.username, role: u.role })));
   });
@@ -462,7 +556,7 @@ export async function registerRoutes(
     newPassword: z.string().min(1),
   });
 
-  app.post("/api/users", requireAdmin, async (req, res) => {
+  app.post("/api/users", requirePermission("users.manage", { platform: true, legacy: legacyRequireAdmin }), async (req, res) => {
     const parsed = createUserSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
@@ -476,7 +570,7 @@ export async function registerRoutes(
     return res.status(201).json({ id: user.id, username: user.username, role: user.role });
   });
 
-  app.delete("/api/users/:id", requireAdmin, async (req, res) => {
+  app.delete("/api/users/:id", requirePermission("users.manage", { platform: true, legacy: legacyRequireAdmin }), async (req, res) => {
     const { id } = req.params;
     if (id === req.session.userId) {
       return res.status(400).json({ error: "Cannot delete your own account" });
@@ -485,7 +579,7 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  app.patch("/api/users/:id/deactivate", requireAdmin, async (req, res) => {
+  app.patch("/api/users/:id/deactivate", requirePermission("users.manage", { platform: true, legacy: legacyRequireAdmin }), async (req, res) => {
     const { id } = req.params;
     if (id === req.session.userId) {
       return res.status(400).json({ error: "You cannot deactivate your own account" });
@@ -528,7 +622,7 @@ export async function registerRoutes(
   // + engagement_call_settings.active) but NEVER resurrects historical ownership
   // — the user starts with an empty live queue and receives new work via the
   // normal distribution path. Team memberships / coverage history stand as-is.
-  app.patch("/api/users/:id/reactivate", requireAdmin, async (req, res) => {
+  app.patch("/api/users/:id/reactivate", requirePermission("users.manage", { platform: true, legacy: legacyRequireAdmin }), async (req, res) => {
     const { id } = req.params;
     const target = await storage.getUser(String(id));
     if (!target) return res.status(404).json({ error: "User not found" });
@@ -555,7 +649,7 @@ export async function registerRoutes(
     return res.json({ ok: true, eligibility });
   });
 
-  app.patch("/api/users/:id/role", requireAdmin, async (req, res) => {
+  app.patch("/api/users/:id/role", requirePermission("users.manage", { platform: true, legacy: legacyRequireAdmin }), async (req, res) => {
     const parsed = roleUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: `Invalid role. Must be one of: ${USER_ROLES.join(", ")}` });
