@@ -21,6 +21,7 @@ import type { AuthUser } from "@/App";
 import { TopBanner } from "@/components/TopBanner";
 import { GlobalNav } from "@/components/GlobalNav";
 import { GlobalDock } from "@/components/dock";
+import { WorkspaceTabBar } from "@/components/workspace/WorkspaceTabBar";
 import { isAdminWorkspaceRoute } from "@/lib/navigation/workspaceRegistry";
 
 export function PlexusAdminShell({
@@ -41,6 +42,13 @@ export function PlexusAdminShell({
       {/* One app-level dock. On Team Portal routes it self-suppresses via
           DockOwnershipContext so the portal's owned dock is the only one. */}
       <GlobalDock />
+      {/* Persistent application-level workspace tab strip. Full main-app width,
+          directly beneath the TopBanner and above the GlobalNav + content row.
+          Self-hides when no workspace tabs are open (e.g. on Home). Gated on
+          adminRoute so it never appears on any non-admin shell surface; Team
+          Portal routes never mount this shell at all, so they are already
+          isolated. */}
+      {adminRoute && <WorkspaceTabBar />}
       <div className="flex flex-1 min-h-0 min-w-0">
         {adminRoute && <GlobalNav user={user} onLogout={onLogout} />}
         <div className="flex flex-col flex-1 min-w-0 min-h-0">
