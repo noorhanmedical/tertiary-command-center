@@ -219,6 +219,7 @@ export function SchedulePatientPlayground({
         instanceId,
         serviceType: row.serviceType ?? "Ancillary",
         executionCaseId: row.executionCaseId ?? null,
+        ancillaryCaseId: row.ancillaryCaseId ?? null,
         patientScreeningId: row.patientScreeningId ?? null,
         readiness: row.readiness ?? null,
         startsAt: row.startsAt ?? null,

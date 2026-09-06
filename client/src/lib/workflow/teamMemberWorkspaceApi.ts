@@ -62,6 +62,11 @@ export type TeamWorkspaceAncillaryAppointment = {
   assignedUserId?: string | null;
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
+  /** Durable per-service ancillary occurrence id (patient_ancillary_cases.id).
+   *  Present once the canonical ancillary-case flag/migration is live; null in
+   *  the pre-canonical world. Used as the preferred identity for per-occurrence
+   *  readiness ownership and threaded into the doc workflows. */
+  ancillaryCaseId?: number | null;
   readiness?: AncillaryReadinessSummary | null;
 };
 
@@ -424,6 +429,50 @@ export async function fetchWorkspaceCallList(
     });
   }
   return out;
+}
+
+// Call List BADGE count — reuses the SAME server filter as the call list
+// (/api/scheduler-portal/cases/count) so the badge and the visible queue can
+// never disagree. `facilityId` omitted → All Clinics (authorized set).
+export async function fetchWorkspaceCallListCount(
+  params: { facilityId?: string | null; date?: string | null; viewAsTeamMemberId?: string | null; workspace?: "pcs" | "acs" | null } = {},
+): Promise<number> {
+  const qs = new URLSearchParams();
+  appendIf(qs, "facilityId", params.facilityId);
+  appendIf(qs, "date", params.date);
+  appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
+  appendIf(qs, "workspace", params.workspace);
+  const url = `/api/scheduler-portal/cases/count${qs.toString() ? `?${qs}` : ""}`;
+  try {
+    const body = await fetchJson<{ count?: number }>(url);
+    return typeof body?.count === "number" ? body.count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Multi-clinic scope for the current team member: authorized clinics +
+// per-clinic PCS/ACS capability (from facility-scoped teams).
+export type ClinicCapability = { pcs: boolean; acs: boolean };
+export type TeamPortalClinicScope = {
+  authorizedFacilities: string[];
+  perClinicCapability: Record<string, ClinicCapability>;
+  hasTeamCapability: boolean;
+  globalWorkspaceType: "patientCareSpecialist" | "ancillaryCareSpecialist" | null;
+};
+
+export async function fetchTeamPortalClinicScope(): Promise<TeamPortalClinicScope> {
+  try {
+    const body = await fetchJson<TeamPortalClinicScope>("/api/portal/clinic-scope");
+    return {
+      authorizedFacilities: Array.isArray(body?.authorizedFacilities) ? body.authorizedFacilities : [],
+      perClinicCapability: body?.perClinicCapability ?? {},
+      hasTeamCapability: !!body?.hasTeamCapability,
+      globalWorkspaceType: body?.globalWorkspaceType ?? null,
+    };
+  } catch {
+    return { authorizedFacilities: [], perClinicCapability: {}, hasTeamCapability: false, globalWorkspaceType: null };
+  }
 }
 
 // ADMIN VIEW-AS — list of team members the admin observer can select
