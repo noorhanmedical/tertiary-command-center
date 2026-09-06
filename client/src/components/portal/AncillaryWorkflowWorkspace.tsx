@@ -3,9 +3,9 @@
 //
 // Design language (matches the Plexus IQ "Team Access" login): navy typography
 // and controls on the winter background, frosted-glass tiles that FLOAT on the
-// page — no wrapper container tiles. The single service in view sets a subtle
-// accent HINT (purple = BrainWave, red = VitalWave, green = Ultrasound); navy
-// stays the base everywhere else.
+// page — no wrapper container tiles. Service identity is expressed ONLY through
+// a slow "smoke" hover atmosphere (purple = BrainWave, burgundy = VitalWave,
+// emerald = Ultrasound); the icon, title, status, and buttons stay navy.
 //
 // It composes existing canonical pieces — it does NOT introduce new writers or
 // duplicate qualification/document logic. Status is read from the canonical
@@ -17,7 +17,7 @@
 // schedule event id / phone, which live in the Team Portal shell and are NOT
 // threaded here — so they are intentionally NOT rendered (no dead buttons).
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties, type MouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   FileSignature,
@@ -73,7 +73,7 @@ type ScreeningEvidence = {
   reasoning: Record<string, unknown> | null;
 };
 
-// ── Service accent (HINT only — navy is the base everywhere else) ────────────
+// ── Service identity ─────────────────────────────────────────────────────────
 type Accent = "purple" | "red" | "green";
 
 function accentForService(service: string): Accent {
@@ -83,32 +83,19 @@ function accentForService(service: string): Accent {
   return "green"; // ultrasound + vascular / cardiac studies
 }
 
-// Static Tailwind class strings per accent (kept static so the JIT sees them).
-const ACCENT_CLASS: Record<
-  Accent,
-  { icon: string; chip: string; ring: string; label: string; statusChip: string }
-> = {
-  purple: {
-    icon: "text-violet-700",
-    chip: "bg-violet-500/15",
-    ring: "ring-violet-300",
-    label: "text-violet-800",
-    statusChip: "bg-violet-500/15 text-violet-800 ring-1 ring-violet-300",
-  },
-  red: {
-    icon: "text-rose-700",
-    chip: "bg-rose-500/15",
-    ring: "ring-rose-300",
-    label: "text-rose-800",
-    statusChip: "bg-rose-500/15 text-rose-800 ring-1 ring-rose-300",
-  },
-  green: {
-    icon: "text-emerald-700",
-    chip: "bg-emerald-500/15",
-    ring: "ring-emerald-300",
-    label: "text-emerald-800",
-    statusChip: "bg-emerald-500/15 text-emerald-800 ring-1 ring-emerald-300",
-  },
+// Space-separated RGB triplets fed to the smoke layers via the --smoke prop.
+// Refined / muted (no neon): plum violet, wine burgundy, forest emerald.
+const SMOKE_RGB: Record<Accent, string> = {
+  purple: "129 74 158",
+  red: "150 45 60",
+  green: "38 112 84",
+};
+
+// Why-Qualified label keeps a small service-accent tint (dark/saturated).
+const ACCENT_LABEL: Record<Accent, string> = {
+  purple: "text-violet-800",
+  red: "text-rose-800",
+  green: "text-emerald-800",
 };
 
 // Map the stored reasoning entry for ONE service into the EmrQualifyingTest
@@ -139,21 +126,21 @@ function splitList(s: string | null | undefined): string[] {
 
 // ── Workflow tiles ───────────────────────────────────────────────────────────
 // Three square tiles, each backed by a canonical readiness item. Status is
-// derived ONLY from the readiness summary (never invented).
+// derived ONLY from the readiness summary (never invented). Left-to-right order
+// communicates sequence (no step labels).
 type DocStepMode = Exclude<AncillaryDocMode, null>;
 
 type StepDef = {
   mode: DocStepMode;
-  step: number;
   title: string;
   Icon: typeof FileSignature;
   itemOf: (r: AncillaryReadinessSummary) => AncillaryReadinessItemState;
 };
 
 const STEP_DEFS: StepDef[] = [
-  { mode: "consent", step: 1, title: "Informed Consent", Icon: FileSignature, itemOf: (r) => r.informedConsent },
-  { mode: "screening", step: 2, title: "Screening Form", Icon: ClipboardList, itemOf: (r) => r.screeningForm },
-  { mode: "report", step: 3, title: "Report Upload", Icon: FileUp, itemOf: (r) => r.report },
+  { mode: "consent", title: "Informed Consent", Icon: FileSignature, itemOf: (r) => r.informedConsent },
+  { mode: "screening", title: "Screening Form", Icon: ClipboardList, itemOf: (r) => r.screeningForm },
+  { mode: "report", title: "Report Upload", Icon: FileUp, itemOf: (r) => r.report },
 ];
 
 type StatusKind = "complete" | "not_started" | "action" | "not_required" | "unknown";
@@ -181,16 +168,16 @@ function statusMetaFor(
   return { kind: isNext ? "action" : "not_started", label: isNext ? "Action needed" : "Not started", cta };
 }
 
-// Non-accent status chips are calm/navy. The "action" (next tile) chip uses the
-// service accent — resolved per render below.
-const NEUTRAL_STATUS_CHIP: Record<Exclude<StatusKind, "action">, string> = {
+// All status chips are navy/neutral — service color lives only in the smoke.
+const STATUS_CHIP: Record<StatusKind, string> = {
   complete: "bg-slate-100 text-[#243B64] ring-1 ring-slate-200",
+  action: "bg-[#243b64]/10 text-[#243B64] ring-1 ring-[#243b64]/20",
   not_started: "bg-slate-100 text-[#52647F] ring-1 ring-slate-200",
   not_required: "bg-slate-100 text-[#71819A] ring-1 ring-slate-200",
   unknown: "bg-slate-100 text-[#71819A] ring-1 ring-slate-200",
 };
 
-// In-progress procedure statuses (anything other than not_started / complete).
+// In-progress canonical procedure statuses (other than not_started / complete).
 const PROC_STATUS_LABEL: Record<string, string> = {
   in_progress: "In progress",
   paused: "Paused",
@@ -198,6 +185,112 @@ const PROC_STATUS_LABEL: Record<string, string> = {
   no_show: "No-show",
   unable_to_complete: "Unable to complete",
 };
+
+// One square workflow tile with the service "smoke" hover atmosphere. Tracks
+// the cursor and writes --mx/--my onto the node (no re-render per move).
+function WorkflowTile({
+  Icon,
+  title,
+  meta,
+  isActive,
+  isComplete,
+  emphasised,
+  smokeRgb,
+  onOpen,
+  onClose,
+  testId,
+}: {
+  Icon: typeof FileSignature;
+  title: string;
+  meta: StatusMeta;
+  isActive: boolean;
+  isComplete: boolean;
+  emphasised: boolean;
+  smokeRgb: string;
+  onOpen: () => void;
+  onClose: () => void;
+  testId: string;
+}) {
+  function handleMove(e: MouseEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${((e.clientX - r.left) / r.width) * 100}%`);
+    el.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`);
+  }
+
+  return (
+    <div
+      className={`smoke-tile group flex aspect-square flex-col rounded-2xl border border-white/65 bg-white/[0.82] p-5 shadow-[0_12px_34px_rgba(31,53,87,0.10)] backdrop-blur-xl transition-transform ${
+        isActive
+          ? "ring-2 ring-[#243b64]/30"
+          : emphasised
+            ? "ring-1 ring-[#243b64]/20 hover:-translate-y-0.5"
+            : "hover:-translate-y-0.5"
+      } ${isComplete ? "opacity-95" : ""}`}
+      style={{ "--smoke": smokeRgb } as CSSProperties}
+      onMouseMove={handleMove}
+      data-testid={testId}
+    >
+      {/* Smoke layers — above the frosted base, below the content. */}
+      <span className="smoke smoke-1" aria-hidden="true" />
+      <span className="smoke smoke-2" aria-hidden="true" />
+      <span className="smoke smoke-3" aria-hidden="true" />
+
+      {/* Completion check — top-right, navy (never green). */}
+      {isComplete && (
+        <span className="absolute right-3.5 top-3.5 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-[#243b64]/10">
+          <Check className="h-3.5 w-3.5 text-[#243b64]" aria-label="Complete" />
+        </span>
+      )}
+
+      {/* Centered group: bare navy icon + title + status */}
+      <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-3 text-center">
+        <Icon className="h-10 w-10 text-[#243B64]" strokeWidth={1.6} />
+        <h3 className="text-[17px] font-bold leading-tight tracking-tight text-[#1F3557]">{title}</h3>
+        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_CHIP[meta.kind]}`}>
+          {meta.label}
+        </span>
+      </div>
+
+      {/* Action button */}
+      <div className="relative z-10 pt-1">
+        {isActive ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-9 w-full rounded-xl text-xs !border-[#243b64]/25 bg-white/60 !text-[#243b64] hover:!bg-[#243b64]/5"
+            onClick={onClose}
+            data-testid={`${testId}-action`}
+          >
+            Close
+          </Button>
+        ) : emphasised ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 w-full rounded-xl text-xs !bg-[#243b64] !text-white hover:!bg-[#1d3054]"
+            onClick={onOpen}
+            data-testid={`${testId}-action`}
+          >
+            {meta.cta}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-9 w-full rounded-xl text-xs !border-[#243b64]/25 bg-white/60 !text-[#243b64] hover:!bg-[#243b64]/5"
+            onClick={onOpen}
+            data-testid={`${testId}-action`}
+          >
+            {meta.cta}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function AncillaryWorkflowWorkspace({
   patientScreeningId,
@@ -228,7 +321,7 @@ export function AncillaryWorkflowWorkspace({
   const displayName = screening?.name ?? patientName ?? "Patient";
   const service = serviceKey ?? "";
   const accent = accentForService(service);
-  const ac = ACCENT_CLASS[accent];
+  const smokeRgb = SMOKE_RGB[accent];
 
   // Canonical per-case readiness (single source of truth: the same resolver the
   // ancillary schedule uses). Drives the tile statuses + screening preview.
@@ -258,19 +351,13 @@ export function AncillaryWorkflowWorkspace({
   const { data: procedureEvents } = useQuery<ProcedureEventDto[]>({
     queryKey: procedureEventsKey,
     queryFn: () =>
-      listProcedureEventsApi({
-        executionCaseId,
-        patientScreeningId,
-        serviceType: service || null,
-      }),
+      listProcedureEventsApi({ executionCaseId, patientScreeningId, serviceType: service || null }),
     enabled: executionCaseId != null || patientScreeningId != null,
     staleTime: 10_000,
   });
   const procedureStatus = useMemo<string | null>(() => {
     const rows = procedureEvents ?? [];
-    const exact = rows.find(
-      (r) => (r.serviceType ?? "").toLowerCase() === service.toLowerCase(),
-    );
+    const exact = rows.find((r) => (r.serviceType ?? "").toLowerCase() === service.toLowerCase());
     return (exact ?? rows[0] ?? null)?.procedureStatus ?? null;
   }, [procedureEvents, service]);
 
@@ -385,11 +472,7 @@ export function AncillaryWorkflowWorkspace({
     ? { kind: "complete", label: "Complete", cta: "Review Components" }
     : procedureStatus == null || procedureStatus === "not_started"
       ? { kind: "not_started", label: "Not started", cta: "Open Procedure" }
-      : {
-          kind: "action",
-          label: PROC_STATUS_LABEL[procedureStatus] ?? procedureStatus,
-          cta: "Continue Procedure",
-        };
+      : { kind: "action", label: PROC_STATUS_LABEL[procedureStatus] ?? procedureStatus, cta: "Continue Procedure" };
   // Emphasise the Procedure tile once screening is done and it isn't complete.
   const procedureEmphasised =
     procedureOpen || (!procedureComplete && readiness?.screeningForm === "complete");
@@ -448,8 +531,7 @@ export function AncillaryWorkflowWorkspace({
             </span>
           </button>
 
-          {/* Quick actions — only the ones actually wired from this workspace.
-              Compact frost buttons, navy icons/text. */}
+          {/* Quick actions — only the ones actually wired from this workspace. */}
           <div className="flex shrink-0 items-center gap-1.5">
             {pdfPatient && (
               <PatientPdfActions
@@ -476,7 +558,7 @@ export function AncillaryWorkflowWorkspace({
         {/* ── Why Qualified — free-floating text under demographics (no box) ── */}
         {qualifyingTest && qualOpen && (
           <div className="ml-[62px] mt-3" data-testid="ancillary-workflow-why-qualified">
-            <div className={`mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide ${ac.label} [text-shadow:0_1px_2px_rgba(255,255,255,0.5)]`}>
+            <div className={`mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide ${ACCENT_LABEL[accent]} [text-shadow:0_1px_2px_rgba(255,255,255,0.5)]`}>
               <Sparkles className="h-3.5 w-3.5" /> Why Qualified — {service}
             </div>
             {hasEvidence ? (
@@ -492,129 +574,68 @@ export function AncillaryWorkflowWorkspace({
           </div>
         )}
 
-        {/* ── Three square workflow tiles — the only surfaces; float on page ── */}
+        {/* ── Four square workflow tiles — float directly over the winter bg.
+            Consent → Screening → Procedure → Report (left-to-right sequence). ── */}
         <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {(
-            [
-              { kind: "doc", def: STEP_DEFS[0] }, // Informed Consent
-              { kind: "doc", def: STEP_DEFS[1] }, // Screening Form
-              { kind: "procedure" }, //              Procedure (canonical event)
-              { kind: "doc", def: STEP_DEFS[2] }, // Report Upload
-            ] as const
-          ).map((tile) => {
-            let mode: string;
-            let title: string;
-            let Icon: typeof FileSignature;
-            let meta: StatusMeta;
-            let isActive: boolean;
-            let emphasised: boolean;
-            let onOpen: () => void;
-            let onClose: () => void;
-
-            if (tile.kind === "doc") {
-              const def = tile.def;
-              mode = def.mode;
-              title = def.title;
-              Icon = def.Icon;
-              const itemState = readiness ? def.itemOf(readiness) : null;
-              const isNext = nextMode === def.mode;
-              meta = statusMetaFor(itemState, isNext, def.mode);
-              isActive = docMode === def.mode;
-              emphasised = isNext || isActive;
-              onOpen = () => openStep(def.mode);
-              onClose = () => setDocMode(null);
-            } else {
-              mode = "procedure";
-              title = "Procedure";
-              Icon = Activity;
-              meta = procMeta;
-              isActive = procedureOpen;
-              emphasised = procedureEmphasised;
-              onOpen = openProcedure;
-              onClose = () => setProcedureOpen(false);
-            }
-            const isComplete = meta.kind === "complete";
-
+          {/* Consent + Screening (docs) */}
+          {STEP_DEFS.slice(0, 2).map((def) => {
+            const { mode, title, Icon } = def;
+            const itemState = readiness ? def.itemOf(readiness) : null;
+            const isNext = nextMode === mode;
+            const meta = statusMetaFor(itemState, isNext, mode);
+            const isActive = docMode === mode;
             return (
-              <div
+              <WorkflowTile
                 key={mode}
-                className={`group relative flex aspect-square flex-col rounded-[26px] border border-white/70 p-5 backdrop-blur-xl transition-all ${
-                  isComplete ? "bg-white/80" : "bg-white/[0.88]"
-                } ${
-                  isActive
-                    ? `shadow-[0_18px_48px_rgba(31,53,87,0.16)] ring-2 ${ac.ring}`
-                    : emphasised
-                      ? `shadow-[0_16px_44px_rgba(31,53,87,0.14)] ring-1 ${ac.ring} hover:-translate-y-0.5`
-                      : "shadow-[0_14px_40px_rgba(31,53,87,0.10)] hover:-translate-y-0.5 hover:shadow-[0_16px_44px_rgba(31,53,87,0.14)]"
-                }`}
-                data-testid={`ancillary-workflow-module-${mode}`}
-              >
-                {/* Completion check — top-right, no step label */}
-                {isComplete && (
-                  <span className="absolute right-4 top-4 flex h-6 w-6 items-center justify-center rounded-full bg-[#243b64]/10">
-                    <Check className="h-3.5 w-3.5 text-[#243b64]" aria-label="Complete" />
-                  </span>
-                )}
+                Icon={Icon}
+                title={title}
+                meta={meta}
+                isActive={isActive}
+                isComplete={meta.kind === "complete"}
+                emphasised={isNext || isActive}
+                smokeRgb={smokeRgb}
+                onOpen={() => openStep(mode)}
+                onClose={() => setDocMode(null)}
+                testId={`ancillary-workflow-module-${mode}`}
+              />
+            );
+          })}
 
-                {/* Centered group: icon + title + status */}
-                <div className="flex flex-1 flex-col items-center justify-center gap-2.5 text-center">
-                  <span
-                    className={`flex h-14 w-14 items-center justify-center rounded-2xl ${
-                      isComplete ? "bg-slate-500/10" : ac.chip
-                    }`}
-                  >
-                    <Icon className={`h-7 w-7 ${isComplete ? "text-slate-500" : ac.icon}`} />
-                  </span>
-                  <h3 className="text-[17px] font-bold leading-tight tracking-tight text-[#1F3557]">
-                    {title}
-                  </h3>
-                  <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                      meta.kind === "action" ? ac.statusChip : NEUTRAL_STATUS_CHIP[meta.kind]
-                    }`}
-                    data-testid={`ancillary-workflow-status-${mode}`}
-                  >
-                    {meta.label}
-                  </span>
-                </div>
+          {/* Procedure — canonical procedure_events (3rd in sequence) */}
+          <WorkflowTile
+            Icon={Activity}
+            title="Procedure"
+            meta={procMeta}
+            isActive={procedureOpen}
+            isComplete={procedureComplete}
+            emphasised={procedureEmphasised}
+            smokeRgb={smokeRgb}
+            onOpen={openProcedure}
+            onClose={() => setProcedureOpen(false)}
+            testId="ancillary-workflow-module-procedure"
+          />
 
-                {/* Action button */}
-                <div className="pt-1">
-                  {isActive ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-9 w-full rounded-xl text-xs !border-[#243b64]/25 !text-[#243b64] hover:!bg-[#243b64]/5"
-                      onClick={onClose}
-                      data-testid={`ancillary-workflow-open-${mode}`}
-                    >
-                      Close
-                    </Button>
-                  ) : emphasised ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-9 w-full rounded-xl text-xs !bg-[#243b64] !text-white hover:!bg-[#1d3054]"
-                      onClick={onOpen}
-                      data-testid={`ancillary-workflow-open-${mode}`}
-                    >
-                      {meta.cta}
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-9 w-full rounded-xl text-xs !border-[#243b64]/25 !text-[#243b64] hover:!bg-[#243b64]/5"
-                      onClick={onOpen}
-                      data-testid={`ancillary-workflow-open-${mode}`}
-                    >
-                      {meta.cta}
-                    </Button>
-                  )}
-                </div>
-              </div>
+          {/* Report Upload (doc) */}
+          {STEP_DEFS.slice(2).map((def) => {
+            const { mode, title, Icon } = def;
+            const itemState = readiness ? def.itemOf(readiness) : null;
+            const isNext = nextMode === mode;
+            const meta = statusMetaFor(itemState, isNext, mode);
+            const isActive = docMode === mode;
+            return (
+              <WorkflowTile
+                key={mode}
+                Icon={Icon}
+                title={title}
+                meta={meta}
+                isActive={isActive}
+                isComplete={meta.kind === "complete"}
+                emphasised={isNext || isActive}
+                smokeRgb={smokeRgb}
+                onOpen={() => openStep(mode)}
+                onClose={() => setDocMode(null)}
+                testId={`ancillary-workflow-module-${mode}`}
+              />
             );
           })}
         </div>
@@ -622,15 +643,13 @@ export function AncillaryWorkflowWorkspace({
         {/* ── Active tile workflow body — floats on the page when open ── */}
         {docMode && docService && (
           <div
-            className="mt-6 rounded-3xl border border-white/70 bg-white/[0.92] p-6 shadow-[0_16px_44px_rgba(31,53,87,0.14)] backdrop-blur-xl"
+            className="mt-6 rounded-2xl border border-white/70 bg-white/[0.92] p-6 shadow-[0_16px_44px_rgba(31,53,87,0.14)] backdrop-blur-xl"
             data-testid={`ancillary-workflow-body-${docMode}`}
           >
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 {activeStep && (
-                  <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${ac.chip}`}>
-                    <activeStep.Icon className={`h-4 w-4 ${ac.icon}`} />
-                  </span>
+                  <activeStep.Icon className="h-5 w-5 text-[#243B64]" strokeWidth={1.6} />
                 )}
                 <h3 className="text-sm font-bold text-[#1F3557]">
                   {activeStep?.title ?? "Workflow"}
@@ -676,14 +695,12 @@ export function AncillaryWorkflowWorkspace({
         {/* ── Procedure execution + component capture — canonical event ── */}
         {procedureOpen && (
           <div
-            className="mt-6 rounded-3xl border border-white/70 bg-white/[0.92] p-6 shadow-[0_16px_44px_rgba(31,53,87,0.14)] backdrop-blur-xl"
+            className="mt-6 rounded-2xl border border-white/70 bg-white/[0.92] p-6 shadow-[0_16px_44px_rgba(31,53,87,0.14)] backdrop-blur-xl"
             data-testid="ancillary-workflow-body-procedure"
           >
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${ac.chip}`}>
-                  <Activity className={`h-4 w-4 ${ac.icon}`} />
-                </span>
+                <Activity className="h-5 w-5 text-[#243B64]" strokeWidth={1.6} />
                 <h3 className="text-sm font-bold text-[#1F3557]">Procedure</h3>
               </div>
               <Button
