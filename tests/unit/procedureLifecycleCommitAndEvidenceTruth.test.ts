@@ -508,11 +508,13 @@ async function testMigration() {
   const body55 = readFileSync(join(process.cwd(), "migrations/0055_add_canonical_billing_readiness_documents.sql"), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
   assert.ok(!/DROP TABLE/i.test(body55.toUpperCase()) && !/TRUNCATE/i.test(body55.toUpperCase()) && !/DROP COLUMN/i.test(body55.toUpperCase()), "(40) 0055 additive only");
   // Phase 2J adds migration 0056 (canonical claim/invoice/payment lifecycle,
-  // additive only). It exists now; the forbidden-next boundary is 0057.
+  // additive only).
   const body56 = readFileSync(join(process.cwd(), "migrations/0056_add_canonical_claim_invoice_payment_lifecycle.sql"), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
   assert.ok(!/DROP TABLE/i.test(body56.toUpperCase()) && !/TRUNCATE/i.test(body56.toUpperCase()) && !/DROP COLUMN/i.test(body56.toUpperCase()), "(40) 0056 additive only");
-  const has57 = readdirSync(join(process.cwd(), "migrations")).some((f) => f.startsWith("0057"));
-  assert.ok(!has57, "(40) no migration 0057 exists");
+  // NOTE: the original "no migration 0057" boundary is obsolete — the repo has
+  // legitimately advanced to 0080. The real invariant is that the canonical
+  // Phase 2F/2G/2J migrations (0054/0055/0056) are additive (asserted above),
+  // never that no later migration exists.
 }
 
 const tests: Array<[string, () => Promise<void>]> = [

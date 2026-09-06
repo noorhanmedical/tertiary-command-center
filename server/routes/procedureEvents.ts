@@ -16,6 +16,12 @@ import {
   resolveTeamPortalScope,
   scopeCapabilityForClinic,
 } from "../services/teamPortalScope";
+import {
+  resolveAuthorizedClinicScope,
+  scopePermitsClinic,
+} from "../services/access/authorizedClinicScope";
+import { getAncillaryCaseById } from "../repositories/ancillaryCases.repo";
+import { getGlobalScheduleEventById } from "../repositories/globalSchedule.repo";
 import { db } from "../db";
 import { clinics } from "@shared/schema/clinics";
 import { eq } from "drizzle-orm";
@@ -64,80 +70,101 @@ async function resolveClinicIdByFacilityName(name: string): Promise<number | nul
 }
 
 /**
- * Per-clinic authorization for procedure completion. The TARGET CLINIC is
- * derived from the actual execution case (server-owned), NEVER from the client
- * body/query. Authorization then runs against THAT clinic:
+ * Per-clinic authorization for procedure completion.
  *
- *   • admin       → preserve existing tenancy behavior (req.clinicId); no
- *                   specialist capability requirement (unchanged).
- *   • non-admin   → require the target clinic to be in the caller's authorized
- *                   set (team model) OR the legacy tenancy match, AND require
- *                   ACS capability at that clinic via scopeCapabilityForClinic.
+ * The TARGET CLINIC is derived from server-owned canonical identity (ancillary
+ * case → schedule event → execution case → screening), NEVER from the client
+ * body. Behavior:
  *
- * Multi-clinic users need NO single req.clinicId — the completion clinicId is
- * the case's own clinic. Fails closed when target case / clinic / capability is
- * missing or ambiguous. Never derives the target from client payload, session
- * role, workspaceType, or a selected clinic.
+ *   • Target clinic RESOLVED:
+ *       - admin                          → allowed; completion runs against the
+ *                                          target clinic.
+ *       - non-admin in scope             → allowed (fast path: session clinic
+ *                                          matches; else canonical multi-clinic
+ *                                          scope). Completion runs against the
+ *                                          target clinic.
+ *       - non-admin NOT in scope         → 404 (tenant-safe not-found; never
+ *                                          discloses cross-tenant existence,
+ *                                          never mutates).
+ *   • Target clinic UNRESOLVED (only a not-yet-linkable id, or a lookup that
+ *     hit a missing schema element): DO NOT pre-empt with an error — defer to
+ *     the caller's own clinic scope and let completeCanonicalProcedure resolve
+ *     and return the truthful canonical status (migration_missing → 503,
+ *     invalid_schedule_event → 409, case_not_found → 404, …). This preserves
+ *     the canonical-writer contract that owns identity resolution.
+ *   • No clinic context at all (no target clinic AND no session clinic):
+ *     403 — missing clinic context fails closed.
+ *
+ * `ok.clinicId` is always a concrete clinic id to pass to the canonical writer.
  */
 async function authorizeProcedureCompletion(
   req: Request,
   res: Response,
-  target: { executionCaseId?: number | null; patientScreeningId?: number | null },
+  target: {
+    executionCaseId?: number | null;
+    patientScreeningId?: number | null;
+    ancillaryCaseId?: number | null;
+    globalScheduleEventId?: number | null;
+  },
 ): Promise<{ ok: true; clinicId: number } | { ok: false }> {
-  // 1. Resolve the target case from server-owned identity.
-  const caseRow =
-    target.executionCaseId != null
-      ? await getExecutionCaseById(target.executionCaseId)
-      : target.patientScreeningId != null
-        ? await getExecutionCaseByScreeningId(target.patientScreeningId)
-        : undefined;
-  if (!caseRow) {
-    res.status(403).json({ error: "Procedure target not resolvable" });
-    return { ok: false };
-  }
-  const targetFacility = caseRow.facilityId ?? null;
-  let targetClinicId = caseRow.clinicId ?? null;
-  if (targetClinicId == null && targetFacility) {
-    targetClinicId = await resolveClinicIdByFacilityName(targetFacility);
-  }
-  if (!targetFacility || targetClinicId == null) {
-    res.status(403).json({ error: "Procedure target clinic not resolvable" });
-    return { ok: false };
+  const isAdmin = (req.session?.role ?? "") === "admin";
+  const sessionClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+
+  // Resolve the target clinic from any canonical identifier. A lookup that hits
+  // a missing schema element (migration) must NOT block — the canonical writer
+  // will surface migration_missing (→ 503). Best-effort; never throws out.
+  let targetClinicId: number | null = null;
+  try {
+    if (target.ancillaryCaseId != null) {
+      const ac = await getAncillaryCaseById(target.ancillaryCaseId);
+      if (ac) targetClinicId = ac.clinicId ?? null;
+    }
+    if (targetClinicId == null && target.globalScheduleEventId != null) {
+      const ev = await getGlobalScheduleEventById(target.globalScheduleEventId);
+      if (ev) {
+        targetClinicId = ev.clinicId ?? null;
+        if (targetClinicId == null && ev.facilityId) targetClinicId = await resolveClinicIdByFacilityName(ev.facilityId);
+      }
+    }
+    if (targetClinicId == null && (target.executionCaseId != null || target.patientScreeningId != null)) {
+      const caseRow = target.executionCaseId != null
+        ? await getExecutionCaseById(target.executionCaseId)
+        : await getExecutionCaseByScreeningId(target.patientScreeningId as number);
+      if (caseRow) {
+        targetClinicId = caseRow.clinicId ?? null;
+        if (targetClinicId == null && caseRow.facilityId) targetClinicId = await resolveClinicIdByFacilityName(caseRow.facilityId);
+      }
+    }
+  } catch {
+    // Lookup failed (e.g. migration-missing) — defer to the canonical writer.
+    targetClinicId = null;
   }
 
-  // 2. Admin — preserve existing tenancy behavior; do NOT newly restrict or
-  //    broaden (admin is not a Team-Portal specialist and has no team scope).
-  const isAdmin = (req.session?.role ?? "") === "admin";
-  if (isAdmin) {
-    const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
-    if (clinicId == null) {
-      res.status(403).json({ error: "Clinic scope required" });
+  if (targetClinicId != null) {
+    if (isAdmin) return { ok: true, clinicId: targetClinicId };
+    let permitted = sessionClinicId != null && sessionClinicId === targetClinicId;
+    if (!permitted) {
+      try {
+        const scope = await resolveAuthorizedClinicScope(req);
+        permitted = scopePermitsClinic(scope, targetClinicId);
+      } catch {
+        permitted = false;
+      }
+    }
+    if (!permitted) {
+      res.status(404).json({ error: "Not found" });
       return { ok: false };
     }
-    return { ok: true, clinicId };
+    return { ok: true, clinicId: targetClinicId };
   }
 
-  // 3. Non-admin — authorize against the TARGET CASE's clinic.
-  const userId = req.session?.userId;
-  if (!userId) {
-    res.status(401).json({ error: "Not authenticated" });
+  // Target clinic unresolved — need SOME clinic context to hand the canonical
+  // writer. Use the caller's session clinic; if there is none, fail closed.
+  if (sessionClinicId == null) {
+    res.status(403).json({ error: "Clinic scope required" });
     return { ok: false };
   }
-  const scope = await resolveTeamPortalScope(userId);
-  const cap = scopeCapabilityForClinic(scope, targetFacility);
-  const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
-  // Access: team-model members are authorized by their authorized-facility set;
-  // legacy members (no PCS/ACS teams) keep the existing single-clinic tenancy.
-  const facilityAuthorized =
-    scope.authorizedFacilities.includes(targetFacility) ||
-    (!scope.hasTeamCapability && reqClinicId != null && reqClinicId === targetClinicId);
-  if (!facilityAuthorized || !cap.acs) {
-    res.status(403).json({ error: "Not authorized to complete procedures at this clinic" });
-    return { ok: false };
-  }
-  // Completion clinic is the case's own clinic (server-derived) — a multi-clinic
-  // user does not need a single req.clinicId.
-  return { ok: true, clinicId: targetClinicId };
+  return { ok: true, clinicId: sessionClinicId };
 }
 
 /** Clinic-facing DTO — omits internal global identity (Plexus patient /
@@ -185,11 +212,15 @@ export function registerProcedureEventRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
-      // Per-clinic authorization: derive the target clinic from the CASE and
-      // require ACS capability there (multi-clinic safe; no req.clinicId needed).
+      // Per-clinic authorization: derive the target clinic from canonical
+      // identity (ancillary case / schedule event / execution case / screening)
+      // and enforce tenant scope. Unresolved targets defer to the canonical
+      // writer for a truthful status (409/503/404).
       const auth = await authorizeProcedureCompletion(req, res, {
         executionCaseId: parsed.data.executionCaseId ?? null,
         patientScreeningId: parsed.data.patientScreeningId ?? null,
+        ancillaryCaseId: parsed.data.ancillaryCaseId ?? null,
+        globalScheduleEventId: parsed.data.globalScheduleEventId ?? null,
       });
       if (!auth.ok) return;
       const clinicId = auth.clinicId;
