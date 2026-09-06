@@ -597,9 +597,18 @@ export function generateVitalWaveDocuments(args: {
       },
       { heading: 'Facility', body: formatClinicAddress(args.input.clinic || DEFAULT_CLINIC) },
       { heading: 'Chief Complaint', body: 'VitalWave Autonomic & Vascular Testing' },
-      { heading: 'Subjective', body: "Patient presents today for VitalWave autonomic and vascular testing. Patient's clinical history was reviewed and appropriateness of studies confirmed. Testing indications include autonomic dysfunction assessment and vascular perfusion evaluation." },
+      { heading: 'Subjective', body: (() => {
+        const dxText = dxList.length ? joinNatural(dxList.map((d) => d.toLowerCase())) : null;
+        return `Patient presents today for VitalWave autonomic and vascular testing. Patient's clinical history was reviewed and appropriateness of studies confirmed.${dxText ? ` Testing is indicated for ${dxText}.` : ' Testing indications include autonomic dysfunction assessment and vascular perfusion evaluation.'}`;
+      })() },
       { heading: 'Objective', body: 'Physical exam not required for this visit' },
-      { heading: 'Assessment & Plan', body: 'The patient tolerated all procedures well. Autonomic nervous system testing was performed including assessment of parasympathetic and sympathetic function with tilt table evaluation. Blood pressure and heart rate responses were monitored throughout position changes. Arterial physiologic studies of extremities were completed using segmental pressure measurements and waveform analysis at multiple levels. Rhythm electrocardiography was performed with continuous monitoring and interpretation. All testing equipment functioned properly and adequate signal quality was maintained throughout. Patient remained stable during all procedures with no adverse events. Results will be interpreted by the reviewing physician and communicated to the ordering clinician. The VitalWave testing was completed successfully and the patient was discharged in stable condition.' },
+      { heading: 'Assessment & Plan', body: (() => {
+        const dxText = dxList.length ? joinNatural(dxList.map((d) => d.toLowerCase())) : null;
+        const lead = dxText
+          ? `In the context of ${dxText}, autonomic and vascular assessment was performed. `
+          : '';
+        return `${lead}The patient tolerated all procedures well. Autonomic nervous system testing was performed including assessment of parasympathetic and sympathetic function with tilt table evaluation. Blood pressure and heart rate responses were monitored throughout position changes. Arterial physiologic studies of the extremities were completed using segmental pressure measurements and waveform analysis at multiple levels. Rhythm electrocardiography was performed with continuous monitoring and interpretation. All testing equipment functioned properly and adequate signal quality was maintained throughout. Patient remained stable during all procedures with no adverse events. Results will be interpreted by the reviewing physician and communicated to the ordering clinician. The VitalWave testing was completed successfully and the patient was discharged in stable condition.`;
+      })() },
 
       {
         heading: 'Order',
@@ -756,7 +765,15 @@ export function generateUltrasoundDocuments(args: {
         ].join('\n')
       },
       { heading: 'Facility', body: formatClinicAddress(args.input.clinic || DEFAULT_CLINIC, true) },
-      { heading: 'Procedure', body: "Chief Complaint: Ultrasound Procedure\n\nSubjective\nPatient presents today for an ultrasound procedure. Intake has been completed. The patient's clinical history and indication for today's imaging study were reviewed and confirmed.\n\nObjective\nPhysical exam not required for this visit.\n\nAssessment & Plan\nThe room was prepared for diagnostic ultrasound imaging. The patient was positioned comfortably on the examination table, with pillows or supports placed as needed to optimize access to the area being studied. The skin over the targeted region was exposed, and ultrasound gel was applied to ensure proper transducer contact. A diagnostic ultrasound system was used to obtain sonographic images. The appropriate transducer was selected, and the exam proceeded according to standard scanning protocols for the anatomy of interest. Image acquisition may include grayscale imaging, Doppler flow assessment, compressibility testing, structural evaluation, or vascular characterization, depending on the type of study being performed. The sonographer adjusted gain, depth, Doppler angle, and other technical settings as needed to optimize visualization. After the study was completed, excess gel was removed, and the patient was assisted to a comfortable position. The patient tolerated the procedure well. The imaging study was successfully completed, and the finalized interpretation will be reviewed with the patient at a subsequent visit." },
+      { heading: 'Procedure', body: (() => {
+        const studiesText = selection.length
+          ? joinNatural(selection.map((t) => `${t}${args.config[t]?.cpt ? ` (CPT ${args.config[t].cpt})` : ''}`))
+          : 'the ordered diagnostic ultrasound study';
+        const dxText = selectedConditions.length ? joinNatural(selectedConditions.map((d) => d.toLowerCase())) : null;
+        const subjective = `Patient presents today for ${selection.length > 1 ? 'diagnostic ultrasound studies' : 'a diagnostic ultrasound study'}${dxText ? ` for evaluation of ${dxText}` : ''}. Intake has been completed. The patient's clinical history and the indication for today's imaging were reviewed and confirmed.`;
+        const plan = `The following ${selection.length > 1 ? 'studies were' : 'study was'} performed: ${studiesText}. The patient was positioned appropriately for each study and ultrasound gel was applied to ensure proper transducer contact. A diagnostic ultrasound system was used to obtain sonographic images per standard scanning protocols for each anatomy of interest, including grayscale imaging and Doppler flow assessment as indicated. Technical settings (gain, depth, Doppler angle) were optimized throughout. The patient tolerated the ${selection.length > 1 ? 'procedures' : 'procedure'} well with no complications. Images were archived for interpretation, and the finalized ${selection.length > 1 ? 'reports' : 'report'} will be reviewed with the patient at a subsequent visit.`;
+        return `Chief Complaint: ${studiesText}\n\nSubjective\n${subjective}\n\nObjective\nPhysical exam not required for this visit.\n\nAssessment & Plan\n${plan}`;
+      })() },
 
       {
         heading: 'Order',

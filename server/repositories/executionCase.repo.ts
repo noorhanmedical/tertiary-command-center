@@ -376,6 +376,9 @@ export type ListExecutionCasesFilters = {
   engagementStatus?: string;
   facilityId?: string;
   patientScreeningId?: number;
+  /** Tenant scope. undefined/null = no clinic filter (admin/global). An array
+   *  narrows to those clinics; an EMPTY array matches nothing (fail closed). */
+  clinicIds?: number[] | null;
 };
 
 export async function listExecutionCases(
@@ -389,6 +392,13 @@ export async function listExecutionCases(
   if (filters.engagementStatus) conditions.push(eq(patientExecutionCases.engagementStatus, filters.engagementStatus));
   if (filters.facilityId) conditions.push(eq(patientExecutionCases.facilityId, filters.facilityId));
   if (filters.patientScreeningId != null) conditions.push(eq(patientExecutionCases.patientScreeningId, filters.patientScreeningId));
+  if (filters.clinicIds != null) {
+    conditions.push(
+      filters.clinicIds.length > 0
+        ? inArray(patientExecutionCases.clinicId, filters.clinicIds)
+        : sql`false`,
+    );
+  }
 
   const query = db.select().from(patientExecutionCases)
     .$dynamic();
@@ -590,6 +600,9 @@ export type ListEngagementCenterCasesFilters = {
   lifecycleStatus?: string;
   engagementStatus?: string;
   qualificationStatus?: string;
+  /** Tenant scope. undefined/null = no clinic filter (admin/global). An array
+   *  narrows to those clinics; an EMPTY array matches nothing (fail closed). */
+  clinicIds?: number[] | null;
 };
 
 /** Engagement Center read: executes against patient_execution_cases.
@@ -611,6 +624,13 @@ export async function listEngagementCenterCases(
   if (filters.assignedTeamMemberId != null) conditions.push(eq(patientExecutionCases.assignedTeamMemberId, filters.assignedTeamMemberId));
   if (filters.assignedRole) conditions.push(eq(patientExecutionCases.assignedRole, filters.assignedRole));
   if (filters.qualificationStatus) conditions.push(eq(patientExecutionCases.qualificationStatus, filters.qualificationStatus));
+  if (filters.clinicIds != null) {
+    conditions.push(
+      filters.clinicIds.length > 0
+        ? inArray(patientExecutionCases.clinicId, filters.clinicIds)
+        : sql`false`,
+    );
+  }
 
   if (filters.lifecycleStatus) {
     conditions.push(eq(patientExecutionCases.lifecycleStatus, filters.lifecycleStatus));
@@ -643,7 +663,12 @@ export async function listEngagementCenterCases(
 
 export type ListSchedulerPortalCasesFilters = {
   assignedTeamMemberId?: number;
+  /** Multi-clinic ASSIGNMENT set — the caller's roster ids across included
+   *  clinics. When present, takes precedence over the single id. */
+  assignedTeamMemberIds?: number[];
   facilityId?: string;
+  /** Multi-clinic ACCESS set. When present, takes precedence over facilityId. */
+  facilityIds?: string[];
   engagementBucket?: string;
   lifecycleStatus?: string;
   engagementStatus?: string;
@@ -668,11 +693,11 @@ const SCHEDULER_TERMINAL_ENGAGEMENT_STATUSES = ["completed", "closed"] as const;
 /** Scheduler Portal read: defaults to scheduler-relevant buckets and excludes
  *  terminal engagement statuses when caller does not override. Ordered by
  *  nextActionAt ASC NULLS LAST, priorityScore DESC NULLS LAST, createdAt DESC. */
-export async function listSchedulerPortalCases(
-  filters: ListSchedulerPortalCasesFilters = {},
-  limit = 100,
-): Promise<PatientExecutionCase[]> {
-  const safeLimit = Math.min(Math.max(1, limit), 500);
+/** Shared WHERE builder for the scheduler-portal call list — used by BOTH the
+ *  list read and the count variant so the badge can never disagree with the
+ *  visible queue. Supports single-clinic (facilityId/assignedTeamMemberId) and
+ *  multi-clinic aggregation (facilityIds[]/assignedTeamMemberIds[]). */
+function buildSchedulerPortalConditions(filters: ListSchedulerPortalCasesFilters) {
   const conditions = [];
 
   if (filters.engagementBucket) {
@@ -687,8 +712,31 @@ export async function listSchedulerPortalCases(
     conditions.push(notInArray(patientExecutionCases.engagementStatus, [...SCHEDULER_TERMINAL_ENGAGEMENT_STATUSES]));
   }
 
-  if (filters.assignedTeamMemberId != null) conditions.push(eq(patientExecutionCases.assignedTeamMemberId, filters.assignedTeamMemberId));
-  if (filters.facilityId) conditions.push(eq(patientExecutionCases.facilityId, filters.facilityId));
+  // ASSIGNMENT: prefer the multi-clinic roster-id set; fall back to single id.
+  // An EMPTY assignedTeamMemberIds means "no roster id matched" → impossible
+  // filter so nothing leaks (never falls through to unassigned rows).
+  if (filters.assignedTeamMemberIds != null) {
+    conditions.push(
+      filters.assignedTeamMemberIds.length > 0
+        ? inArray(patientExecutionCases.assignedTeamMemberId, filters.assignedTeamMemberIds)
+        : eq(patientExecutionCases.assignedTeamMemberId, -1),
+    );
+  } else if (filters.assignedTeamMemberId != null) {
+    conditions.push(eq(patientExecutionCases.assignedTeamMemberId, filters.assignedTeamMemberId));
+  }
+
+  // ACCESS: prefer the multi-clinic facility set; fall back to single facility.
+  // An empty facilityIds means "no authorized clinic" → impossible filter.
+  if (filters.facilityIds != null) {
+    conditions.push(
+      filters.facilityIds.length > 0
+        ? inArray(patientExecutionCases.facilityId, filters.facilityIds)
+        : sql`false`, // no authorized clinic → match nothing (fail closed)
+    );
+  } else if (filters.facilityId) {
+    conditions.push(eq(patientExecutionCases.facilityId, filters.facilityId));
+  }
+
   if (filters.qualificationStatus) conditions.push(eq(patientExecutionCases.qualificationStatus, filters.qualificationStatus));
 
   // Operational-day window over nextActionAt. Backlog (null nextActionAt) is
@@ -711,6 +759,30 @@ export async function listSchedulerPortalCases(
   } else {
     conditions.push(notInArray(patientExecutionCases.lifecycleStatus, [...TERMINAL_LIFECYCLE_STATUSES]));
   }
+
+  return conditions;
+}
+
+/** Count of scheduler-portal cases matching the SAME filter as the list read.
+ *  Powers the Call List badge; shares buildSchedulerPortalConditions so the
+ *  count and the visible queue are always consistent. */
+export async function countSchedulerPortalCases(
+  filters: ListSchedulerPortalCasesFilters = {},
+): Promise<number> {
+  const conditions = buildSchedulerPortalConditions(filters);
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(patientExecutionCases)
+    .where(and(...conditions));
+  return row?.n ?? 0;
+}
+
+export async function listSchedulerPortalCases(
+  filters: ListSchedulerPortalCasesFilters = {},
+  limit = 100,
+): Promise<PatientExecutionCase[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = buildSchedulerPortalConditions(filters);
 
   const query = db.select().from(patientExecutionCases).$dynamic();
   const orderClause = [

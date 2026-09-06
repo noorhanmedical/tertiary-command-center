@@ -14,19 +14,19 @@ import { canOverrideCapacity } from "../services/scheduling/capacityAuthorizatio
 
 const overrideSchema = z.object({
   constraint: z.enum(["full", "off_day", "outage"]),
-  reason: z.string().trim().min(1, "Override reason is required").max(500),
+  reason: z.string({ required_error: "Override reason is required" }).trim().min(1, "Override reason is required").max(500),
   category: z.string().trim().max(80).nullable().optional(),
   capacityState: z.record(z.unknown()).nullable().optional(),
 });
 
 const serviceSchema = z.object({
-  serviceType: z.string().min(1),
-  time: z.string().regex(/^\d{1,2}:\d{2}$/, "time must be HH:MM"),
+  serviceType: z.string({ required_error: "serviceType is required" }).min(1, "serviceType is required"),
+  time: z.string({ required_error: "time is required (HH:MM)" }).regex(/^\d{1,2}:\d{2}$/, "time must be HH:MM"),
   studyCount: z.number().int().min(1).max(20).optional(),
 });
 
 const groupSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+  date: z.string({ required_error: "date is required (YYYY-MM-DD)" }).regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
   services: z.array(serviceSchema).min(1, "Each group needs at least one service"),
   overrides: z.record(overrideSchema).optional(),
 });
@@ -58,7 +58,16 @@ export function registerSchedulingVisitRoutes(app: Express) {
   app.post("/api/scheduling/visit", async (req: Request, res: Response) => {
     const parsed = visitBodySchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
+      const issue = parsed.error.issues[0];
+      const field = issue?.path?.length ? issue.path.join(".") : null;
+      // A bare "Required" is meaningless to the operator; name the field so the
+      // client toast is actionable (e.g. "serviceType is required").
+      const error = issue
+        ? field && issue.message === "Required"
+          ? `${field} is required`
+          : issue.message
+        : "Invalid input";
+      return res.status(400).json({ error, field, code: "INVALID_VISIT_INPUT" });
     }
     const data = parsed.data;
 

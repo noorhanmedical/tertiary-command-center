@@ -30,6 +30,10 @@ import {
   getCanonicalAppointmentProjection,
   getCanonicalAppointmentsByService,
 } from "../services/canonicalAppointments/appointmentProjection";
+import {
+  resolveAuthorizedClinicScope,
+  scopePermitsClinic,
+} from "../services/access/authorizedClinicScope";
 
 const CANONICAL_ANCILLARY_CALENDAR_TYPES = new Set(["ancillary_appointment", "same_day_add"]);
 
@@ -51,6 +55,7 @@ function handleCanonicalReadError(res: Response, e: unknown): boolean {
 // user could request any facilityId in the query string and bypass
 // the assigned-facility allow-list returned by /api/portal/my-facilities.
 import { requirePortalRole, allowedFacilities, resolveAdminViewAsUserId, type ViewAsWorkspaceType } from "./portal";
+import { resolveTeamPortalScope, scopeFacilityIds } from "../services/teamPortalScope";
 
 // Resolves the requested facilityId for a Phase-1 team-portal feed.
 // Returns either an HTTP error to send or the (admin-pass-through or
@@ -198,6 +203,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listGlobalScheduleEvents>[0] = {};
 
+      // Tenant isolation (P0): a non-admin caller sees ONLY their authorized
+      // clinics. Empty scope → repo matches nothing (fail closed). Admin/global
+      // passes with no clinic filter.
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) filters.clinicIds = scope.clinicIds;
+
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.eventType) filters.eventType = q.eventType;
       if (q.status) filters.status = q.status;
@@ -319,11 +330,30 @@ export function registerGlobalScheduleRoutes(app: Express) {
   app.get("/api/technician-liaison/ancillary-schedule", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId);
-      if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTechnicianLiaisonAncillarySchedule>[0] = {};
-      if (scope.facilityId) filters.facilityId = scope.facilityId;
+
+      // MULTI-CLINIC ancillary schedule for a real (non-admin, non-view-as)
+      // team member: aggregate across EVERY authorized clinic by default, or a
+      // single requested clinic when facilityId is supplied. The ancillary feed
+      // is facility-scoped by ACCESS (no per-user assignment narrowing — kept
+      // as-is; assignedUserId remains an optional explicit filter). Admin +
+      // admin view-as keep the existing single-facility path unchanged.
+      const isAdmin = (req.session.role ?? "") === "admin";
+      const useMultiClinic = !isAdmin && !q.viewAsTeamMemberId && !!req.session.userId;
+      if (useMultiClinic) {
+        const portalScope = await resolveTeamPortalScope(req.session.userId as string);
+        const requested = (q.facilityId ?? "").trim() || null;
+        const facilityIds = scopeFacilityIds(portalScope, requested);
+        if (facilityIds == null) {
+          return res.status(403).json({ error: "Forbidden — clinic not assigned to this user" });
+        }
+        filters.facilityIds = facilityIds;
+      } else {
+        const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId);
+        if (!scope.ok) return;
+        if (scope.facilityId) filters.facilityId = scope.facilityId;
+      }
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.serviceType) filters.serviceType = q.serviceType;
       if (q.startDate) {
@@ -343,6 +373,10 @@ export function registerGlobalScheduleRoutes(app: Express) {
           id: r.id,
           executionCaseId: r.executionCaseId ?? null,
           patientScreeningId: r.patientScreeningId ?? null,
+          // Durable per-service ancillary occurrence id (present once the
+          // canonical ancillary-case flag/migration is live). Preferred over the
+          // executionCase+serviceType proxy for per-occurrence readiness scope.
+          ancillaryCaseId: r.ancillaryCaseId ?? null,
           serviceType: r.serviceType ?? null,
           // The appointment's scheduled day drives the dated consent guard
           // (mirrors the clinic-portal consentForTest rule): a completion
@@ -370,6 +404,8 @@ export function registerGlobalScheduleRoutes(app: Express) {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTeamAvailabilityBlocks>[0] = {};
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) filters.clinicIds = scope.clinicIds;
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.eventType === "pto_block" || q.eventType === "sick_day" || q.eventType === "unavailable_block") {
@@ -399,6 +435,8 @@ export function registerGlobalScheduleRoutes(app: Express) {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listUltrasoundTechSchedule>[0] = {};
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) filters.clinicIds = scope.clinicIds;
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.serviceType) filters.serviceType = q.serviceType;
@@ -825,6 +863,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const row = await getGlobalScheduleEventById(id);
       if (!row) return res.status(404).json({ error: "Global schedule event not found" });
+      // Tenant isolation (P0): a foreign-clinic event reads as not-found so
+      // existence is never disclosed across tenants.
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scopePermitsClinic(scope, row.clinicId)) {
+        return res.status(404).json({ error: "Global schedule event not found" });
+      }
       res.json(row);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

@@ -8,6 +8,17 @@ import {
   type ProcedureEvent,
 } from "../repositories/procedureEvents.repo";
 import { updateGlobalScheduleEvent } from "../repositories/globalSchedule.repo";
+import {
+  getExecutionCaseById,
+  getExecutionCaseByScreeningId,
+} from "../repositories/executionCase.repo";
+import {
+  resolveTeamPortalScope,
+  scopeCapabilityForClinic,
+} from "../services/teamPortalScope";
+import { db } from "../db";
+import { clinics } from "@shared/schema/clinics";
+import { eq } from "drizzle-orm";
 import { featureFlags } from "../lib/featureFlags";
 import {
   completeCanonicalProcedure,
@@ -43,6 +54,90 @@ function requireClinicScope(req: Request, res: Response): number | null {
     return null;
   }
   return clinicId;
+}
+
+/** Map a facility NAME to its canonical clinic id (used only when a legacy
+ *  execution case has no clinic_id populated). */
+async function resolveClinicIdByFacilityName(name: string): Promise<number | null> {
+  const [row] = await db.select({ id: clinics.id }).from(clinics).where(eq(clinics.name, name)).limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * Per-clinic authorization for procedure completion. The TARGET CLINIC is
+ * derived from the actual execution case (server-owned), NEVER from the client
+ * body/query. Authorization then runs against THAT clinic:
+ *
+ *   • admin       → preserve existing tenancy behavior (req.clinicId); no
+ *                   specialist capability requirement (unchanged).
+ *   • non-admin   → require the target clinic to be in the caller's authorized
+ *                   set (team model) OR the legacy tenancy match, AND require
+ *                   ACS capability at that clinic via scopeCapabilityForClinic.
+ *
+ * Multi-clinic users need NO single req.clinicId — the completion clinicId is
+ * the case's own clinic. Fails closed when target case / clinic / capability is
+ * missing or ambiguous. Never derives the target from client payload, session
+ * role, workspaceType, or a selected clinic.
+ */
+async function authorizeProcedureCompletion(
+  req: Request,
+  res: Response,
+  target: { executionCaseId?: number | null; patientScreeningId?: number | null },
+): Promise<{ ok: true; clinicId: number } | { ok: false }> {
+  // 1. Resolve the target case from server-owned identity.
+  const caseRow =
+    target.executionCaseId != null
+      ? await getExecutionCaseById(target.executionCaseId)
+      : target.patientScreeningId != null
+        ? await getExecutionCaseByScreeningId(target.patientScreeningId)
+        : undefined;
+  if (!caseRow) {
+    res.status(403).json({ error: "Procedure target not resolvable" });
+    return { ok: false };
+  }
+  const targetFacility = caseRow.facilityId ?? null;
+  let targetClinicId = caseRow.clinicId ?? null;
+  if (targetClinicId == null && targetFacility) {
+    targetClinicId = await resolveClinicIdByFacilityName(targetFacility);
+  }
+  if (!targetFacility || targetClinicId == null) {
+    res.status(403).json({ error: "Procedure target clinic not resolvable" });
+    return { ok: false };
+  }
+
+  // 2. Admin — preserve existing tenancy behavior; do NOT newly restrict or
+  //    broaden (admin is not a Team-Portal specialist and has no team scope).
+  const isAdmin = (req.session?.role ?? "") === "admin";
+  if (isAdmin) {
+    const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+    if (clinicId == null) {
+      res.status(403).json({ error: "Clinic scope required" });
+      return { ok: false };
+    }
+    return { ok: true, clinicId };
+  }
+
+  // 3. Non-admin — authorize against the TARGET CASE's clinic.
+  const userId = req.session?.userId;
+  if (!userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return { ok: false };
+  }
+  const scope = await resolveTeamPortalScope(userId);
+  const cap = scopeCapabilityForClinic(scope, targetFacility);
+  const reqClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+  // Access: team-model members are authorized by their authorized-facility set;
+  // legacy members (no PCS/ACS teams) keep the existing single-clinic tenancy.
+  const facilityAuthorized =
+    scope.authorizedFacilities.includes(targetFacility) ||
+    (!scope.hasTeamCapability && reqClinicId != null && reqClinicId === targetClinicId);
+  if (!facilityAuthorized || !cap.acs) {
+    res.status(403).json({ error: "Not authorized to complete procedures at this clinic" });
+    return { ok: false };
+  }
+  // Completion clinic is the case's own clinic (server-derived) — a multi-clinic
+  // user does not need a single req.clinicId.
+  return { ok: true, clinicId: targetClinicId };
 }
 
 /** Clinic-facing DTO — omits internal global identity (Plexus patient /
@@ -86,12 +181,18 @@ export function registerProcedureEventRoutes(app: Express) {
   // POST /api/procedure-events/complete — clinic-scoped write.
   app.post("/api/procedure-events/complete", async (req, res) => {
     try {
-      const clinicId = requireClinicScope(req, res);
-      if (clinicId == null) return;
       const parsed = procedureCompleteSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
+      // Per-clinic authorization: derive the target clinic from the CASE and
+      // require ACS capability there (multi-clinic safe; no req.clinicId needed).
+      const auth = await authorizeProcedureCompletion(req, res, {
+        executionCaseId: parsed.data.executionCaseId ?? null,
+        patientScreeningId: parsed.data.patientScreeningId ?? null,
+      });
+      if (!auth.ok) return;
+      const clinicId = auth.clinicId;
       const { completedAt, globalScheduleEventId, ...rest } = parsed.data;
 
       // Phase 2F canonical path — dedupe by ancillary case, awaited note ensure.
@@ -261,6 +362,87 @@ export function registerProcedureEventRoutes(app: Express) {
       const row = await getProcedureEventByIdForClinic(id, clinicId);
       if (!row) return res.status(404).json({ error: "Procedure event not found" });
       res.json(toClinicDto(row));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Procedure component evidence (P1 — was BACKEND-ONLY / unwired) ────────
+  // The performed-component record (BrainWave: neuropsych/EEG/ECG/VEP/AEP;
+  // VitalWave: autonomic/tilt/BP-HR/segmental/waveform/rhythm-ECG) is what the
+  // canonical Procedure Note renders and what billing CPT selection uses. The
+  // persistence function existed but was reachable from NO route, so BW/VW
+  // Procedure Notes could never render their real content. This exposes it.
+  //
+  // GET  → read the recorded components (clinic-scoped).
+  // POST → validate + persist components (requires the procedure to be
+  //        complete), then best-effort (re)generate the Procedure Note so it
+  //        reflects the recorded evidence. Never fabricates completion.
+  app.get("/api/procedure-events/:id/components", async (req, res) => {
+    try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
+      const id = parseInt(String(req.params.id), 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const row = await getProcedureEventByIdForClinic(id, clinicId);
+      if (!row) return res.status(404).json({ error: "Procedure event not found" });
+      const { loadProcedureComponents } = await import(
+        "../services/procedureLifecycle/procedureNoteContext"
+      );
+      const components = await loadProcedureComponents(id, row.serviceType);
+      res.json({ procedureEventId: id, serviceType: row.serviceType, components });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/procedure-events/:id/components", async (req, res) => {
+    try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
+      const id = parseInt(String(req.params.id), 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const row = await getProcedureEventByIdForClinic(id, clinicId);
+      if (!row) return res.status(404).json({ error: "Procedure event not found" });
+      const rawComponents = (req.body ?? {}).components ?? req.body;
+      const { recordProcedureComponents } = await import(
+        "../services/procedureLifecycle/procedureNoteContext"
+      );
+      const result = await recordProcedureComponents({
+        clinicId,
+        procedureEventId: id,
+        serviceType: row.serviceType,
+        rawComponents,
+      });
+      if (result.status !== "recorded") {
+        const code =
+          result.status === "invalid_components" ? 400
+          : result.status === "not_complete" ? 409
+          : result.status === "cross_clinic_denied" ? 403
+          : 404;
+        return res.status(code).json({ status: result.status });
+      }
+      // Best-effort Procedure Note (re)generation from the recorded evidence.
+      // Non-throwing: recording succeeded regardless of note reconciliation.
+      let noteReconciliation = "not_attempted";
+      if (row.ancillaryCaseId != null) {
+        try {
+          const { ensureCanonicalProcedureNoteForAncillaryCase } = await import(
+            "../services/procedureLifecycle/procedureLifecycleOrchestration"
+          );
+          const note = await ensureCanonicalProcedureNoteForAncillaryCase({
+            clinicId,
+            ancillaryCaseId: row.ancillaryCaseId,
+            actorUserId: req.session?.userId ?? null,
+            source: "procedure_components_recorded",
+          });
+          noteReconciliation = note.status;
+        } catch (e) {
+          noteReconciliation = "note_reconciliation_failed";
+          console.error("[procedureEvents.route] component note reconcile failed:", e);
+        }
+      }
+      res.status(200).json({ status: "recorded", noteReconciliation });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

@@ -6,6 +6,12 @@ import { listCaseDocumentReadinessForCases } from "../../repositories/documentRe
 import { getExecutionCaseById, getExecutionCaseByScreeningId } from "../../repositories/executionCase.repo";
 import { getAncillaryCategory } from "@shared/ancillaryCategory";
 import { readinessCountsForSchedule } from "./ancillaryReadinessRules";
+import {
+  buildReadinessIndex,
+  resolveReadinessRow,
+  consentScopeForCategory,
+  type ResolutionScope,
+} from "./ancillaryReadinessKeying";
 import type { CaseDocumentReadiness } from "@shared/schema/documentReadiness";
 
 type CaseReadinessRow = CaseDocumentReadiness;
@@ -58,6 +64,16 @@ type AncillaryRowLike = {
   id: string | number;
   executionCaseId?: number | null;
   patientScreeningId?: number | null;
+  /**
+   * The durable per-service ancillary occurrence id (patient_ancillary_cases.id).
+   * Preferred, when present, as the ownership key for BrainWave / VitalWave
+   * consent and for Report — so a specific occurrence's readiness never bleeds
+   * across occurrences. Null in the pre-canonical (flag-off) world, where the
+   * resolver falls back to (executionCaseId + exact serviceType). Ultrasound
+   * consent is deliberately NOT keyed by this — it is shared across ultrasound
+   * studies of the same visit/execution case (see the resolver below).
+   */
+  ancillaryCaseId?: number | null;
   serviceType?: string | null;
   /**
    * The appointment's scheduled date (YYYY-MM-DD), when the caller knows it.
@@ -191,23 +207,10 @@ export async function buildAncillaryReadinessSummaries(
   // last-iterated (OLDEST) row won, which let a stale completion shadow a
   // fresher one; combined with the dated guard that would incorrectly mark a
   // current, valid completion as missing.
-  const rowByKey = new Map<string, CaseReadinessRow>();
-  const put = (
-    prefix: string,
-    id: number | null | undefined,
-    serviceCat: string,
-    docType: string,
-    r: CaseReadinessRow,
-  ) => {
-    if (id == null) return;
-    const key = `${prefix}:${id}:${serviceCat}:${docType}`;
-    if (!rowByKey.has(key)) rowByKey.set(key, r);
-  };
-  for (const r of readinessRows) {
-    const cat = getAncillaryCategory(r.serviceType ?? "");
-    put("ec", r.executionCaseId, cat, r.documentType, r);
-    put("ps", r.patientScreeningId, cat, r.documentType, r);
-  }
+  // Key/scope resolution is factored into the pure ancillaryReadinessKeying
+  // module (deterministically unit-tested). This layer only supplies the
+  // DB-read rows and then applies the dated guard below.
+  const rowByKey = buildReadinessIndex(readinessRows);
   // Episode + service isolation (Option A + strict consent rule). Resolution:
   //   1. When the row carries an executionCaseId, resolve ONLY by the
   //      case+service key — never fall back to patientScreeningId — so a prior
@@ -217,18 +220,22 @@ export async function buildAncillaryReadinessSummaries(
   //      never satisfies "Ultrasound", even on a multi-service case.
   //   3. The patientScreeningId key is used ONLY for legacy rows with no
   //      execution-case link at all.
-  const lookupRow = (row: AncillaryRowLike, docType: string): CaseReadinessRow | undefined => {
-    const cat = getAncillaryCategory(row.serviceType ?? "");
-    if (row.executionCaseId != null) {
-      return rowByKey.get(`ec:${row.executionCaseId}:${cat}:${docType}`);
-    }
-    if (row.patientScreeningId != null) {
-      return rowByKey.get(`ps:${row.patientScreeningId}:${cat}:${docType}`);
-    }
-    return undefined;
-  };
-  const lookup = (row: AncillaryRowLike, docType: string): string | undefined =>
-    lookupRow(row, docType)?.documentStatus;
+  // Resolution scope per Decision 1:
+  //   "service"  — the requirement belongs to the SPECIFIC ancillary occurrence
+  //                (BrainWave/VitalWave consent, screening, report, brainwave_pdf).
+  //                Prefers the durable ancillaryCaseId key, else (executionCase +
+  //                exact serviceType), else (patientScreening + exact serviceType).
+  //   "category" — the requirement is shared across studies of the same category
+  //                in the same visit (ULTRASOUND consent only). Keeps the prior
+  //                (executionCase + category) behavior so one ultrasound consent
+  //                covers Echo + Carotid + AAA of the SAME execution case.
+  // In BOTH scopes: when an executionCaseId is present we NEVER fall back to the
+  // patientScreening key, so a prior episode's completion cannot bleed in.
+  const lookupRow = (
+    row: AncillaryRowLike,
+    docType: string,
+    scope: ResolutionScope = "category",
+  ): CaseReadinessRow | undefined => resolveReadinessRow(rowByKey, row, docType, scope);
 
   for (const row of rows) {
     const req = requirementsForService(row.serviceType);
@@ -236,33 +243,42 @@ export async function buildAncillaryReadinessSummaries(
 
     // A readiness item is "complete" only when its persisted row is complete
     // AND satisfies the dated on/after-scheduledDate guard (when a scheduled
-    // date is supplied). Episode + service keying already isolates by case;
-    // the dated guard blocks a stale same-case completion from a prior visit.
-    const dated = (docType: string): boolean =>
-      completedOnOrAfterScheduled(lookupRow(row, docType), sched);
+    // date is supplied). Occurrence/service keying isolates by the specific
+    // ancillary; the dated guard blocks a stale same-case completion from a
+    // prior visit.
+    const dated = (docType: string, scope: ResolutionScope): boolean =>
+      completedOnOrAfterScheduled(lookupRow(row, docType, scope), sched);
+
+    // Consent ownership (Decision 1): BrainWave / VitalWave consent belongs to
+    // the specific occurrence (service scope → prefers ancillaryCaseId); an
+    // ultrasound consent is shared across ultrasound studies of the same visit
+    // (category scope).
+    const consentScope: ResolutionScope = consentScopeForCategory(req.category);
 
     const informedConsent: ReadinessItemState = req.informedConsent
-      ? dated(READINESS_DOC_INFORMED_CONSENT)
+      ? dated(READINESS_DOC_INFORMED_CONSENT, consentScope)
         ? "complete"
         : "missing"
       : "not_required";
 
     const screeningForm: ReadinessItemState = req.screeningForm
-      ? dated(READINESS_DOC_SCREENING_FORM)
+      ? dated(READINESS_DOC_SCREENING_FORM, "service")
         ? "complete"
         : "missing"
       : "not_required";
 
     const brainwavePdf: ReadinessItemState = req.brainwavePdf
-      ? dated(READINESS_DOC_BRAINWAVE_PDF)
+      ? dated(READINESS_DOC_BRAINWAVE_PDF, "service")
         ? "complete"
         : "missing"
       : "not_required";
 
-    // Report applies to every ancillary. For BrainWave the result lives under
-    // the dedicated brainwave_pdf item, so treat either as satisfying report.
-    const reportRow = lookupRow(row, READINESS_DOC_REPORT);
-    const brainwaveRow = lookupRow(row, READINESS_DOC_BRAINWAVE_PDF);
+    // Report belongs to the specific ancillary occurrence (service scope), so an
+    // Echo report never satisfies a Carotid report on the same execution case.
+    // For BrainWave the result lives under the dedicated brainwave_pdf item, so
+    // treat either as satisfying report.
+    const reportRow = lookupRow(row, READINESS_DOC_REPORT, "service");
+    const brainwaveRow = lookupRow(row, READINESS_DOC_BRAINWAVE_PDF, "service");
     const report: ReadinessItemState =
       completedOnOrAfterScheduled(reportRow, sched) ||
       (req.brainwavePdf && completedOnOrAfterScheduled(brainwaveRow, sched))
@@ -289,11 +305,11 @@ export async function buildAncillaryReadinessSummaries(
         : null,
       informedConsentProvenance:
         informedConsent === "complete"
-          ? provOf(lookupRow(row, READINESS_DOC_INFORMED_CONSENT))
+          ? provOf(lookupRow(row, READINESS_DOC_INFORMED_CONSENT, consentScope))
           : null,
       screeningFormProvenance:
         screeningForm === "complete"
-          ? provOf(lookupRow(row, READINESS_DOC_SCREENING_FORM))
+          ? provOf(lookupRow(row, READINESS_DOC_SCREENING_FORM, "service"))
           : null,
       reportProvenance:
         report === "complete" ? provOf(reportRow ?? brainwaveRow) : null,
