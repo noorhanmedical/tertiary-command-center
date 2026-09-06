@@ -2,6 +2,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 import { evaluateInvoiceReadiness } from "../services/billing/invoiceReadinessEngine";
 import {
   listInvoiceReadiness,
@@ -33,7 +34,7 @@ const evaluateFacilityBody = z.object({
 });
 
 export function registerInvoiceReadinessRoutes(app: Express) {
-  app.get("/api/invoice-readiness", requireAuth, async (req, res) => {
+  app.get("/api/invoice-readiness", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const filters: Parameters<typeof listInvoiceReadiness>[0] = {};
@@ -53,7 +54,7 @@ export function registerInvoiceReadinessRoutes(app: Express) {
     }
   });
 
-  app.get("/api/invoice-readiness/:id", requireAuth, async (req, res) => {
+  app.get("/api/invoice-readiness/:id", requireBillingView, async (req, res) => {
     try {
       const rawId = req.params.id as string;
       const id = parseInt(rawId, 10);
@@ -68,7 +69,7 @@ export function registerInvoiceReadinessRoutes(app: Express) {
   });
 
   // POST /api/invoice-readiness/evaluate — single (case, service) eval.
-  app.post("/api/invoice-readiness/evaluate", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoice-readiness/evaluate", requireBillingManage, async (req, res) => {
     try {
       const parsed = evaluateBody.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
@@ -97,7 +98,7 @@ export function registerInvoiceReadinessRoutes(app: Express) {
   });
 
   // POST /api/invoice-readiness/evaluate-facility — facility sweep.
-  app.post("/api/invoice-readiness/evaluate-facility", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoice-readiness/evaluate-facility", requireBillingManage, async (req, res) => {
     try {
       const parsed = evaluateFacilityBody.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });

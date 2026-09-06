@@ -15,6 +15,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { featureFlags } from "../lib/featureFlags";
+import { requireBillingView } from "../middleware/billingGuards";
 import { disabledCanonicalFinancialView } from "@shared/canonicalFinancialView";
 import { getCanonicalFinancialView } from "../services/canonicalFinancial/financialView";
 import { evaluateClaimReadiness } from "../services/canonicalFinancial/claimReadiness";
@@ -33,14 +34,11 @@ import type { CanonicalInvoiceStatus } from "@shared/schema/canonicalInvoices";
 
 const MIGRATION_CODE = "ANCILLARY_DOCUMENT_MIGRATION_MISSING";
 const MIGRATION = new Set(["42P01", "42703", MIGRATION_CODE]);
-const FINANCIAL_ROLES = new Set(["biller", "admin"]);
-
-function requireBillerOrAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const role = req.session.role;
-  if (typeof role !== "string" || !FINANCIAL_ROLES.has(role)) { res.status(403).json({ error: "Forbidden — biller or admin role required" }); return; }
-  next();
-}
+// Phase 4A: capability gate layered ON TOP of the existing requireClinicScope
+// + per-case ownership checks (which are NOT removed). Enforcement OFF → the
+// legacy admin|biller fallback preserves prior behavior. Writes retain
+// ownership verification in-handler; billing.view is the capability floor.
+const requireBillerOrAdmin = requireBillingView;
 function requireClinicScope(req: Request, res: Response): number | null {
   const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
   if (clinicId == null) { res.status(403).json({ error: "Clinic scope required" }); return null; }

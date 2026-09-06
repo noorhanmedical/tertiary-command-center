@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { requireBillingView } from "../middleware/billingGuards";
 import {
   listProjectedInvoiceRows,
   getProjectedInvoiceRowById,
@@ -8,7 +9,7 @@ export function registerProjectedInvoiceRoutes(app: Express) {
   // GET /api/projected-invoice-rows
   // Filters: executionCaseId, patientScreeningId, procedureEventId,
   //          facilityId, serviceType, projectedStatus, realInvoiceLineItemId, limit
-  app.get("/api/projected-invoice-rows", async (req, res) => {
+  app.get("/api/projected-invoice-rows", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
@@ -42,9 +43,9 @@ export function registerProjectedInvoiceRoutes(app: Express) {
   });
 
   // GET /api/projected-invoice-rows/:id
-  app.get("/api/projected-invoice-rows/:id", async (req, res) => {
+  app.get("/api/projected-invoice-rows/:id", requireBillingView, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const row = await getProjectedInvoiceRowById(id);
       if (!row) return res.status(404).json({ error: "Projected invoice row not found" });

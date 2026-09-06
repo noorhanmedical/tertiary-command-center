@@ -2,6 +2,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 import { buildInvoiceBatchPreview } from "../services/billing/invoiceBatchBuilder";
 import {
   listInvoiceBatches, getInvoiceBatchById, listInvoiceBatchItems, updateInvoiceBatchStatus,
@@ -30,7 +31,7 @@ const generateDueSchema = z.object({
 });
 
 export function registerInvoiceBatchRoutes(app: Express) {
-  app.get("/api/invoice-batches", requireAuth, async (req, res) => {
+  app.get("/api/invoice-batches", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const rows = await listInvoiceBatches({ facilityId: q.facilityId, batchStatus: q.batchStatus }, 200);
@@ -40,7 +41,7 @@ export function registerInvoiceBatchRoutes(app: Express) {
     }
   });
 
-  app.get("/api/invoice-batches/:id", requireAuth, async (req, res) => {
+  app.get("/api/invoice-batches/:id", requireBillingView, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -53,7 +54,7 @@ export function registerInvoiceBatchRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoice-batches/preview", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoice-batches/preview", requireBillingManage, async (req, res) => {
     try {
       const parsed = previewSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
@@ -70,7 +71,7 @@ export function registerInvoiceBatchRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoice-batches/generate-due", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoice-batches/generate-due", requireBillingManage, async (req, res) => {
     try {
       const parsed = generateDueSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
@@ -88,7 +89,7 @@ export function registerInvoiceBatchRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoice-batches/:id/refresh", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoice-batches/:id/refresh", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -113,7 +114,7 @@ export function registerInvoiceBatchRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoice-batches/:id/void", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoice-batches/:id/void", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });

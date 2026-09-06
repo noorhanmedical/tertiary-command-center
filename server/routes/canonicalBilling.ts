@@ -14,6 +14,7 @@ import { db } from "../db";
 import { canonicalBillingReadinessChecks as billingReadinessChecks } from "@shared/schema/billingReadiness";
 import { canonicalBillingDocumentRequests as billingDocumentRequests } from "@shared/schema/billingDocuments";
 import { billingReadinessRuntimeEnabled, billingDocumentRuntimeEnabled } from "../lib/featureFlags";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 import { getAncillaryCaseById } from "../repositories/ancillaryCases.repo";
 import { evaluateCanonicalBillingReadiness } from "../services/billingLifecycle/billingReadinessEvaluator";
 import { ensureCanonicalBillingDocumentForAncillaryCase } from "../services/billingLifecycle/billingLifecycleOrchestration";
@@ -45,7 +46,7 @@ async function ownedCase(clinicId: number, ancillaryCaseId: number) {
 
 export function registerCanonicalBillingRoutes(app: Express): void {
   // ─── GET current canonical billing readiness ──────────────────────
-  app.get("/api/ancillary-cases/:ancillaryCaseId/billing-readiness", async (req, res) => {
+  app.get("/api/ancillary-cases/:ancillaryCaseId/billing-readiness", requireBillingView, async (req, res) => {
     if (!billingReadinessRuntimeEnabled()) return res.json({ disabled: true, readiness: null });
     const clinicId = requireClinicScope(req, res); if (clinicId == null) return;
     const ancillaryCaseId = parseIntOrNull(req.params.ancillaryCaseId);
@@ -63,7 +64,7 @@ export function registerCanonicalBillingRoutes(app: Express): void {
   });
 
   // ─── GET current canonical Billing Document ───────────────────────
-  app.get("/api/ancillary-cases/:ancillaryCaseId/billing-document", async (req, res) => {
+  app.get("/api/ancillary-cases/:ancillaryCaseId/billing-document", requireBillingView, async (req, res) => {
     if (!billingDocumentRuntimeEnabled()) return res.json({ disabled: true, billingDocument: null });
     const clinicId = requireClinicScope(req, res); if (clinicId == null) return;
     const ancillaryCaseId = parseIntOrNull(req.params.ancillaryCaseId);
@@ -81,12 +82,13 @@ export function registerCanonicalBillingRoutes(app: Express): void {
   });
 
   // ─── POST evaluate canonical billing readiness ────────────────────
-  app.post("/api/ancillary-cases/:ancillaryCaseId/billing-readiness/evaluate", async (req, res) => {
+  app.post("/api/ancillary-cases/:ancillaryCaseId/billing-readiness/evaluate", requireBillingManage, async (req, res) => {
     if (!billingReadinessRuntimeEnabled()) return res.status(409).json({ error: "Canonical billing readiness disabled" });
     const clinicId = requireClinicScope(req, res); if (clinicId == null) return;
     const actor = sessionActor(req);
     if (!actor) return res.status(401).json({ error: "Not authenticated" });
-    if (!["admin", "biller"].includes(actor.role)) return res.status(403).json({ error: "Forbidden" });
+    // Capability is enforced by requireBillingManage; ownership + clinic scope
+    // below are UNCHANGED. `actor` identity is still required for attribution.
     const ancillaryCaseId = parseIntOrNull(req.params.ancillaryCaseId);
     if (ancillaryCaseId == null) return res.status(400).json({ error: "Invalid ancillaryCaseId" });
     try {
@@ -102,12 +104,13 @@ export function registerCanonicalBillingRoutes(app: Express): void {
   });
 
   // ─── POST generate canonical Billing Document ─────────────────────
-  app.post("/api/ancillary-cases/:ancillaryCaseId/billing-document/generate", async (req, res) => {
+  app.post("/api/ancillary-cases/:ancillaryCaseId/billing-document/generate", requireBillingManage, async (req, res) => {
     if (!billingDocumentRuntimeEnabled()) return res.status(409).json({ error: "Canonical Billing Document disabled" });
     const clinicId = requireClinicScope(req, res); if (clinicId == null) return;
     const actor = sessionActor(req);
     if (!actor) return res.status(401).json({ error: "Not authenticated" });
-    if (!["admin", "biller"].includes(actor.role)) return res.status(403).json({ error: "Forbidden" });
+    // Capability enforced by requireBillingManage; ownership + clinic scope
+    // below are UNCHANGED. `actor` identity is still required for attribution.
     const ancillaryCaseId = parseIntOrNull(req.params.ancillaryCaseId);
     if (ancillaryCaseId == null) return res.status(400).json({ error: "Invalid ancillaryCaseId" });
     try {

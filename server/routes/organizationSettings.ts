@@ -27,6 +27,7 @@ import {
   facilityRepository,
 } from "../repositories/clinicians.repo";
 import { insertClinicianSchema } from "@shared/schema/clinics";
+import { requirePermission } from "../middleware/accessControl";
 
 const facilityBodySchema = z.object({
   name: z.string().trim().min(1, "Facility name is required").max(200),
@@ -58,6 +59,12 @@ export function registerOrganizationSettingsRoutes(
   requireRole: (...roles: string[]) => RequestHandler,
 ) {
   const requireAdmin = requireRole("admin");
+  // Phase 3: facilities/clinicians are clinic-level resources. Migrated to
+  // `clinic.manage` + PLATFORM scope, which preserves the current admin-only
+  // behavior (these endpoints are not yet clinic/org-scope-aware). Scoped
+  // org/clinic-admin management of specific facilities is a Phase 4 item.
+  // Enforcement OFF → legacy admin gate.
+  const requireClinicManage = requirePermission("clinic.manage", { platform: true, legacy: requireAdmin });
 
   // ── Facilities ──────────────────────────────────────────────────────
   app.get("/api/org/facilities", async (req: Request, res: Response) => {
@@ -69,7 +76,7 @@ export function registerOrganizationSettingsRoutes(
     }
   });
 
-  app.post("/api/org/facilities", requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/org/facilities", requireClinicManage, async (req: Request, res: Response) => {
     const parsed = facilityBodySchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
@@ -87,7 +94,7 @@ export function registerOrganizationSettingsRoutes(
     }
   });
 
-  app.patch("/api/org/facilities/:id", requireAdmin, async (req: Request, res: Response) => {
+  app.patch("/api/org/facilities/:id", requireClinicManage, async (req: Request, res: Response) => {
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     const parsed = facilityBodySchema.partial().safeParse(req.body);
@@ -116,7 +123,7 @@ export function registerOrganizationSettingsRoutes(
     }
   });
 
-  app.post("/api/org/facilities/:id/clinicians", requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/org/facilities/:id/clinicians", requireClinicManage, async (req: Request, res: Response) => {
     const clinicId = parseInt(String(req.params.id), 10);
     const clinicianId = Number((req.body as { clinicianId?: unknown }).clinicianId);
     if (Number.isNaN(clinicId) || !Number.isInteger(clinicianId) || clinicianId <= 0) {
@@ -130,7 +137,7 @@ export function registerOrganizationSettingsRoutes(
     }
   });
 
-  app.delete("/api/org/facilities/:id/clinicians/:clinicianId", requireAdmin, async (req: Request, res: Response) => {
+  app.delete("/api/org/facilities/:id/clinicians/:clinicianId", requireClinicManage, async (req: Request, res: Response) => {
     const clinicId = parseInt(String(req.params.id), 10);
     const clinicianId = parseInt(String(req.params.clinicianId), 10);
     if (Number.isNaN(clinicId) || Number.isNaN(clinicianId)) {
@@ -172,7 +179,7 @@ export function registerOrganizationSettingsRoutes(
     }
   });
 
-  app.post("/api/org/clinicians", requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/org/clinicians", requireClinicManage, async (req: Request, res: Response) => {
     const parsed = clinicianBodySchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
@@ -190,7 +197,7 @@ export function registerOrganizationSettingsRoutes(
     }
   });
 
-  app.patch("/api/org/clinicians/:id", requireAdmin, async (req: Request, res: Response) => {
+  app.patch("/api/org/clinicians/:id", requireClinicManage, async (req: Request, res: Response) => {
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     const parsed = clinicianBodySchema.partial().safeParse(req.body);

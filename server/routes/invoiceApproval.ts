@@ -10,6 +10,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { requireBillingManage } from "../middleware/billingGuards";
 import { createDraftsFromBatch } from "../services/billing/invoiceDraftService";
 import { applyApprovalTransition } from "../services/billing/invoiceApprovalService";
 import { db } from "../db";
@@ -27,7 +28,7 @@ const voidBody = z.object({ reason: z.string().min(1).max(2048) });
 const reviseBody = z.object({ note: z.string().optional() });
 
 export function registerInvoiceApprovalRoutes(app: Express) {
-  app.post("/api/invoice-batches/:id/create-drafts", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoice-batches/:id/create-drafts", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -39,18 +40,18 @@ export function registerInvoiceApprovalRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/submit-for-review", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/submit-for-review", requireBillingManage, async (req, res) => {
     return runTransition(req, res, "submit_for_review");
   });
-  app.post("/api/invoices/:id/approve", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/approve", requireBillingManage, async (req, res) => {
     return runTransition(req, res, "approve");
   });
-  app.post("/api/invoices/:id/void", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/void", requireBillingManage, async (req, res) => {
     const parsed = voidBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
     return runTransition(req, res, "void", parsed.data.reason);
   });
-  app.post("/api/invoices/:id/revise", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/revise", requireBillingManage, async (req, res) => {
     reviseBody.safeParse(req.body); // optional body
     return runTransition(req, res, "revise");
   });

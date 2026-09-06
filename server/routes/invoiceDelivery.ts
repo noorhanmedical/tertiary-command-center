@@ -14,6 +14,7 @@ import {
   listDeliveryEventsForInvoice,
   getInvoiceById,
 } from "../repositories/invoiceDelivery.repo";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 
 function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -34,7 +35,7 @@ const sendBody = z.object({
 
 export function registerInvoiceDeliveryRoutes(app: Express) {
   // GET /api/invoice-delivery-queue — invoices grouped by delivery_status.
-  app.get("/api/invoice-delivery-queue", requireAuth, async (_req, res) => {
+  app.get("/api/invoice-delivery-queue", requireBillingView, async (_req, res) => {
     try {
       const rows = await listInvoiceDeliveryQueue();
       res.json(rows);
@@ -43,7 +44,7 @@ export function registerInvoiceDeliveryRoutes(app: Express) {
     }
   });
 
-  app.get("/api/invoices/:id/delivery-events", requireAuth, async (req, res) => {
+  app.get("/api/invoices/:id/delivery-events", requireBillingView, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -54,7 +55,7 @@ export function registerInvoiceDeliveryRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/queue-delivery", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/queue-delivery", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -66,7 +67,7 @@ export function registerInvoiceDeliveryRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/send-email", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/send-email", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -97,7 +98,7 @@ export function registerInvoiceDeliveryRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/send-reminder", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/send-reminder", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });

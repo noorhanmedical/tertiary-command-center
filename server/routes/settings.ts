@@ -16,6 +16,7 @@ import {
   clearPhoneProviderDefault,
 } from "../repositories/adminSettings.repo";
 import { SELECTABLE_PHONE_PROVIDER_IDS } from "@shared/phoneProvider";
+import { requirePermission } from "../middleware/accessControl";
 
 const VALID_QUAL_MODES = ["permissive", "standard", "conservative"] as const;
 const qualModeSchema = z.object({
@@ -75,6 +76,10 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   }
   return next();
 }
+
+// Phase 3: platform-settings guards. Enforcement OFF → legacy admin gate.
+const requireSettingsManage = requirePermission("platform.settings.manage", { legacy: requireAdmin });
+const requireSettingsView = requirePermission("platform.settings.view", { legacy: requireAdmin });
 
 // ─── World Time image registry ──────────────────────────────────────────────
 // Backing store for the premium World Time card imagery + its approval state
@@ -387,7 +392,7 @@ export function registerSettingsRoutes(app: Express) {
 
   // Admin read: full registry INCLUDING pending candidate asset URLs, so the
   // approval surface can render the exact production preview before approval.
-  app.get("/api/admin/world-time/images", requireAdmin, async (_req, res) => {
+  app.get("/api/admin/world-time/images", requireSettingsView, async (_req, res) => {
     try {
       res.json({ images: await readWorldTimeRegistry() });
     } catch (error: any) {
@@ -399,7 +404,7 @@ export function registerSettingsRoutes(app: Express) {
   // NOT approval — this moves the record to PENDING_APPROVAL and records
   // proposal audit metadata. The location's timezone card keeps working on the
   // fallback gradient until an image is explicitly approved.
-  app.put("/api/admin/world-time/images/:id", requireAdmin, async (req, res) => {
+  app.put("/api/admin/world-time/images/:id", requireSettingsManage, async (req, res) => {
     try {
       const id = wtSlugify(String(req.params.id ?? ""));
       if (!id) return res.status(400).json({ error: "Invalid location id" });
@@ -426,7 +431,7 @@ export function registerSettingsRoutes(app: Express) {
   });
 
   // Admin APPROVE — the only action that makes an image operationally visible.
-  app.post("/api/admin/world-time/images/:id/approve", requireAdmin, async (req, res) => {
+  app.post("/api/admin/world-time/images/:id/approve", requireSettingsManage, async (req, res) => {
     try {
       const id = wtSlugify(String(req.params.id ?? ""));
       const reg = await readWorldTimeRegistry();
@@ -444,7 +449,7 @@ export function registerSettingsRoutes(app: Express) {
   });
 
   // Admin REJECT — candidate stays unavailable; fallback gradient remains.
-  app.post("/api/admin/world-time/images/:id/reject", requireAdmin, async (req, res) => {
+  app.post("/api/admin/world-time/images/:id/reject", requireSettingsManage, async (req, res) => {
     try {
       const id = wtSlugify(String(req.params.id ?? ""));
       const reg = await readWorldTimeRegistry();
@@ -459,7 +464,7 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/settings/qualification-modes", async (req, res) => {
+  app.post("/api/settings/qualification-modes", requireSettingsManage, async (req, res) => {
     try {
       const parsed = qualModeSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });

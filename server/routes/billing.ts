@@ -7,6 +7,31 @@ import { eq, and, or, ilike, desc } from "drizzle-orm";
 import type { InsertBillingRecord } from "../../shared/schema";
 import { logAudit } from "../services/auditService";
 import { evaluateCaseReadinessGate } from "../services/ancillary/ancillaryReadinessSummary";
+import { requirePermission, legacyRequireAnyRole, permissionEnforcementEnabled, ensureAccessContext } from "../middleware/accessControl";
+import { actorAdministrableClinicIds } from "../services/access/accessAdminService";
+
+// Phase 3.5 permission guards. Enforcement OFF → legacy admin|biller fallback
+// (this also CLOSES the previously-ungated create/patch/delete writes now,
+// tightening them from "any authenticated user" to admin|biller).
+const billerLegacy = legacyRequireAnyRole("admin", "biller");
+const requireBillingView = requirePermission("billing.view", { legacy: billerLegacy });
+const requireBillingManage = requirePermission("billing.manage", { legacy: billerLegacy });
+// Resource-scoped billing.manage: loads the billing record's PERSISTED clinic
+// (never a client-supplied clinicId) and enforces it against the caller's
+// clinic scope (platform scope passes any clinic).
+const requireBillingManageScoped = requirePermission("billing.manage", {
+  legacy: billerLegacy,
+  clinic: async (req) => {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) return null;
+    const [row] = await db
+      .select({ clinicId: billingRecords.clinicId })
+      .from(billingRecords)
+      .where(eq(billingRecords.id, id))
+      .limit(1);
+    return row?.clinicId ?? null;
+  },
+});
 
 // Billing statuses that represent a record being put forward for billing.
 // Setting any of these transitions the record past "Not Billed" and is gated
@@ -81,7 +106,7 @@ export function registerBillingRoutes(
   // byte-for-byte; see docs/architecture/backend-route-parity-inventory.md §9.1.
   // The O(batches × patients × tests) scan is intentionally NOT optimized
   // here — orchestrator Batches 14/17 are the venues for that work.
-  app.get("/api/billing-records", async (_req, res) => {
+  app.get("/api/billing-records", requireBillingView, async (req, res) => {
     try {
       const { listBillingRecordsWithAutoCreate } = await import(
         "../services/billing/billingRecordsService"
@@ -90,16 +115,29 @@ export function registerBillingRoutes(
       // sheet-sync coupling that main ships. Pass a no-op backgroundSyncBilling
       // here so the auto-create scan runs but does not enqueue a Google sync
       // in this preview restore path.
-      const records = await listBillingRecordsWithAutoCreate({
+      let records = await listBillingRecordsWithAutoCreate({
         backgroundSyncBilling: () => {},
       });
+      // Phase 4A: clinic-scope filtering. When enforcement is ON, a non-platform
+      // billing user receives ONLY rows for clinics they are authorized to see
+      // (server-side filter on persisted clinic ownership — never client-side).
+      if (permissionEnforcementEnabled()) {
+        const actor = await ensureAccessContext(req);
+        if (actor && !actor.scope.platform) {
+          const administrable = await actorAdministrableClinicIds(actor);
+          if (administrable !== "all") {
+            const allowed = new Set<number>(administrable);
+            records = records.filter((r: { clinicId: number | null }) => r.clinicId != null && allowed.has(r.clinicId));
+          }
+        }
+      }
       res.json(records);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/billing-records/invoice-links", requireBillerOrAdmin, async (_req, res) => {
+  app.get("/api/billing-records/invoice-links", requireBillingView, async (_req, res) => {
     try {
       const links = await storage.getBillingRecordInvoiceLinks();
       res.json(links);
@@ -111,7 +149,7 @@ export function registerBillingRoutes(
   // Cross-entity command search: match billing records by patient name, MRN,
   // service, or facility. Used by the command-rail Search popup alongside the
   // patient and document searches. Test rows are excluded.
-  app.get("/api/billing-records/search", async (req, res) => {
+  app.get("/api/billing-records/search", requireBillingView, async (req, res) => {
     try {
       const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
       const limit = Math.min(parseInt(String(req.query.limit ?? "25"), 10) || 25, 100);
@@ -147,7 +185,7 @@ export function registerBillingRoutes(
     }
   });
 
-  app.post("/api/billing-records", async (req, res) => {
+  app.post("/api/billing-records", requireBillingManage, async (req, res) => {
     try {
       const parsed = createBillingRecordSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
@@ -197,9 +235,9 @@ export function registerBillingRoutes(
     }
   });
 
-  app.patch("/api/billing-records/:id", async (req, res) => {
+  app.patch("/api/billing-records/:id", requireBillingManageScoped, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id));
       const parsed = updateBillingRecordSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       const updates: Partial<InsertBillingRecord> = Object.fromEntries(
@@ -242,9 +280,9 @@ export function registerBillingRoutes(
     }
   });
 
-  app.delete("/api/billing-records/:id", async (req, res) => {
+  app.delete("/api/billing-records/:id", requireBillingManageScoped, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id));
       await storage.deleteBillingRecord(id);
       void logAudit(req, "delete", "billing_record", id, null);
       res.status(204).send();

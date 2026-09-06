@@ -1,6 +1,7 @@
 // /api/billing-auditor/* — Phase 4 PR 4.7.
 
 import type { Express, Request, Response, NextFunction } from "express";
+import { requireBillingView } from "../middleware/billingGuards";
 import {
   getWorklistSummary, getWorklistItems, WORKLIST_QUEUE_IDS, type WorklistQueueId,
 } from "../services/billing/billingAuditorWorklistService";
@@ -13,7 +14,7 @@ function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
 }
 
 export function registerBillingAuditorRoutes(app: Express) {
-  app.get("/api/billing-auditor/summary", requireAdminOrBiller, async (req, res) => {
+  app.get("/api/billing-auditor/summary", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const summary = await getWorklistSummary(q.facilityId ?? null);
@@ -23,7 +24,7 @@ export function registerBillingAuditorRoutes(app: Express) {
     }
   });
 
-  app.get("/api/billing-auditor/worklist", requireAdminOrBiller, async (req, res) => {
+  app.get("/api/billing-auditor/worklist", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const queueId = q.queueId as WorklistQueueId | undefined;

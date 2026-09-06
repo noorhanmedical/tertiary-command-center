@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { completedBillingPackages } from "@shared/schema/completedBillingPackages";
 import { invoiceLineItems, invoices } from "@shared/schema/invoices";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 import {
   listCompletedBillingPackages,
   getCompletedBillingPackageById,
@@ -56,7 +57,7 @@ export function registerCompletedBillingPackageRoutes(app: Express) {
   // Filters: executionCaseId, patientScreeningId, procedureEventId,
   //          billingReadinessCheckId, billingDocumentRequestId,
   //          facilityId, serviceType, packageStatus, paymentStatus, limit
-  app.get("/api/completed-billing-packages", async (req, res) => {
+  app.get("/api/completed-billing-packages", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
@@ -95,9 +96,9 @@ export function registerCompletedBillingPackageRoutes(app: Express) {
   });
 
   // POST /api/completed-billing-packages/:id/payment
-  app.post("/api/completed-billing-packages/:id/payment", async (req, res) => {
+  app.post("/api/completed-billing-packages/:id/payment", requireBillingManage, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
       const parsed = paymentUpdateSchema.safeParse(req.body);
@@ -118,9 +119,9 @@ export function registerCompletedBillingPackageRoutes(app: Express) {
   });
 
   // GET /api/completed-billing-packages/:id
-  app.get("/api/completed-billing-packages/:id", async (req, res) => {
+  app.get("/api/completed-billing-packages/:id", requireBillingView, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const pkg = await getCompletedBillingPackageById(id);
       if (!pkg) return res.status(404).json({ error: "Completed billing package not found" });
@@ -140,7 +141,7 @@ export function registerCompletedBillingPackageRoutes(app: Express) {
   // payment, awaits the invoice-line-item insert (using the existing
   // 50/50 split via settings-aware metadata), and appends two journey
   // events (billing_payment_updated + added_to_invoice).
-  app.post("/api/billing/complete-package-payment", async (req, res) => {
+  app.post("/api/billing/complete-package-payment", requireBillingManage, async (req, res) => {
     try {
       const parsed = completePackagePaymentSchema.safeParse(req.body);
       if (!parsed.success) {
