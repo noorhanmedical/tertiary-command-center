@@ -27,12 +27,24 @@ type PersistedSession = {
   workspaces: PersistedWorkspace[];
   activeWorkspaceId: string | null;
   savedAt: number;
+  /**
+   * The user id that owned this workspace session. Restore is refused when the
+   * current owner does not match — so a logout→login in the SAME browser tab
+   * (sessionStorage survives an SPA logout) can never surface the previous
+   * user's open patient tabs / PHI descriptors to the next user (Scenario G).
+   */
+  ownerUserId?: string | null;
 };
 
-/** Save current workspace state to sessionStorage. */
-export function saveSession(workspaces: PlaygroundWorkspace[], activeId: string | null): void {
+/** Save current workspace state to sessionStorage, stamped with the owner. */
+export function saveSession(
+  workspaces: PlaygroundWorkspace[],
+  activeId: string | null,
+  ownerUserId?: string | null,
+): void {
   try {
     const session: PersistedSession = {
+      ownerUserId: ownerUserId ?? null,
       workspaces: workspaces.map((ws) => ({
         id: ws.id,
         type: ws.type,
@@ -54,13 +66,58 @@ export function saveSession(workspaces: PlaygroundWorkspace[], activeId: string 
   } catch { /* storage unavailable */ }
 }
 
-/** Restore workspace descriptors from sessionStorage. Returns null if none. */
-export function restoreSession(): { workspaces: PlaygroundWorkspace[]; activeId: string | null } | null {
+/**
+ * Restore workspace descriptors from sessionStorage.
+ *
+ * FAIL-CLOSED owner scoping (Scenario G): the persisted workspace descriptors
+ * carry PHI (patient names, screening/execution-case ids, tab labels), so they
+ * are restored ONLY when the session can be POSITIVELY attributed to the
+ * current authenticated owner. It returns null — surfacing NO patient state —
+ * in every unproven case:
+ *   • current owner unknown (auth not yet resolved): the persisted session is
+ *     LEFT INTACT so a later call with the resolved owner can still match;
+ *   • persisted session has no owner (legacy / pre-owner-scoping): treated as
+ *     unattributable PHI and CLEARED;
+ *   • persisted owner differs from the current owner (foreign): CLEARED;
+ *   • payload malformed, stale (>24h), or empty.
+ * Only an exact owner match restores.
+ */
+export function restoreSession(
+  ownerUserId?: string | null,
+): { workspaces: PlaygroundWorkspace[]; activeId: string | null } | null {
+  let raw: string | null;
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const session: PersistedSession = JSON.parse(raw);
-    // Reject stale sessions (> 24 hours).
+    raw = sessionStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null; // storage unavailable
+  }
+  if (!raw) return null;
+
+  let session: PersistedSession;
+  try {
+    session = JSON.parse(raw) as PersistedSession;
+  } catch {
+    // Malformed junk — remove it and fail safe (never surface partial state).
+    clearSession();
+    return null;
+  }
+
+  // ── Fail-closed owner gate ────────────────────────────────────────────────
+  const persistedOwner = session.ownerUserId ?? null;
+  if (ownerUserId == null) {
+    // Current owner unknown (auth still resolving). Never surface PHI, and do
+    // NOT clear — the resolved owner may legitimately own this session.
+    return null;
+  }
+  if (persistedOwner == null || persistedOwner !== ownerUserId) {
+    // Legacy/unowned OR another user's session — never restore, and clear the
+    // unattributable/foreign entry so it cannot linger or be re-read.
+    clearSession();
+    return null;
+  }
+
+  // Positive owner match beyond this point.
+  try {
     if (Date.now() - session.savedAt > 24 * 60 * 60 * 1000) return null;
     if (!session.workspaces || session.workspaces.length === 0) return null;
 

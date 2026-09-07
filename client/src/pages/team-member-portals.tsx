@@ -12,6 +12,7 @@
 import { Link } from "wouter";
 import { ArrowRight, Headphones, Stethoscope } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 
 type PortalCard = {
   title: string;
@@ -59,16 +60,11 @@ const PORTALS: PortalCard[] = [
 export default function TeamMemberPortalsPage() {
   return (
     <div className="flex flex-col h-full">
-      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2">
-          <SidebarTrigger data-testid="button-sidebar-toggle-team-member-portals" />
-          <div>
-            <h1
-              className="text-xl font-semibold tracking-tight text-slate-900"
-              data-testid="text-team-member-portals-title"
-            >
-              Team Member Portals
-            </h1>
+      <header className="bg-white sticky top-0 z-30">
+        <div className="w-full px-6 py-3">
+          <InteriorPageTitle title="Team Portals" titleTestId="text-team-member-portals-title" />
+          <div className="mt-4 flex items-center gap-2">
+            <SidebarTrigger data-testid="button-sidebar-toggle-team-member-portals" />
             <p className="text-[11px] text-slate-500">
               Pick the portal that matches your role today.
             </p>
@@ -77,7 +73,7 @@ export default function TeamMemberPortalsPage() {
       </header>
 
       <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-8 lg:py-10 xl:py-12">
+        <div className="w-full px-6 py-8 lg:py-10 xl:py-12">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6 xl:gap-8">
             {PORTALS.map((portal) => (
               <Link key={portal.href} href={portal.href}>

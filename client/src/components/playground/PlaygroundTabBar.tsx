@@ -49,18 +49,18 @@ function SketchTab({
           aria-selected={isActive}
           onClick={() => focusWorkspace(workspace.id)}
           className={[
-            "group relative flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs cursor-pointer transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+            // iOS-style frosted glass pill. Backdrop blur + translucent fill
+            // over the winter scene. Active = brighter glass with a soft lift;
+            // inactive = faint glass that warms on hover.
+            "group relative flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs cursor-pointer shrink-0 backdrop-blur-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+            "transition-[background-color,border-color,box-shadow,transform] duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]",
             isActive
-              ? "border-slate-300 bg-white text-slate-900 font-semibold shadow-sm"
-              : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100/70",
+              ? "border-white/70 bg-white/70 text-slate-900 font-semibold shadow-[0_8px_24px_rgba(15,23,42,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]"
+              : "border-white/40 bg-white/25 text-slate-600 hover:bg-white/45 hover:text-slate-800 hover:border-white/55 shadow-[0_2px_10px_rgba(15,23,42,0.06)]",
           ].join(" ")}
           data-testid={`playground-tab-${workspace.id}`}
           title={workspace.subtitle ? `${workspace.title} — ${workspace.subtitle}` : workspace.title}
         >
-          {/* Active tab underline — plain CSS accent bar. */}
-          {isActive && (
-            <span className="pointer-events-none absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" />
-          )}
           {Icon && <Icon className="relative h-3.5 w-3.5 shrink-0" />}
           <span className="relative max-w-[140px] truncate">{workspace.title}</span>
           {workspace.dirty && (
@@ -77,7 +77,7 @@ function SketchTab({
             <button
               type="button"
               onClick={handleClose}
-              className="relative z-10 ml-0.5 h-4 w-4 rounded flex items-center justify-center text-slate-400 opacity-0 group-hover:opacity-100 hover:text-slate-700 hover:bg-slate-900/[0.06] transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="relative z-10 ml-0.5 h-4 w-4 rounded-full flex items-center justify-center text-slate-500 opacity-0 group-hover:opacity-100 hover:text-slate-800 hover:bg-white/60 transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               aria-label={`Close ${workspace.title}`}
               data-testid={`playground-tab-close-${workspace.id}`}
             >
@@ -171,20 +171,21 @@ export function PlaygroundTabBar() {
     setDirtyCloseTarget(null);
   };
 
-  // Render Home first, then the rest — but ALL through the same SketchTab, so
-  // Home and workspace tabs share one visual language. The row itself is a
-  // transparent flex (no strip, no band); only the individual tabs are styled.
-  const orderedTabs = [
-    ...workspaces.filter((w) => w.type === "playground_home"),
-    ...workspaces.filter((w) => w.type !== "playground_home"),
-  ];
+  // The redundant "Home" tab was removed. Filter out any playground_home
+  // workspace that may still exist (e.g. restored from a persisted session)
+  // so it never appears in the strip. Only real workspace tabs render.
+  const orderedTabs = workspaces.filter((w) => w.type !== "playground_home");
+
+  // When there are no open workspaces, render nothing — the empty playground
+  // shows the winter background scene directly, with no tab strip chrome.
+  if (orderedTabs.length === 0) return null;
 
   return (
     <>
       <div
         ref={scrollRef}
         role="tablist"
-        className="flex items-center gap-1.5 overflow-x-auto bg-transparent px-4 py-2.5 scrollbar-thin scrollbar-thumb-slate-200"
+        className="flex items-center gap-1.5 overflow-x-auto bg-transparent px-4 py-2.5 scrollbar-thin scrollbar-thumb-transparent"
         data-testid="playground-tab-bar"
       >
         {orderedTabs.map((ws) => (

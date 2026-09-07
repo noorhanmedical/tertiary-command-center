@@ -12,13 +12,11 @@ import { PlaygroundCanvas } from "./PlaygroundCanvas";
 export function PlaygroundBridge() {
   const { workspaces, goHome } = usePlayground();
 
-  // Always render the Playground engine. When no workspaces exist,
-  // the canvas shows its built-in empty/home state.
-  // Auto-create playground_home on first render if empty.
-  if (workspaces.length === 0) {
-    // Trigger home creation (deferred to avoid render-during-render).
-    Promise.resolve().then(() => goHome());
-  }
+  // Always render the Playground engine. When no workspaces exist, the canvas
+  // shows its built-in empty state (the winter background scene). We no longer
+  // auto-create a "Home" workspace/tab — it was redundant chrome. `goHome`
+  // remains available on the API for any explicit caller.
+  void goHome;
 
   return (
     <div className="relative flex min-h-0 w-full flex-1 flex-col bg-transparent" data-testid="playground-bridge-active">
