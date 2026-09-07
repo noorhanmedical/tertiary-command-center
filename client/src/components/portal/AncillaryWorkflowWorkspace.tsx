@@ -3,9 +3,9 @@
 //
 // Design language (matches the Plexus IQ "Team Access" login): navy typography
 // and controls on the winter background, frosted-glass tiles that FLOAT on the
-// page — no wrapper container tiles. Service identity is expressed ONLY through
-// a slow "smoke" hover atmosphere (purple = BrainWave, burgundy = VitalWave,
-// emerald = Ultrasound); the icon, title, status, and buttons stay navy.
+// page — no wrapper container tiles. The bare navy tile icon lights up to the
+// service color on hover (purple = BrainWave, red = VitalWave, green =
+// Ultrasound); everything else stays navy.
 //
 // It composes existing canonical pieces — it does NOT introduce new writers or
 // duplicate qualification/document logic. Status is read from the canonical
@@ -17,7 +17,7 @@
 // schedule event id / phone, which live in the Team Portal shell and are NOT
 // threaded here — so they are intentionally NOT rendered (no dead buttons).
 
-import { useMemo, useState, type CSSProperties, type MouseEvent } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   FileSignature,
@@ -83,12 +83,11 @@ function accentForService(service: string): Accent {
   return "green"; // ultrasound + vascular / cardiac studies
 }
 
-// Space-separated RGB triplets fed to the smoke layers via the --smoke prop.
-// Refined / muted (no neon): plum violet, wine burgundy, forest emerald.
-const SMOKE_RGB: Record<Accent, string> = {
-  purple: "129 74 158",
-  red: "150 45 60",
-  green: "38 112 84",
+// Icon lights up to the service color on hover; navy at rest.
+const ICON_HOVER: Record<Accent, string> = {
+  purple: "group-hover:text-violet-600",
+  red: "group-hover:text-rose-600",
+  green: "group-hover:text-emerald-600",
 };
 
 // Why-Qualified label keeps a small service-accent tint (dark/saturated).
@@ -168,7 +167,7 @@ function statusMetaFor(
   return { kind: isNext ? "action" : "not_started", label: isNext ? "Action needed" : "Not started", cta };
 }
 
-// All status chips are navy/neutral — service color lives only in the smoke.
+// All status chips are navy/neutral — service color shows only on the icon hover.
 const STATUS_CHIP: Record<StatusKind, string> = {
   complete: "bg-slate-100 text-[#243B64] ring-1 ring-slate-200",
   action: "bg-[#243b64]/10 text-[#243B64] ring-1 ring-[#243b64]/20",
@@ -186,8 +185,8 @@ const PROC_STATUS_LABEL: Record<string, string> = {
   unable_to_complete: "Unable to complete",
 };
 
-// One square workflow tile with the service "smoke" hover atmosphere. Tracks
-// the cursor and writes --mx/--my onto the node (no re-render per move).
+// One square workflow tile. Bare navy icon that lights up to the service color
+// on hover; frosted glass at rest.
 function WorkflowTile({
   Icon,
   title,
@@ -195,7 +194,7 @@ function WorkflowTile({
   isActive,
   isComplete,
   emphasised,
-  smokeRgb,
+  iconHover,
   onOpen,
   onClose,
   testId,
@@ -206,36 +205,22 @@ function WorkflowTile({
   isActive: boolean;
   isComplete: boolean;
   emphasised: boolean;
-  smokeRgb: string;
+  iconHover: string;
   onOpen: () => void;
   onClose: () => void;
   testId: string;
 }) {
-  function handleMove(e: MouseEvent<HTMLDivElement>) {
-    const el = e.currentTarget;
-    const r = el.getBoundingClientRect();
-    el.style.setProperty("--mx", `${((e.clientX - r.left) / r.width) * 100}%`);
-    el.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`);
-  }
-
   return (
     <div
-      className={`smoke-tile group flex aspect-square flex-col rounded-2xl border border-white/65 bg-white/[0.82] p-5 shadow-[0_12px_34px_rgba(31,53,87,0.10)] backdrop-blur-xl transition-transform ${
+      className={`group relative flex aspect-square flex-col rounded-2xl border border-white/65 bg-white/[0.82] p-5 shadow-[0_12px_34px_rgba(31,53,87,0.10)] backdrop-blur-xl transition-transform ${
         isActive
           ? "ring-2 ring-[#243b64]/30"
           : emphasised
             ? "ring-1 ring-[#243b64]/20 hover:-translate-y-0.5"
             : "hover:-translate-y-0.5"
       } ${isComplete ? "opacity-95" : ""}`}
-      style={{ "--smoke": smokeRgb } as CSSProperties}
-      onMouseMove={handleMove}
       data-testid={testId}
     >
-      {/* Smoke layers — above the frosted base, below the content. */}
-      <span className="smoke smoke-1" aria-hidden="true" />
-      <span className="smoke smoke-2" aria-hidden="true" />
-      <span className="smoke smoke-3" aria-hidden="true" />
-
       {/* Completion check — top-right, navy (never green). */}
       {isComplete && (
         <span className="absolute right-3.5 top-3.5 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-[#243b64]/10">
@@ -243,9 +228,9 @@ function WorkflowTile({
         </span>
       )}
 
-      {/* Centered group: bare navy icon + title + status */}
+      {/* Centered group: bare navy icon (lights up on hover) + title + status */}
       <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-3 text-center">
-        <Icon className="h-10 w-10 text-[#243B64]" strokeWidth={1.6} />
+        <Icon className={`h-10 w-10 text-[#243B64] transition-colors duration-300 ${iconHover}`} strokeWidth={1.6} />
         <h3 className="text-[17px] font-bold leading-tight tracking-tight text-[#1F3557]">{title}</h3>
         <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_CHIP[meta.kind]}`}>
           {meta.label}
@@ -321,7 +306,7 @@ export function AncillaryWorkflowWorkspace({
   const displayName = screening?.name ?? patientName ?? "Patient";
   const service = serviceKey ?? "";
   const accent = accentForService(service);
-  const smokeRgb = SMOKE_RGB[accent];
+  const iconHover = ICON_HOVER[accent];
 
   // Canonical per-case readiness (single source of truth: the same resolver the
   // ancillary schedule uses). Drives the tile statuses + screening preview.
@@ -344,9 +329,9 @@ export function AncillaryWorkflowWorkspace({
     staleTime: 15_000,
   });
 
-  // Canonical procedure event for THIS service — drives the Procedure tile
-  // status (never invented; read straight from procedure_events). No parallel
-  // frontend procedure state machine — the canonical row is the source.
+  // Canonical procedure event for THIS service — drives the contextual
+  // Procedure action's status (never invented; read straight from
+  // procedure_events). No parallel frontend procedure state machine.
   const procedureEventsKey = ["/api/procedure-events", executionCaseId, service] as const;
   const { data: procedureEvents } = useQuery<ProcedureEventDto[]>({
     queryKey: procedureEventsKey,
@@ -437,7 +422,8 @@ export function AncillaryWorkflowWorkspace({
     setDocMode(null);
   }
 
-  // Opening one active surface closes the other (they share the body region).
+  // Opening a doc tile and opening the Procedure body are mutually exclusive
+  // (they share the single body region below).
   function openStep(mode: DocStepMode) {
     setProcedureOpen(false);
     setDocMode(mode);
@@ -447,7 +433,7 @@ export function AncillaryWorkflowWorkspace({
     setProcedureOpen(true);
   }
   // Procedure completion / component capture changes downstream readiness
-  // (billing) and the procedure status chip — refresh both.
+  // (billing) and the procedure status — refresh both.
   function handleProcedureChanged() {
     queryClient.invalidateQueries({ queryKey: readinessQueryKey });
     queryClient.invalidateQueries({ queryKey: procedureEventsKey });
@@ -466,16 +452,18 @@ export function AncillaryWorkflowWorkspace({
 
   const activeStep = docMode ? STEP_DEFS.find((d) => d.mode === docMode) ?? null : null;
 
-  // Procedure tile status — derived ONLY from the canonical procedure event.
+  // ── Contextual Procedure action (NOT a permanent 4th tile) ──────────────
+  // Canonical workflow is Consent → Screening → Procedure → Report. Procedure
+  // is surfaced as a contextual action strip ONLY once canonical readiness
+  // permits it (screening complete) OR a canonical procedure event already
+  // exists. Status is read from procedure_events, never invented.
   const procedureComplete = procedureStatus === "complete";
+  const procedurePermitted = procedureStatus != null || readiness?.screeningForm === "complete";
   const procMeta: StatusMeta = procedureComplete
     ? { kind: "complete", label: "Complete", cta: "Review Components" }
     : procedureStatus == null || procedureStatus === "not_started"
-      ? { kind: "not_started", label: "Not started", cta: "Open Procedure" }
+      ? { kind: "action", label: "Ready to begin", cta: "Open Procedure" }
       : { kind: "action", label: PROC_STATUS_LABEL[procedureStatus] ?? procedureStatus, cta: "Continue Procedure" };
-  // Emphasise the Procedure tile once screening is done and it isn't complete.
-  const procedureEmphasised =
-    procedureOpen || (!procedureComplete && readiness?.screeningForm === "complete");
 
   return (
     <div
@@ -574,16 +562,17 @@ export function AncillaryWorkflowWorkspace({
           </div>
         )}
 
-        {/* ── Four square workflow tiles — float directly over the winter bg.
-            Consent → Screening → Procedure → Report (left-to-right sequence). ── */}
-        <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {/* Consent + Screening (docs) */}
-          {STEP_DEFS.slice(0, 2).map((def) => {
+        {/* ── Three square workflow tiles — float directly over the winter bg ── */}
+        <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {STEP_DEFS.map((def) => {
             const { mode, title, Icon } = def;
             const itemState = readiness ? def.itemOf(readiness) : null;
             const isNext = nextMode === mode;
             const meta = statusMetaFor(itemState, isNext, mode);
             const isActive = docMode === mode;
+            const isComplete = meta.kind === "complete";
+            const emphasised = isNext || isActive;
+
             return (
               <WorkflowTile
                 key={mode}
@@ -591,47 +580,9 @@ export function AncillaryWorkflowWorkspace({
                 title={title}
                 meta={meta}
                 isActive={isActive}
-                isComplete={meta.kind === "complete"}
-                emphasised={isNext || isActive}
-                smokeRgb={smokeRgb}
-                onOpen={() => openStep(mode)}
-                onClose={() => setDocMode(null)}
-                testId={`ancillary-workflow-module-${mode}`}
-              />
-            );
-          })}
-
-          {/* Procedure — canonical procedure_events (3rd in sequence) */}
-          <WorkflowTile
-            Icon={Activity}
-            title="Procedure"
-            meta={procMeta}
-            isActive={procedureOpen}
-            isComplete={procedureComplete}
-            emphasised={procedureEmphasised}
-            smokeRgb={smokeRgb}
-            onOpen={openProcedure}
-            onClose={() => setProcedureOpen(false)}
-            testId="ancillary-workflow-module-procedure"
-          />
-
-          {/* Report Upload (doc) */}
-          {STEP_DEFS.slice(2).map((def) => {
-            const { mode, title, Icon } = def;
-            const itemState = readiness ? def.itemOf(readiness) : null;
-            const isNext = nextMode === mode;
-            const meta = statusMetaFor(itemState, isNext, mode);
-            const isActive = docMode === mode;
-            return (
-              <WorkflowTile
-                key={mode}
-                Icon={Icon}
-                title={title}
-                meta={meta}
-                isActive={isActive}
-                isComplete={meta.kind === "complete"}
-                emphasised={isNext || isActive}
-                smokeRgb={smokeRgb}
+                isComplete={isComplete}
+                emphasised={emphasised}
+                iconHover={iconHover}
                 onOpen={() => openStep(mode)}
                 onClose={() => setDocMode(null)}
                 testId={`ancillary-workflow-module-${mode}`}
@@ -639,6 +590,47 @@ export function AncillaryWorkflowWorkspace({
             );
           })}
         </div>
+
+        {/* ── Contextual Procedure action — appears once canonical readiness
+            permits it (screening complete) or a procedure event exists. This is
+            a CONTEXTUAL action, NOT a permanent workflow tile. ── */}
+        {service && procedurePermitted && (
+          <div
+            className={`mt-4 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 backdrop-blur-xl ${
+              procedureOpen
+                ? "border-[#243b64]/30 bg-white/[0.9] ring-1 ring-[#243b64]/20"
+                : "border-white/65 bg-white/[0.78]"
+            }`}
+            data-testid="ancillary-workflow-procedure-action"
+          >
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Activity className={`h-5 w-5 shrink-0 text-[#243B64] ${iconHover}`} strokeWidth={1.6} />
+              <div className="min-w-0">
+                <div className="text-[13px] font-bold leading-tight text-[#1F3557]">Procedure</div>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_CHIP[procMeta.kind]}`} data-testid="ancillary-workflow-procedure-status">
+                    {procMeta.label}
+                  </span>
+                  {procedureComplete && <Check className="h-3.5 w-3.5 text-[#243b64]" aria-label="Complete" />}
+                </div>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={procedureOpen ? "outline" : procedureComplete ? "outline" : undefined}
+              className={
+                procedureOpen || procedureComplete
+                  ? "h-9 shrink-0 rounded-xl text-xs !border-[#243b64]/25 bg-white/60 !text-[#243b64] hover:!bg-[#243b64]/5"
+                  : "h-9 shrink-0 rounded-xl text-xs !bg-[#243b64] !text-white hover:!bg-[#1d3054]"
+              }
+              onClick={() => (procedureOpen ? setProcedureOpen(false) : openProcedure())}
+              data-testid="ancillary-workflow-procedure-action-button"
+            >
+              {procedureOpen ? "Close" : procMeta.cta}
+            </Button>
+          </div>
+        )}
 
         {/* ── Active tile workflow body — floats on the page when open ── */}
         {docMode && docService && (
@@ -692,7 +684,8 @@ export function AncillaryWorkflowWorkspace({
           </div>
         )}
 
-        {/* ── Procedure execution + component capture — canonical event ── */}
+        {/* ── Procedure execution + component capture body — canonical event.
+            Opened contextually from the Procedure action strip above. ── */}
         {procedureOpen && (
           <div
             className="mt-6 rounded-2xl border border-white/70 bg-white/[0.92] p-6 shadow-[0_16px_44px_rgba(31,53,87,0.14)] backdrop-blur-xl"
