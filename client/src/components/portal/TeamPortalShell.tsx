@@ -83,6 +83,7 @@ import {
 import type { CallCaseContext } from "@/components/portal/caseWorkspace";
 import { CallWorkspace } from "@/components/portal/CallWorkspace";
 import { SchedulingWorkspace } from "@/components/portal/SchedulingWorkspace";
+import { useWorkClaim } from "@/lib/workflow/useWorkClaim";
 import { SelectedCaseOverview } from "@/components/portal/SelectedCaseOverview";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
@@ -1328,6 +1329,14 @@ export function TeamPortalShell({
   // instead of navigating to a Playground tab. CallWorkspace owns the honest
   // RingCentral boundary (manual-dial fallback when the provider is unwired).
   const [callWorkspaceCtx, setCallWorkspaceCtx] = useState<CallCaseContext | null>(null);
+  // Phase 5B — the ONE active patient-interaction work claim. Keyed on the
+  // execution case being actively worked; spans Phone↔Calendar (the key does
+  // not change on a mode switch), so a single renewal loop covers the whole
+  // interaction. Acquired when the call workspace opens; released when the
+  // interaction ends (dialog close / disposition success). A stale/held-by-
+  // another result flips the workspace to a read-only conflict view.
+  const [activeClaimCaseId, setActiveClaimCaseId] = useState<number | null>(null);
+  const workClaim = useWorkClaim(activeClaimCaseId);
   // PCS parity — call-queue cursor. Holds the row id of the "current" call in
   // the assigned queue so Next/Skip and the keyboard shortcuts can advance
   // through workspaceCallList WITHOUT creating a parallel queue: ordering,
@@ -2355,6 +2364,10 @@ export function TeamPortalShell({
       sourcePortal: (workspaceCallListContext ?? "acs").toUpperCase(),
       engagementStatus: row.engagementStatus ?? null,
       lifecycleStatus: row.lifecycleStatus ?? null,
+      // Phase 5A — canonical per-case metrics for the header attempt/last-contact.
+      callAttemptCount: row.callAttemptCount ?? null,
+      lastCallOutcome: row.lastCallOutcome ?? null,
+      lastAttemptAt: row.lastAttemptAt ?? null,
     };
   }
 
@@ -2399,6 +2412,27 @@ export function TeamPortalShell({
   // Open the canonical booking dialog for the current queue row (keyboard "S").
   function openScheduleForCurrent() {
     if (currentCallRow) openSchedulePatientDialog(callRowToDialogPatient(currentCallRow));
+  }
+
+  // Phase 5B — Save & Next: after a disposition durably succeeds (the server
+  // released the claim in the SAME transaction), drop the client claim and open
+  // the NEXT eligible patient's call (which acquires its own claim). Runs ONLY
+  // from a confirmed onLogged (never skips server confirmation) and only ever
+  // holds ONE claim at a time. Empty queue → return to the empty queue.
+  function advanceToNextCallAfterDisposition(doneScreeningId: number | null) {
+    const next = liveCallRows.find(
+      (r) => r.patientScreeningId != null && r.patientScreeningId !== doneScreeningId,
+    );
+    if (!next) {
+      setCallWorkspaceCtx(null);
+      setActiveClaimCaseId(null);
+      setCallQueueCursorId(null);
+      return;
+    }
+    const c = callRowToCaseContext(next);
+    setCallQueueCursorId(next.id ?? null);
+    setCallWorkspaceCtx(c);
+    setActiveClaimCaseId(c.executionCaseId ?? null);
   }
 
   // PCS call-workspace keyboard shortcuts (parity with the legacy console):
@@ -4330,8 +4364,13 @@ export function TeamPortalShell({
                               callReason={callReason}
                               canCall={canCall}
                               testIdKey={row.id ?? idx}
+                              callAttemptCount={row.callAttemptCount ?? null}
                               onOpenPatient={() => openCallRowPatient(row)}
-                              onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                              onOpenCall={() => {
+                                const c = callRowToCaseContext(row);
+                                setCallWorkspaceCtx(c);
+                                setActiveClaimCaseId(c.executionCaseId ?? null);
+                              }}
                               onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
                               onOpenCase={() => openCaseTab("caseOverview", callRowToCaseContext(row))}
                             />
@@ -4395,12 +4434,40 @@ export function TeamPortalShell({
                                 row={row}
                                 idx={row.id ?? idx}
                                 canCall={canCall}
-                                onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                                onOpenCall={() => {
+                                  const c = callRowToCaseContext(row);
+                                  setCallWorkspaceCtx(c);
+                                  setActiveClaimCaseId(c.executionCaseId ?? null);
+                                }}
                                 onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
                                 onHandoff={() => openHandoffForRow(row)}
                               />
                             )}
                           </div>
+                          {/* Phase 5A — live rows show Service·reason + the
+                              canonical per-case attempt count so the queue row
+                              answers "who / why / how many tries" at a glance. */}
+                          {!row.historical && (
+                            <div
+                              className="mt-0.5 truncate text-[10px] text-slate-500"
+                              data-testid={`call-live-meta-${row.id ?? idx}`}
+                            >
+                              {callReason}
+                              {(row.callAttemptCount ?? 0) > 0
+                                ? ` · Attempt ${(row.callAttemptCount ?? 0) + 1}`
+                                : ""}
+                              {row.activeClaimBy != null &&
+                              row.activeClaimExpiresAt &&
+                              new Date(row.activeClaimExpiresAt).getTime() > Date.now() ? (
+                                <span
+                                  className="ml-1 font-medium text-emerald-600"
+                                  data-testid={`call-working-now-${row.id ?? idx}`}
+                                >
+                                  · Working now
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
                           {row.historical && (row.lastCallOutcome || (row.historicalCallCount ?? 0) > 0 || row.historicalCallbackAt) && (
                             <div className="mt-1 text-[10px] text-slate-500" data-testid={`call-historical-detail-${row.id ?? idx}`}>
                               {row.lastCallOutcome ? `Outcome: ${row.lastCallOutcome}` : "No outcome logged"}
@@ -4945,6 +5012,17 @@ export function TeamPortalShell({
         patientId={callDialogRow?.patientScreeningId ?? null}
         patientName={callDialogRow?.patientName ?? ""}
         schedulerUserId={viewAsTeamMemberId ?? currentUserId}
+        executionCaseId={callDialogRow?.executionCaseId ?? null}
+        onClaimLost={() => {
+          // Phase 5B — a stale-claim rejection: refetch the queue so the row
+          // reflects the current server (claim/ownership) state. The draft is
+          // preserved inside the sheet.
+          queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
+          queryClient.invalidateQueries({
+            predicate: (q) =>
+              Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
+          });
+        }}
         onPushToPlayground={
           callDialogRow
             ? () => pushCallRowToPlayground(callDialogRow)
@@ -4960,36 +5038,87 @@ export function TeamPortalShell({
       <Dialog
         open={!!callWorkspaceCtx}
         onOpenChange={(o) => {
-          if (!o) setCallWorkspaceCtx(null);
+          if (!o) {
+            setCallWorkspaceCtx(null);
+            setActiveClaimCaseId(null);
+          }
         }}
       >
         <DialogContent
           className="z-[95] max-w-2xl gap-0 overflow-hidden p-0"
           data-testid="dialog-quick-call"
         >
-          {callWorkspaceCtx && (
-            <CallWorkspace
-              ctx={callWorkspaceCtx}
-              onScheduleCase={() => {
-                const ctx = callWorkspaceCtx;
-                setCallWorkspaceCtx(null);
-                openSchedulePatientDialog({
-                  patientName: ctx.patientName ?? null,
-                  patientDob: ctx.patientDob ?? null,
-                  facilityId: ctx.facilityId ?? null,
-                  patientScreeningId: ctx.patientScreeningId ?? null,
-                  executionCaseId: ctx.executionCaseId ?? null,
-                  serviceType: ctx.targetServices?.[0] ?? null,
-                });
-              }}
-              onOpenCase={() => {
-                const ctx = callWorkspaceCtx;
-                setCallWorkspaceCtx(null);
-                openCaseTab("caseOverview", ctx);
-              }}
-              onClose={() => setCallWorkspaceCtx(null)}
-            />
-          )}
+          {callWorkspaceCtx &&
+            (activeClaimCaseId != null &&
+            (workClaim.status === "conflict" || workClaim.status === "lost") ? (
+              // Phase 5B — another team member holds this patient's active work
+              // (or our lease lapsed and was reclaimed). Read-only: no editable
+              // dialer / disposition; never steal the claim.
+              <div className="p-6" data-testid="call-claim-conflict">
+                <div
+                  className="text-base font-semibold text-slate-900"
+                  data-testid="call-claim-conflict-name"
+                >
+                  {callWorkspaceCtx.patientName}
+                </div>
+                <div role="status" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-900">
+                  <div className="font-semibold">
+                    {workClaim.holderName
+                      ? `${workClaim.holderName} is working this patient right now.`
+                      : "This patient is being worked by another team member right now."}
+                  </div>
+                  <p className="mt-0.5">
+                    You can review their context, but calling and logging are locked until
+                    they finish.
+                  </p>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCallWorkspaceCtx(null);
+                      setActiveClaimCaseId(null);
+                    }}
+                    className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    data-testid="call-claim-conflict-close"
+                  >
+                    Back to queue
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <CallWorkspace
+                ctx={callWorkspaceCtx}
+                onScheduleCase={() => {
+                  const ctx = callWorkspaceCtx;
+                  setCallWorkspaceCtx(null);
+                  // Phase 5B — Phone→Calendar is the SAME interaction: KEEP the
+                  // claim (do NOT clear activeClaimCaseId) so it persists.
+                  openSchedulePatientDialog({
+                    patientName: ctx.patientName ?? null,
+                    patientDob: ctx.patientDob ?? null,
+                    facilityId: ctx.facilityId ?? null,
+                    patientScreeningId: ctx.patientScreeningId ?? null,
+                    executionCaseId: ctx.executionCaseId ?? null,
+                    serviceType: ctx.targetServices?.[0] ?? null,
+                  });
+                }}
+                onOpenCase={() => {
+                  const ctx = callWorkspaceCtx;
+                  setCallWorkspaceCtx(null);
+                  setActiveClaimCaseId(null);
+                  openCaseTab("caseOverview", ctx);
+                }}
+                onClose={() => {
+                  setCallWorkspaceCtx(null);
+                  setActiveClaimCaseId(null);
+                }}
+                onLogged={() =>
+                  advanceToNextCallAfterDisposition(callWorkspaceCtx?.patientScreeningId ?? null)
+                }
+                onClaimLost={() => setActiveClaimCaseId(null)}
+              />
+            ))}
         </DialogContent>
       </Dialog>
 

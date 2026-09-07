@@ -45,7 +45,10 @@ import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
 import { PlexusAdminShell } from "@/components/workspace/PlexusAdminShell";
 import { WorkspaceTabsProvider, clearWorkspaceTabsStorage } from "@/lib/navigation/workspaceTabs";
-import { clearSession as clearPlaygroundSession } from "@/components/playground/sessionPersistence";
+import {
+  clearSession as clearPlaygroundSession,
+  clearAllCallDrafts,
+} from "@/components/playground/sessionPersistence";
 import { resolveDefaultWorkspaceRoute } from "@/lib/navigation/defaultWorkspaceRoutes";
 import { AccessProvider, canEnterAccessSettings } from "@/lib/access/accessContext";
 import AccessPendingPage from "@/pages/access-pending";
@@ -525,6 +528,9 @@ function AppShell() {
     // descriptors) so the next user in the SAME browser tab cannot inherit the
     // previous user's open patients (Scenario G — logout isolation).
     clearPlaygroundSession();
+    // Phase 5B — clear any in-progress call-interaction drafts (PHI notes) so
+    // the next user in the same tab never inherits the previous user's draft.
+    clearAllCallDrafts();
     queryClient.clear();
     refetch();
     navigate("/");

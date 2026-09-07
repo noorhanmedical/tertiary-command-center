@@ -12,8 +12,14 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { engagementCallResultEndpoint } from "@/lib/engagementCanonicalCallResultsUiFlag";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import {
+  loadCallDraft,
+  saveCallDraft,
+  clearCallDraft,
+} from "@/components/playground/sessionPersistence";
+import { parseStaleWorkClaim } from "@/lib/workflow/workClaimApi";
 import {
   PhoneCall,
   PhoneOff,
@@ -36,17 +42,12 @@ import {
 } from "lucide-react";
 import type { OutreachCallOutcome } from "@shared/schema";
 
-// Phase 1 Segment E Batch 4 — structured call-result selector flag.
-// Default OFF: when unset/false the legacy outcome grid is the only
-// disposition surface. When truthy, an additive structured selector
-// appears below the legacy controls and posts canonical payloads to
-// engagementCallResultEndpoint(). See:
-//   docs/architecture/team-portal-structured-call-result-selector-contract.md
-const STRUCTURED_SELECTOR_ENABLED = (() => {
-  const v = (import.meta as { env?: Record<string, unknown> }).env
-    ?.VITE_USE_STRUCTURED_CALL_RESULT_SELECTOR;
-  return v === "1" || v === "true" || v === "yes";
-})();
+// Phase 5A — the previously flag-gated "structured canonical selector" (a
+// SECOND disposition grid + its own submit button + engineering "Canonical
+// call result (Phase 1)" labeling) has been REMOVED. There is now exactly ONE
+// employee-facing disposition surface (the grid below), which already posts to
+// the canonical engagement call-result endpoint. No behavior change for the
+// default deployment (the selector shipped OFF); the duplicate is simply gone.
 
 // Phase 1 Segment E Batch 9 — primary write switch. When OFF (default
 // after E9 ships) the legacy outcome grid posts to the canonical
@@ -59,51 +60,6 @@ const LEGACY_DISPOSITION_WRITE_ENABLED = (() => {
     ?.VITE_USE_LEGACY_DISPOSITION_WRITE;
   return v === "1" || v === "true" || v === "yes";
 })();
-
-const CANONICAL_OUTCOMES = [
-  "scheduled",
-  "callback",
-  "no_answer",
-  "voicemail",
-  "wrong_number",
-  "declined",
-  "needs_records",
-  "insurance_prior_auth_issue",
-  "manager_review",
-  "facility_specific_issue",
-  "completed",
-  "dnc",
-  "do_not_contact",
-  "deceased",
-  "cancelled",
-] as const;
-type CanonicalOutcome = (typeof CANONICAL_OUTCOMES)[number];
-
-const CANONICAL_OUTCOME_LABELS: Record<CanonicalOutcome, string> = {
-  scheduled: "Scheduled",
-  callback: "Callback later",
-  no_answer: "No answer",
-  voicemail: "Voicemail",
-  wrong_number: "Wrong number",
-  declined: "Declined",
-  needs_records: "Needs records",
-  insurance_prior_auth_issue: "Insurance / prior auth issue",
-  manager_review: "Manager review",
-  facility_specific_issue: "Facility-specific issue",
-  completed: "Completed",
-  dnc: "DNC",
-  do_not_contact: "Do not contact",
-  deceased: "Deceased",
-  cancelled: "Cancelled",
-};
-
-const OUTREACH_TERMINAL_OUTCOMES: ReadonlySet<CanonicalOutcome> = new Set<CanonicalOutcome>([
-  "completed",
-  "dnc",
-  "do_not_contact",
-  "deceased",
-  "cancelled",
-]);
 
 type OutcomeDef = {
   value: OutreachCallOutcome;
@@ -136,16 +92,39 @@ const OUTCOMES: OutcomeDef[] = [
   { value: "deceased",            label: "Deceased",             Icon: UserX,            group: "other" },
 ];
 
+// Phase 5A — the small set of everyday outcomes shown up-front. Everything else
+// lives under "More outcomes" so the common path is one tap and the sheet is
+// not an 18-tile wall. (All outcomes still post the SAME canonical result.)
+const PRIMARY_OUTCOME_VALUES: OutreachCallOutcome[] = [
+  "reached",
+  "scheduled",
+  "callback",
+  "no_answer",
+  "voicemail",
+  "declined",
+  "wrong_number",
+];
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   patientId: number | null;
   patientName: string;
   schedulerUserId: string | null;
+  /** Phase 5B — the execution case being dispositioned. When provided (with an
+   *  authenticated owner), the in-progress draft (outcome/notes/callback) is
+   *  persisted owner+case-scoped so it survives Phone↔Calendar switches, Atlas/
+   *  history navigation, transient refetch, and a stale-claim rejection.
+   *  Outreach surfaces omit it → no draft persistence (unchanged behavior). */
+  executionCaseId?: number | null;
   /** Number of prior call attempts. Sheet shows the auto-incremented next # (priorAttempts + 1). */
   priorAttempts?: number;
   defaultOutcome?: OutreachCallOutcome;
   onLogged?: () => void;
+  /** Phase 5B — invoked when the disposition is REJECTED because the claim is
+   *  now held by someone else (stale work). The host should refetch the queue/
+   *  case. The typed note draft is preserved regardless. */
+  onClaimLost?: () => void;
   /**
    * Optional — emitted when the in-progress disposition draft changes. Lets a
    * host (e.g. the Playground Call workspace) reflect unsaved state. `dirty` is
@@ -174,37 +153,70 @@ export function DispositionSheet({
   patientId,
   patientName,
   schedulerUserId,
+  executionCaseId,
   priorAttempts = 0,
   defaultOutcome,
   onLogged,
+  onClaimLost,
   onPushToPlayground,
   onDraftChange,
 }: Props) {
   const [outcome, setOutcome] = useState<OutreachCallOutcome | null>(defaultOutcome ?? null);
   const [notes, setNotes] = useState("");
   const [callbackAt, setCallbackAt] = useState<string>(defaultCallbackIso());
+  const [showMore, setShowMore] = useState(false);
+  // Phase 5B — set when the server rejects the log because the claim is now
+  // held by someone else. Preserves the draft + disables further submits.
+  const [staleClaim, setStaleClaim] = useState(false);
   const { toast } = useToast();
 
-  // Structured selector state (only consulted when the flag is ON).
-  const [canonicalOutcome, setCanonicalOutcome] = useState<CanonicalOutcome | "">("");
-  const [canonicalNotes, setCanonicalNotes] = useState("");
-  const [canonicalCallbackAt, setCanonicalCallbackAt] = useState<string>(defaultCallbackIso());
-  const [canonicalDesiredApptStatus, setCanonicalDesiredApptStatus] = useState<string>("scheduled");
-  const [canonicalTerminalReason, setCanonicalTerminalReason] = useState<string>("");
+  // Phase 5B — the authenticated owner (shares TeamPortalShell's cached query,
+  // so no extra fetch). Drafts are scoped to this owner + the execution case so
+  // one user can never read another's in-progress PHI note.
+  const { data: authUser } = useQuery<{ id?: string } | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const ownerUserId = authUser?.id ?? null;
+  const draftEnabled =
+    ownerUserId != null && typeof executionCaseId === "number" && executionCaseId > 0;
 
-  // Reset on patient change / open
+  // Reset / hydrate on open + patient/case change. Phase 5B: when draft
+  // persistence is enabled, hydrate the in-progress draft (outcome/notes/
+  // callback) for THIS owner + case so it survives Phone↔Calendar, Atlas/
+  // history navigation, refetch, and a stale-claim rejection. Otherwise reset.
+  // Keyed on open/patient/case/defaultOutcome (NOT owner) so it never clobbers
+  // what the user is typing if auth resolves mid-session.
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    setStaleClaim(false);
+    const draft = draftEnabled ? loadCallDraft(ownerUserId, executionCaseId) : null;
+    if (draft) {
+      const o = (draft.outcome as OutreachCallOutcome | null) ?? defaultOutcome ?? null;
+      setOutcome(o);
+      setNotes(draft.notes ?? "");
+      setCallbackAt(draft.callbackAt ?? defaultCallbackIso());
+      setShowMore(o != null && !PRIMARY_OUTCOME_VALUES.includes(o));
+    } else {
       setOutcome(defaultOutcome ?? null);
       setNotes("");
       setCallbackAt(defaultCallbackIso());
-      setCanonicalOutcome("");
-      setCanonicalNotes("");
-      setCanonicalCallbackAt(defaultCallbackIso());
-      setCanonicalDesiredApptStatus("scheduled");
-      setCanonicalTerminalReason("");
+      setShowMore(defaultOutcome != null && !PRIMARY_OUTCOME_VALUES.includes(defaultOutcome));
     }
-  }, [open, patientId, defaultOutcome]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patientId, executionCaseId, defaultOutcome]);
+
+  // Phase 5B — persist the in-progress draft (owner + case scoped) as the user
+  // edits, so a Phone↔Calendar switch / Atlas / refetch never loses it.
+  useEffect(() => {
+    if (!open || !draftEnabled) return;
+    saveCallDraft(ownerUserId, executionCaseId, { outcome, notes, callbackAt });
+  }, [open, draftEnabled, ownerUserId, executionCaseId, outcome, notes, callbackAt]);
 
   // Emit unsaved-draft state to an optional host (Playground Call workspace).
   // Dirty once an outcome is chosen or notes are typed on either the legacy or
@@ -215,12 +227,10 @@ export function DispositionSheet({
       onDraftChange(false);
       return;
     }
-    const hasLegacyDraft = outcome != null || notes.trim().length > 0;
-    const hasCanonicalDraft = canonicalOutcome !== "" || canonicalNotes.trim().length > 0;
-    const dirty = hasLegacyDraft || hasCanonicalDraft;
-    const label = (outcome ?? canonicalOutcome) || "call disposition";
+    const dirty = outcome != null || notes.trim().length > 0;
+    const label = outcome || "call disposition";
     onDraftChange(dirty, dirty ? `Unsaved ${label} disposition` : undefined);
-  }, [open, outcome, notes, canonicalOutcome, canonicalNotes, onDraftChange]);
+  }, [open, outcome, notes, onDraftChange]);
 
   const logCall = useMutation({
     mutationFn: async () => {
@@ -312,86 +322,41 @@ export function DispositionSheet({
       queryClient.invalidateQueries({
         predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
       });
+      // Phase 5B — the interaction is durably complete: clear this case's draft
+      // (the server already released the claim in the same transaction).
+      if (draftEnabled) clearCallDraft(ownerUserId, executionCaseId);
       onLogged?.();
       onOpenChange(false);
     },
-    onError: (e: Error) =>
-      toast({ title: "Could not log call", description: e.message, variant: "destructive" }),
-  });
-
-  // Phase 1 Segment E Batch 4 — canonical structured submission.
-  // Only invoked when the structured selector flag is ON. Posts the
-  // E3-contract payload to engagementCallResultEndpoint(); the legacy
-  // logCall flow above is unchanged and remains the OFF-flag default.
-  const logCanonicalCall = useMutation({
-    mutationFn: async () => {
-      if (patientId == null || !canonicalOutcome) throw new Error("Missing patient or canonical outcome");
-      const isCallbackOutcome = canonicalOutcome === "callback";
-      const isScheduledOutcome = canonicalOutcome === "scheduled";
-      const isTerminalOutcome = OUTREACH_TERMINAL_OUTCOMES.has(canonicalOutcome);
-      if (isCallbackOutcome && !canonicalCallbackAt) throw new Error("Callback time required");
-      if (isScheduledOutcome && !canonicalDesiredApptStatus) throw new Error("Desired appointment status required");
-      if (isTerminalOutcome && !canonicalTerminalReason.trim()) throw new Error("Terminal completion reason required");
-      const nextActionIso = isCallbackOutcome && canonicalCallbackAt
-        ? new Date(canonicalCallbackAt).toISOString()
-        : null;
-      const body: Record<string, unknown> = {
-        patientScreeningId: patientId,
-        patientName: patientName || undefined,
-        callResult: canonicalOutcome,
-        callDisposition: canonicalOutcome,
-        note: canonicalNotes.trim() || undefined,
-        assignedUserId: schedulerUserId ?? undefined,
-        callMetadata: { source: "team-portal", ringCentralCallId: null },
-      };
-      if (nextActionIso) body.nextActionAt = nextActionIso;
-      if (isScheduledOutcome) {
-        body.desiredAppointmentStatus = canonicalDesiredApptStatus;
-        if (schedulerUserId) body.schedulerUserId = schedulerUserId;
+    onError: (e: Error) => {
+      // Phase 5B — a stale/concurrent claim (someone else took over, or the
+      // lease lapsed and was reclaimed) is NOT a normal error: preserve the
+      // draft, do NOT pretend success, surface a calm recovery state, and let
+      // the host refetch the current server state.
+      const stale = parseStaleWorkClaim(e);
+      if (stale.stale) {
+        setStaleClaim(true);
+        onClaimLost?.();
+        return;
       }
-      if (isTerminalOutcome) {
-        body.terminalCompletionReason = canonicalTerminalReason.trim();
-      }
-      const res = await apiRequest("POST", engagementCallResultEndpoint(), body);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to log canonical call result");
-      }
-      return res.json().catch(() => ({}));
+      toast({ title: "Could not log call", description: e.message, variant: "destructive" });
     },
-    onSuccess: () => {
-      toast({ title: "Canonical call result logged" });
-      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/by-patients"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/today"] });
-      // Phase 1 Segment E Batch 10 — refresh Team Portal assigned-work
-      // surfaces so the cockpit reflects engagement-completed state
-      // immediately (instead of waiting for the next poll).
-      queryClient.invalidateQueries({ queryKey: ["/api/engagement-center/cases"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/outreach-call-list"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
-      queryClient.invalidateQueries({ queryKey: ["portal-call-history", patientId] });
-      // Slice 1.4: PCS Workspace shell reads call list via the
-      // canonical /api/scheduler-portal/cases feed under a separate
-      // React-Query key. Invalidate both keys so the workspace shows
-      // the next call without a manual refresh.
-      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
-      queryClient.invalidateQueries({
-        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
-      });
-      onLogged?.();
-      onOpenChange(false);
-    },
-    onError: (e: Error) =>
-      toast({ title: "Could not log canonical result", description: e.message, variant: "destructive" }),
   });
 
   const grouped = {
     reached: OUTCOMES.filter((o) => o.group === "reached"),
     missed: OUTCOMES.filter((o) => o.group === "missed"),
     other: OUTCOMES.filter((o) => o.group === "other"),
+  };
+  // Phase 5A — everyday outcomes up-front; the rest under "More outcomes".
+  const notPrimary = (o: OutcomeDef) => !PRIMARY_OUTCOME_VALUES.includes(o.value);
+  const primaryDefs = PRIMARY_OUTCOME_VALUES
+    .map((v) => OUTCOMES.find((o) => o.value === v))
+    .filter((o): o is OutcomeDef => !!o);
+  const moreGrouped = {
+    reached: grouped.reached.filter(notPrimary),
+    missed: grouped.missed.filter(notPrimary),
+    other: grouped.other.filter(notPrimary),
   };
 
   function renderGroup(label: string, items: OutcomeDef[], colorClass: string) {
@@ -427,7 +392,7 @@ export function DispositionSheet({
   }
 
   const isCallback = outcome === "callback";
-  const canSubmit = !!outcome && !logCall.isPending;
+  const canSubmit = !!outcome && !logCall.isPending && !staleClaim;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -450,103 +415,27 @@ export function DispositionSheet({
         </SheetHeader>
 
         <div className="mt-6 space-y-5">
-          {renderGroup("Reached patient", grouped.reached, "border-emerald-300 bg-emerald-50 text-emerald-800")}
-          {renderGroup("Did not reach", grouped.missed, "border-amber-300 bg-amber-50 text-amber-800")}
-          {renderGroup("Other", grouped.other, "border-slate-300 bg-slate-100 text-slate-700")}
+          {renderGroup("Common outcomes", primaryDefs, "border-emerald-300 bg-emerald-50 text-emerald-800")}
 
-          {STRUCTURED_SELECTOR_ENABLED && (
-            <section
-              className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-3"
-              data-testid="canonical-call-result-selector"
-            >
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-700">
-                Canonical call result (Phase 1)
-              </p>
-              <Label htmlFor="canonical-outcome" className="text-xs font-semibold text-indigo-900">
-                Outcome
-              </Label>
-              <select
-                id="canonical-outcome"
-                value={canonicalOutcome}
-                onChange={(e) => setCanonicalOutcome((e.target.value || "") as CanonicalOutcome | "")}
-                className="mt-1.5 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm"
-                data-testid="canonical-outcome-select"
-              >
-                <option value="">— select canonical outcome —</option>
-                {CANONICAL_OUTCOMES.map((v) => (
-                  <option key={v} value={v} data-testid={`canonical-outcome-option-${v}`}>
-                    {CANONICAL_OUTCOME_LABELS[v]}
-                  </option>
-                ))}
-              </select>
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+            aria-expanded={showMore}
+            data-testid="disposition-more-toggle"
+          >
+            {showMore ? "Fewer outcomes" : "More outcomes"}
+          </button>
 
-              {canonicalOutcome === "callback" && (
-                <div className="mt-3" data-testid="canonical-callback-block">
-                  <Label className="text-xs font-semibold text-indigo-900">Callback at</Label>
-                  <Input
-                    type="datetime-local"
-                    value={canonicalCallbackAt}
-                    onChange={(e) => setCanonicalCallbackAt(e.target.value)}
-                    className="mt-1 rounded-xl border-indigo-200 bg-white text-sm"
-                    data-testid="canonical-callback-input"
-                  />
-                </div>
-              )}
-
-              {canonicalOutcome === "scheduled" && (
-                <div className="mt-3" data-testid="canonical-scheduled-block">
-                  <Label className="text-xs font-semibold text-indigo-900">Desired appointment status</Label>
-                  <Input
-                    type="text"
-                    value={canonicalDesiredApptStatus}
-                    onChange={(e) => setCanonicalDesiredApptStatus(e.target.value)}
-                    placeholder="scheduled"
-                    className="mt-1 rounded-xl border-indigo-200 bg-white text-sm"
-                    data-testid="canonical-desired-appt-status-input"
-                  />
-                </div>
-              )}
-
-              {canonicalOutcome && OUTREACH_TERMINAL_OUTCOMES.has(canonicalOutcome) && (
-                <div className="mt-3" data-testid="canonical-terminal-block">
-                  <Label className="text-xs font-semibold text-indigo-900">Terminal completion reason</Label>
-                  <Input
-                    type="text"
-                    value={canonicalTerminalReason}
-                    onChange={(e) => setCanonicalTerminalReason(e.target.value)}
-                    placeholder="e.g. completed-outreach, dnc-request"
-                    className="mt-1 rounded-xl border-indigo-200 bg-white text-sm"
-                    data-testid="canonical-terminal-reason-input"
-                  />
-                </div>
-              )}
-
-              <div className="mt-3">
-                <Label htmlFor="canonical-notes" className="text-xs font-semibold text-indigo-900">
-                  Notes <span className="text-indigo-400">(optional)</span>
-                </Label>
-                <Textarea
-                  id="canonical-notes"
-                  value={canonicalNotes}
-                  onChange={(e) => setCanonicalNotes(e.target.value)}
-                  rows={3}
-                  className="mt-1 resize-none rounded-xl border-indigo-200 bg-white text-sm"
-                  data-testid="canonical-notes"
-                />
-              </div>
-
-              <div className="mt-3 flex justify-end">
-                <Button
-                  type="button"
-                  disabled={!canonicalOutcome || logCanonicalCall.isPending}
-                  onClick={() => logCanonicalCall.mutate()}
-                  className="rounded-full bg-indigo-600 px-4 text-white hover:bg-indigo-700 disabled:opacity-40"
-                  data-testid="canonical-submit"
-                >
-                  {logCanonicalCall.isPending ? "Logging…" : "Log canonical result"}
-                </Button>
-              </div>
-            </section>
+          {showMore && (
+            <div className="space-y-5" data-testid="disposition-more-outcomes">
+              {moreGrouped.reached.length > 0 &&
+                renderGroup("Reached patient", moreGrouped.reached, "border-emerald-300 bg-emerald-50 text-emerald-800")}
+              {moreGrouped.missed.length > 0 &&
+                renderGroup("Did not reach", moreGrouped.missed, "border-amber-300 bg-amber-50 text-amber-800")}
+              {moreGrouped.other.length > 0 &&
+                renderGroup("Other", moreGrouped.other, "border-slate-300 bg-slate-100 text-slate-700")}
+            </div>
           )}
 
           {isCallback && (
@@ -593,6 +482,53 @@ export function DispositionSheet({
             >
               Push to Playground
             </Button>
+          )}
+
+          {staleClaim && (
+            <div
+              role="alert"
+              className="rounded-2xl border border-amber-300 bg-amber-50 p-3 text-[13px]"
+              data-testid="disposition-stale-claim"
+            >
+              <div className="flex items-start gap-2">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <div className="min-w-0">
+                  <div className="font-semibold text-amber-900">
+                    This patient is now being worked by another team member
+                  </div>
+                  <p className="mt-0.5 text-amber-800">
+                    Your note wasn't saved and is kept below so nothing is lost. Copy it if
+                    you need it, then return to the queue.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(notes).catch(() => {});
+                        toast({ title: "Note copied" });
+                      }}
+                      data-testid="disposition-stale-copy"
+                    >
+                      Copy note
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        onClaimLost?.();
+                        onOpenChange(false);
+                      }}
+                      data-testid="disposition-stale-return"
+                    >
+                      Return to queue
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4">

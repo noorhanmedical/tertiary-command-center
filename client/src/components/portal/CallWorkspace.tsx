@@ -36,15 +36,8 @@ import {
 import {
   resolvePhoneProvider,
   getClientPhoneProviderPreferences,
-  setTeamMemberPhoneProviderOverride,
-  AVAILABLE_PROVIDER_IDS,
 } from "@/features/command-center/providers/phoneProviderResolver";
-import {
-  usePhoneProviderPreferences,
-  useSavePhoneProviderDefault,
-} from "@/features/command-center/providers/phoneProviderSettingsApi";
-import { isSelectablePhoneProviderId } from "@shared/phoneProvider";
-import type { PhoneProviderId } from "@/features/command-center/providers/phoneProviderTypes";
+import { usePhoneProviderPreferences } from "@/features/command-center/providers/phoneProviderSettingsApi";
 import type { PhoneCallSession } from "@/features/command-center/providers/phoneProviderTypes";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { getScriptForTest, fillScript } from "@/lib/outreachScripts";
@@ -63,6 +56,9 @@ export type CallWorkspaceProps = {
   onDraftChange?: (dirty: boolean, description?: string) => void;
   /** Optional — fired after a call is successfully logged (canonical save). */
   onLogged?: () => void;
+  /** Phase 5B — fired when the disposition is rejected because the claim is now
+   *  held by someone else (stale work). The host drops its claim + refetches. */
+  onClaimLost?: () => void;
   /**
    * Optional one-shot signal: when this number increases, the disposition
    * sheet is opened. Lets a host (Playground "Save & Close") route the user to
@@ -96,6 +92,13 @@ const TONE_CLASS: Record<string, string> = {
   rose: "border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100",
   slate: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
 };
+
+// snake_case canonical outcome → readable sentence-case ("no_answer" → "No
+// answer"). Used only for the compact "last contact" label in the header.
+function humanizeOutcome(o: string): string {
+  const s = o.replace(/_/g, " ").trim().toLowerCase();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
 
 // Context-aware panel: a SketchSurface inside the Playground canvas, a plain
 // Card everywhere else (e.g. the non-Playground quick-dial Dialog). Keeps ONE
@@ -284,6 +287,7 @@ export function CallWorkspace({
   onClose,
   onDraftChange,
   onLogged,
+  onClaimLost,
   requestOpenDisposition,
 }: CallWorkspaceProps) {
   const { toast } = useToast();
@@ -306,26 +310,18 @@ export function CallWorkspace({
 
   const ringCentralEnabled = isRingCentralClickToCallEnabled();
 
-  // Per-call provider switch (null → use the precedence-resolved default).
-  // A per-call switch NEVER persists; making it the saved default is an
-  // explicit action (the "Make default" control below).
-  const [providerOverride, setProviderOverride] = useState<PhoneProviderId | null>(null);
-
-  // Persisted defaults (admin_settings-backed) are the source of truth;
-  // localStorage/env are fallback only. Scope the facility layer to this case.
+  // Persisted defaults (admin_settings-backed) resolve the calling method by
+  // precedence (team-member → facility → org → manual). Phase 5A demoted the
+  // per-call provider switcher and "Make default" control out of the call
+  // surface — choosing a calling method is a settings concern, not something
+  // the caller manages mid-call. The workspace just shows the resolved method
+  // and its readiness as a compact status.
   const { data: persistedPrefs } = usePhoneProviderPreferences(ctx.facilityId ?? null);
-  const saveDefault = useSavePhoneProviderDefault(ctx.facilityId ?? null);
   const providerPrefs = getClientPhoneProviderPreferences(persistedPrefs ?? null);
-  // Effective provider by precedence (team-member → facility → org → manual),
-  // with an optional per-call switch. The UI NEVER hard-wires RingCentral.
   const resolvedProvider = resolvePhoneProvider(providerPrefs, {
     ringCentralEnabled,
-    explicitProviderId: providerOverride,
+    explicitProviderId: null,
   });
-  // The provider currently shown in the switcher (per-call override wins).
-  const activeProviderId = providerOverride ?? resolvedProvider.providerId;
-  // Is the shown provider already the persisted team-member default?
-  const isSavedTeamMemberDefault = persistedPrefs?.teamMemberProviderId === activeProviderId;
 
   const commandEnabled = typeof screeningId === "number" && screeningId > 0;
   const { data, isLoading, isError, error } = useQuery<CommandCenterResponse>({
@@ -339,7 +335,24 @@ export function CallWorkspace({
 
   const phone = data?.patient.phone ?? null;
   const diagnoses = data?.clinicalProfile?.diagnoses ?? null;
-  const priorAttempts = data?.histories?.calls?.length ?? 0;
+  const qualifyingTests = data?.clinicalProfile?.qualifyingTests ?? [];
+  // Phase 5A — "Attempt N" MUST come from the canonical per-case counter
+  // (patient_execution_cases.call_attempt_count), threaded on ctx from the
+  // scheduler-portal row. Fall back to the patient-wide command-center call
+  // count ONLY for ad-hoc contexts that carry no execution-case row.
+  const priorAttempts = ctx.callAttemptCount ?? data?.histories?.calls?.length ?? 0;
+  // Compact "last contact" for the header — canonical per-case last attempt +
+  // outcome (from the execution-case row), not a re-derived patient-wide guess.
+  const lastContactLabel = (() => {
+    const at = ctx.lastAttemptAt ? new Date(ctx.lastAttemptAt) : null;
+    const when =
+      at && !Number.isNaN(at.getTime())
+        ? at.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+        : null;
+    const outcome = ctx.lastCallOutcome ? humanizeOutcome(ctx.lastCallOutcome) : null;
+    if (when && outcome) return `${when} · ${outcome}`;
+    return when ?? outcome ?? null;
+  })();
   const targetService = ctx.targetServices.filter(Boolean)[0] ?? null;
 
   const openDisposition = (outcome?: OutreachCallOutcome) => {
@@ -458,6 +471,19 @@ export function CallWorkspace({
                 </span>
               ) : null}
             </div>
+            <div
+              className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500"
+              data-testid="call-workspace-metrics"
+            >
+              <span data-testid="call-attempt-count">Attempt {priorAttempts + 1}</span>
+              {lastContactLabel ? (
+                <span data-testid="call-last-contact">Last contact {lastContactLabel}</span>
+              ) : (
+                <span className="text-slate-400" data-testid="call-last-contact-none">
+                  No prior contact
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {ctx.engagementStatus ? (
@@ -480,64 +506,19 @@ export function CallWorkspace({
         ) : null}
       </Panel>
 
-      {/* ─── RingCentral dialer panel ───────────────────────────── */}
+      {/* ─── Call panel ─────────────────────────────────────────── */}
       <Panel seedId="call-dialer" testId="call-workspace-dialer">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-slate-900">Dialer</div>
-          <div className="flex items-center gap-1.5">
-            {/* Provider switcher — pick which calling method to use for this
-                call. Default comes from the precedence chain (team-member →
-                facility → org → manual). Persisting the choice sets the
-                team-member override. */}
-            <select
-              value={activeProviderId}
-              onChange={(e) => {
-                // Per-call switch ONLY — does NOT overwrite the saved default.
-                // Making it the default is the explicit "Make default" action.
-                const v = e.target.value as PhoneProviderId;
-                setProviderOverride(v);
-                setProviderUnwired(false);
-              }}
-              className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-700"
-              data-testid="call-provider-select"
-              title="Calling method (this call only)"
-            >
-              {AVAILABLE_PROVIDER_IDS.map((id) => (
-                <option key={id} value={id}>
-                  {id === "ringcentral" ? "RingCentral" : id === "manual" ? "Manual" : id}
-                </option>
-              ))}
-            </select>
-            {/* Explicit make-default: persists the shown provider as this
-                team member's saved default (does not affect other users).
-                Also mirrors to localStorage so the offline fallback agrees. */}
-            {isSavedTeamMemberDefault ? (
-              <span
-                className="text-[10px] font-medium text-emerald-600"
-                data-testid="call-provider-default-badge"
-              >
-                Default
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isSelectablePhoneProviderId(activeProviderId)) return;
-                  saveDefault.mutate({ scope: "team_member", providerId: activeProviderId });
-                  setTeamMemberPhoneProviderOverride(activeProviderId);
-                }}
-                disabled={saveDefault.isPending}
-                className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                data-testid="call-provider-make-default"
-                title="Save as my default calling method"
-              >
-                Make default
-              </button>
-            )}
+          <div className="text-sm font-semibold text-slate-900">Call</div>
+          {/* Phase 5A — compact calling-method status only. Which method is used
+              (and its default) is a settings concern; the caller just needs to
+              know it's ready or that they should dial manually. */}
+          <div className="flex items-center gap-1.5" data-testid="call-provider-status">
+            <span className="text-[11px] text-slate-500">{resolvedProvider.adapter.label}</span>
             {resolvedProvider.live ? (
               <StatusPill label="Ready" tone="emerald" />
             ) : (
-              <StatusPill label="Integration required" tone="amber" />
+              <StatusPill label="Dial manually" tone="amber" />
             )}
           </div>
         </div>
@@ -549,14 +530,11 @@ export function CallWorkspace({
           >
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <div className="font-semibold">
-                {resolvedProvider.adapter.label} connection required
-              </div>
+              <div className="font-semibold">Dial this patient manually</div>
               <p className="mt-0.5 text-amber-800">
-                {resolvedProvider.adapter.label} click-to-call is not connected for
-                this environment. Place the call manually{phone ? ` to ${phone}` : ""},
-                then log the outcome below. No call is placed from here until a live
-                calling provider is connected.
+                Automatic calling isn't connected here. Place the call
+                {phone ? ` to ${phone}` : ""} from your phone, then log the outcome
+                below.
               </p>
             </div>
           </div>
@@ -606,7 +584,7 @@ export function CallWorkspace({
                 </SketchAwareButton>
               )}
               <span className="text-[11px] text-slate-500">
-                Disposition is logged below — a placed call is never marked complete
+                Log the outcome below — a call is never marked complete
                 automatically.
               </span>
             </div>
@@ -698,6 +676,23 @@ export function CallWorkspace({
             isLoading={proof.isLoading}
           />
         </div>
+        {qualifyingTests.length > 0 ? (
+          <div className="mt-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Qualifying tests
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1.5" data-testid="call-qualifying-tests">
+              {qualifyingTests.map((t, i) => (
+                <span
+                  key={`${t}-${i}`}
+                  className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {diagnoses ? (
           <div className="mt-3 rounded-md bg-slate-50 px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
@@ -721,13 +716,13 @@ export function CallWorkspace({
         ) : null}
       </Panel>
 
-      {/* ─── Disposition logging ────────────────────────────────── */}
+      {/* ─── Log call outcome ───────────────────────────────────── */}
       <Panel seedId="call-disposition" testId="call-workspace-disposition">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <div className="text-sm font-semibold text-slate-900">Log call outcome</div>
-            <div className="text-[11px] text-slate-500">
-              Attempt #{priorAttempts + 1} · posts to the canonical call-result endpoint.
+            <div className="text-[11px] text-slate-500" data-testid="call-disposition-attempt">
+              Attempt {priorAttempts + 1}
             </div>
           </div>
         </div>
@@ -739,7 +734,12 @@ export function CallWorkspace({
               label={o.label}
               tone={o.tone}
               disabled={screeningId == null}
-              onSelect={() => openDisposition(o.value)}
+              onSelect={() =>
+                // Phase 5A — "Scheduled" means a REAL booking, never a bare
+                // disposition. Route it to the scheduler (with this case's
+                // context) instead of logging a fake "scheduled" outcome.
+                o.value === "scheduled" ? onScheduleCase() : openDisposition(o.value)
+              }
             />
           ))}
         </div>
@@ -752,7 +752,7 @@ export function CallWorkspace({
             seedId="call-open-disposition"
             data-testid="call-open-disposition"
           >
-            <Phone className="mr-1 h-4 w-4" /> Full disposition sheet
+            <Phone className="mr-1 h-4 w-4" /> More options
           </SketchAwareButton>
         </div>
       </Panel>
@@ -790,10 +790,12 @@ export function CallWorkspace({
         patientId={screeningId}
         patientName={ctx.patientName}
         schedulerUserId={null}
+        executionCaseId={ctx.executionCaseId}
         priorAttempts={priorAttempts}
         defaultOutcome={defaultOutcome}
         onDraftChange={onDraftChange}
         onLogged={onLogged}
+        onClaimLost={onClaimLost}
       />
     </div>
   );

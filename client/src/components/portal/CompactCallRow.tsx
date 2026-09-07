@@ -39,6 +39,10 @@ export type CompactCallRowProps = {
   callReason: string;
   canCall: boolean;
   testIdKey: string | number;
+  /** Phase 5A — CANONICAL per-case attempt count
+   *  (patient_execution_cases.call_attempt_count). When > 0 the row shows
+   *  "Attempt N"; never the all-time patient calls.length. */
+  callAttemptCount?: number | null;
   onOpenPatient: () => void;
   onOpenCall: () => void;
   onOpenSchedule: () => void;
@@ -53,6 +57,7 @@ export function CompactCallRow({
   callReason,
   canCall,
   testIdKey,
+  callAttemptCount,
   onOpenPatient,
   onOpenCall,
   onOpenSchedule,
@@ -75,6 +80,16 @@ export function CompactCallRow({
           {name}
         </span>
       </button>
+      {(callAttemptCount ?? 0) > 0 ? (
+        <div
+          className="mt-0.5 text-[9px] font-medium text-slate-500"
+          data-testid={`text-call-attempt-${testIdKey}`}
+        >
+          {/* The attempt about to be made = prior count + 1, matching the call
+              workspace header and the disposition sheet (never disagree). */}
+          Attempt {(callAttemptCount ?? 0) + 1}
+        </div>
+      ) : null}
       <div className="mt-1.5 flex items-center justify-between gap-1">
         <span
           className="inline-flex max-w-[96px] items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700"

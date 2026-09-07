@@ -148,3 +148,106 @@ export function restoreSession(
 export function clearSession(): void {
   try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* noop */ }
 }
+
+// ── Phase 5B: owner + execution-case scoped call-interaction drafts ──────────
+// In-progress disposition input (outcome / notes / callback) persisted so it
+// survives Phone↔Calendar switches, Atlas/history navigation, transient
+// refetches, a booking conflict, and a hard refresh. Keyed by BOTH the
+// authenticated owner AND the execution case: the owner is part of the key, so
+// it is impossible for a different user to READ another user's draft, and
+// drafts never bleed across patients. Client/session only — NEVER autosaved to
+// the server (no approved server draft API). Reuses the same owner-scoping
+// discipline as the workspace session above.
+
+export type CallInteractionDraft = {
+  outcome: string | null;
+  notes: string;
+  callbackAt: string | null;
+  savedAt: number;
+};
+
+const DRAFT_PREFIX = "plexus_call_draft";
+
+function draftKey(ownerUserId: string, executionCaseId: number): string {
+  return `${DRAFT_PREFIX}:${ownerUserId}:${executionCaseId}`;
+}
+
+/** Save the in-progress draft for THIS owner + case. Fails closed (no-op) when
+ *  the owner is unknown — PHI notes are never persisted without an owner. An
+ *  empty draft clears the key instead of storing a blank. */
+export function saveCallDraft(
+  ownerUserId: string | null | undefined,
+  executionCaseId: number | null | undefined,
+  draft: Omit<CallInteractionDraft, "savedAt">,
+): void {
+  if (!ownerUserId || executionCaseId == null || executionCaseId <= 0) return;
+  const meaningful = draft.outcome != null || draft.notes.trim().length > 0;
+  try {
+    const key = draftKey(ownerUserId, executionCaseId);
+    if (!meaningful) {
+      sessionStorage.removeItem(key);
+      return;
+    }
+    const payload: CallInteractionDraft = { ...draft, savedAt: Date.now() };
+    sessionStorage.setItem(key, JSON.stringify(payload));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Load the draft for THIS owner + case. Returns null when absent, malformed,
+ *  stale (>24h), or when the owner is unknown (fail closed). */
+export function loadCallDraft(
+  ownerUserId: string | null | undefined,
+  executionCaseId: number | null | undefined,
+): CallInteractionDraft | null {
+  if (!ownerUserId || executionCaseId == null || executionCaseId <= 0) return null;
+  const key = draftKey(ownerUserId, executionCaseId);
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as CallInteractionDraft;
+    if (typeof d.savedAt !== "number" || Date.now() - d.savedAt > 24 * 60 * 60 * 1000) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return {
+      outcome: d.outcome ?? null,
+      notes: typeof d.notes === "string" ? d.notes : "",
+      callbackAt: d.callbackAt ?? null,
+      savedAt: d.savedAt,
+    };
+  } catch {
+    try { sessionStorage.removeItem(key); } catch { /* noop */ }
+    return null;
+  }
+}
+
+/** Clear one case's draft for this owner (on successful disposition / done). */
+export function clearCallDraft(
+  ownerUserId: string | null | undefined,
+  executionCaseId: number | null | undefined,
+): void {
+  if (!ownerUserId || executionCaseId == null) return;
+  try {
+    sessionStorage.removeItem(draftKey(ownerUserId, executionCaseId));
+  } catch {
+    /* noop */
+  }
+}
+
+/** Clear ALL call drafts (every owner) in this tab — called on logout so no
+ *  prior user's PHI draft lingers. Owner-in-key already blocks a DIFFERENT user
+ *  from reading them; this is defense-in-depth cleanup on owner change. */
+export function clearAllCallDrafts(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(`${DRAFT_PREFIX}:`)) keys.push(k);
+    }
+    for (const k of keys) sessionStorage.removeItem(k);
+  } catch {
+    /* noop */
+  }
+}
