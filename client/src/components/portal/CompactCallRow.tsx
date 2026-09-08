@@ -1,5 +1,7 @@
-import { Phone, Calendar as CalendarIcon, Maximize2, PhoneCall, Stethoscope, Activity, Check } from "lucide-react";
+import { Phone, Calendar as CalendarIcon, Maximize2, PhoneCall, Stethoscope, Check } from "lucide-react";
 import { getInitials } from "@/lib/format";
+import { categoryIcons, categoryStyles } from "@/features/schedule/ancillaryMeta";
+import { getAncillaryCategory } from "@shared/ancillaryCategory";
 
 // Purpose-built compact (thin-rail) layouts for the Team Portal right
 // work-queue panel. These render only when the right rail is in `small`
@@ -37,6 +39,10 @@ export type CompactCallRowProps = {
   callReason: string;
   canCall: boolean;
   testIdKey: string | number;
+  /** Phase 5A — CANONICAL per-case attempt count
+   *  (patient_execution_cases.call_attempt_count). When > 0 the row shows
+   *  "Attempt N"; never the all-time patient calls.length. */
+  callAttemptCount?: number | null;
   onOpenPatient: () => void;
   onOpenCall: () => void;
   onOpenSchedule: () => void;
@@ -51,6 +57,7 @@ export function CompactCallRow({
   callReason,
   canCall,
   testIdKey,
+  callAttemptCount,
   onOpenPatient,
   onOpenCall,
   onOpenSchedule,
@@ -73,6 +80,16 @@ export function CompactCallRow({
           {name}
         </span>
       </button>
+      {(callAttemptCount ?? 0) > 0 ? (
+        <div
+          className="mt-0.5 text-[9px] font-medium text-slate-500"
+          data-testid={`text-call-attempt-${testIdKey}`}
+        >
+          {/* The attempt about to be made = prior count + 1, matching the call
+              workspace header and the disposition sheet (never disagree). */}
+          Attempt {(callAttemptCount ?? 0) + 1}
+        </div>
+      ) : null}
       <div className="mt-1.5 flex items-center justify-between gap-1">
         <span
           className="inline-flex max-w-[96px] items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700"
@@ -173,7 +190,9 @@ export type CompactAncillaryRowProps = {
   onClick: () => void;
 };
 
-// Compact ancillary-schedule row: time chip + procedure icon + initials.
+// Compact ancillary-schedule row: time chip + per-service icon + initials.
+// The service icon carries the ONLY color accent (BrainWave violet · VitalWave
+// rose · Ultrasound emerald); the row stays neutral.
 export function CompactAncillaryRow({
   name,
   time,
@@ -181,26 +200,32 @@ export function CompactAncillaryRow({
   testIdKey,
   onClick,
 }: CompactAncillaryRowProps) {
+  const category = getAncillaryCategory(serviceType ?? "");
+  const SvcIcon = categoryIcons[category];
+  const svcStyle = categoryStyles[category];
+  const avatarTint =
+    category === "ultrasound" ? "emerald" : category === "brainwave" ? "violet" : "sky";
   return (
     <button
       type="button"
       onClick={onClick}
       className="glass-tile glass-tile-interactive !rounded-xl flex w-full items-center gap-2 px-2 py-1 text-left"
       data-testid={`workspace-ancillary-compact-${testIdKey}`}
+      title={serviceType}
     >
-      <span className="inline-flex shrink-0 items-center rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-violet-700">
+      <span className="inline-flex shrink-0 items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600">
         {time}
       </span>
       <span
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-600"
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${svcStyle.bg} ${svcStyle.icon}`}
         title={serviceType}
       >
-        <Activity className="h-3.5 w-3.5" />
+        <SvcIcon className="h-3.5 w-3.5" />
       </span>
       <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-slate-900">
         {name}
       </span>
-      <InitialsAvatar name={name} tint="violet" />
+      <InitialsAvatar name={name} tint={avatarTint} />
     </button>
   );
 }

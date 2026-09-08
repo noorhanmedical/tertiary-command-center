@@ -26,6 +26,8 @@ const availabilityBodySchema = z.object({
     .regex(/^\d{1,2}:\d{2}$/)
     .nullable()
     .optional(),
+  // Phase 6 — optional STRUCTURED part-of-day preference (ranking only).
+  partOfDay: z.enum(["morning", "afternoon"]).nullable().optional(),
 });
 
 export function registerSchedulingAvailabilityRoutes(app: Express) {
@@ -201,6 +203,7 @@ export function registerSchedulingAvailabilityRoutes(app: Express) {
         services: parsed.data.services,
         patientKey: parsed.data.patientKey ?? null,
         preferredTime: parsed.data.preferredTime ?? null,
+        partOfDay: parsed.data.partOfDay ?? null,
       });
       res.json(result);
     } catch (e) {

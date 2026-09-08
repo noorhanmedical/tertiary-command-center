@@ -14,6 +14,7 @@
 import type { HomeStatsResponse } from "@/hooks/api/home-stats";
 import type { ScheduleDashboardResponse } from "@/components/HomeDashboard";
 import type { HomeDashboardData, PulseMetric, ClinicRow, ScheduleItem, TaskItem } from "@/components/PlexusHomeDashboard";
+import { getZonedTime } from "@/lib/worldTime/time";
 
 export const EM_DASH = "—";
 
@@ -24,6 +25,9 @@ export type BuildHomeInputs = {
   homeStats: HomeStatsResponse | undefined;
   scheduleDashboard: ScheduleDashboardResponse | undefined;
   overdueTasks: OverdueTasks;
+  /** Editable World Time locations (/api/settings/world-clocks). When omitted,
+   *  buildClocks falls back to the built-in defaults. */
+  worldClockCities?: WorldClockCity[];
 };
 
 function num(value: number | undefined, sourceMissing?: boolean): string | number {
@@ -37,7 +41,7 @@ function unavailable(label: string, helper?: string): PulseMetric {
 }
 
 export function buildHomeDashboardData(inputs: BuildHomeInputs): HomeDashboardData {
-  const { userName, homeStats, scheduleDashboard, overdueTasks } = inputs;
+  const { userName, homeStats, scheduleDashboard, overdueTasks, worldClockCities } = inputs;
   const avail = homeStats?.availability;
 
   // ── Practice Pulse ──────────────────────────────────────────────────────
@@ -146,25 +150,37 @@ export function buildHomeDashboardData(inputs: BuildHomeInputs): HomeDashboardDa
     today: { newPatients: todayNewPatients, completedStudies: todayCompletedStudies, revenue: todayRevenue },
     tasks,
     schedule,
-    clocks: buildClocks(),
+    clocks: buildClocks(worldClockCities),
   };
 }
 
-// ── Global clocks (live, no backend) — spec §12 ────────────────────────────
-const CLOCK_ZONES: Array<{ city: string; zone: string; label: string }> = [
-  { city: "Arizona", zone: "America/Phoenix", label: "MST" },
-  { city: "Houston", zone: "America/Chicago", label: "CDT" },
-  { city: "Michigan", zone: "America/Detroit", label: "EDT" },
-  { city: "Dhaka", zone: "Asia/Dhaka", label: "BST" },
-  { city: "Manila", zone: "Asia/Manila", label: "PST" },
+// ── Global World Time clocks (live, no backend) ─────────────────────────────
+// Config-driven: the row is built from the editable world-clocks list
+// (/api/settings/world-clocks) when supplied, else these built-in defaults.
+// Timezone abbreviation + date are DERIVED from Intl (getZonedTime) so DST is
+// handled correctly and adding a city needs config only — no code change.
+export type WorldClockCity = { label: string; timeZone: string };
+
+const DEFAULT_WORLD_CLOCK_CITIES: WorldClockCity[] = [
+  { label: "Manila", timeZone: "Asia/Manila" },
+  { label: "Dhaka", timeZone: "Asia/Dhaka" },
+  { label: "Arizona", timeZone: "America/Phoenix" },
+  { label: "Houston", timeZone: "America/Chicago" },
+  { label: "Michigan", timeZone: "America/Detroit" },
 ];
 
-export function buildClocks() {
+export function buildClocks(cities?: WorldClockCity[]) {
   const now = new Date();
-  return CLOCK_ZONES.map(({ city, zone, label }) => ({
-    city,
-    time: new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: zone }).format(now),
-    timezone: label,
-    date: new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: zone }).format(now),
-  }));
+  const list = cities && cities.length > 0 ? cities : DEFAULT_WORLD_CLOCK_CITIES;
+  return list.map(({ label, timeZone }) => {
+    const z = getZonedTime(timeZone, now);
+    return {
+      city: label,
+      time: z.digital,
+      timezone: z.abbr,
+      date: z.date,
+      hours: z.hours,
+      minutes: z.minutes,
+    };
+  });
 }

@@ -27,6 +27,13 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Pencil, Plus, Trash2, ChevronDown, Check, GripVertical } from "lucide-react";
+import {
+  getZonedTime,
+  getSupportedTimeZones as getSupportedTimeZonesShared,
+} from "@/lib/worldTime/time";
+import { slugify } from "@/lib/worldTime/locations";
+import type { WorldTimeImagePublicMap } from "@/lib/worldTime/types";
+import { WorldTimeCard } from "@/components/world-time/WorldTimeCard";
 
 type ClockCity = {
   label: string;
@@ -42,62 +49,7 @@ const DEFAULT_CLOCKS: ClockCity[] = [
 ];
 
 function getSupportedTimeZones(): string[] {
-  try {
-    const fn = (Intl as any).supportedValuesOf;
-    if (typeof fn === "function") {
-      return fn("timeZone") as string[];
-    }
-  } catch {
-    /* ignore */
-  }
-  return DEFAULT_CLOCKS.map((c) => c.timeZone);
-}
-
-type ZonedTime = {
-  hours: number;
-  minutes: number;
-  seconds: number;
-  digital: string;
-  date: string;
-  abbr: string;
-};
-
-function getZonedTime(timeZone: string, now: Date): ZonedTime {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(now);
-
-  const pick = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
-  let hours = pick("hour");
-  if (hours === 24) hours = 0;
-  const minutes = pick("minute");
-  const seconds = pick("second");
-
-  const digital = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: true,
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(now);
-
-  const date = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    month: "short",
-    day: "numeric",
-  }).format(now);
-
-  const abbrParts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    timeZoneName: "short",
-    hour: "2-digit",
-  }).formatToParts(now);
-  const abbr = abbrParts.find((p) => p.type === "timeZoneName")?.value ?? "";
-
-  return { hours, minutes, seconds, digital, date, abbr };
+  return getSupportedTimeZonesShared(DEFAULT_CLOCKS.map((c) => c.timeZone));
 }
 
 function TimeZoneCombobox({
@@ -365,6 +317,14 @@ export function HomeWorldClocks({
     queryKey: ["/api/settings/world-clocks"],
   });
 
+  // Approved-only image registry. The endpoint returns an assetUrl solely for
+  // APPROVED locations, so an unapproved candidate can never render here — the
+  // card falls back to the Plexus navy gradient automatically.
+  const { data: imageData } = useQuery<{ images: WorldTimeImagePublicMap }>({
+    queryKey: ["/api/settings/world-time/images"],
+  });
+  const images = imageData?.images ?? {};
+
   const cities = data?.cities ?? DEFAULT_CLOCKS;
 
   useEffect(() => {
@@ -383,57 +343,96 @@ export function HomeWorldClocks({
       return aSecs - bSecs;
     });
 
+  // ── Winter preview variant — unchanged legacy tile treatment ──
+  if (winter) {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <div
+          className="flex flex-wrap justify-center gap-3 sm:gap-4"
+          data-testid="row-world-clocks"
+        >
+          {clocks.map((clock, index) => {
+            const time = clock.time;
+            const key = `${clock.label}-${clock.timeZone}-${index}`;
+            const idBase = clock.label.toLowerCase().replace(/\s+/g, "-");
+            return (
+              <div
+                key={key}
+                className="winter-clock-tile flex flex-col items-center gap-1.5 px-4 py-3.5 min-w-[112px]"
+                data-testid={`clock-${idBase}`}
+              >
+                <div className="text-[12px] font-medium tracking-tight" style={{ color: "var(--w-text-2)" }}>
+                  {clock.label}
+                </div>
+                <div className="flex flex-col items-center leading-tight">
+                  <span
+                    className="text-[20px] font-medium tabular-nums"
+                    style={{ color: "var(--w-text)" }}
+                    data-testid={`text-clock-time-${idBase}`}
+                  >
+                    {time.digital}
+                  </span>
+                  {time.abbr && (
+                    <span
+                      className="text-[10px] font-medium uppercase tracking-wide"
+                      style={{ color: "var(--w-text-muted)" }}
+                    >
+                      {time.abbr}
+                    </span>
+                  )}
+                  <span
+                    className="text-[11px] font-medium"
+                    style={{ color: "var(--w-text-muted)" }}
+                    data-testid={`text-clock-date-${idBase}`}
+                  >
+                    {time.date}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <WorldClocksEditor cities={cities} onSaved={() => {}} />
+      </div>
+    );
+  }
+
+  // ── Default variant — premium location-aware image cards ──
+  // Row: one line on desktop, wraps to 2–3 columns on tablet, stacks on
+  // mobile. Cards stay compact (≈92px) so the row remains subordinate to
+  // Practice Pulse.
   return (
     <div className="flex flex-col items-center gap-2">
       <div
-        className="flex flex-wrap justify-center gap-3 sm:gap-4"
+        className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3 lg:flex lg:flex-nowrap"
         data-testid="row-world-clocks"
       >
         {clocks.map((clock, index) => {
           const time = clock.time;
           const key = `${clock.label}-${clock.timeZone}-${index}`;
           const idBase = clock.label.toLowerCase().replace(/\s+/g, "-");
+          // Look up an APPROVED image by the location slug; anything else
+          // (pending/rejected/missing) yields no image → fallback gradient.
+          const rec = images[slugify(clock.label)];
+          const image =
+            rec?.status === "approved" && rec.assetUrl
+              ? {
+                  assetUrl: rec.assetUrl,
+                  imagePosition: rec.imagePosition,
+                  landmarkName: rec.landmarkName,
+                }
+              : null;
           return (
-            <div
+            <WorldTimeCard
               key={key}
-              className={
-                winter
-                  ? "winter-clock-tile flex flex-col items-center gap-1.5 px-4 py-3.5 min-w-[112px]"
-                  : "flex flex-col items-center gap-1.5 rounded-2xl border border-black bg-black backdrop-blur px-4 py-3 min-w-[110px]"
-              }
+              label={clock.label}
+              time={time.digital}
+              abbr={time.abbr}
+              date={time.date}
+              image={image}
+              localHour={time.hours}
               data-testid={`clock-${idBase}`}
-            >
-              <div
-                className={`text-[12px] font-medium tracking-tight ${winter ? "" : "font-semibold text-white"}`}
-                style={winter ? { color: "var(--w-text-2)" } : undefined}
-              >
-                {clock.label}
-              </div>
-              <div className="flex flex-col items-center leading-tight">
-                <span
-                  className={`text-[20px] font-medium tabular-nums ${winter ? "" : "font-semibold text-blue-400"}`}
-                  style={winter ? { color: "var(--w-text)" } : undefined}
-                  data-testid={`text-clock-time-${idBase}`}
-                >
-                  {time.digital}
-                </span>
-                {time.abbr && (
-                  <span
-                    className={`text-[10px] font-medium uppercase tracking-wide ${winter ? "" : "text-white"}`}
-                    style={winter ? { color: "var(--w-text-muted)" } : undefined}
-                  >
-                    {time.abbr}
-                  </span>
-                )}
-                <span
-                  className={`text-[11px] font-medium ${winter ? "" : "text-white"}`}
-                  style={winter ? { color: "var(--w-text-muted)" } : undefined}
-                  data-testid={`text-clock-date-${idBase}`}
-                >
-                  {time.date}
-                </span>
-              </div>
-            </div>
+            />
           );
         })}
       </div>

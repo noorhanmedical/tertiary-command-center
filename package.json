@@ -10,6 +10,8 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "seed:admin-settings": "tsx script/seedAdminSettings.ts",
+    "seed:access-control": "tsx script/seedAccessControl.ts",
+    "backfill:access-control": "tsx script/backfillAccessControl.ts",
     "check:canonical-tables": "tsx script/checkCanonicalTables.ts",
     "test:unit": "for t in tests/unit/*.test.ts; do npx tsx \"$t\" || exit 1; done",
     "test:acceptance": "for t in tests/acceptance/*.test.ts; do npx tsx \"$t\" || exit 1; done",

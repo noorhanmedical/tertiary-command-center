@@ -31,6 +31,7 @@ import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 // dead-code audit.
 import PhysicianPortalPage from "@/pages/physician-portal";
 import AdminSettingsPage from "@/pages/admin-settings";
+import AdminAccessPage from "@/pages/admin-access";
 import BillingReadinessPage from "@/pages/billing-readiness";
 import InvoiceBatchesPage from "@/pages/invoice-batches";
 import InvoiceReviewPage from "@/pages/invoice-review";
@@ -42,12 +43,16 @@ import PlexusTasksPage from "@/pages/plexus-tasks";
 import PlexusBankPage from "@/pages/plexus-bank";
 import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
-import { GlobalNav } from "@/components/GlobalNav";
-import { TopBanner } from "@/components/TopBanner";
-// @deprecated — replaced by GlobalDock. Preserved for reference only.
-// import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
-import { GlobalDock } from "@/components/dock";
-import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
+import { PlexusAdminShell } from "@/components/workspace/PlexusAdminShell";
+import { WorkspaceTabsProvider, clearWorkspaceTabsStorage } from "@/lib/navigation/workspaceTabs";
+import {
+  clearSession as clearPlaygroundSession,
+  clearAllCallDrafts,
+} from "@/components/playground/sessionPersistence";
+import { resolveDefaultWorkspaceRoute } from "@/lib/navigation/defaultWorkspaceRoutes";
+import { AccessProvider, canEnterAccessSettings } from "@/lib/access/accessContext";
+import AccessPendingPage from "@/pages/access-pending";
+import { isTeamPortalRoute } from "@/lib/navigation/workspaceRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
@@ -78,7 +83,37 @@ const SIDEBAR_STYLE = {
   "--sidebar-width-icon": "3rem",
 } as React.CSSProperties;
 
-export type AuthUser = { id: string; username: string; role: string } | null;
+// `defaultWorkspace` is the backend-derived controlled landing identifier
+// (see AccessContextService). It is additive/optional; legacy `role` remains
+// the transition-era authority for the app's existing role guards.
+//
+// Phase 4B: the additive access-context fields below are ALREADY returned by
+// GET /api/auth/me (they were additive since Phase 2.5). They are typed here so
+// the access-management Settings UI can read effective permissions/scope/
+// service access WITHOUT recomputing anything on the client — the backend is
+// authoritative. All are optional so the ~20 legacy consumers are unaffected.
+export interface AuthUserAccessRole {
+  key: string;
+  displayName: string;
+  scopeType: string;
+  defaultWorkspace: string;
+  isPrimary: boolean;
+}
+export type AuthUser = {
+  id: string;
+  username: string;
+  role: string;
+  clinicId?: number | null;
+  defaultWorkspace?: string | null;
+  email?: string | null;
+  displayName?: string | null;
+  jobTitle?: string | null;
+  accountStatus?: string;
+  roles?: AuthUserAccessRole[];
+  permissions?: string[];
+  scope?: { platform: boolean; organizationIds: number[]; clinicIds: number[] };
+  serviceAccess?: string[];
+} | null;
 
 function AdminGuard({ user, children }: { user: AuthUser; children: React.ReactNode }) {
   if (!user || user.role !== "admin") {
@@ -94,26 +129,100 @@ function RoleGuard({ user, roles, children }: { user: AuthUser; roles: string[];
   return <>{children}</>;
 }
 
+// Team-portal (ACS/PCS) access. Mirrors the server-side PORTAL_ROLES set plus
+// the DB-derived access context (defaultWorkspace / roles[]) so a user
+// provisioned under the new RBAC model is recognized. The backend remains
+// authoritative (every /api/portal|scheduler-portal|technician-liaison route
+// is scoped); this guard is defense-in-depth + correct UX so an unauthorized
+// user is sent to their own workspace instead of an empty/erroring portal.
+const PORTAL_ACCESS_ROLES = [
+  "admin", "technician", "liaison", "acs", "pcs", "ancillary_technician", "scheduler",
+];
+function hasPortalAccess(user: AuthUser): boolean {
+  if (!user) return false;
+  if (PORTAL_ACCESS_ROLES.includes(user.role)) return true;
+  const dw = user.defaultWorkspace ?? "";
+  if (dw === "pcs" || dw === "acs" || dw === "technician") return true;
+  const keys = (user.roles ?? []).map((r) => r.key);
+  return keys.some((k) => ["acs", "pcs", "ancillary_technician", "scheduler"].includes(k));
+}
+function PortalAccessGuard({ user, children }: { user: AuthUser; children: React.ReactNode }) {
+  if (!hasPortalAccess(user)) {
+    return <Redirect to={resolveDefaultWorkspaceRoute(user?.defaultWorkspace ?? undefined)} />;
+  }
+  return <>{children}</>;
+}
+
+// Phase 4B — permission-aware entry to the access-management Settings console.
+// A user may enter if they hold ANY settings-entry capability (users/org/clinic
+// view-or-manage, or an audit-view permission). This deliberately does NOT
+// require the legacy `admin` role, so an Organization Admin or Clinic Admin can
+// enter and see only the sections they're authorized for. Denied users are sent
+// to their own default workspace (Investor → /access-pending), never granted a
+// broader surface. The backend enforces every /api/access/* call regardless.
+function AccessSettingsGuard({ user, children }: { user: AuthUser; children: React.ReactNode }) {
+  if (!user) return <Redirect to="/home" />;
+  if (!canEnterAccessSettings(user.permissions)) {
+    return <Redirect to={resolveDefaultWorkspaceRoute(user.defaultWorkspace)} />;
+  }
+  return <>{children}</>;
+}
+
 function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
-  const [currentPath] = useLocation();
-  const showGlobalNav = shouldShowGlobalNav(currentPath);
+  const [location] = useLocation();
+
+  // ACS / PCS FULL isolation: dedicated Team Portal routes render ONLY their
+  // own portal experience — no TopBanner, GlobalDock, GlobalNav, or
+  // WorkspaceTabs. They never mount the main-app shell.
+  if (isTeamPortalRoute(location)) {
+    return (
+      <Switch>
+        <Route path="/technician-portal">
+          <Redirect to="/ancillary-care-specialist-portal" />
+        </Route>
+        <Route path="/liaison-technician-portal">
+          <Redirect to="/patient-care-specialist-portal" />
+        </Route>
+        <Route path="/liaison-portal">
+          <Redirect to="/patient-care-specialist-portal" />
+        </Route>
+        <Route path="/team-portal-glass-preview" component={TeamPortalGlassPreviewPage} />
+        <Route path="/patient-care-specialist-portal">
+          <PortalAccessGuard user={user}>
+            <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+              <PatientCareSpecialistPortalPage />
+            </SidebarProvider>
+          </PortalAccessGuard>
+        </Route>
+        <Route path="/ancillary-care-specialist-portal">
+          <PortalAccessGuard user={user}>
+            <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+              <AncillaryCareSpecialistPortalPage />
+            </SidebarProvider>
+          </PortalAccessGuard>
+        </Route>
+      </Switch>
+    );
+  }
+
   return (
-    <Switch>
-      <Route path="/schedule/:id" component={SharedSchedule} />
-      <Route>
-        <div className="flex flex-col h-screen w-full overflow-hidden">
-          <TopBanner user={user} onLogout={onLogout} />
-          <GlobalDock />
-          {/* Legacy GlobalFloatingDock preserved for feature-parity transition */}
-          {/* <GlobalFloatingDock /> */}
-          <div className="flex flex-1 min-h-0 min-w-0">
-            {showGlobalNav && <GlobalNav user={user} onLogout={onLogout} />}
-            <div className="flex flex-col flex-1 min-w-0 min-h-0">
-              <div className="flex-1 min-h-0 overflow-auto">
-              <Switch>
-                <Route path="/">
-                  <Redirect to="/home" />
-                </Route>
+    <AccessProvider>
+      <WorkspaceTabsProvider role={user?.role}>
+        <PlexusAdminShell user={user} onLogout={onLogout}>
+        <Switch>
+          {/* Schedule detail belongs to the Global Schedule workspace and now
+              renders INSIDE the persistent Admin shell (no longer a bypass).
+              It resolves to workspace "global-schedule" — no extra tab. */}
+          <Route path="/schedule/:id" component={SharedSchedule} />
+          <Route path="/">
+            <Redirect to="/home" />
+          </Route>
+          {/* Neutral safe landing for authenticated users with no supported
+              workspace yet (e.g. Investor). Renders full-screen; exposes no
+              operational/PHI data. TEMPORARY / UNSUPPORTED — not a portal. */}
+          <Route path="/access-pending">
+            <AccessPendingPage onLogout={onLogout} />
+          </Route>
                 <Route path="/archive">
                   <Redirect to="/patient-directory" />
                 </Route>
@@ -138,9 +247,12 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 {/* Pixel-faithful design mockup (static data). Not production. */}
                 <Route path="/ancillary-documents-mockup" component={AncillaryDocumentsMockupPage} />
                 <Route path="/mission-control">
-                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <MissionControlPage />
-                  </SidebarProvider>
+                  {/* Full-page layout — Mission Control uses no Sidebar, so it
+                      renders directly in the shell's full-width content outlet.
+                      Wrapping it in SidebarProvider (a flex row expecting a
+                      Sidebar + SidebarInset) collapsed it into a narrow left
+                      column. */}
+                  <MissionControlPage />
                 </Route>
                 <Route path="/imaging-central">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
@@ -302,6 +414,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <AdminGuard user={user}><DocumentLibraryPage /></AdminGuard>
                 </Route>
                 {/* Task #530: unified admin settings hub. */}
+                <Route path="/admin/access">
+                  <AccessSettingsGuard user={user}><AdminAccessPage /></AccessSettingsGuard>
+                </Route>
                 <Route path="/admin/settings">
                   <AdminGuard user={user}><AdminSettingsPage /></AdminGuard>
                 </Route>
@@ -364,13 +479,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/admin/settings#team" />
                 </Route>
                 <Route component={NotFound} />
-              </Switch>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Route>
-    </Switch>
+        </Switch>
+        </PlexusAdminShell>
+      </WorkspaceTabsProvider>
+    </AccessProvider>
   );
 }
 
@@ -399,12 +511,26 @@ function AppShell() {
           duration: 8000,
         });
       }
-      navigate("/home");
+      // Route from the backend-derived default workspace via the controlled
+      // identifier→route map. Never navigate to a raw identifier; unknown/null
+      // falls back to /home. PCS/ACS resolve to their full-screen Team Portals.
+      const target = resolveDefaultWorkspaceRoute((data as AuthUser)?.defaultWorkspace);
+      navigate(target);
     });
   }
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    // Clear persisted workspace tabs so the next user in this browser session
+    // does not inherit the previous user's open-workspace history.
+    clearWorkspaceTabsStorage();
+    // Clear the Playground workspace session (open patient EHR tabs + PHI
+    // descriptors) so the next user in the SAME browser tab cannot inherit the
+    // previous user's open patients (Scenario G — logout isolation).
+    clearPlaygroundSession();
+    // Phase 5B — clear any in-progress call-interaction drafts (PHI notes) so
+    // the next user in the same tab never inherits the previous user's draft.
+    clearAllCallDrafts();
     queryClient.clear();
     refetch();
     navigate("/");

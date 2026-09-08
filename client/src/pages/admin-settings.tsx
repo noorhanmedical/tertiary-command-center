@@ -22,6 +22,7 @@ import {
   Sparkles,
   Building2,
   CalendarClock,
+  Globe2,
   type LucideIcon,
 } from "lucide-react";
 import { OrganizationSettingsSection } from "@/components/settings/OrganizationSettingsSection";
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
 import { QualificationModeSettings } from "@/components/QualificationModeSettings";
+import { WorldTimeImageApproval } from "@/components/settings/WorldTimeImageApproval";
 
 import AdminSettingsCenterPage from "@/pages/admin-settings-center";
 import BillingSettingsPage from "@/pages/billing-settings";
@@ -197,7 +199,8 @@ export default function AdminSettingsPage() {
         <PageHeader
           eyebrow="PLEXUS ANCILLARY · ADMIN"
           icon={Shield}
-          title="Admin Settings"
+          title="Admin"
+          context={meta.label}
           subtitle="System, billing, team, facility, and logs — every administrative surface in one place."
         />
 
@@ -295,6 +298,13 @@ export default function AdminSettingsPage() {
                     Icon={Sparkles}
                   >
                     <QualificationModeSettings />
+                  </Group>
+                  <Group
+                    title="World Time Imagery"
+                    desc="Propose and approve the landmark background images used by the Home dashboard World Time cards."
+                    Icon={Globe2}
+                  >
+                    <WorldTimeImageApproval />
                   </Group>
                   <Group>
                     <OperationalRuleSections />

@@ -203,8 +203,13 @@ export async function autoGeneratePatientNotesServer(
     const bwMetaSection = { heading: "__screening_meta__", body: bwMeta };
     const bwJustSection = aiJustification ? { heading: "__ai_justification__", body: JSON.stringify({ text: aiJustification }) } : null;
     const bwExtra = [bwMetaSection, ...(bwJustSection ? [bwJustSection] : [])];
-    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...bwExtra];
-    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...bwExtra];
+    // ICD-10 / CPT codes belong ONLY in the Billing Document — never the Order
+    // Note or Procedure Note. Those two get an ICD/CPT-FREE meta (selected
+    // conditions only); the fully-coded meta is attached to billing alone.
+    const bwOrderMetaSection = { heading: "__screening_meta__", body: JSON.stringify({ selectedConditions: screeningResult.selectedConditions }) };
+    const bwOrderExtra = [bwOrderMetaSection, ...(bwJustSection ? [bwJustSection] : [])];
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...bwOrderExtra];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...bwOrderExtra];
     generated.billing.sections = [...generated.billing.sections, ...bwExtra];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
@@ -239,8 +244,11 @@ export async function autoGeneratePatientNotesServer(
     const vwMetaSection = { heading: "__screening_meta__", body: vwMeta };
     const vwJustSection = aiJustification ? { heading: "__ai_justification__", body: JSON.stringify({ text: aiJustification }) } : null;
     const vwExtra = [vwMetaSection, ...(vwJustSection ? [vwJustSection] : [])];
-    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...vwExtra];
-    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...vwExtra];
+    // ICD/CPT only on billing (see BrainWave note above).
+    const vwOrderMetaSection = { heading: "__screening_meta__", body: JSON.stringify({ selectedConditions: screeningResult.selectedConditions }) };
+    const vwOrderExtra = [vwOrderMetaSection, ...(vwJustSection ? [vwJustSection] : [])];
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...vwOrderExtra];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...vwOrderExtra];
     generated.billing.sections = [...generated.billing.sections, ...vwExtra];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
@@ -299,8 +307,12 @@ export async function autoGeneratePatientNotesServer(
     const usMetaSection = { heading: "__screening_meta__", body: usMeta };
     const usJustSection = aiJustification ? { heading: "__ai_justification__", body: JSON.stringify({ text: aiJustification }) } : null;
     const usExtra = [usMetaSection, ...(usJustSection ? [usJustSection] : [])];
-    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...usExtra];
-    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...usExtra];
+    // ICD/CPT only on billing (see BrainWave note above); order/procedure keep
+    // the selection context needed for rendering, minus any codes.
+    const usOrderMetaSection = { heading: "__screening_meta__", body: JSON.stringify({ selectedConditions: screeningResult.selectedConditions, selection, conditions }) };
+    const usOrderExtra = [usOrderMetaSection, ...(usJustSection ? [usJustSection] : [])];
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...usOrderExtra];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...usOrderExtra];
     generated.billing.sections = [...generated.billing.sections, ...usExtra];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }

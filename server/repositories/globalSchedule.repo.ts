@@ -18,6 +18,9 @@ export type ListGlobalScheduleEventsFilters = {
   patientScreeningId?: number;
   startDate?: Date;
   endDate?: Date;
+  /** Tenant scope. undefined/null = no clinic filter (admin/global). An array
+   *  narrows to those clinics; an EMPTY array matches nothing (fail closed). */
+  clinicIds?: number[] | null;
 };
 
 export async function createGlobalScheduleEvent(
@@ -250,13 +253,23 @@ export type UpsertAncillaryScheduleInput = {
   metadata?: Record<string, unknown>;
 };
 
+// Any drizzle executor: the base `db` or an open transaction handle. Lets the
+// caller (scheduleAncillaryCore) commit the appointment write and the
+// execution-case advance in ONE transaction (Phase 1 #4).
+type ScheduleTxClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type ScheduleDbExecutor = typeof db | ScheduleTxClient;
+
 /** Upsert an ancillary_appointment global_schedule_event. Dedup contract:
  *  one row per (patient_screening_id, service_type, starts_at). Falls back
  *  to (execution_case_id, service_type, starts_at) when patient_screening_id
  *  is unavailable. status defaults to "scheduled"; metadata is merged with
- *  existing JSON when updating an existing row. */
+ *  existing JSON when updating an existing row.
+ *
+ *  `exec` defaults to the base db; pass a transaction handle to make the
+ *  upsert participate in the caller's transaction. */
 export async function upsertAncillaryScheduleEvent(
   input: UpsertAncillaryScheduleInput,
+  exec: ScheduleDbExecutor = db,
 ): Promise<{ event: GlobalScheduleEvent; created: boolean }> {
   if (!input.serviceType) throw new Error("serviceType is required");
   if (!(input.startsAt instanceof Date) || isNaN(input.startsAt.getTime())) {
@@ -274,7 +287,7 @@ export async function upsertAncillaryScheduleEvent(
   dedupeConditions.push(eq(globalScheduleEvents.serviceType, input.serviceType));
   dedupeConditions.push(eq(globalScheduleEvents.startsAt, input.startsAt));
 
-  const [existing] = await db
+  const [existing] = await exec
     .select()
     .from(globalScheduleEvents)
     .where(and(...dedupeConditions))
@@ -291,7 +304,7 @@ export async function upsertAncillaryScheduleEvent(
       ...((existing.metadata as Record<string, unknown> | null) ?? {}),
       ...baseMetadata,
     };
-    const [updated] = await db
+    const [updated] = await exec
       .update(globalScheduleEvents)
       .set({
         executionCaseId: input.executionCaseId ?? existing.executionCaseId ?? undefined,
@@ -313,7 +326,7 @@ export async function upsertAncillaryScheduleEvent(
     return { event: updated, created: false };
   }
 
-  const [created] = await db
+  const [created] = await exec
     .insert(globalScheduleEvents)
     .values({
       executionCaseId: input.executionCaseId ?? undefined,
@@ -336,6 +349,8 @@ export async function upsertAncillaryScheduleEvent(
 
 export type ListTechnicianLiaisonFilters = {
   facilityId?: string;
+  /** Multi-clinic ACCESS set. When present, takes precedence over facilityId. */
+  facilityIds?: string[];
   assignedUserId?: string;
   serviceType?: string;
   startDate?: Date;
@@ -378,7 +393,17 @@ export async function listTechnicianLiaisonAncillarySchedule(
   const conditions = [
     inArray(globalScheduleEvents.eventType, [...ANCILLARY_SCHEDULE_EVENT_TYPES]),
   ];
-  if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
+  // ACCESS: prefer the multi-clinic facility set; fall back to single facility.
+  // An empty facilityIds means "no authorized clinic" → impossible filter.
+  if (filters.facilityIds != null) {
+    conditions.push(
+      filters.facilityIds.length > 0
+        ? inArray(globalScheduleEvents.facilityId, filters.facilityIds)
+        : sql`false`, // no authorized clinic → match nothing (fail closed)
+    );
+  } else if (filters.facilityId) {
+    conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
+  }
   if (filters.assignedUserId) conditions.push(eq(globalScheduleEvents.assignedUserId, filters.assignedUserId));
   if (filters.serviceType) conditions.push(eq(globalScheduleEvents.serviceType, filters.serviceType));
   if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
@@ -404,6 +429,9 @@ export type ListUltrasoundTechScheduleFilters = {
   status?: string;
   startDate?: Date;
   endDate?: Date;
+  /** Tenant scope. undefined/null = no clinic filter (admin/global). An array
+   *  narrows to those clinics; an EMPTY array matches nothing (fail closed). */
+  clinicIds?: number[] | null;
 };
 
 /** Ultrasound Tech schedule: ancillary_appointment + same_day_add events
@@ -433,6 +461,13 @@ export async function listUltrasoundTechSchedule(
   if (filters.status) conditions.push(eq(globalScheduleEvents.status, filters.status));
   if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
   if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
+  if (filters.clinicIds != null) {
+    conditions.push(
+      filters.clinicIds.length > 0
+        ? inArray(globalScheduleEvents.clinicId, filters.clinicIds)
+        : sql`false`,
+    );
+  }
 
   return db
     .select()
@@ -523,6 +558,9 @@ export type ListTeamAvailabilityBlocksFilters = {
   eventType?: TeamBlockEventType;
   startDate?: Date;
   endDate?: Date;
+  /** Tenant scope. undefined/null = no clinic filter (admin/global). An array
+   *  narrows to those clinics; an EMPTY array matches nothing (fail closed). */
+  clinicIds?: number[] | null;
 };
 
 /** List team availability blocks (pto_block / sick_day / unavailable_block)
@@ -543,6 +581,13 @@ export async function listTeamAvailabilityBlocks(
   if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
   if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
   if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
+  if (filters.clinicIds != null) {
+    conditions.push(
+      filters.clinicIds.length > 0
+        ? inArray(globalScheduleEvents.clinicId, filters.clinicIds)
+        : sql`false`,
+    );
+  }
 
   return db
     .select()
@@ -568,6 +613,13 @@ export async function listGlobalScheduleEvents(
   if (filters.patientScreeningId != null) conditions.push(eq(globalScheduleEvents.patientScreeningId, filters.patientScreeningId));
   if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
   if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
+  if (filters.clinicIds != null) {
+    conditions.push(
+      filters.clinicIds.length > 0
+        ? inArray(globalScheduleEvents.clinicId, filters.clinicIds)
+        : sql`false`,
+    );
+  }
 
   const query = db.select().from(globalScheduleEvents).$dynamic();
 

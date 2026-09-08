@@ -14,7 +14,6 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Radar,
   Users,
   PhoneCall,
   CalendarClock,
@@ -45,6 +44,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 import {
   Select,
   SelectContent,
@@ -766,22 +766,19 @@ function PageHeader({
   onOpenChat?: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700">
-            <Radar className="w-5 h-5" strokeWidth={1.75} />
-          </span>
-          <div>
-            <h1 className="text-xl font-semibold text-slate-900" data-testid="text-mission-control-title">
-              Mission Control
-            </h1>
-            <p className="text-sm text-slate-500">
-              Executive operations command center · monitoring only
-              {generatedAt && <span className="text-slate-400"> · updated {new Date(generatedAt).toLocaleTimeString()}</span>}
-            </p>
-          </div>
-        </div>
+    <header className="sticky top-0 z-10 bg-white/95 backdrop-blur px-6 py-4">
+      {/* Title + optional facility context + hairline. */}
+      <InteriorPageTitle
+        title="Mission Control"
+        context={facilityScope && facilityScope !== "all" ? facilityScope : undefined}
+        titleTestId="text-mission-control-title"
+      />
+      {/* Subtitle + controls relocated below the line. */}
+      <div className="mt-4 flex items-start justify-between gap-4 flex-wrap">
+        <p className="text-sm text-slate-500">
+          Executive operations command center · monitoring only
+          {generatedAt && <span className="text-slate-400"> · updated {new Date(generatedAt).toLocaleTimeString()}</span>}
+        </p>
         <div className="flex items-center gap-2 flex-wrap">
           {onOpenSearch && (
             <Button variant="outline" size="sm" className="h-9" onClick={onOpenSearch} data-testid="button-open-patient-search">

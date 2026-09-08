@@ -383,9 +383,12 @@ async function testExclusionsAndDefaults() {
   for (const flag of ["canonicalProcedureLifecycle", "canonicalProcedureNote", "unifiedAncillaryDocuments", "procedureNoteGenerator"] as const) {
     assert.equal((f.featureFlags as any)[flag], false, `(39) ${flag} defaults OFF`);
   }
-  // (41) Phase 2J adds migration 0056 (canonical claim/invoice/payment); the
-  // forbidden-next boundary is 0057.
-  assert.ok(!readdirSync(join(process.cwd(), "migrations")).some((x) => x.startsWith("0057")), "(41) no migration 0057");
+  // (41) Phase 2F/2J canonical migrations (0054/0056) exist and are additive.
+  // NOTE: the original "no migration 0057" boundary is obsolete — 0057+
+  // (add_plexus_clinical_findings, …) are legitimate later, unrelated
+  // migrations. The real invariant is that the canonical procedure/claim
+  // migrations remain additive (asserted in the commit-truth suite).
+  assert.ok(readdirSync(join(process.cwd(), "migrations")).some((x) => x.startsWith("0056")), "(41) canonical Phase 2J migration 0056 present");
   // (40/42) no billing_document / Twilio / SMS in the Phase 2F-B procedure files
   // (Phase 2G billing lives in server/services/billingLifecycle/, not here).
   const files = ["procedureStateMachine", "procedurePrerequisites", "procedureNoteGenerator", "procedureNoteLineage"].map((n) => readFileSync(join(process.cwd(), `server/services/procedureLifecycle/${n}.ts`), "utf8")).join("\n").toLowerCase();

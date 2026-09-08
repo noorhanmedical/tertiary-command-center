@@ -55,7 +55,7 @@ export function PlexusIQActiveBatchHeader({
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2.5"
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-indigo-100 bg-indigo-50/70 px-6 py-2.5"
       data-testid="plexus-iq-active-batch-header"
     >
       <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-700">

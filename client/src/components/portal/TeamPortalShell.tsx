@@ -23,6 +23,7 @@ import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
 import { AncillaryReadinessRow } from "@/components/portal/AncillaryReadinessRow";
+import { categoryIcons, categoryStyles } from "@/features/schedule/ancillaryMeta";
 import type { AncillaryServiceContext } from "@/components/portal/AncillaryDocModals";
 import { QualifyingEvidence } from "@/components/patient-directory/PatientChartSections";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
@@ -37,8 +38,11 @@ import {
 // body). The canonical section renders nothing / zero requests when OFF.
 import { WorkspaceWorkQueueComposition } from "@/components/careSpecialist/WorkspaceWorkQueueComposition";
 import { CanonicalLifecycleSection } from "@/components/careSpecialist/CanonicalLifecycleSection";
+import { colorForClinic, clinicLabel } from "@/lib/clinicIdentity";
 import {
   fetchWorkspaceCallList,
+  fetchWorkspaceCallListCount,
+  fetchTeamPortalClinicScope,
   fetchWorkspaceClinicSchedule,
   fetchWorkspaceAncillarySchedule,
   fetchTeamMembersForWorkspace,
@@ -79,6 +83,7 @@ import {
 import type { CallCaseContext } from "@/components/portal/caseWorkspace";
 import { CallWorkspace } from "@/components/portal/CallWorkspace";
 import { SchedulingWorkspace } from "@/components/portal/SchedulingWorkspace";
+import { useWorkClaim } from "@/lib/workflow/useWorkClaim";
 import { SelectedCaseOverview } from "@/components/portal/SelectedCaseOverview";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
@@ -1324,6 +1329,14 @@ export function TeamPortalShell({
   // instead of navigating to a Playground tab. CallWorkspace owns the honest
   // RingCentral boundary (manual-dial fallback when the provider is unwired).
   const [callWorkspaceCtx, setCallWorkspaceCtx] = useState<CallCaseContext | null>(null);
+  // Phase 5B — the ONE active patient-interaction work claim. Keyed on the
+  // execution case being actively worked; spans Phone↔Calendar (the key does
+  // not change on a mode switch), so a single renewal loop covers the whole
+  // interaction. Acquired when the call workspace opens; released when the
+  // interaction ends (dialog close / disposition success). A stale/held-by-
+  // another result flips the workspace to a read-only conflict view.
+  const [activeClaimCaseId, setActiveClaimCaseId] = useState<number | null>(null);
+  const workClaim = useWorkClaim(activeClaimCaseId);
   // PCS parity — call-queue cursor. Holds the row id of the "current" call in
   // the assigned queue so Next/Skip and the keyboard shortcuts can advance
   // through workspaceCallList WITHOUT creating a parallel queue: ordering,
@@ -1644,11 +1657,68 @@ export function TeamPortalShell({
     }
     return currentUserId;
   }, [viewAsTeamMemberId, viewAsCandidates, currentUserId]);
+  // ── Multi-clinic scope (real team members) ────────────────────────────────
+  const isAdminOrViewAs = isAdmin || !!viewAsTeamMemberId;
+  const { data: clinicScope } = useQuery({
+    queryKey: ["/api/portal/clinic-scope", currentUserId],
+    queryFn: fetchTeamPortalClinicScope,
+    enabled: !!currentUserId && !isAdmin,
+    staleTime: 5 * 60 * 1000,
+  });
+  // Clinic filter for the unified Call List + Ancillary Schedule. null = All
+  // Clinics (aggregate across every authorized clinic). INDEPENDENT of the
+  // `facility` selector, which continues to drive the single-clinic Clinic
+  // Schedule + messaging tenancy (unchanged).
+  const [clinicFilter, setClinicFilter] = useState<string | null>(null);
+  const authorizedClinics = useMemo<string[]>(
+    () =>
+      clinicScope?.authorizedFacilities && clinicScope.authorizedFacilities.length > 0
+        ? clinicScope.authorizedFacilities
+        : facilities,
+    [clinicScope, facilities],
+  );
+  // Facility sent to the unified feeds: admin / view-as keep the single
+  // selected facility; a real team member uses the clinic filter (null = All).
+  const feedFacility = isAdminOrViewAs ? facility || null : clinicFilter;
+  const feedEnabled = isAdminOrViewAs ? !!facility : true;
+  // Per-clinic ACS capability for procedure completion (CASE 9). Team model →
+  // only clinics where the member is ACS; legacy (no PCS/ACS teams) → the
+  // global profile gate.
+  const clinicAcsAllowed = (fac: string | null): boolean => {
+    if (isAdminOrViewAs) return workspaceCanCompleteProcedure;
+    if (!clinicScope || !clinicScope.hasTeamCapability) return workspaceCanCompleteProcedure;
+    const cap = fac ? clinicScope.perClinicCapability[fac] : undefined;
+    return !!cap?.acs;
+  };
+
+  // Clinic filter control (All Clinics default) — shown for real team members
+  // who cover more than one clinic. Drives BOTH the Call List and the Ancillary
+  // Schedule. Never mandatory: the unified queue works without a selection.
+  const clinicFilterControl =
+    !isAdminOrViewAs && authorizedClinics.length > 1 ? (
+      <div className="mb-2 flex items-center justify-end">
+        <select
+          value={clinicFilter ?? "__all__"}
+          onChange={(e) => setClinicFilter(e.target.value === "__all__" ? null : e.target.value)}
+          className="h-7 max-w-[70%] rounded-lg border border-slate-200 bg-white px-1.5 text-[11px] text-slate-700"
+          data-testid="team-portal-clinic-filter"
+          title="Filter by clinic"
+        >
+          <option value="__all__">All Clinics</option>
+          {authorizedClinics.map((c) => (
+            <option key={c} value={c}>
+              {clinicLabel(c)}
+            </option>
+          ))}
+        </select>
+      </div>
+    ) : null;
+
   const { data: workspaceCallList = [], isLoading: workspaceCallListLoading } = useQuery({
     queryKey: [
       "team-workspace-call-list",
       workspaceRole ?? role,
-      facility,
+      feedFacility,
       selectedDate,
       viewAsTeamMemberId,
       workspaceCallListContext,
@@ -1666,7 +1736,10 @@ export function TeamPortalShell({
       // as a locked filter. The client must not pass an integer id
       // because it would be ignored anyway (locked override).
       fetchWorkspaceCallList({
-        facilityId: facility || null,
+        // null = All Clinics → the server aggregates across every authorized
+        // clinic and narrows to THIS user's roster ids (assignment). A specific
+        // clinicFilter narrows to that one clinic.
+        facilityId: feedFacility,
         // Server-side operational-day scoping (Phase 0/#11). Backlog is
         // included only for today/future by the server; past dates show
         // cases whose next action was due that day.
@@ -1675,7 +1748,28 @@ export function TeamPortalShell({
         viewAsTeamMemberId,
         workspace: workspaceCallListContext ?? null,
       }),
-    enabled: !!facility,
+    enabled: feedEnabled,
+  });
+
+  // Call List BADGE — actionable outstanding assigned-call count, from the SAME
+  // server filter as the visible queue (so they can never disagree).
+  const { data: callListBadgeCount = 0 } = useQuery({
+    queryKey: [
+      "team-workspace-call-list-count",
+      feedFacility,
+      selectedDate,
+      viewAsTeamMemberId,
+      workspaceCallListContext,
+    ],
+    queryFn: () =>
+      fetchWorkspaceCallListCount({
+        facilityId: feedFacility,
+        date: selectedDate,
+        viewAsTeamMemberId,
+        workspace: workspaceCallListContext ?? null,
+      }),
+    enabled: feedEnabled,
+    refetchInterval: POLL_MS,
   });
 
   // Warm the patient-directory resolve cache (screening id -> roster key) for
@@ -1728,7 +1822,7 @@ export function TeamPortalShell({
   const { data: workspaceAncillarySchedule = [], isLoading: workspaceAncillaryLoading } = useQuery({
     queryKey: [
       "team-workspace-ancillary-schedule",
-      facility,
+      feedFacility,
       selectedDate,
       viewAsTeamMemberId,
     ],
@@ -1737,13 +1831,16 @@ export function TeamPortalShell({
     // facility, regardless of assigned user.
     queryFn: () =>
       fetchWorkspaceAncillarySchedule({
-        facilityId: facility || null,
+        // null = All Clinics → the server aggregates ancillary appointments
+        // across every authorized clinic (facility ACCESS; no per-user
+        // assignment narrowing — matches the existing feed contract).
+        facilityId: feedFacility,
         startDate: workspaceDayStartIso,
         endDate: workspaceDayEndIso,
         limit: 100,
         viewAsTeamMemberId,
       }),
-    enabled: !!facility,
+    enabled: feedEnabled,
   });
 
   // Profile-driven Ancillary Schedule filtering. When the team member's
@@ -1853,6 +1950,7 @@ export function TeamPortalShell({
         instanceId: String(row.id),
         serviceType: row.serviceType ?? "Ancillary",
         executionCaseId: row.executionCaseId ?? null,
+        ancillaryCaseId: row.ancillaryCaseId ?? null,
         patientScreeningId: row.patientScreeningId ?? null,
         readiness: row.readiness ?? null,
         startsAt: row.startsAt ?? null,
@@ -2144,6 +2242,22 @@ export function TeamPortalShell({
     };
   }
 
+  // Map an ancillary schedule row into the shared schedule-dialog patient shape
+  // so the calendar icon opens the SAME canonical calendar/schedule flow the
+  // Call List uses, focused on this patient's appointment date.
+  function ancillaryRowToDialogPatient(
+    row: TeamWorkspaceAncillaryAppointment,
+  ): SchedulePatientDialogPatient {
+    return {
+      patientName: row.patientName ?? null,
+      patientDob: row.patientDob ?? null,
+      facilityId: row.facilityId ?? facility ?? null,
+      patientScreeningId: row.patientScreeningId ?? null,
+      executionCaseId: row.executionCaseId ?? null,
+      serviceType: row.serviceType ?? null,
+    };
+  }
+
   // Patient name click → pull the patient into the center Playground
   // (Patient Command Canvas) instead of navigating away. When the row has
   // no real screening id we fall back to the scheduling playground so the
@@ -2210,6 +2324,24 @@ export function TeamPortalShell({
     });
   }
 
+  // Phone action on an ancillary row → open the EXISTING canonical patient
+  // calling workflow (Playground "call" workspace). That workspace dials via
+  // the phone-provider abstraction (manual tel: today, RingCentral when live)
+  // and records disposition through the engagement-center flow. We carry the
+  // case identity (executionCaseId + ancillaryCaseId) so the call is bound to
+  // the right ancillary episode. This is NOT a new dialer.
+  function openAncillaryCall(row: TeamWorkspaceAncillaryAppointment) {
+    dispatchOpenWorkspace({
+      type: "call",
+      title: row.patientName ?? "Call",
+      patientScreeningId: row.patientScreeningId ?? null,
+      executionCaseId: row.executionCaseId ?? null,
+      ancillaryCaseId: row.ancillaryCaseId ?? null,
+      serviceKey: row.serviceType ?? null,
+      facilityId: row.facilityId ?? facility ?? null,
+    });
+  }
+
   // Map a call-list row into the shared CallCaseContext consumed by the
   // Call / Schedule / Case Overview Playground tabs.
   function callRowToCaseContext(row: TeamWorkspaceCallListItem): CallCaseContext {
@@ -2232,6 +2364,10 @@ export function TeamPortalShell({
       sourcePortal: (workspaceCallListContext ?? "acs").toUpperCase(),
       engagementStatus: row.engagementStatus ?? null,
       lifecycleStatus: row.lifecycleStatus ?? null,
+      // Phase 5A — canonical per-case metrics for the header attempt/last-contact.
+      callAttemptCount: row.callAttemptCount ?? null,
+      lastCallOutcome: row.lastCallOutcome ?? null,
+      lastAttemptAt: row.lastAttemptAt ?? null,
     };
   }
 
@@ -2276,6 +2412,27 @@ export function TeamPortalShell({
   // Open the canonical booking dialog for the current queue row (keyboard "S").
   function openScheduleForCurrent() {
     if (currentCallRow) openSchedulePatientDialog(callRowToDialogPatient(currentCallRow));
+  }
+
+  // Phase 5B — Save & Next: after a disposition durably succeeds (the server
+  // released the claim in the SAME transaction), drop the client claim and open
+  // the NEXT eligible patient's call (which acquires its own claim). Runs ONLY
+  // from a confirmed onLogged (never skips server confirmation) and only ever
+  // holds ONE claim at a time. Empty queue → return to the empty queue.
+  function advanceToNextCallAfterDisposition(doneScreeningId: number | null) {
+    const next = liveCallRows.find(
+      (r) => r.patientScreeningId != null && r.patientScreeningId !== doneScreeningId,
+    );
+    if (!next) {
+      setCallWorkspaceCtx(null);
+      setActiveClaimCaseId(null);
+      setCallQueueCursorId(null);
+      return;
+    }
+    const c = callRowToCaseContext(next);
+    setCallQueueCursorId(next.id ?? null);
+    setCallWorkspaceCtx(c);
+    setActiveClaimCaseId(c.executionCaseId ?? null);
   }
 
   // PCS call-workspace keyboard shortcuts (parity with the legacy console):
@@ -2692,7 +2849,7 @@ export function TeamPortalShell({
 
   return (
     <DockOwnershipProvider>
-    <PlaygroundWorkspaceProvider>
+    <PlaygroundWorkspaceProvider ownerUserId={currentUserId}>
     <PlaygroundEventListener />
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`} data-team-portal-shell="true">
       {/* Winter mountain background — the user's exact image, filling the
@@ -3854,7 +4011,9 @@ export function TeamPortalShell({
                     onModeChange={setActiveWorkspaceMode}
                     compact={rightRailSize === "small"}
                     counts={{
-                      callList: workspaceCallList.length,
+                      // Actionable outstanding assigned-call count from the
+                      // canonical count endpoint (same filter as the queue).
+                      callList: callListBadgeCount,
                       // Count MUST match the rows the clinicSchedule body
                       // actually renders. The body iterates `patients` (from
                       // /api/portal/today-schedule), not `workspaceClinicSchedule`
@@ -4101,6 +4260,7 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "callList" && (
                   <div className="space-y-1" data-testid="workspace-mode-body-callList">
+                    {clinicFilterControl}
                     {/* PCS parity — compact daily KPI HUD (calls worked /
                         reached / booked / conversion + per-member targets),
                         reusing the canonical Call Settings + today's-calls
@@ -4204,8 +4364,13 @@ export function TeamPortalShell({
                               callReason={callReason}
                               canCall={canCall}
                               testIdKey={row.id ?? idx}
+                              callAttemptCount={row.callAttemptCount ?? null}
                               onOpenPatient={() => openCallRowPatient(row)}
-                              onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                              onOpenCall={() => {
+                                const c = callRowToCaseContext(row);
+                                setCallWorkspaceCtx(c);
+                                setActiveClaimCaseId(c.executionCaseId ?? null);
+                              }}
                               onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
                               onOpenCase={() => openCaseTab("caseOverview", callRowToCaseContext(row))}
                             />
@@ -4225,6 +4390,19 @@ export function TeamPortalShell({
                           data-testid={`workspace-call-${row.id ?? idx}`}
                           aria-current={isCurrentQueueRow ? "true" : undefined}
                         >
+                          {/* Clinic identity — only while aggregating All
+                              Clinics; color in the dot, name always visible. */}
+                          {!feedFacility && row.facilityId && (
+                            <div className="mb-0.5 flex items-center gap-1.5">
+                              <span
+                                className={`h-2 w-2 shrink-0 rounded-full ${colorForClinic(row.facilityId)}`}
+                                aria-hidden="true"
+                              />
+                              <span className="truncate text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                                {clinicLabel(row.facilityId)}
+                              </span>
+                            </div>
+                          )}
                           {/* Minimal card: just the patient name + a circular
                               phone button (call) and a circular calendar button
                               (opens the quick schedule popup). Historical rows
@@ -4256,12 +4434,40 @@ export function TeamPortalShell({
                                 row={row}
                                 idx={row.id ?? idx}
                                 canCall={canCall}
-                                onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                                onOpenCall={() => {
+                                  const c = callRowToCaseContext(row);
+                                  setCallWorkspaceCtx(c);
+                                  setActiveClaimCaseId(c.executionCaseId ?? null);
+                                }}
                                 onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
                                 onHandoff={() => openHandoffForRow(row)}
                               />
                             )}
                           </div>
+                          {/* Phase 5A — live rows show Service·reason + the
+                              canonical per-case attempt count so the queue row
+                              answers "who / why / how many tries" at a glance. */}
+                          {!row.historical && (
+                            <div
+                              className="mt-0.5 truncate text-[10px] text-slate-500"
+                              data-testid={`call-live-meta-${row.id ?? idx}`}
+                            >
+                              {callReason}
+                              {(row.callAttemptCount ?? 0) > 0
+                                ? ` · Attempt ${(row.callAttemptCount ?? 0) + 1}`
+                                : ""}
+                              {row.activeClaimBy != null &&
+                              row.activeClaimExpiresAt &&
+                              new Date(row.activeClaimExpiresAt).getTime() > Date.now() ? (
+                                <span
+                                  className="ml-1 font-medium text-emerald-600"
+                                  data-testid={`call-working-now-${row.id ?? idx}`}
+                                >
+                                  · Working now
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
                           {row.historical && (row.lastCallOutcome || (row.historicalCallCount ?? 0) > 0 || row.historicalCallbackAt) && (
                             <div className="mt-1 text-[10px] text-slate-500" data-testid={`call-historical-detail-${row.id ?? idx}`}>
                               {row.lastCallOutcome ? `Outcome: ${row.lastCallOutcome}` : "No outcome logged"}
@@ -4311,6 +4517,7 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "ancillarySchedule" && (
                   <div className="space-y-1" data-testid="workspace-mode-body-ancillarySchedule">
+                    {clinicFilterControl}
                     {workspaceAncillaryLoading ? (
                       <div className="text-xs text-slate-600 py-4 text-center">Loading ancillary schedule…</div>
                     ) : filteredAncillarySchedule.length === 0 ? (
@@ -4341,20 +4548,32 @@ export function TeamPortalShell({
                               : blockTimes[0]
                             : "—";
                         return (
-                          <div
-                            key={group.key}
-                            className={isBlock ? "rounded-xl border border-violet-200/70 bg-violet-50/30 p-1" : ""}
-                            data-testid={isBlock ? `ancillary-visit-block-${group.key}` : undefined}
-                          >
+                          <div key={group.key} className="space-y-1">
+                            {/* Clinic identity — only when the member covers more
+                                than one clinic (otherwise pure noise). */}
+                            {authorizedClinics.length > 1 && group.events[0]?.facilityId && (
+                              <div className="flex items-center gap-1.5 px-1 pt-0.5">
+                                <span
+                                  className={`h-2 w-2 shrink-0 rounded-full ${colorForClinic(group.events[0]?.facilityId ?? null)}`}
+                                  aria-hidden="true"
+                                />
+                                <span className="truncate text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                                  {clinicLabel(group.events[0]?.facilityId ?? null)}
+                                </span>
+                              </div>
+                            )}
+                            {/* Double-booked visit: patient + appointment time-range
+                                shown ONCE on the panel (plain text, NOT a card).
+                                Each bar below then leads with its specific test. */}
                             {isBlock && (
                               <div
-                                className="flex items-center justify-between gap-2 px-1.5 pb-1 pt-0.5"
+                                className="flex items-baseline justify-between gap-2 px-1 pt-1"
                                 data-testid={`ancillary-visit-block-header-${group.key}`}
                               >
-                                <span className="truncate text-sm font-semibold text-slate-800">
+                                <span className="truncate text-[11px] font-semibold text-slate-600">
                                   {group.patientName}
                                 </span>
-                                <span className="shrink-0 text-[10px] text-slate-500 tabular-nums">
+                                <span className="shrink-0 text-[10px] font-medium text-slate-400 tabular-nums">
                                   {blockRange} · {group.events.length} tests
                                 </span>
                               </div>
@@ -4362,22 +4581,48 @@ export function TeamPortalShell({
                             {group.events.map((row, idx) => {
                         const rowKey = `ancillary:${row.id ?? idx}`;
                         const removing = removingRowKeys.has(rowKey);
+                        // Per-service icon + color come from the shared
+                        // ancillaryMeta maps (BrainWave=violet, VitalWave=rose,
+                        // Ultrasound=emerald). Color lives in the ICON only; the
+                        // row itself stays neutral.
+                        const svcCategory = getAncillaryCategory(row.serviceType ?? "");
+                        const SvcIcon = categoryIcons[svcCategory];
+                        const svcStyle = categoryStyles[svcCategory];
+                        const rowTime = row.startsAt
+                          ? new Date(row.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+                          : "";
+                        const acsHere = clinicAcsAllowed(row.facilityId ?? null);
+                        const rdy = row.readiness;
+                        // "Done" = every APPLICABLE readiness item complete
+                        // (not_required counts as satisfied). Drives the dim +
+                        // green-check "procedure done" treatment.
+                        const done =
+                          !!rdy &&
+                          (rdy.informedConsent === "complete" || rdy.informedConsent === "not_required") &&
+                          (rdy.screeningForm === "complete" || rdy.screeningForm === "not_required") &&
+                          rdy.report === "complete";
+                        const apptDate = row.startsAt ? String(row.startsAt).slice(0, 10) : null;
                         if (rightRailSize === "small" && !removing) {
                           return (
                             <CompactAncillaryRow
                               key={`${row.id ?? idx}`}
                               name={row.patientName ?? "Unnamed patient"}
-                              time={
-                                row.startsAt
-                                  ? new Date(row.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
-                                  : "—"
-                              }
+                              time={rowTime || "—"}
                               serviceType={row.serviceType ?? "Ancillary"}
                               testIdKey={row.id ?? idx}
                               onClick={() => openAncillaryWorkflow(row)}
                             />
                           );
                         }
+                        // Primary = the identity for THIS bar. In a visit block
+                        // the patient is named once on the panel header, so bars
+                        // lead with the test; otherwise the patient name leads.
+                        const barPrimary = isBlock
+                          ? row.serviceType ?? "Ancillary"
+                          : row.patientName ?? "Unnamed patient";
+                        const barSecondary = isBlock
+                          ? rowTime
+                          : [row.serviceType ?? "Ancillary", rowTime].filter(Boolean).join(" · ");
                         return (
                         <div
                           key={`${row.id ?? idx}`}
@@ -4391,126 +4636,99 @@ export function TeamPortalShell({
                               openAncillaryWorkflow(row);
                             }
                           }}
-                          className={`cursor-pointer overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
-                            removing
-                              ? "max-h-0 -translate-y-2 border-transparent py-0 opacity-0"
-                              : "max-h-[400px] py-1.5 opacity-100 hover:bg-white/90"
+                          className={`cursor-pointer overflow-hidden rounded-lg border border-slate-200/70 bg-white/80 px-2 py-1.5 text-slate-900 transition-all duration-300 hover:bg-white ${
+                            done ? "opacity-60" : "shadow-[0_1px_4px_rgba(15,23,42,0.05)]"
+                          } ${
+                            removing ? "max-h-0 -translate-y-1 border-transparent py-0 opacity-0" : "max-h-40"
                           }`}
                           data-testid={`workspace-ancillary-${row.id ?? idx}`}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <div
-                                className="max-w-full truncate text-left text-sm font-medium"
-                                data-testid={`button-ancillary-open-playground-${row.id ?? idx}`}
-                              >
-                                {row.patientName ?? "Unnamed patient"}
-                              </div>
-                              <div className="text-[10px] text-slate-500 truncate">
-                                {row.serviceType ?? "Ancillary"}
-                                {row.startsAt
-                                  ? ` · ${new Date(row.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
-                                  : ""}
-                                {row.facilityId ? ` · ${row.facilityId}` : ""}
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              {row.status && (
-                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                  {row.status}
-                                </Badge>
+                          <div className="flex items-center gap-2">
+                            {/* Bold, color-filled service icon — the at-a-glance
+                                "what test" cue. Green check overlay when done. */}
+                            <span
+                              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${svcStyle.bg} ${svcStyle.icon}`}
+                              title={row.serviceType ?? "Ancillary"}
+                              aria-hidden="true"
+                            >
+                              <SvcIcon className="h-5 w-5" strokeWidth={2.4} />
+                              {done && (
+                                <Check className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-white text-emerald-600" />
                               )}
-                              {/* Cancel appointment (canonical schedule-event
-                                  transition). Available to workspaces that can
-                                  schedule, for a live (not already terminal)
-                                  ancillary row with a numeric event id. Reason
-                                  is collected + required by the dialog/server. */}
-                              {workspaceCanCallAndSchedule &&
-                                typeof row.id === "number" &&
-                                !["cancelled", "completed", "no_show"].includes(
-                                  (row.status ?? "").toLowerCase(),
-                                ) && (
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              {/* Line 1: patient/test name (left) + readiness (right). */}
+                              <div className="flex items-center justify-between gap-2">
+                                <span
+                                  className="truncate text-sm font-semibold leading-tight"
+                                  title={barPrimary}
+                                  data-testid={`button-ancillary-open-playground-${row.id ?? idx}`}
+                                >
+                                  {barPrimary}
+                                </span>
+                                {acsHere && rdy && (
+                                  <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                    <AncillaryReadinessRow
+                                      compact
+                                      executionCaseId={row.executionCaseId ?? null}
+                                      ancillaryCaseId={row.ancillaryCaseId ?? null}
+                                      serviceType={row.serviceType ?? null}
+                                      patientName={row.patientName ?? null}
+                                      readiness={rdy}
+                                      rowId={String(row.id ?? idx)}
+                                      onChanged={() =>
+                                        queryClient.invalidateQueries({
+                                          queryKey: ["team-workspace-ancillary-schedule"],
+                                        })
+                                      }
+                                      onOpenReport={() => openAncillaryWorkflow(row)}
+                                    />
+                                  </span>
+                                )}
+                              </div>
+                              {/* Line 2: test · time (left) + phone/calendar (right),
+                                  matching the Call List's circular action buttons. */}
+                              <div className="mt-0.5 flex items-center justify-between gap-2">
+                                <span
+                                  className="truncate text-[11px] leading-tight text-slate-500"
+                                  title={barSecondary}
+                                >
+                                  {barSecondary}
+                                </span>
+                                <div
+                                  className="flex shrink-0 items-center gap-1.5"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
                                   <button
                                     type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setCancelAncillaryTarget({
-                                        eventId: row.id as number,
-                                        patientName: row.patientName ?? "Patient",
-                                        serviceType: row.serviceType ?? null,
-                                      });
-                                    }}
-                                    className="rounded-md border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-rose-600 hover:bg-rose-50"
-                                    title="Cancel appointment"
-                                    data-testid={`button-ancillary-cancel-${row.id ?? idx}`}
+                                    onClick={() => openAncillaryCall(row)}
+                                    aria-label={`Call ${row.patientName ?? "patient"}`}
+                                    title="Call patient"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border transition-colors hover:bg-slate-900/[0.04]"
+                                    style={{ borderColor: "rgba(31,41,55,0.45)", backgroundColor: "#FAFBFD", color: "var(--sketch-green, #5C7A5C)" }}
+                                    data-testid={`button-ancillary-phone-${row.id ?? idx}`}
                                   >
-                                    Cancel
+                                    <Phone className="h-4 w-4" />
                                   </button>
-                                )}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openSchedulePatientDialog(ancillaryRowToDialogPatient(row), {
+                                        date: apptDate,
+                                      })
+                                    }
+                                    aria-label={`Open calendar for ${row.patientName ?? "patient"}`}
+                                    title="Open calendar / reschedule"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border transition-colors hover:bg-slate-900/[0.04]"
+                                    style={{ borderColor: "rgba(31,41,55,0.45)", backgroundColor: "#FAFBFD", color: "#4863A0" }}
+                                    data-testid={`button-ancillary-calendar-${row.id ?? idx}`}
+                                  >
+                                    <CalendarIcon className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                          {/* Document readiness (consent / screening / brainwave)
-                              rendered inline on the row from the already-fetched
-                              row.readiness the server enriches each ancillary
-                              appointment with. ACS-only; the mark/upload actions
-                              hit existing canonical /api/portal/case-readiness
-                              routes keyed on the row's executionCaseId, and a
-                              change refetches the ancillary feed. Clicks inside
-                              this control must not bubble to the row's open-in-
-                              Playground handler. */}
-                          {workspaceCanCompleteProcedure &&
-                            row.readiness && (
-                              <div onClick={(e) => e.stopPropagation()}>
-                                <AncillaryReadinessRow
-                                  executionCaseId={row.executionCaseId ?? null}
-                                  serviceType={row.serviceType ?? null}
-                                  patientName={row.patientName ?? null}
-                                  readiness={row.readiness}
-                                  rowId={String(row.id ?? idx)}
-                                  onChanged={() =>
-                                    queryClient.invalidateQueries({
-                                      queryKey: ["team-workspace-ancillary-schedule"],
-                                    })
-                                  }
-                                />
-                              </div>
-                            )}
-                          {/* Document workflows live inside the patient's
-                              Playground (opened by clicking anywhere on this row),
-                              keeping the schedule row clean and uncluttered. */}
-                          {workspaceCanCompleteProcedure &&
-                            row.patientScreeningId != null &&
-                            row.serviceType && (
-                              <div
-                                className="mt-2 flex justify-end"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ProcedureCompleteButton
-                                  patientScreeningId={row.patientScreeningId}
-                                  patientName={row.patientName ?? null}
-                                  patientDob={row.patientDob ?? null}
-                                  facilityId={row.facilityId ?? null}
-                                  serviceType={row.serviceType}
-                                  onCompleted={() => {
-                                    // Slide the completed row up, then drop the
-                                    // animation key once the ancillary feed
-                                    // refetch has removed the underlying row.
-                                    setRemovingRowKeys((prev) => {
-                                      const next = new Set(prev);
-                                      next.add(rowKey);
-                                      return next;
-                                    });
-                                    window.setTimeout(() => {
-                                      setRemovingRowKeys((prev) => {
-                                        const next = new Set(prev);
-                                        next.delete(rowKey);
-                                        return next;
-                                      });
-                                    }, 350);
-                                  }}
-                                />
-                              </div>
-                            )}
                         </div>
                         );
                             })}
@@ -4794,6 +5012,17 @@ export function TeamPortalShell({
         patientId={callDialogRow?.patientScreeningId ?? null}
         patientName={callDialogRow?.patientName ?? ""}
         schedulerUserId={viewAsTeamMemberId ?? currentUserId}
+        executionCaseId={callDialogRow?.executionCaseId ?? null}
+        onClaimLost={() => {
+          // Phase 5B — a stale-claim rejection: refetch the queue so the row
+          // reflects the current server (claim/ownership) state. The draft is
+          // preserved inside the sheet.
+          queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
+          queryClient.invalidateQueries({
+            predicate: (q) =>
+              Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
+          });
+        }}
         onPushToPlayground={
           callDialogRow
             ? () => pushCallRowToPlayground(callDialogRow)
@@ -4809,36 +5038,87 @@ export function TeamPortalShell({
       <Dialog
         open={!!callWorkspaceCtx}
         onOpenChange={(o) => {
-          if (!o) setCallWorkspaceCtx(null);
+          if (!o) {
+            setCallWorkspaceCtx(null);
+            setActiveClaimCaseId(null);
+          }
         }}
       >
         <DialogContent
           className="z-[95] max-w-2xl gap-0 overflow-hidden p-0"
           data-testid="dialog-quick-call"
         >
-          {callWorkspaceCtx && (
-            <CallWorkspace
-              ctx={callWorkspaceCtx}
-              onScheduleCase={() => {
-                const ctx = callWorkspaceCtx;
-                setCallWorkspaceCtx(null);
-                openSchedulePatientDialog({
-                  patientName: ctx.patientName ?? null,
-                  patientDob: ctx.patientDob ?? null,
-                  facilityId: ctx.facilityId ?? null,
-                  patientScreeningId: ctx.patientScreeningId ?? null,
-                  executionCaseId: ctx.executionCaseId ?? null,
-                  serviceType: ctx.targetServices?.[0] ?? null,
-                });
-              }}
-              onOpenCase={() => {
-                const ctx = callWorkspaceCtx;
-                setCallWorkspaceCtx(null);
-                openCaseTab("caseOverview", ctx);
-              }}
-              onClose={() => setCallWorkspaceCtx(null)}
-            />
-          )}
+          {callWorkspaceCtx &&
+            (activeClaimCaseId != null &&
+            (workClaim.status === "conflict" || workClaim.status === "lost") ? (
+              // Phase 5B — another team member holds this patient's active work
+              // (or our lease lapsed and was reclaimed). Read-only: no editable
+              // dialer / disposition; never steal the claim.
+              <div className="p-6" data-testid="call-claim-conflict">
+                <div
+                  className="text-base font-semibold text-slate-900"
+                  data-testid="call-claim-conflict-name"
+                >
+                  {callWorkspaceCtx.patientName}
+                </div>
+                <div role="status" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-900">
+                  <div className="font-semibold">
+                    {workClaim.holderName
+                      ? `${workClaim.holderName} is working this patient right now.`
+                      : "This patient is being worked by another team member right now."}
+                  </div>
+                  <p className="mt-0.5">
+                    You can review their context, but calling and logging are locked until
+                    they finish.
+                  </p>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCallWorkspaceCtx(null);
+                      setActiveClaimCaseId(null);
+                    }}
+                    className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    data-testid="call-claim-conflict-close"
+                  >
+                    Back to queue
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <CallWorkspace
+                ctx={callWorkspaceCtx}
+                onScheduleCase={() => {
+                  const ctx = callWorkspaceCtx;
+                  setCallWorkspaceCtx(null);
+                  // Phase 5B — Phone→Calendar is the SAME interaction: KEEP the
+                  // claim (do NOT clear activeClaimCaseId) so it persists.
+                  openSchedulePatientDialog({
+                    patientName: ctx.patientName ?? null,
+                    patientDob: ctx.patientDob ?? null,
+                    facilityId: ctx.facilityId ?? null,
+                    patientScreeningId: ctx.patientScreeningId ?? null,
+                    executionCaseId: ctx.executionCaseId ?? null,
+                    serviceType: ctx.targetServices?.[0] ?? null,
+                  });
+                }}
+                onOpenCase={() => {
+                  const ctx = callWorkspaceCtx;
+                  setCallWorkspaceCtx(null);
+                  setActiveClaimCaseId(null);
+                  openCaseTab("caseOverview", ctx);
+                }}
+                onClose={() => {
+                  setCallWorkspaceCtx(null);
+                  setActiveClaimCaseId(null);
+                }}
+                onLogged={() =>
+                  advanceToNextCallAfterDisposition(callWorkspaceCtx?.patientScreeningId ?? null)
+                }
+                onClaimLost={() => setActiveClaimCaseId(null)}
+              />
+            ))}
         </DialogContent>
       </Dialog>
 

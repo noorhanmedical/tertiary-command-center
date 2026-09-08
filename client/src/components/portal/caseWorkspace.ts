@@ -25,6 +25,15 @@ export type CallCaseContext = {
   sourcePortal: string;
   engagementStatus: string | null;
   lifecycleStatus: string | null;
+  // Phase 5A — CANONICAL per-case call metrics carried straight from the
+  // execution-case row (patient_execution_cases via /api/scheduler-portal/cases).
+  // callAttemptCount is the ONLY correct source for an "Attempt N" label — never
+  // all-time patient calls.length, which spans every service/objective. Optional
+  // because ad-hoc contexts (dock quick-call, keyword fallback) have no
+  // execution-case row and legitimately fall back to the patient-wide count.
+  callAttemptCount?: number | null;
+  lastCallOutcome?: string | null;
+  lastAttemptAt?: string | null;
 };
 
 // Appointment / test types offered by the scheduling workspace. The first

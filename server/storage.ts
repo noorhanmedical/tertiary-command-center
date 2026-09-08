@@ -28,6 +28,7 @@ import {
   marketingMaterialsRepository,
   documentLibraryRepository,
 } from "./repositories";
+import type { UserSummary, SafeUser } from "./repositories/users.repo";
 import type { ManagerTaskFilters } from "./repositories/plexus.repo";
 
 import type {
@@ -107,15 +108,19 @@ import type {
 } from "./repositories/screening.repo";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  getAllUsers(): Promise<Omit<User, "password">[]>;
-  getUsersByRole(role: string): Promise<Omit<User, "password">[]>;
+  // Phase 3.5: user getters return SafeUser (NO password hash). Credential
+  // verification uses the repo's auth-only path internally.
+  getUser(id: string): Promise<SafeUser | undefined>;
+  getUserByUsername(username: string): Promise<SafeUser | undefined>;
+  createUser(user: InsertUser): Promise<SafeUser>;
+  getAllUsers(): Promise<UserSummary[]>;
+  getUsersByRole(role: string): Promise<UserSummary[]>;
   getUserCount(): Promise<number>;
   updateUserPassword(id: string, plaintext: string): Promise<void>;
   updateUserRole(id: string, role: string): Promise<void>;
-  validateUserPassword(username: string, plaintext: string): Promise<User | null>;
+  validateUserPassword(username: string, plaintext: string): Promise<SafeUser | null>;
+  validateUserPasswordByIdentifier(identifier: string, plaintext: string): Promise<SafeUser | null>;
+  touchUserLastLogin(id: string): Promise<void>;
   deactivateUser(id: string): Promise<void>;
   reactivateUser(id: string): Promise<void>;
   deleteUser(id: string): Promise<void>;
@@ -337,6 +342,8 @@ export class DatabaseStorage implements IStorage {
   updateUserPassword(id: string, plaintext: string) { return usersRepository.updatePassword(id, plaintext); }
   updateUserRole(id: string, role: string) { return usersRepository.updateRole(id, role); }
   validateUserPassword(username: string, plaintext: string) { return usersRepository.validatePassword(username, plaintext); }
+  validateUserPasswordByIdentifier(identifier: string, plaintext: string) { return usersRepository.validatePasswordByIdentifier(identifier, plaintext); }
+  touchUserLastLogin(id: string) { return usersRepository.touchLastLogin(id); }
   getAllUsers() { return usersRepository.listAll(); }
   getUsersByRole(role: string) { return usersRepository.listByRole(role); }
   deactivateUser(id: string) { return usersRepository.deactivate(id); }

@@ -6,7 +6,6 @@ import {
   CalendarDays,
   CheckSquare,
   CircleDollarSign,
-  Clock3,
   CreditCard,
   FileText,
   HeartPulse,
@@ -21,6 +20,10 @@ import {
   Waves,
   ArrowRight,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { WorldTimeCard } from "@/components/world-time/WorldTimeCard";
+import { slugify } from "@/lib/worldTime/locations";
+import type { WorldTimeImagePublicMap } from "@/lib/worldTime/types";
 
 /*
 |--------------------------------------------------------------------------
@@ -50,6 +53,9 @@ export type ClockItem = {
   time: string;
   timezone: string;
   date: string;
+  /** Real local time in the zone, for the analog clock hands. */
+  hours: number;
+  minutes: number;
 };
 
 export type TaskItem = {
@@ -104,8 +110,9 @@ export type PlexusHomeDashboardProps = {
 */
 export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPatient }: PlexusHomeDashboardProps) {
   return (
-    <div className="min-h-full bg-[#f4f7fb] text-[#172033]">
-      <div className="mx-auto w-full max-w-[1600px] px-5 py-6 lg:px-8">
+    <div className="min-h-full bg-[#e2e8f0] text-[#172033]">
+      {/* pb-28 keeps the bottom Platform Apps row clear of the floating GlobalDock. */}
+      <div className="mx-auto w-full max-w-[1600px] px-6 pt-6 pb-28">
         {/* PAGE HEADER */}
         <section className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
@@ -129,13 +136,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
         </section>
 
         {/* PRACTICE PULSE */}
-        <section className="mb-4 rounded-[13px] border border-[#e1e7ef] bg-white px-6 py-5 shadow-[0_5px_20px_rgba(23,32,51,0.04)]">
-          <div className="mb-5 flex items-center gap-2">
-            <Activity className="h-4 w-4 text-[#516de0]" />
-            <span className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#354665]">
-              Practice Pulse
-            </span>
-          </div>
+        <section className="mb-4 rounded-[13px] border border-[#e1e7ef] bg-white/85 backdrop-blur-sm px-6 py-6 shadow-[0_5px_20px_rgba(23,32,51,0.04)]">
           <div className="grid grid-cols-2 divide-x divide-[#e4eaf1] md:grid-cols-4 xl:grid-cols-8">
             <PulseCell icon={<Users />} metric={data.pulse.patients} />
             <PulseCell icon={<Phone />} metric={data.pulse.calls} />
@@ -148,25 +149,8 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
           </div>
         </section>
 
-        {/* CLOCKS */}
-        <section className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {data.clocks.map((clock) => (
-            <div
-              key={clock.city}
-              className="flex min-h-[88px] items-center rounded-[12px] bg-gradient-to-br from-[#101b3e] to-[#071127] px-5 text-white shadow-sm"
-            >
-              <div className="mr-4 flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04]">
-                <Clock3 className="h-7 w-7 text-white/90" strokeWidth={1.4} />
-              </div>
-              <div>
-                <div className="text-[12px] font-medium">{clock.city}</div>
-                <div className="mt-0.5 text-[20px] font-medium text-[#73adff]">{clock.time}</div>
-                <div className="text-[10px] text-white/70">{clock.timezone}</div>
-                <div className="text-[10px] text-white/65">{clock.date}</div>
-              </div>
-            </div>
-          ))}
-        </section>
+        {/* WORLD TIME */}
+        <WorldTimeClocksRow clocks={data.clocks} />
 
         {/* MAIN DASHBOARD GRID */}
         <section className="mb-4 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
@@ -177,7 +161,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               <div className="mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Building2 className="h-5 w-5 text-[#415578]" />
-                  <h2 className="text-[17px] font-medium">Network Overview</h2>
+                  <h2 className="text-[18px] font-semibold text-[#101a2e]">Network Overview</h2>
                 </div>
                 <button className="text-[12px] font-medium text-[#365fd5]">View all clinics</button>
               </div>
@@ -222,30 +206,67 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               </div>
             </DashboardPanel>
 
-            {/* PLEXUS IQ */}
-            <section className="relative min-h-[180px] overflow-hidden rounded-[13px] bg-gradient-to-r from-[#050817] via-[#101443] to-[#182a75] p-7 text-white shadow-lg">
-              <div className="absolute inset-y-0 right-0 w-[48%] opacity-80">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(86,123,255,.55),transparent_45%)]" />
-                <div className="absolute left-[35%] top-[15%] h-[110px] w-[110px] rounded-full border border-[#789cff]/40 shadow-[0_0_50px_rgba(80,122,255,.7)]" />
-                <div className="absolute left-[45%] top-[25%] h-[70px] w-[70px] rounded-full border border-[#9bb4ff]/40" />
-                <div className="absolute left-[29%] top-[35%] h-[85px] w-[85px] rounded-full border border-[#718cff]/30" />
-              </div>
-              <div className="relative z-10 max-w-[470px]">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-white/55">Plexus Ancillary</div>
-                <h2 className="mt-1 text-[24px] font-medium">Plexus IQ</h2>
-                <p className="mt-2 max-w-[420px] text-[13px] leading-5 text-white/70">
-                  AI-powered insights to optimize operations, improve utilization, and elevate patient care.
-                </p>
-                <button
-                  className="mt-5 flex h-9 items-center gap-2 rounded-[8px] bg-[#5c58dc] px-4 text-[12px] font-semibold text-white"
-                  onClick={onOpenPlexusIq}
-                  data-testid="home-open-plexus-iq"
-                >
-                  Open Plexus IQ
-                  <ArrowRight className="h-4 w-4" />
-                </button>
-              </div>
-            </section>
+            {/* PLEXUS IQ — full-card dark ethereal hero button (whole thing clickable) */}
+            <button
+              type="button"
+              onClick={onOpenPlexusIq}
+              data-testid="home-open-plexus-iq"
+              className="group relative flex min-h-[180px] w-full items-center justify-center overflow-hidden rounded-[14px] text-white shadow-lg ring-1 ring-white/10 transition hover:ring-white/20"
+              style={{
+                background:
+                  "radial-gradient(120% 140% at 50% 0%, rgba(92,88,220,0.30) 0%, rgba(10,15,36,0) 55%), linear-gradient(160deg, #0c1230 0%, #070a1a 60%, #05070f 100%)",
+              }}
+            >
+              {/* Soft ethereal glow that lifts on hover */}
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+                style={{ background: "radial-gradient(65% 90% at 50% 50%, rgba(120,150,255,0.26) 0%, transparent 70%)" }}
+              />
+              {/* Brighter core bloom behind the wordmark */}
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-1/2 top-1/2 h-32 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-70 blur-2xl transition-opacity duration-300 group-hover:opacity-100"
+                style={{ background: "radial-gradient(circle, rgba(150,175,255,0.45) 0%, transparent 70%)" }}
+              />
+              {/* Shining stars */}
+              <span aria-hidden="true" className="pointer-events-none absolute inset-0">
+                {[
+                  { l: "12%", t: "30%", s: 2, d: "0s" },
+                  { l: "20%", t: "66%", s: 1, d: "0.6s" },
+                  { l: "31%", t: "42%", s: 1, d: "1.2s" },
+                  { l: "42%", t: "22%", s: 2, d: "0.3s" },
+                  { l: "57%", t: "72%", s: 1, d: "0.9s" },
+                  { l: "66%", t: "32%", s: 2, d: "1.5s" },
+                  { l: "76%", t: "60%", s: 1, d: "0.4s" },
+                  { l: "85%", t: "26%", s: 2, d: "1.1s" },
+                  { l: "90%", t: "64%", s: 1, d: "0.7s" },
+                  { l: "16%", t: "50%", s: 1, d: "1.8s" },
+                  { l: "62%", t: "52%", s: 1, d: "2.1s" },
+                  { l: "48%", t: "78%", s: 2, d: "1.4s" },
+                ].map((st, i) => (
+                  <span
+                    key={i}
+                    className="absolute rounded-full bg-white animate-pulse"
+                    style={{
+                      left: st.l,
+                      top: st.t,
+                      width: `${st.s}px`,
+                      height: `${st.s}px`,
+                      boxShadow: "0 0 6px rgba(200,215,255,0.95), 0 0 12px rgba(120,150,255,0.65)",
+                      animationDelay: st.d,
+                      animationDuration: "2.4s",
+                    }}
+                  />
+                ))}
+              </span>
+              <span
+                className="relative text-[26px] font-light tracking-[0.05em] text-white"
+                style={{ textShadow: "0 2px 18px rgba(120,150,255,0.55)" }}
+              >
+                Plexus IQ
+              </span>
+            </button>
           </div>
 
           {/* RIGHT */}
@@ -254,7 +275,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
             <DashboardPanel>
               <div className="mb-5 flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-[#435ee2]" />
-                <h2 className="text-[17px] font-medium">Today&apos;s Summary</h2>
+                <h2 className="text-[18px] font-semibold text-[#101a2e]">Today&apos;s Summary</h2>
               </div>
               <div className="grid grid-cols-3 divide-x divide-[#e4eaf1]">
                 <SummaryMetric metric={data.today.newPatients} />
@@ -268,7 +289,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckSquare className="h-5 w-5 text-[#405ed9]" />
-                  <h2 className="text-[17px] font-medium">Tasks</h2>
+                  <h2 className="text-[18px] font-semibold text-[#101a2e]">Tasks</h2>
                 </div>
                 <button className="text-[12px] font-medium text-[#365fd5]">View all</button>
               </div>
@@ -291,7 +312,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-5 w-5 text-[#405ed9]" />
-                  <h2 className="text-[17px] font-medium">Schedule Snapshot</h2>
+                  <h2 className="text-[18px] font-semibold text-[#101a2e]">Schedule Snapshot</h2>
                 </div>
                 <button className="text-[12px] font-medium text-[#365fd5]">View calendar</button>
               </div>
@@ -358,10 +379,10 @@ function PulseCell({ icon, metric }: { icon: React.ReactElement; metric: PulseMe
     <div className="min-w-0 px-4 py-1 text-center">
       <div className="mb-2 flex items-center justify-center gap-2">
         {cloneIcon(icon, "h-5 w-5 text-[#263b86]")}
-        <span className="text-[11px] font-medium text-[#34445e]">{metric.label}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#3a4a66]">{metric.label}</span>
       </div>
       <div className="flex items-baseline justify-center gap-2">
-        <span className="text-[27px] font-medium tracking-[-0.025em]">{metric.value}</span>
+        <span className="text-[28px] font-bold tracking-[-0.03em] text-[#0f1a2e]">{metric.value}</span>
         {metric.delta && (
           <span className="text-[11px] font-semibold text-emerald-600">{metric.delta}</span>
         )}
@@ -388,7 +409,7 @@ function SummaryMetric({ metric }: { metric: PulseMetric }) {
 
 function DashboardPanel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-[13px] border border-[#e0e6ee] bg-white p-5 shadow-[0_4px_16px_rgba(23,32,51,0.035)]">
+    <div className="rounded-[13px] border border-[#e0e6ee] bg-white/85 backdrop-blur-sm p-5 shadow-[0_4px_16px_rgba(23,32,51,0.035)]">
       {children}
     </div>
   );
@@ -436,7 +457,7 @@ function AppTile({
   return (
     <button
       onClick={() => onClick?.(label)}
-      className="group relative flex min-h-[70px] items-center gap-3 rounded-[10px] border border-[#e2e8ef] bg-white px-5 text-left shadow-[0_3px_10px_rgba(23,32,51,0.03)] transition hover:-translate-y-[1px] hover:shadow-md"
+      className="group relative flex min-h-[70px] items-center gap-3 rounded-[10px] border border-[#e2e8ef] bg-white/85 backdrop-blur-sm px-5 text-left shadow-[0_3px_10px_rgba(23,32,51,0.03)] transition hover:-translate-y-[1px] hover:shadow-md"
       data-testid={`home-app-tile-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
     >
       <span className="relative">
@@ -464,6 +485,44 @@ function PaginationButton({ children, active }: { children: React.ReactNode; act
     >
       {children}
     </button>
+  );
+}
+
+// World Time row — premium, location-aware image cards. Reads the approved
+// image registry (approved-only asset URLs) and matches each clock to its
+// landmark image by city slug; anything not approved renders the Plexus navy
+// fallback via WorldTimeCard.
+function WorldTimeClocksRow({ clocks }: { clocks: ClockItem[] }) {
+  const { data } = useQuery<{ images: WorldTimeImagePublicMap }>({
+    queryKey: ["/api/settings/world-time/images"],
+  });
+  const images = data?.images ?? {};
+
+  return (
+    <section
+      className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:flex lg:flex-nowrap"
+      data-testid="row-world-time"
+    >
+      {clocks.map((clock) => {
+        const rec = images[slugify(clock.city)];
+        const image =
+          rec?.status === "approved" && rec.assetUrl
+            ? { assetUrl: rec.assetUrl, imagePosition: rec.imagePosition, landmarkName: rec.landmarkName }
+            : null;
+        return (
+          <WorldTimeCard
+            key={clock.city}
+            label={clock.city}
+            time={clock.time}
+            abbr={clock.timezone}
+            date={clock.date}
+            image={image}
+            localHour={clock.hours}
+            data-testid={`world-time-${slugify(clock.city)}`}
+          />
+        );
+      })}
+    </section>
   );
 }
 

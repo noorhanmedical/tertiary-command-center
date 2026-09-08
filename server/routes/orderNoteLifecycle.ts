@@ -23,6 +23,10 @@ import {
   signAddendum,
 } from "../repositories/orderNoteLifecycle.repo";
 import { ADDENDUM_TYPES, ADDENDUM_SOURCE_TYPES } from "@shared/schema/noteAddenda";
+import {
+  resolveAuthorizedClinicScope,
+  scopePermitsClinic,
+} from "../services/access/authorizedClinicScope";
 
 const createDraftSchema = z.object({
   clinicId: z.number().int().optional().nullable(),
@@ -104,6 +108,11 @@ export function registerOrderNoteLifecycleRoutes(app: Express) {
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid case ID" });
       const note = await getActiveOrderNoteForCase(id);
       if (!note) return res.status(404).json({ error: "No active order note for this case" });
+      // Tenant isolation (P0): a foreign-clinic note reads as not-found.
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scopePermitsClinic(scope, note.clinicId)) {
+        return res.status(404).json({ error: "No active order note for this case" });
+      }
       res.json(note);
     } catch (error: any) {
       console.error("[order-notes] get by case error:", error?.message ?? error);
@@ -117,7 +126,10 @@ export function registerOrderNoteLifecycleRoutes(app: Express) {
       const id = parseInt(String(req.params.screeningId), 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid screening ID" });
       const notes = await listOrderNotesForScreening(id);
-      res.json(notes);
+      // Tenant isolation (P0): a scoped caller sees only notes in their clinics.
+      const scope = await resolveAuthorizedClinicScope(req);
+      const visible = scope.admin ? notes : notes.filter((n) => scopePermitsClinic(scope, n.clinicId));
+      res.json(visible);
     } catch (error: any) {
       console.error("[order-notes] list by screening error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to list order notes" });
@@ -154,7 +166,12 @@ export function registerOrderNoteLifecycleRoutes(app: Express) {
       const id = parseInt(String(req.params.noteId), 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid note ID" });
       const addenda = await listAddendaForNote(id);
-      res.json(addenda);
+      // Tenant isolation (P0): a scoped caller sees only addenda in their clinics.
+      const scope = await resolveAuthorizedClinicScope(req);
+      const visible = scope.admin
+        ? addenda
+        : addenda.filter((a) => scopePermitsClinic(scope, (a as { clinicId?: number | null }).clinicId ?? null));
+      res.json(visible);
     } catch (error: any) {
       console.error("[note-addenda] list error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to list addenda" });
@@ -168,6 +185,11 @@ export function registerOrderNoteLifecycleRoutes(app: Express) {
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid ID" });
       const addendum = await getAddendum(id);
       if (!addendum) return res.status(404).json({ error: "Addendum not found" });
+      // Tenant isolation (P0): a foreign-clinic addendum reads as not-found.
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scopePermitsClinic(scope, (addendum as { clinicId?: number | null }).clinicId ?? null)) {
+        return res.status(404).json({ error: "Addendum not found" });
+      }
       res.json(addendum);
     } catch (error: any) {
       console.error("[note-addenda] get error:", error?.message ?? error);

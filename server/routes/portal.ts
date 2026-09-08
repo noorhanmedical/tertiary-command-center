@@ -38,7 +38,21 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 },
 });
 
-const PORTAL_ROLES = new Set(["admin", "technician", "liaison"]);
+// Team-portal roles. Includes the legacy strings (technician/liaison) AND the
+// canonical access-control role keys (acs/pcs/ancillary_technician/scheduler)
+// so a user provisioned under the NEW RBAC model — routed to the portal by
+// their defaultWorkspace — is not 403'd by every portal API. session.role
+// mirrors the DB-authoritative role (see /api/auth/me legacyRole), so a new
+// role key surfaces here once assigned.
+const PORTAL_ROLES = new Set([
+  "admin",
+  "technician",
+  "liaison",
+  "acs",
+  "pcs",
+  "ancillary_technician",
+  "scheduler",
+]);
 
 export const requirePortalRole = (req: Request, res: Response, next: NextFunction) => {
   if (!req.session.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -984,6 +998,30 @@ export function registerPortalRoutes(app: Express) {
       }
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to load facilities" });
+    }
+  });
+
+  // ── Multi-clinic scope for the current team member ────────────────────────
+  // Returns the caller's authorized clinics + per-clinic PCS/ACS capability,
+  // derived from facility-scoped teams (teams.type + teams.facilityId) via team
+  // memberships, plus facility coverage + roster (ACCESS). The client uses this
+  // to populate the clinic filter (All Clinics default) and to gate per-clinic
+  // procedure completion. Non-admin (real team member) only; admins observe via
+  // view-as and use /api/portal/my-facilities for the selector.
+  app.get("/api/portal/clinic-scope", requirePortalRole, async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { resolveTeamPortalScope } = await import("../services/teamPortalScope");
+      const scope = await resolveTeamPortalScope(userId);
+      return res.json({
+        authorizedFacilities: scope.authorizedFacilities,
+        perClinicCapability: scope.perClinicCapability,
+        hasTeamCapability: scope.hasTeamCapability,
+        globalWorkspaceType: scope.globalWorkspaceType,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Failed to load clinic scope" });
     }
   });
 

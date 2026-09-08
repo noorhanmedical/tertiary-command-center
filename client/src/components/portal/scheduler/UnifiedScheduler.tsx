@@ -79,6 +79,17 @@ function hmToMin(hhmm: string): number {
 function minToHm(min: number): string {
   return `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
 }
+// Age in whole years from a YYYY-MM-DD (or parseable) DOB. null when unknown.
+function ageFromDob(dob: string | null | undefined): number | null {
+  if (!dob) return null;
+  const d = new Date(`${dob}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age -= 1;
+  return age >= 0 && age < 130 ? age : null;
+}
 let __seq = 0;
 function nextKey(): string { __seq += 1; return `p${__seq}_${Date.now().toString(36)}`; }
 // Monday of the week containing `iso` (matches the server schedule dashboard).
@@ -107,6 +118,8 @@ type SelectedPatient = {
   name: string | null;
   dob: string | null;
   facility: string | null;
+  phone?: string | null;
+  insurance?: string | null;
 };
 
 type OverrideMeta = { constraint: SoftConstraint; reason: string; category: string | null };
@@ -170,7 +183,30 @@ const OVERRIDE_CATEGORIES = [
 export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const facility = context.facility ?? null;
+
+  // ── Facility resolution (independent of patient selection) ──
+  // Availability must be viewable generically (no patient). Facility resolves
+  // in this order: (1) explicit user selection, (2) context.facility, (3) the
+  // sole facility for this clinic auto-selected, (4) a selector when several
+  // exist and none is chosen. Never hard-coded, never patient-derived.
+  const [selectedFacility, setSelectedFacility] = useState<string | null>(context.facility ?? null);
+  const { data: myFacilitiesData } = useQuery<{ facilities: string[] }>({
+    queryKey: ["/api/portal/my-facilities"],
+    queryFn: async () => {
+      const res = await fetch("/api/portal/my-facilities", { credentials: "include" });
+      if (!res.ok) return { facilities: [] };
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+  const availableFacilities = useMemo(() => myFacilitiesData?.facilities ?? [], [myFacilitiesData]);
+  // Auto-adopt the sole facility when nothing is selected and there's exactly one.
+  useEffect(() => {
+    if (selectedFacility == null && availableFacilities.length === 1) {
+      setSelectedFacility(availableFacilities[0]);
+    }
+  }, [selectedFacility, availableFacilities]);
+  const facility = selectedFacility;
 
   const [patient, setPatient] = useState<SelectedPatient>(() => ({
     patientScreeningId: context.patientScreeningId ?? null,
@@ -204,6 +240,8 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const [clinicProvider, setClinicProvider] = useState<string>("__all__");
   // Which service's qualification-evidence popover is open (from the dropdown).
   const [infoService, setInfoService] = useState<string | null>(null);
+  // Which qualified-test rows have their Plexus IQ evidence expanded (right panel).
+  const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
   // Click-timing guard so a single-click doesn't fire before a double-click.
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastScheduled, setLastScheduled] = useState<{ label: string; isoDate: string; time: string } | null>(null);
@@ -279,7 +317,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   const activeResourceType: CapResourceType | null = active ? active.resourceType : null;
 
   const activeServices: CapServiceRequest[] = activeRequest ? [activeRequest] : [];
-  const { data: availability } = useQuery<AvailabilityResult>({
+  const { data: availability, isFetching: availabilityFetching } = useQuery<AvailabilityResult>({
     queryKey: [
       "scheduler-availability", facility, selectedDate,
       activeServices.map((s) => `${s.resourceType}:${s.studyCount ?? 1}`).join("|"),
@@ -290,6 +328,9 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     staleTime: 10_000,
   });
   const slots = availability?.slots ?? [];
+  // Phase 6 — server-computed DETERMINISTIC ranked recommendations over the
+  // engine's FEASIBLE slots (never invented). Each carries a fact-derived reason.
+  const recommendations = availability?.recommendations ?? [];
   const agenda = availability?.agenda ?? [];
   const equipment = availability?.equipment ?? [];
   const operatingDays = availability?.operatingDays ?? [];
@@ -506,11 +547,17 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     const byDate = new Map<string, WriteGroup>();
     const get = (date: string) => { let g = byDate.get(date); if (!g) { g = { date, services: [] }; byDate.set(date, g); } return g; };
     for (const item of plan) {
+      // Never emit a service block missing the fields the server requires. A
+      // malformed item would otherwise be rejected with a cryptic 400.
+      if (!item.code || !item.time || !item.isoDate) continue;
       const g = get(item.isoDate);
       g.services.push({ serviceType: item.code, time: item.time });
-      if (item.override) (g.overrides ??= {})[item.code] = { constraint: item.override.constraint, reason: item.override.reason, category: item.override.category, capacityState: { operatingDays } };
+      if (item.override && item.override.reason && item.override.reason.trim()) {
+        (g.overrides ??= {})[item.code] = { constraint: item.override.constraint, reason: item.override.reason.trim(), category: item.override.category, capacityState: { operatingDays } };
+      }
     }
-    return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+    // Drop any date group left with no valid services after filtering.
+    return Array.from(byDate.values()).filter((g) => g.services.length > 0).sort((a, b) => a.date.localeCompare(b.date));
   }
 
   const scheduleMutation = useMutation({
@@ -558,7 +605,14 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       toast({ title: "Could not schedule", description: err instanceof Error ? err.message : "Schedule write failed.", variant: "destructive" });
     },
   });
-  function confirmVisit() { const g = buildGroups(); if (g.length === 0) return; scheduleMutation.mutate(g); }
+  function confirmVisit() {
+    const g = buildGroups();
+    if (g.length === 0) {
+      toast({ title: "Nothing to schedule", description: "Add at least one complete appointment (service, date and time) first.", variant: "destructive" });
+      return;
+    }
+    scheduleMutation.mutate(g);
+  }
 
   // ── Month grid ──
   const monthCells = useMemo(() => {
@@ -649,7 +703,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
               {searching ? (<div className="px-3 py-2 text-xs italic text-slate-400">Searching…</div>)
                 : matches.length === 0 ? (<div className="px-3 py-2 text-xs italic text-slate-400">No patients found.</div>)
                   : (matches.map((m) => (
-                    <button key={m.patientScreeningId} type="button" onClick={() => { setPatient({ patientScreeningId: m.patientScreeningId, executionCaseId: null, name: m.name, dob: m.dob, facility: m.facility ?? facility }); setPlan([]); setActive(null); setTime(""); }} className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-slate-50" data-testid={`scheduler-patient-result-${m.patientScreeningId}`}>
+                    <button key={m.patientScreeningId} type="button" onClick={() => { setPatient({ patientScreeningId: m.patientScreeningId, executionCaseId: null, name: m.name, dob: m.dob, facility: m.facility ?? facility, phone: m.phone, insurance: m.insurance }); setPlan([]); setActive(null); setTime(""); }} className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-slate-50" data-testid={`scheduler-patient-result-${m.patientScreeningId}`}>
                       <span className="min-w-0"><span className="block truncate text-sm text-slate-800">{m.name}</span><span className="block truncate text-[10px] text-slate-400">{m.facility ?? "—"}{m.dob ? ` · DOB ${m.dob}` : ""}</span></span>
                     </button>
                   )))}
@@ -777,6 +831,97 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </div>
   );
 
+  // ── Patient demographics (right panel, persistent) ──
+  const patientAge = ageFromDob(patient.dob);
+  const demographicsBlock = hasPatient ? (
+    <div className="rounded-lg border border-slate-200 bg-white p-3" data-testid="scheduler-demographics">
+      <div className="flex items-start gap-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[12px] font-semibold text-slate-700">
+          {(patient.name ?? "?").split(/\s+/).slice(0, 2).map((s) => s[0]?.toUpperCase() ?? "").join("") || <User className="h-4 w-4" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-bold text-slate-900" data-testid="scheduler-demo-name">{patient.name ?? "Patient"}</span>
+            {reviewTag}
+          </div>
+          <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+            <div className="min-w-0"><dt className="font-semibold uppercase tracking-wide text-slate-400">DOB</dt><dd className="truncate text-slate-700" data-testid="scheduler-demo-dob">{patient.dob ?? "—"}</dd></div>
+            <div className="min-w-0"><dt className="font-semibold uppercase tracking-wide text-slate-400">Age</dt><dd className="truncate text-slate-700" data-testid="scheduler-demo-age">{patientAge != null ? `${patientAge}` : "—"}</dd></div>
+            <div className="min-w-0"><dt className="font-semibold uppercase tracking-wide text-slate-400">Facility</dt><dd className="truncate text-slate-700" data-testid="scheduler-demo-facility">{patient.facility ?? facility ?? "—"}</dd></div>
+            <div className="min-w-0"><dt className="font-semibold uppercase tracking-wide text-slate-400">Phone</dt><dd className="truncate text-slate-700" data-testid="scheduler-demo-phone">{patient.phone ?? "—"}</dd></div>
+            <div className="col-span-2 min-w-0"><dt className="font-semibold uppercase tracking-wide text-slate-400">Insurance</dt><dd className="truncate text-slate-700" data-testid="scheduler-demo-insurance">{patient.insurance ?? "—"}</dd></div>
+          </dl>
+        </div>
+        <button type="button" onClick={() => { setPatient({ patientScreeningId: null, executionCaseId: null, name: null, dob: null, facility, phone: null, insurance: null }); setPatientSearch(""); setPlan([]); setActive(null); setTime(""); setLastScheduled(null); }} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Change patient" data-testid="scheduler-demo-change-patient">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  // ── Qualified tests + Plexus IQ clinical evidence (right panel, persistent) ──
+  const qualifiedServices = (qualification?.services ?? []).filter((s) => s.resourceType !== "other");
+  function toggleEvidence(code: string) {
+    setExpandedEvidence((prev) => { const next = new Set(prev); if (next.has(code)) next.delete(code); else next.add(code); return next; });
+  }
+  const qualifiedTestsBlock = hasPatient ? (
+    <div data-testid="scheduler-qualified-tests">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-700">
+        <Sparkles className="h-3.5 w-3.5 text-indigo-400" /> Qualified Tests
+        {qualifiedServices.length > 0 ? <span className="text-slate-400">· {qualifiedServices.length}</span> : null}
+      </div>
+      {qualifiedServices.length === 0 ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-qualified-empty">No Plexus IQ qualified tests for this patient.</p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {qualifiedServices.map((s) => {
+            const open = expandedEvidence.has(s.internalCode);
+            const status = s.adminReviewStatus;
+            const statusLabel = status === "approved" ? "Approved" : status === "needs_info" || status === "rejected" ? "Needs attention" : "Pending review";
+            const statusTone = status === "approved" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : status === "needs_info" || status === "rejected" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-500";
+            return (
+              <div key={s.internalCode} className="overflow-hidden rounded-lg border border-slate-200 bg-white" data-testid={`scheduler-qualified-${s.internalCode}`}>
+                <button type="button" onClick={() => toggleEvidence(s.internalCode)} className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-slate-50" data-testid={`scheduler-qualified-toggle-${s.internalCode}`} aria-expanded={open}>
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RESOURCE_DOT[s.resourceType as keyof typeof RESOURCE_DOT] ?? "bg-slate-400"}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-900">{s.displayName}</span>
+                    {s.cptCode ? <span className="block text-[10px] tabular-nums text-slate-400">CPT {s.cptCode}</span> : null}
+                  </span>
+                  <span className={`shrink-0 rounded-full border px-1.5 py-0 text-[9px] font-semibold uppercase ${statusTone}`} data-testid={`scheduler-qualified-status-${s.internalCode}`}>{statusLabel}</span>
+                  <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
+                </button>
+                {open ? (
+                  <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-2" data-testid={`scheduler-qualified-evidence-${s.internalCode}`}>
+                    {s.qualification ? (
+                      <>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Why {s.displayName} qualifies</div>
+                        {s.qualification.understanding ? <div className="mt-0.5 text-[12px] text-slate-700">{s.qualification.understanding}</div> : null}
+                        {s.qualification.qualifyingFactors.length > 0 ? (
+                          <ul className="mt-1 list-disc pl-4 text-[12px] text-slate-700">
+                            {s.qualification.qualifyingFactors.map((f, i) => <li key={i}>{f}</li>)}
+                          </ul>
+                        ) : null}
+                        {s.qualification.icd10.length > 0 ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {s.qualification.icd10.map((c) => <span key={c} className="rounded border border-slate-200 bg-white px-1.5 py-0 text-[10px] font-medium tabular-nums text-slate-600">{c}</span>)}
+                          </div>
+                        ) : null}
+                        {s.qualification.adminJustification ? <div className="mt-1 text-[11px] italic text-slate-500">Admin: {s.qualification.adminJustification}</div> : null}
+                        <div className="mt-1 text-[10px] text-slate-400">Source: Plexus IQ · Admin Review</div>
+                      </>
+                    ) : (
+                      <div className="text-[11px] italic text-slate-500">No Plexus IQ evidence recorded for this test.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  ) : null;
+
   // ── Active-ancillary indicator (near Available Times) ──
   const activeIndicator = active ? (
     <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500" data-testid="scheduler-active-service">
@@ -786,10 +931,17 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   ) : null;
 
   // ── Time grid ──
-  const timeGrid = !activeRequest ? (
-    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-times-empty">Add an appointment above to see available times.</p>
+  // Honest empty states: distinguish "no facility", "no service", "actually
+  // loading", and "loaded but no slots" so we never show a fake perpetual
+  // loading state when the query is disabled.
+  const timeGrid = !facility ? (
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-times-need-facility">Select a facility to view availability.</p>
+  ) : !activeRequest ? (
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-times-empty">Select a service to view availability.</p>
+  ) : availabilityFetching && slots.length === 0 ? (
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-times-loading">Loading availability…</p>
   ) : slots.length === 0 ? (
-    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400">Loading availability…</p>
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-400" data-testid="scheduler-times-none">No available times for this service on this date.</p>
   ) : (
     <div className="grid grid-cols-4 gap-1.5" data-testid="scheduler-time-slots">
       {slots.map((slot) => {
@@ -845,6 +997,33 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       </span>
       <span className="shrink-0 rounded-full border border-slate-300 px-2 py-0.5 text-[9px] font-semibold uppercase text-slate-600">Use</span>
     </button>
+  ) : null;
+
+  // ── Phase 6 — DETERMINISTIC ranked "Suggested times" (top 3) ──────────────
+  // Server-computed over the engine's FEASIBLE slots (never invented); each
+  // carries a fact-derived reason. Clicking one populates the pending time
+  // (does NOT commit — the canonical Schedule button revalidates + books).
+  const recommendationsBlock = active && !time && recommendations.length > 0 ? (
+    <div className="flex flex-col gap-1.5" data-testid="scheduler-recommendations">
+      <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Suggested times</span>
+      {recommendations.slice(0, 3).map((r) => (
+        <button
+          key={r.time}
+          type="button"
+          onClick={() => { setLastScheduled(null); setTime(r.time); }}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50"
+          data-testid={`scheduler-recommendation-${r.time}`}
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-900">{pretty12h(r.time)}</span>
+            <span className="block truncate text-[11px] text-slate-500" data-testid={`scheduler-recommendation-reason-${r.time}`}>
+              {r.reasons.join(" · ")}
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full border border-slate-300 px-2 py-0.5 text-[9px] font-semibold uppercase text-slate-600">Use</span>
+        </button>
+      ))}
+    </div>
   ) : null;
 
   // ── Selected (pending) appointment + explicit Schedule button ──
@@ -1082,11 +1261,13 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
   ) : null;
 
   // ── The scheduling column (shared by full panel + quick popover) ──
-  const schedulingColumn = (
-    <div className="flex flex-col gap-2.5">
-      {patientBlock}
+  // The scheduling CONTROLS (appointment picker → times → plan → confirm).
+  // Shared by the full right panel and the quick popover. Qualified appointment
+  // types are highlighted via the dropdown's qualified-first sort + indigo ⓘ.
+  const schedulingControls = (
+    <>
       <div>
-        <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Appointment</div>
+        <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Appointment Types</div>
         {ancillaryDropdown}
       </div>
       <div>
@@ -1100,12 +1281,50 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       {(active || time || lastScheduled) ? (
         <div className="flex flex-col gap-2" data-testid="scheduler-pending-area">
           {selectedBlock}
-          {suggestionBlock}
+          {recommendations.length > 0 ? recommendationsBlock : suggestionBlock}
           {successBlock}
         </div>
       ) : null}
       {planList}
       {scheduleButton}
+    </>
+  );
+
+  // Quick-Schedule popover body (compact): patient chip/search + controls.
+  const schedulingColumn = (
+    <div className="flex flex-col gap-2.5">
+      {patientBlock}
+      {schedulingControls}
+    </div>
+  );
+
+  // Full right-panel body, in the requested top→bottom order:
+  //   date (header, above) → demographics → qualified tests (+ Plexus IQ) →
+  //   appointment types (+ times / plan / confirm).
+  const rightPanelBody = (
+    <div className="flex flex-col gap-2.5">
+      {/* Facility selector — shown when more than one facility is available so
+          generic (patient-less) scheduling can pick one. When exactly one
+          exists it is auto-selected and this control is hidden. */}
+      {availableFacilities.length > 1 ? (
+        <div data-testid="scheduler-facility-select">
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Facility</div>
+          <select
+            value={facility ?? ""}
+            onChange={(e) => { setSelectedFacility(e.target.value || null); setActive(null); setTime(""); setPlan([]); }}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+            data-testid="scheduler-facility-select-input"
+          >
+            <option value="">Select a facility…</option>
+            {availableFacilities.map((f) => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+      {hasPatient ? demographicsBlock : patientBlock}
+      {hasPatient ? qualifiedTestsBlock : null}
+      {schedulingControls}
     </div>
   );
 
@@ -1184,7 +1403,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
             <div className="text-base font-bold uppercase tracking-tight text-slate-900" data-testid="scheduler-selected-date">{prettyDateLong(selectedDate)}</div>
             {facility ? <div className="text-[11px] text-slate-500">{facility}</div> : null}
           </div>
-          {schedulingColumn}
+          {rightPanelBody}
         </div>
       </div>
     </div>

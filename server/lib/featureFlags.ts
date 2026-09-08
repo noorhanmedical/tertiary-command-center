@@ -15,6 +15,22 @@ function readBool(name: string, fallback: boolean): boolean {
 }
 
 export const featureFlags = {
+  // ─── Phase 3 — Access-control permission ENFORCEMENT ───────────────
+  // When OFF (default), migrated high-risk routes fall back to their legacy
+  // session.role guard (behavior-preserving) so the app keeps working on a
+  // database where the access-control tables (migration 0079) are NOT yet
+  // seeded/backfilled. When ON, the new permission middleware
+  // (server/middleware/accessControl.ts) is AUTHORITATIVE: authorization is
+  // resolved from AccessContextService (roles ⊕ grants ⊖ denies, scope, deny
+  // wins) and session.role is no longer consulted on migrated routes.
+  //
+  // DO NOT enable in an environment until migration 0079 is applied AND the
+  // role/permission catalog is seeded AND users are backfilled — otherwise
+  // every user (including admin) resolves to empty permissions and is locked
+  // out of migrated routes. Enable only after the Phase 4 provisioning
+  // rollout (or in the disposable Phase 3 test DB).
+  permissionEnforcement: readBool("FEATURE_PERMISSION_ENFORCEMENT", false),
+
   /** Internal (user-to-user, tenant-scoped) direct messages backend. */
   internalDirectMessages: readBool("FEATURE_INTERNAL_DIRECT_MESSAGES", false),
   /** Portal Assistant (AI chat) backend. */

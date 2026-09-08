@@ -262,6 +262,15 @@ export interface MemberCapacityState {
   // handoffs (P1/P2) may exceed this; that surfaces as overCapacity, never as
   // a hidden negative.
   remainingCapacity: number;
+  // Phase 1 (Invariant #2/#3) — headroom for NEW work today =
+  // max(0, dailyCallCapacity − assigned). `assigned` is the full live owned
+  // queue and ALREADY INCLUDES carryover (carryover ⊆ assigned: both count
+  // active, non-terminal, owned cases — carryover is just the past-due
+  // subset), so owned work is subtracted exactly ONCE and carryover is never
+  // double-counted. This is the ceiling the distribution allocator uses to
+  // decide how many NEW cases a member may receive, so repeated distribution
+  // runs cannot "top up" a member who already owns work.
+  availableForNewWork: number;
   // Effective workload the member is actually carrying right now.
   effectiveWorkload: number;
   // How far effective workload exceeds capacity (0 when within capacity).
@@ -285,6 +294,10 @@ export function computeMemberCapacityState(
   const priorityHandoffs = Math.max(0, input.priorityHandoffs ?? 0);
   const assigned = Math.max(0, input.assigned);
   const remaining = remainingCapacity(dailyCallCapacity, carryover);
+  // Headroom for NEW work = capacity − already-owned queue. `assigned` already
+  // includes carryover (carryover ⊆ assigned), so this subtracts owned work
+  // exactly once and never double-subtracts carryover.
+  const availableForNewWork = Math.max(0, dailyCallCapacity - assigned);
   const effectiveWorkload = assigned + priorityHandoffs;
   const overCapacity = Math.max(0, effectiveWorkload - dailyCallCapacity);
   return {
@@ -294,6 +307,7 @@ export function computeMemberCapacityState(
     carryover,
     priorityHandoffs,
     remainingCapacity: remaining,
+    availableForNewWork,
     effectiveWorkload,
     overCapacity,
     workingToday: input.workingToday,

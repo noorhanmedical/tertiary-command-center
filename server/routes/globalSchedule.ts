@@ -25,11 +25,16 @@ import {
 } from "../services/scheduling/scheduleStatusService";
 import { featureFlags } from "../lib/featureFlags";
 import { scheduleCanonicalAncillaryAppointment } from "../services/canonicalAppointments/scheduleAncillaryOrchestrator";
+import { revalidateSlot } from "../services/scheduling/availabilityService";
 import { applyCanonicalAncillaryTransition } from "../services/canonicalAppointments/transitionOrchestrator";
 import {
   getCanonicalAppointmentProjection,
   getCanonicalAppointmentsByService,
 } from "../services/canonicalAppointments/appointmentProjection";
+import {
+  resolveAuthorizedClinicScope,
+  scopePermitsClinic,
+} from "../services/access/authorizedClinicScope";
 
 const CANONICAL_ANCILLARY_CALENDAR_TYPES = new Set(["ancillary_appointment", "same_day_add"]);
 
@@ -51,6 +56,7 @@ function handleCanonicalReadError(res: Response, e: unknown): boolean {
 // user could request any facilityId in the query string and bypass
 // the assigned-facility allow-list returned by /api/portal/my-facilities.
 import { requirePortalRole, allowedFacilities, resolveAdminViewAsUserId, type ViewAsWorkspaceType } from "./portal";
+import { resolveTeamPortalScope, scopeFacilityIds } from "../services/teamPortalScope";
 
 // Resolves the requested facilityId for a Phase-1 team-portal feed.
 // Returns either an HTTP error to send or the (admin-pass-through or
@@ -198,6 +204,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listGlobalScheduleEvents>[0] = {};
 
+      // Tenant isolation (P0): a non-admin caller sees ONLY their authorized
+      // clinics. Empty scope → repo matches nothing (fail closed). Admin/global
+      // passes with no clinic filter.
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) filters.clinicIds = scope.clinicIds;
+
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.eventType) filters.eventType = q.eventType;
       if (q.status) filters.status = q.status;
@@ -319,11 +331,30 @@ export function registerGlobalScheduleRoutes(app: Express) {
   app.get("/api/technician-liaison/ancillary-schedule", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId);
-      if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTechnicianLiaisonAncillarySchedule>[0] = {};
-      if (scope.facilityId) filters.facilityId = scope.facilityId;
+
+      // MULTI-CLINIC ancillary schedule for a real (non-admin, non-view-as)
+      // team member: aggregate across EVERY authorized clinic by default, or a
+      // single requested clinic when facilityId is supplied. The ancillary feed
+      // is facility-scoped by ACCESS (no per-user assignment narrowing — kept
+      // as-is; assignedUserId remains an optional explicit filter). Admin +
+      // admin view-as keep the existing single-facility path unchanged.
+      const isAdmin = (req.session.role ?? "") === "admin";
+      const useMultiClinic = !isAdmin && !q.viewAsTeamMemberId && !!req.session.userId;
+      if (useMultiClinic) {
+        const portalScope = await resolveTeamPortalScope(req.session.userId as string);
+        const requested = (q.facilityId ?? "").trim() || null;
+        const facilityIds = scopeFacilityIds(portalScope, requested);
+        if (facilityIds == null) {
+          return res.status(403).json({ error: "Forbidden — clinic not assigned to this user" });
+        }
+        filters.facilityIds = facilityIds;
+      } else {
+        const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId);
+        if (!scope.ok) return;
+        if (scope.facilityId) filters.facilityId = scope.facilityId;
+      }
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.serviceType) filters.serviceType = q.serviceType;
       if (q.startDate) {
@@ -343,6 +374,10 @@ export function registerGlobalScheduleRoutes(app: Express) {
           id: r.id,
           executionCaseId: r.executionCaseId ?? null,
           patientScreeningId: r.patientScreeningId ?? null,
+          // Durable per-service ancillary occurrence id (present once the
+          // canonical ancillary-case flag/migration is live). Preferred over the
+          // executionCase+serviceType proxy for per-occurrence readiness scope.
+          ancillaryCaseId: r.ancillaryCaseId ?? null,
           serviceType: r.serviceType ?? null,
           // The appointment's scheduled day drives the dated consent guard
           // (mirrors the clinic-portal consentForTest rule): a completion
@@ -370,6 +405,8 @@ export function registerGlobalScheduleRoutes(app: Express) {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTeamAvailabilityBlocks>[0] = {};
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) filters.clinicIds = scope.clinicIds;
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.eventType === "pto_block" || q.eventType === "sick_day" || q.eventType === "unavailable_block") {
@@ -399,6 +436,8 @@ export function registerGlobalScheduleRoutes(app: Express) {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listUltrasoundTechSchedule>[0] = {};
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) filters.clinicIds = scope.clinicIds;
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.serviceType) filters.serviceType = q.serviceType;
@@ -475,6 +514,59 @@ export function registerGlobalScheduleRoutes(app: Express) {
         } catch {
           /* fall through — endsAt stays null (legacy behavior) */
         }
+      }
+
+      // ── Phase 6 — server-side BOOKING REVALIDATION ────────────────────────
+      // Availability seen at discovery can go stale before this write (a
+      // concurrent booking took the last machine). Re-run the SAME engine
+      // against fresh capacity/occupancy and REJECT a now-full slot with a
+      // clear conflict — never book over capacity silently. An explicit,
+      // authorized override (metadata.override) intentionally bypasses this
+      // (the scheduler already captured a reason). Fails OPEN on an engine
+      // error so a capacity-read hiccup never blocks a legitimate booking
+      // (preserves pre-Phase-6 behavior, which had no revalidation at all).
+      const hasAuthorizedOverride = !!(data.metadata as { override?: unknown } | undefined)?.override;
+      if (!hasAuthorizedOverride) {
+        // revalidateSlot NEVER throws — it returns a three-way outcome. An
+        // explicit authorized override (above) is the ONLY sanctioned bypass;
+        // an ordinary system failure must NEVER behave like an override.
+        const reval = await revalidateSlot({
+          facilityName: data.facilityId ?? null,
+          clinicId: reqClinicIdIn,
+          startsAt,
+          serviceType: data.serviceType,
+          studyCount:
+            (data.metadata as { ultrasoundStudyCount?: number } | undefined)?.ultrasoundStudyCount ?? null,
+          patientKey:
+            data.patientScreeningId != null ? `ps:${data.patientScreeningId}` : null,
+        });
+        if (reval.status === "conflict") {
+          // KNOWN capacity conflict (full/outage) — do not book.
+          return {
+            httpStatus: 409,
+            body: {
+              error: "That time is no longer available — please pick another.",
+              code: "slot_unavailable",
+              constraint: reval.constraint,
+              conflict: reval.conflict,
+            },
+          };
+        }
+        if (reval.status === "cannot_verify") {
+          // FAIL CLOSED: we could not determine availability (engine/capacity/
+          // occupancy/DB read error). UNKNOWN AVAILABILITY ≠ AVAILABLE — do NOT
+          // create an appointment, do NOT advance engagement; the employee can
+          // retry once the availability service recovers. No writes happen
+          // because we return BEFORE any of them.
+          return {
+            httpStatus: 503,
+            body: {
+              error: "We couldn't verify that this time is still available. Please try again in a moment.",
+              code: "revalidation_unavailable",
+            },
+          };
+        }
+        // reval.status === "ok" → verified feasible → proceed to book.
       }
 
       // Resolve patient context — must be able to identify the case
@@ -668,23 +760,54 @@ export function registerGlobalScheduleRoutes(app: Express) {
         }
       }
 
-      // Upsert ancillary appointment (dedup happens inside the repo helper)
-      const { event, created } = await upsertAncillaryScheduleEvent({
-        executionCaseId: executionCase.id,
-        patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
-        patientName: executionCase.patientName,
-        patientDob: executionCase.patientDob ?? null,
-        facilityId,
-        serviceType: data.serviceType,
-        startsAt,
-        endsAt,
-        assignedUserId: data.assignedUserId ?? null,
-        source: "scheduler_portal",
-        note: data.note ?? null,
-        metadata: { actorUserId, ...(data.metadata ?? {}) },
+      // Phase 1 (#4): the appointment write AND the execution-case advance
+      // commit as ONE transaction. This makes the operational invariant hold —
+      // if Plexus reports the patient scheduled (engagementStatus="scheduled")
+      // then a durable appointment row MUST exist, and vice versa. A failure
+      // in either statement rolls BOTH back and surfaces as a 500 (the outer
+      // catch), instead of the previous best-effort path that could leave
+      // engagementStatus="scheduled" with no appointment (or an appointment
+      // with the case left un-advanced). The journey/audit append stays
+      // best-effort AFTER commit (never rolls back a committed schedule).
+      let updatedExecutionCase = executionCase;
+      const { event, created } = await db.transaction(async (tx) => {
+        const upserted = await upsertAncillaryScheduleEvent(
+          {
+            executionCaseId: executionCase.id,
+            patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+            patientName: executionCase.patientName,
+            patientDob: executionCase.patientDob ?? null,
+            facilityId,
+            serviceType: data.serviceType,
+            startsAt,
+            endsAt,
+            assignedUserId: data.assignedUserId ?? null,
+            source: "scheduler_portal",
+            note: data.note ?? null,
+            metadata: { actorUserId, ...(data.metadata ?? {}) },
+          },
+          tx,
+        );
+
+        // Advance execution case state — engagementStatus=scheduled,
+        // nextActionAt=startsAt. Update unconditionally because scheduling
+        // is the operationally-correct next state regardless of prior state.
+        const [row] = await tx
+          .update(patientExecutionCases)
+          .set({
+            engagementStatus: "scheduled",
+            nextActionAt: startsAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(patientExecutionCases.id, executionCase.id))
+          .returning();
+        if (row) updatedExecutionCase = row;
+
+        return { event: upserted.event, created: upserted.created };
       });
 
-      // Append journey event (best-effort)
+      // Append journey event (best-effort, POST-COMMIT — an audit-write miss
+      // must never roll back a committed appointment).
       let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {
         journeyEvent = await appendJourneyEvent({
@@ -710,25 +833,6 @@ export function registerGlobalScheduleRoutes(app: Express) {
         });
       } catch (err: any) {
         console.error("[schedule-ancillary] journey event append failed:", err.message);
-      }
-
-      // Advance execution case state — engagementStatus=scheduled,
-      // nextActionAt=startsAt. Update unconditionally because scheduling
-      // is the operationally-correct next state regardless of prior state.
-      let updatedExecutionCase = executionCase;
-      try {
-        const [row] = await db
-          .update(patientExecutionCases)
-          .set({
-            engagementStatus: "scheduled",
-            nextActionAt: startsAt,
-            updatedAt: new Date(),
-          })
-          .where(eq(patientExecutionCases.id, executionCase.id))
-          .returning();
-        if (row) updatedExecutionCase = row;
-      } catch (err: any) {
-        console.error("[schedule-ancillary] execution case update failed:", err.message);
       }
 
       return {
@@ -825,6 +929,12 @@ export function registerGlobalScheduleRoutes(app: Express) {
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const row = await getGlobalScheduleEventById(id);
       if (!row) return res.status(404).json({ error: "Global schedule event not found" });
+      // Tenant isolation (P0): a foreign-clinic event reads as not-found so
+      // existence is never disclosed across tenants.
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scopePermitsClinic(scope, row.clinicId)) {
+        return res.status(404).json({ error: "Global schedule event not found" });
+      }
       res.json(row);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

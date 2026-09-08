@@ -2,6 +2,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 import {
   getEffectiveBillingPolicy,
   BILLING_POLICY_DOMAIN,
@@ -32,7 +33,7 @@ const upsertSchema = z.object({
 
 export function registerBillingPolicyRoutes(app: Express) {
   // GET /api/billing-policy/effective
-  app.get("/api/billing-policy/effective", async (req, res) => {
+  app.get("/api/billing-policy/effective", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const bundle = await getEffectiveBillingPolicy({
@@ -47,7 +48,7 @@ export function registerBillingPolicyRoutes(app: Express) {
   });
 
   // GET /api/billing-policy/settings — list raw rows in this domain.
-  app.get("/api/billing-policy/settings", async (req, res) => {
+  app.get("/api/billing-policy/settings", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const filters: Parameters<typeof listAdminSettings>[0] = {
@@ -64,7 +65,7 @@ export function registerBillingPolicyRoutes(app: Express) {
   });
 
   // POST /api/billing-policy/settings — create a new policy row.
-  app.post("/api/billing-policy/settings", requireAdmin, async (req, res) => {
+  app.post("/api/billing-policy/settings", requireBillingManage, async (req, res) => {
     try {
       const parsed = upsertSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
@@ -85,7 +86,7 @@ export function registerBillingPolicyRoutes(app: Express) {
   });
 
   // PATCH /api/billing-policy/settings/:id — update value / active.
-  app.patch("/api/billing-policy/settings/:id", requireAdmin, async (req, res) => {
+  app.patch("/api/billing-policy/settings/:id", requireBillingManage, async (req, res) => {
     try {
       const rawId = req.params.id as string;
       const id = parseInt(rawId, 10);

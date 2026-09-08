@@ -14,12 +14,13 @@ import {
   CalendarDays,
   Atom,
   MessageSquare,
-  User,
   FileText,
   TrendingUp,
   Receipt,
   Gamepad2,
   PenTool,
+  HeartPulse,
+  LayoutGrid,
 } from "lucide-react";
 import { NovaDockIcon } from "@/components/nova/NovaDockIcon";
 import type { DockAppDefinition, RoleDockConfig } from "./types";
@@ -41,7 +42,7 @@ export const DOCK_APPS: DockAppDefinition[] = [
   },
   {
     id: "nova",
-    label: "Nova",
+    label: "AI Assistant",
     icon: NovaDockIcon,
     destinationType: "action",
     order: 999,
@@ -100,11 +101,11 @@ export const DOCK_APPS: DockAppDefinition[] = [
   },
   {
     id: "schedule",
-    label: "Schedule",
+    label: "Calendar",
     icon: CalendarDays,
-    destinationType: "popup",
-    popupId: "schedule",
-    order: 60,
+    destinationType: "route",
+    route: "/schedule",
+    order: 70,
     locked: false,
     configurable: true,
     preserveContext: true,
@@ -138,11 +139,11 @@ export const DOCK_APPS: DockAppDefinition[] = [
   },
   {
     id: "patients",
-    label: "Patients",
-    icon: User,
+    label: "Plexus EHR",
+    icon: HeartPulse,
     destinationType: "route",
     route: "/patient-directory",
-    order: 90,
+    order: 10,
     locked: false,
     configurable: true,
     preserveContext: false,
@@ -150,7 +151,7 @@ export const DOCK_APPS: DockAppDefinition[] = [
   },
   {
     id: "documents",
-    label: "Documents",
+    label: "Ancillary Documents",
     icon: FileText,
     destinationType: "workspace",
     workspaceType: "documents",
@@ -167,11 +168,23 @@ export const DOCK_APPS: DockAppDefinition[] = [
     destinationType: "route",
     route: "/engagement-center",
     allowedRoles: ["admin"],
-    order: 110,
+    order: 30,
     locked: false,
     configurable: true,
     preserveContext: false,
     testId: "dock-app-engagement",
+  },
+  {
+    id: "team-portals",
+    label: "Team Portals",
+    icon: LayoutGrid,
+    destinationType: "route",
+    route: "/team-member-portals",
+    order: 40,
+    locked: false,
+    configurable: true,
+    preserveContext: false,
+    testId: "dock-app-team-portals",
   },
   {
     id: "plexus-iq",
@@ -180,7 +193,7 @@ export const DOCK_APPS: DockAppDefinition[] = [
     destinationType: "route",
     route: "/plexus-iq",
     allowedRoles: ["admin"],
-    order: 120,
+    order: 20,
     locked: false,
     configurable: true,
     preserveContext: false,
@@ -188,12 +201,12 @@ export const DOCK_APPS: DockAppDefinition[] = [
   },
   {
     id: "billing",
-    label: "Billing",
+    label: "Plexus Bank",
     icon: Receipt,
     destinationType: "route",
     route: "/plexus-bank",
     allowedRoles: ["admin", "biller"],
-    order: 130,
+    order: 60,
     locked: false,
     configurable: true,
     preserveContext: false,
@@ -235,42 +248,69 @@ export function getDockApp(id: string): DockAppDefinition | undefined {
 
 // ─── Role configurations ──────────────────────────────────────────────────
 
+// Canonical primary dock structure (exact order):
+// Home → Plexus EHR → Plexus IQ → Engagement → Team Portals →
+// Ancillary Documents → Plexus Bank → Calendar → AI Assistant.
+//
+// App-id mapping: patients=Plexus EHR, documents=Ancillary Documents,
+// billing=Plexus Bank, schedule=Calendar, nova=AI Assistant.
+//
+// Role gating still applies via each app's `allowedRoles`
+// (engagement/plexus-iq: admin; billing: admin+biller). resolveAppsForRole
+// filters those out for roles that lack access, so the visible dock is the
+// canonical order minus any items the role cannot see.
+const PRIMARY_DOCK_ORDER = [
+  "home",
+  "patients",
+  "plexus-iq",
+  "engagement",
+  "team-portals",
+  "documents",
+  "billing",
+  "schedule",
+  "nova",
+];
+
+const PRIMARY_OPTIONAL = [
+  "metrics", "phone", "team-ops", "plexus-tasks", "plexus-nucleus", "messages", "whiteboard", "games",
+];
+
 export const ROLE_DOCK_CONFIGS: RoleDockConfig[] = [
   {
     role: "admin",
-    defaultApps: ["home", "metrics", "phone", "team-ops", "plexus-tasks", "schedule", "plexus-nucleus", "nova"],
+    defaultApps: [...PRIMARY_DOCK_ORDER],
     lockedApps: ["home", "nova"],
-    optionalApps: ["messages", "patients", "documents", "engagement", "plexus-iq", "billing", "whiteboard", "games"],
+    optionalApps: [...PRIMARY_OPTIONAL],
   },
   {
     role: "pcs",
-    defaultApps: ["home", "metrics", "phone", "plexus-tasks", "schedule", "team-ops", "plexus-nucleus", "nova"],
+    defaultApps: [...PRIMARY_DOCK_ORDER],
     lockedApps: ["home", "nova"],
-    optionalApps: ["messages", "patients", "documents", "whiteboard", "games"],
+    optionalApps: [...PRIMARY_OPTIONAL],
   },
   {
     role: "acs",
-    defaultApps: ["home", "schedule", "plexus-tasks", "phone", "metrics", "team-ops", "plexus-nucleus", "nova"],
+    defaultApps: [...PRIMARY_DOCK_ORDER],
     lockedApps: ["home", "nova"],
-    optionalApps: ["messages", "patients", "documents", "whiteboard", "games"],
+    optionalApps: [...PRIMARY_OPTIONAL],
   },
   {
     role: "scheduler",
-    defaultApps: ["home", "phone", "plexus-tasks", "schedule", "metrics", "team-ops", "plexus-nucleus", "nova"],
+    defaultApps: [...PRIMARY_DOCK_ORDER],
     lockedApps: ["home", "nova"],
-    optionalApps: ["messages", "patients", "documents", "whiteboard", "games"],
+    optionalApps: [...PRIMARY_OPTIONAL],
   },
   {
     role: "clinician",
-    defaultApps: ["home", "schedule", "plexus-tasks", "patients", "plexus-nucleus", "metrics", "documents", "nova"],
+    defaultApps: [...PRIMARY_DOCK_ORDER],
     lockedApps: ["home", "nova"],
-    optionalApps: ["messages", "phone", "whiteboard", "games"],
+    optionalApps: [...PRIMARY_OPTIONAL],
   },
   {
     role: "biller",
-    defaultApps: ["home", "billing", "plexus-tasks", "documents", "schedule", "metrics", "plexus-nucleus", "nova"],
+    defaultApps: [...PRIMARY_DOCK_ORDER],
     lockedApps: ["home", "nova"],
-    optionalApps: ["messages", "patients", "whiteboard", "games"],
+    optionalApps: [...PRIMARY_OPTIONAL],
   },
 ];
 

@@ -12,6 +12,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -815,20 +816,11 @@ export default function ImagingCentralPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/15 to-teal-500/15 text-cyan-700">
-              <ScanLine className="w-5 h-5" strokeWidth={1.75} />
-            </span>
-            <div>
-              <h1 className="text-xl font-semibold text-slate-900" data-testid="text-imaging-central-title">
-                Imaging Central
-              </h1>
-              <p className="text-sm text-slate-500">Imaging execution · ultrasound focus</p>
-            </div>
-          </div>
-          {/* Demo state switcher */}
+      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur px-6 py-4">
+        <InteriorPageTitle title="Imaging Central" />
+        <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-slate-500">Imaging execution · ultrasound focus</p>
+          {/* Demo state switcher — moved below the hairline. */}
           <div className="flex items-center gap-2">
             <Select value={view} onValueChange={(v) => setView(v as ViewState)}>
               <SelectTrigger className="w-[150px]" data-testid="select-view-state">

@@ -1,6 +1,6 @@
 import type { Express, Request } from "express";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import {
@@ -41,6 +41,10 @@ const DEFAULT_STATUS_BY_TYPE: Record<typeof COMPLETION_DOCUMENT_TYPES[number], s
 const completeDocumentBodySchema = z.object({
   executionCaseId: z.number().int().optional().nullable(),
   patientScreeningId: z.number().int().optional().nullable(),
+  // Canonical procedure OCCURRENCE id (patient_ancillary_cases.id) — keys
+  // readiness to a specific occurrence so same-service occurrences don't
+  // collide (migration 0081). Optional: legacy callers omit it.
+  ancillaryCaseId: z.number().int().optional().nullable(),
   serviceType: z.string().min(1),
   documentType: z.enum(COMPLETION_DOCUMENT_TYPES),
   documentStatus: z.string().optional().nullable(),
@@ -190,6 +194,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
 
       // Upsert by (patientScreeningId, serviceType, documentType). Falls back
       // to (executionCaseId, serviceType, documentType) when no screening id.
+      const occurrenceId = data.ancillaryCaseId ?? null;
       const dedupConditions = [
         eq(caseDocumentReadiness.serviceType, data.serviceType),
         eq(caseDocumentReadiness.documentType, data.documentType),
@@ -199,6 +204,15 @@ export function registerDocumentReadinessRoutes(app: Express) {
       } else if (executionCaseId !== null) {
         dedupConditions.push(eq(caseDocumentReadiness.executionCaseId, executionCaseId));
       }
+      // Occurrence-aware (migration 0081): with an occurrence id, match ONLY
+      // that occurrence; without one, match ONLY legacy NULL-occurrence rows so
+      // occurrence-keyed readiness is never overwritten by an occurrence-less
+      // completion (and vice versa).
+      dedupConditions.push(
+        occurrenceId != null
+          ? eq(caseDocumentReadiness.ancillaryCaseId, occurrenceId)
+          : isNull(caseDocumentReadiness.ancillaryCaseId),
+      );
       const [existing] = await db
         .select()
         .from(caseDocumentReadiness)
@@ -227,6 +241,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
       } else {
         row = await createCaseDocumentReadiness({
           executionCaseId: executionCase.id,
+          ancillaryCaseId: occurrenceId ?? undefined,
           patientScreeningId: patientScreeningId ?? undefined,
           patientName: executionCase.patientName,
           patientDob: executionCase.patientDob ?? undefined,

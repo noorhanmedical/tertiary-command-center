@@ -50,6 +50,22 @@ export const patientExecutionCases = pgTable("patient_execution_cases", {
   lastAttemptAt: timestamp("last_attempt_at"),
   lastCallOutcome: text("last_call_outcome"),
   unableToReachAt: timestamp("unable_to_reach_at"),
+  // Phase 4 — ACTIVE-WORK CLAIM / LEASE. Orthogonal to ownership
+  // (assignedTeamMemberId) AND to disposition state: it records that a team
+  // member is ACTIVELY working this case RIGHT NOW (call workspace open / on a
+  // call), so another employee or automation must not concurrently work or
+  // redistribute it. Server-authoritative + AUTO-EXPIRING: a claim is ACTIVE
+  // only while active_claim_by IS NOT NULL AND active_claim_expires_at > now()
+  // (implicit expiry — a crashed browser's claim simply becomes ignorable and
+  // is overwritten by the next claimant; NO sweeper / manual cleanup). Released
+  // on disposition (recordCallResult), explicit release, or expiry. These
+  // columns NEVER change engagementStatus / lifecycleStatus / nextActionAt /
+  // callAttemptCount — a claim is not a disposition and never touches metrics.
+  // active_claim_by mirrors assignedTeamMemberId (outreach_schedulers.id; no FK
+  // in drizzle, matching the ownership column). Migration 0084.
+  activeClaimBy: integer("active_claim_by"),
+  activeClaimAt: timestamp("active_claim_at"),
+  activeClaimExpiresAt: timestamp("active_claim_expires_at"),
   // Phase 2C — authoritative "list became available in Engagement"
   // timestamp. Server-owned; NEVER accepted from client. Never copied
   // from serviceDate. Never a future/backdated timestamp. Populated
@@ -68,6 +84,10 @@ export const patientExecutionCases = pgTable("patient_execution_cases", {
   index("idx_execution_cases_call_attempt_count").on(table.callAttemptCount),
   index("idx_execution_cases_unable_to_reach_at").on(table.unableToReachAt),
   index("idx_pec_sent_to_engagement_at").on(table.sentToEngagementAt),
+  // Phase 4 — supports the active-claim eligibility/absence lookups. The SQL
+  // migration uses a PARTIAL index (WHERE active_claim_by IS NOT NULL); drizzle
+  // cannot express the partial predicate, so this decl is a superset for typing.
+  index("idx_pec_active_claim_by").on(table.activeClaimBy),
 ]);
 
 export const insertPatientExecutionCaseSchema = createInsertSchema(patientExecutionCases).omit({

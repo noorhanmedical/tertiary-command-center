@@ -128,3 +128,35 @@ export function calculateNextActionAt(
       return { nextActionAt: explicit ?? now, bucket: "now" };
   }
 }
+
+/**
+ * Ownership-only next-action resolver (Phase 1 — Invariant #1).
+ *
+ * Changing WHO owns a case must NOT change WHEN the patient is due. When a
+ * case is (re)assigned — auto-distribution, manual reassignment, or
+ * absence/PTO/deactivation redistribution — a pending FUTURE next-action
+ * (e.g. a patient-requested "call me Friday at 2 PM") is preserved EXACTLY.
+ * Only when there is no future next-action does the case surface "now" (a
+ * fresh assignment or overdue backlog is due immediately either way).
+ *
+ * This is the SINGLE definition of assignment-time next-action, shared by
+ * distributionService.applyDistribution and the Engagement assignment board so
+ * the two ownership paths can never diverge. Disposition-driven next-action
+ * (callback timing after a call outcome) is owned separately by the
+ * call-result planner — this helper never overrides an operator disposition.
+ */
+export function resolveAssignmentNextActionAt(
+  existingNextActionAt: Date | string | null | undefined,
+  now: Date = new Date(),
+): Date {
+  if (existingNextActionAt != null) {
+    const existing =
+      existingNextActionAt instanceof Date
+        ? existingNextActionAt
+        : new Date(existingNextActionAt);
+    if (!Number.isNaN(existing.getTime()) && existing.getTime() > now.getTime()) {
+      return existing;
+    }
+  }
+  return now;
+}

@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { requireBillingView } from "../middleware/billingGuards";
 import {
   listBillingReadinessChecks,
   getBillingReadinessCheckById,
@@ -8,7 +9,7 @@ export function registerBillingReadinessRoutes(app: Express) {
   // GET /api/billing-readiness-checks
   // Filters: executionCaseId, patientScreeningId, procedureEventId,
   //          serviceType, readinessStatus, limit
-  app.get("/api/billing-readiness-checks", async (req, res) => {
+  app.get("/api/billing-readiness-checks", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
@@ -37,9 +38,9 @@ export function registerBillingReadinessRoutes(app: Express) {
   });
 
   // GET /api/billing-readiness-checks/:id
-  app.get("/api/billing-readiness-checks/:id", async (req, res) => {
+  app.get("/api/billing-readiness-checks/:id", requireBillingView, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const check = await getBillingReadinessCheckById(id);
       if (!check) return res.status(404).json({ error: "Billing readiness check not found" });

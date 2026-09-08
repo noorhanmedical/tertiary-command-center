@@ -10,7 +10,7 @@
 // the Engagement Center, Team Portal PCS queue, and OSP all read from.
 // The legacy releaseAndRedistribute() in callListEngine.ts is superseded.
 
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, or, isNull, lte } from "drizzle-orm";
 import { db } from "../../db";
 import { patientExecutionCases } from "@shared/schema/executionCase";
 import { appendJourneyEvent } from "../journey/appendJourneyEvent";
@@ -38,37 +38,70 @@ export async function releaseAndRedistributeCanonical(
   schedulerId: number,
   reason: string,
   actorUserId: string | null = null,
+  opts: { onlyCaseIds?: number[]; forceReleaseClaims?: boolean } = {},
 ): Promise<CanonicalRedistributionResult> {
-  // 1. Find all active execution cases assigned to this team member.
+  // Phase 3 — optional case scoping. When `onlyCaseIds` is provided (e.g. an
+  // early-departure that redistributes ONLY due/overdue work and preserves
+  // future callbacks), release just those cases; otherwise release the whole
+  // active queue (unchanged full-absence behavior). An empty explicit set is a
+  // no-op (nothing to release).
+  const scopeIds = opts.onlyCaseIds;
+  if (scopeIds && scopeIds.length === 0) {
+    return { schedulerId, released: 0, redistributed: 0, unplaced: 0, reason };
+  }
+  // Phase 4 — ACTIVE-WORK CLAIM PROTECTION. Ordinary redistribution (absence /
+  // PTO / early-departure / manager) must NOT yank a case out from under a team
+  // member who is ACTIVELY working it right now (a valid, non-expired claim).
+  // Such cases are simply EXCLUDED from the release set — the member keeps them
+  // until they finish / release / the lease lapses, after which the next
+  // redistribution moves whatever is still due. The ONLY exception is an
+  // explicit force-release (account deactivation / admin emergency), which also
+  // clears the claim as it reassigns.
+  const now = new Date();
+  const claimGuard = opts.forceReleaseClaims
+    ? undefined
+    : or(
+        isNull(patientExecutionCases.activeClaimBy),
+        lte(patientExecutionCases.activeClaimExpiresAt, now),
+      );
+  const ownerActive = and(
+    eq(patientExecutionCases.assignedTeamMemberId, schedulerId),
+    eq(patientExecutionCases.lifecycleStatus, "active"),
+    scopeIds ? inArray(patientExecutionCases.id, scopeIds) : undefined,
+    claimGuard,
+  );
+
+  // 1. Find the active execution cases assigned to this team member (scoped).
   const activeCases = await db.select({
     id: patientExecutionCases.id,
     patientName: patientExecutionCases.patientName,
     patientDob: patientExecutionCases.patientDob,
     patientScreeningId: patientExecutionCases.patientScreeningId,
-  }).from(patientExecutionCases).where(
-    and(
-      eq(patientExecutionCases.assignedTeamMemberId, schedulerId),
-      eq(patientExecutionCases.lifecycleStatus, "active"),
-    ),
-  );
+  }).from(patientExecutionCases).where(ownerActive);
 
   if (activeCases.length === 0) {
     return { schedulerId, released: 0, redistributed: 0, unplaced: 0, reason };
   }
 
-  // 2. NULL out assignedTeamMemberId on all those cases (release).
-  const now = new Date();
+  // 2. NULL out assignedTeamMemberId on those cases (release).
   await db.update(patientExecutionCases).set({
+    // Invariant #4: releasing ownership must NOT reset workflow state. Null
+    // ONLY the ownership fields; engagementStatus (contacted / not_reached /
+    // needs_followup / callback / …) and nextActionAt are preserved so the
+    // re-placement (applyDistribution) keeps the patient's real progress and
+    // due-time (Invariant #1). Previously this reset engagementStatus="new",
+    // which discarded contact progress and forced the patient back to square
+    // one purely because their owner became unavailable.
     assignedTeamMemberId: null,
     assignedRole: null,
-    engagementStatus: "new",
     updatedAt: now,
-  }).where(
-    and(
-      eq(patientExecutionCases.assignedTeamMemberId, schedulerId),
-      eq(patientExecutionCases.lifecycleStatus, "active"),
-    ),
-  );
+    // Phase 4 — a force-release (deactivation/emergency) also CLEARS the active
+    // claim as it reassigns. Ordinary redistribution never reaches claimed
+    // cases (excluded above), so this only fires on the force path.
+    ...(opts.forceReleaseClaims
+      ? { activeClaimBy: null, activeClaimAt: null, activeClaimExpiresAt: null }
+      : {}),
+  }).where(ownerActive);
 
   // 3. Emit journey events for each released case.
   for (const c of activeCases) {
@@ -86,6 +119,7 @@ export async function releaseAndRedistributeCanonical(
           previousSchedulerId: schedulerId,
           reason,
           action: "release",
+          forceReleasedClaim: opts.forceReleaseClaims === true,
         },
       });
     } catch {

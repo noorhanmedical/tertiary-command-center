@@ -141,12 +141,8 @@ export const PORTAL_DOCK_ITEMS: DockItem[] = [
 // Roles that get the simplified 4-item portal dock.
 export const PORTAL_DOCK_ROLES = new Set(["scheduler", "clinician"]);
 
-// `/home-preview` is included so the winter Home redesign can be staged with the
-// global sidebar visible; it mirrors `/home` and is removed on promotion.
-export const GLOBAL_NAV_ROUTES: string[] = ["/home", "/home-preview", "/clinician-portal"];
-
-export function shouldShowGlobalNav(pathname: string): boolean {
-  return GLOBAL_NAV_ROUTES.some(
-    (route) => pathname === route || pathname.startsWith(route + "/"),
-  );
-}
+// NOTE: The legacy left-nav gate (GLOBAL_NAV_ROUTES / shouldShowGlobalNav) was
+// removed. Admin-shell + sidebar visibility is now owned by the single
+// canonical system in workspaceRegistry.ts (isAdminWorkspaceRoute + the
+// per-workspace `sidebar` metadata / getSidebarGroups). Do not reintroduce a
+// second route allow-list here.

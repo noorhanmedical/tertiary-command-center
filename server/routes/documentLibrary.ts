@@ -20,6 +20,10 @@ import {
 } from "../repositories/documentLibraryLegacy.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import {
+  isImmutableClinicalDocument,
+  IMMUTABLE_CLINICAL_DOCUMENT_ERROR,
+} from "../services/documents/clinicalDocumentImmutability";
+import {
   type Document,
   DOCUMENT_KINDS,
   DOCUMENT_SIGNATURE_REQUIREMENTS,
@@ -65,6 +69,84 @@ const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
   }
   return next();
 };
+
+// ── Patient/facility-scoped document authorization (P0 — data isolation) ─────
+// The global `requireAuth` guard only checks a session exists. A document that
+// is patient-owned (patientScreeningId) or facility-tagged (facility) is PHI
+// and MUST be scoped to the caller's clinic access — otherwise any
+// authenticated user could download any patient's report or signed consent by
+// guessing an id. Org-shared library templates (marketing/training/reference
+// with NO patient and NO facility) remain readable to any authenticated user.
+//
+//   • admin (session.role === "admin")        → cross-clinic, always allowed.
+//   • document with no patient AND no facility → org-shared template, allowed.
+//   • otherwise                                → the document's effective
+//     facility must be in the caller's authorized facility set (team-model
+//     authorizedFacilities ∪ the caller's legacy session clinic name).
+//
+// Denials return 404 (not 403) so document existence is never disclosed across
+// tenants — the same non-existence-revealing rule the portal read paths use.
+async function resolveDocumentFacility(doc: Document): Promise<string | null> {
+  if (doc.facility) return doc.facility;
+  if (doc.patientScreeningId != null) {
+    try {
+      const p = await storage.getPatientScreening(doc.patientScreeningId);
+      if (p) {
+        if (p.facility) return p.facility;
+        const batch = await storage.getScreeningBatch(p.batchId);
+        return batch?.facility ?? null;
+      }
+    } catch {
+      /* fall through — treat as unknown facility (fail closed below) */
+    }
+  }
+  return null;
+}
+
+async function callerAllowedFacilityNames(req: Request): Promise<Set<string>> {
+  const names = new Set<string>();
+  const userId = req.session.userId;
+  if (userId) {
+    try {
+      const { resolveTeamPortalScope } = await import("../services/teamPortalScope");
+      const scope = await resolveTeamPortalScope(userId);
+      for (const f of scope.authorizedFacilities) names.add(f);
+    } catch {
+      /* team scope unavailable — fall back to legacy session clinic below */
+    }
+  }
+  // Legacy single-clinic session scope: resolve req.clinicId → clinic name via
+  // the canonical facility resolver service (routes must not query the db
+  // directly — see phase5 §1 facade rule).
+  const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+  if (clinicId != null) {
+    try {
+      const { createFacilityResolver } = await import("../services/facilityResolver");
+      const { facilities } = await createFacilityResolver();
+      const match = facilities.find((f) => f.clinicId === clinicId);
+      if (match?.name) names.add(match.name);
+    } catch {
+      /* non-fatal */
+    }
+  }
+  return names;
+}
+
+// Returns true when the caller may access this document. `res` is used only to
+// send the 404 on denial so callers can `if (!(await authorizeDocumentAccess(...))) return;`.
+async function authorizeDocumentAccess(req: Request, res: Response, doc: Document): Promise<boolean> {
+  if (req.session.role === "admin") return true;
+  // Org-shared library template (no patient, no facility) — readable to all.
+  if (doc.patientScreeningId == null && !doc.facility) return true;
+  const docFacility = await resolveDocumentFacility(doc);
+  if (docFacility) {
+    const allowed = await callerAllowedFacilityNames(req);
+    if (allowed.has(docFacility)) return true;
+  }
+  // Unknown/foreign facility → deny WITHOUT disclosing existence.
+  res.status(404).json({ error: "Not found" });
+  return false;
+}
 
 function isImageMime(contentType: string): boolean {
   return contentType.startsWith("image/");
@@ -266,6 +348,7 @@ function mountRoutes(app: Express, basePath: string) {
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const doc = await storage.getDocument(id);
       if (!doc || doc.deletedAt !== null) return res.status(404).json({ error: "Not found" });
+      if (!(await authorizeDocumentAccess(req, res, doc))) return;
       res.json(await shapeDocument(doc, basePath));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -278,6 +361,7 @@ function mountRoutes(app: Express, basePath: string) {
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const head = await storage.getDocument(id);
       if (!head || head.deletedAt !== null) return res.status(404).json({ error: "Not found" });
+      if (!(await authorizeDocumentAccess(req, res, head))) return;
       const chain = await storage.getDocumentVersionChain(id);
       const shaped = await Promise.all(chain.map((d) => shapeDocument(d, basePath)));
       res.json(shaped);
@@ -294,6 +378,8 @@ function mountRoutes(app: Express, basePath: string) {
       if (!doc) return res.status(404).json({ error: "Not found" });
       // Soft-deleted docs must not be retrievable by direct id either.
       if (doc.deletedAt !== null) return res.status(404).json({ error: "Not found" });
+      // P0 — patient/facility-scoped authorization before serving bytes.
+      if (!(await authorizeDocumentAccess(req, res, doc))) return;
 
       let blob = await getLatestBlobForOwner("library_document", doc.id);
 
@@ -446,6 +532,15 @@ function mountRoutes(app: Express, basePath: string) {
       if (!oldDoc) return res.status(404).json({ error: "Not found" });
       if (oldDoc.supersededByDocumentId !== null) {
         return res.status(409).json({ error: "Document is already superseded" });
+      }
+      // P0 — a signed per-patient clinical record is immutable. It may not be
+      // superseded in place; corrections are a NEW record (preserving the
+      // original + its audit trail). Templates (no patientScreeningId) are
+      // freely versionable and unaffected.
+      if (isImmutableClinicalDocument(oldDoc)) {
+        return res
+          .status(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.status)
+          .json(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.body);
       }
       if (!req.file) return res.status(400).json({ error: "file is required" });
 
@@ -690,6 +785,13 @@ function mountRoutes(app: Express, basePath: string) {
         return res.status(409).json({
           error: "Cannot delete a superseded version. Delete the current version instead.",
         });
+      }
+      // P0 — a signed per-patient clinical record is immutable and cannot be
+      // deleted through the ordinary admin route (templates are unaffected).
+      if (isImmutableClinicalDocument(doc)) {
+        return res
+          .status(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.status)
+          .json(IMMUTABLE_CLINICAL_DOCUMENT_ERROR.body);
       }
       await storage.softDeleteDocument(id);
       res.status(204).end();

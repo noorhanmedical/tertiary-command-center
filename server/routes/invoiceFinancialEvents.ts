@@ -9,6 +9,7 @@ import {
   postPayment, postAdjustment, postDenial, postRemittanceEvent, patchDenialStatus,
 } from "../services/billing/invoiceFinancialService";
 import { loadFinancialEventsForInvoice } from "../repositories/invoiceFinancialEvents.repo";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 
 function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -62,7 +63,7 @@ const denialPatchBody = z.object({
 });
 
 export function registerInvoiceFinancialRoutes(app: Express) {
-  app.post("/api/invoices/:id/payments", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/payments", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -76,7 +77,7 @@ export function registerInvoiceFinancialRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/adjustments", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/adjustments", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -90,7 +91,7 @@ export function registerInvoiceFinancialRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/denials", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/denials", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -104,7 +105,7 @@ export function registerInvoiceFinancialRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/remittance-events", requireAdminOrBiller, async (req, res) => {
+  app.post("/api/invoices/:id/remittance-events", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -117,7 +118,7 @@ export function registerInvoiceFinancialRoutes(app: Express) {
     }
   });
 
-  app.get("/api/invoices/:id/financial-events", requireAuth, async (req, res) => {
+  app.get("/api/invoices/:id/financial-events", requireBillingView, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
@@ -128,7 +129,7 @@ export function registerInvoiceFinancialRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/denials/:id/status", requireAdminOrBiller, async (req, res) => {
+  app.patch("/api/denials/:id/status", requireBillingManage, async (req, res) => {
     try {
       const id = parseInt(req.params.id as string, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });

@@ -262,7 +262,7 @@ export default function AppointmentsPage() {
 
   return (
     <div className="min-h-screen bg-[hsl(210,35%,96%)]">
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         <PageHeader
           variant="light"
           icon={Calendar}

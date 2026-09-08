@@ -43,15 +43,19 @@ export function SketchSurface({
   padded = true,
   "data-testid": dataTestId,
 }: SketchSurfaceProps) {
+  // Frosted-glass tile: translucent fill + backdrop blur so the winter scene
+  // behind the playground reads through every surface (iOS glass look). A soft
+  // white border and inner top highlight give the pane its "lifted glass" edge.
   return (
     <div
       className={cn(
-        "relative border border-slate-200 shadow-sm",
+        "relative border border-white/60 backdrop-blur-2xl",
+        "shadow-[0_10px_40px_rgba(15,23,42,0.10),inset_0_1px_0_rgba(255,255,255,0.65)]",
         padded && "p-4",
         className,
       )}
       style={{
-        backgroundColor: warm ? "#FBFAF7" : "#FFFFFF",
+        backgroundColor: warm ? "rgba(251,250,247,0.85)" : "rgba(255,255,255,0.85)",
         borderRadius: radius,
       }}
       data-testid={dataTestId}

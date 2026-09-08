@@ -2,6 +2,7 @@
 
 import type { Express, Request, Response, NextFunction } from "express";
 import { buildEodReport, buildWeeklyReport, buildMonthlyReport } from "../services/billing/billingReportService";
+import { requireBillingView } from "../middleware/billingGuards";
 
 function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -11,7 +12,7 @@ function requireAdminOrBiller(req: Request, res: Response, next: NextFunction) {
 }
 
 export function registerBillingReportsRoutes(app: Express) {
-  app.get("/api/billing-reports/eod", requireAdminOrBiller, async (req, res) => {
+  app.get("/api/billing-reports/eod", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const date = q.date ? new Date(q.date) : new Date();
@@ -23,7 +24,7 @@ export function registerBillingReportsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/billing-reports/weekly", requireAdminOrBiller, async (req, res) => {
+  app.get("/api/billing-reports/weekly", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const ws = q.weekStart ? new Date(q.weekStart) : new Date();
@@ -35,7 +36,7 @@ export function registerBillingReportsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/billing-reports/monthly", requireAdminOrBiller, async (req, res) => {
+  app.get("/api/billing-reports/monthly", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const month = q.month ?? new Date().toISOString().slice(0, 7);
@@ -47,7 +48,7 @@ export function registerBillingReportsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/billing-reports/facility/:facilityId", requireAdminOrBiller, async (req, res) => {
+  app.get("/api/billing-reports/facility/:facilityId", requireBillingView, async (req, res) => {
     try {
       const facilityId = req.params.facilityId as string;
       const today = new Date();

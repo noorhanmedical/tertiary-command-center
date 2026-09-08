@@ -101,6 +101,9 @@ export function WorkspaceModeSwitcher({
           const meta = MODE_META[mode];
           const Icon = meta.icon;
           const count = counts?.[mode];
+          // Call List surfaces a small RED alert badge for outstanding
+          // actionable assigned calls; other modes keep the neutral chip.
+          const isAlertBadge = mode === "callList" && (count ?? 0) > 0;
           return (
             <button
               key={mode}
@@ -131,14 +134,17 @@ export function WorkspaceModeSwitcher({
               >
                 {meta.shortLabel}
               </span>
-              {count != null && (
+              {count != null && (count > 0 || !isAlertBadge) && (
                 <span
                   className="inline-flex h-4 min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums"
                   style={
-                    isActive
-                      ? { color: meta.accent, backgroundColor: "rgba(31,41,55,0.06)" }
-                      : { color: "#64748B", backgroundColor: "rgba(148,163,184,0.16)" }
+                    isAlertBadge
+                      ? { color: "#FFFFFF", backgroundColor: "#DC2626" }
+                      : isActive
+                        ? { color: meta.accent, backgroundColor: "rgba(31,41,55,0.06)" }
+                        : { color: "#64748B", backgroundColor: "rgba(148,163,184,0.16)" }
                   }
+                  data-testid={`workspace-mode-count-${mode}`}
                 >
                   {count}
                 </span>

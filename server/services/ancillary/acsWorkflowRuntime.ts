@@ -207,10 +207,14 @@ export async function getAcsWorkflowSnapshot(
     statuses.add("billing_ready");
   }
 
-  // Completed = a procedure_event with procedureStatus = "completed" AND billing ready.
-  const procedureComplete = procRows.some(
-    (p) => (p.procedureStatus ?? "").toLowerCase() === "completed",
-  );
+  // Completed = a procedure_event with a terminal completion status AND billing
+  // ready. The canonical procedure lifecycle writes procedureStatus="complete";
+  // legacy rows may carry "completed". Accept BOTH so the ACS "completed"
+  // rollup fires for canonical completions.
+  const procedureComplete = procRows.some((p) => {
+    const s = (p.procedureStatus ?? "").toLowerCase();
+    return s === "complete" || s === "completed";
+  });
   if (procedureComplete && allReady) statuses.add("completed");
 
   return {

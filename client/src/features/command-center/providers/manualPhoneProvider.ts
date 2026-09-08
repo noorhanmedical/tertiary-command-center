@@ -11,6 +11,8 @@ import type {
 let activeCall: PhoneCallSession | null = null;
 const recentCalls: PhoneCallSummary[] = [];
 
+import { capabilitiesFor } from "@shared/phoneProvider";
+
 export const manualPhoneProvider: PhoneProviderAdapter = {
   id: "manual",
   label: "Manual",
@@ -18,6 +20,9 @@ export const manualPhoneProvider: PhoneProviderAdapter = {
   supportsRecordingStatus: false,
   supportsDispositionSync: false,
   supportsCallEvents: false,
+  // Manual has NO telephony capabilities — Plexus cannot initiate, launch,
+  // verify, or time the call. The employee dials on their own phone.
+  capabilities: capabilitiesFor("manual"),
 
   async initialize(_config: PhoneProviderConfig) {
     return;

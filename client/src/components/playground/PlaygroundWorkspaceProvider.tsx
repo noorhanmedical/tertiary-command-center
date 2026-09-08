@@ -26,26 +26,59 @@ function generateId(): string {
   return `ws_${nextId++}_${Date.now().toString(36)}`;
 }
 
-export function PlaygroundWorkspaceProvider({ children }: { children: ReactNode }) {
-  // Restore session on mount.
+export function PlaygroundWorkspaceProvider({
+  children,
+  ownerUserId,
+}: {
+  children: ReactNode;
+  /** The logged-in user id. Persisted with the session and verified on
+   *  restore so a different user in the same browser tab never inherits the
+   *  previous user's open patient tabs (Scenario G). */
+  ownerUserId?: string | null;
+}) {
+  // Owner-scoped restore on mount (Scenario G, FAIL CLOSED). `ownerUserId`
+  // (currentUserId) can be null at mount on a hard refresh while /api/auth/me
+  // resolves, so we restore NOTHING until the owner is known — no foreign or
+  // legacy PHI is ever surfaced before the authenticated owner is confirmed.
+  // The effect below restores this user's own session once the owner resolves.
+  const restoredForOwnerRef = useRef<string | null>(null);
   const [workspaces, setWorkspaces] = useState<PlaygroundWorkspace[]>(() => {
-    const restored = restoreSession();
-    return restored?.workspaces ?? [];
+    if (ownerUserId == null) return [];
+    restoredForOwnerRef.current = ownerUserId;
+    return restoreSession(ownerUserId)?.workspaces ?? [];
   });
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(() => {
-    const restored = restoreSession();
-    return restored?.activeId ?? null;
+    if (ownerUserId == null) return null;
+    return restoreSession(ownerUserId)?.activeId ?? null;
   });
 
-  // Auto-save session on state changes (debounced).
+  // Deferred restore: when the owner was NOT known at mount (auth resolving on
+  // a hard refresh), restore this user's own session once their identity is
+  // confirmed. Runs at most once per owner; restoreSession still rejects
+  // foreign/legacy sessions, so an owner change only ever yields this user's
+  // own tabs (or a clean slate).
+  useEffect(() => {
+    if (ownerUserId == null) return;
+    if (restoredForOwnerRef.current === ownerUserId) return;
+    restoredForOwnerRef.current = ownerUserId;
+    const restored = restoreSession(ownerUserId);
+    setWorkspaces(restored?.workspaces ?? []);
+    setActiveWorkspaceId(restored?.activeId ?? null);
+  }, [ownerUserId]);
+
+  // Auto-save session on state changes (debounced), stamped with the owner.
+  // NEVER persist while the owner is unknown: that would write an
+  // unattributable session and, during the auth-resolving window on a hard
+  // refresh, clobber the prior owner's persisted session with an empty one.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (ownerUserId == null) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveSession(workspaces, activeWorkspaceId);
+      saveSession(workspaces, activeWorkspaceId, ownerUserId);
     }, 300);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [workspaces, activeWorkspaceId]);
+  }, [workspaces, activeWorkspaceId, ownerUserId]);
 
   // Workspace-owned save handlers, keyed by workspace id. Populated via
   // registerSaveHandler; consumed by saveWorkspace (Save & Close). Kept in a

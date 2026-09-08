@@ -12,7 +12,7 @@ import {
 } from "@shared/schema";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import { listJourneyEvents } from "../repositories/executionCase.repo";
-import { calculateNextActionAt } from "../services/callList/nextActionPolicy";
+import { resolveAssignmentNextActionAt } from "../services/callList/nextActionPolicy";
 
 // No-duplicate-scheduler-per-date guard.
 //
@@ -818,30 +818,25 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
               ? allSchedulers.find((s) => s.id === previousSchedulerId) ?? null
               : null;
 
-          const NEW_STATES = new Set(["new", "ready", "assigned", "not_reached"]);
-          const nextEngagementStatus = NEW_STATES.has(
-            execCase.engagementStatus ?? "",
-          )
-            ? "assigned"
-            : execCase.engagementStatus;
+          // Invariant #4: a pure ownership change must NOT reset workflow
+          // state. Only promote a genuinely-unassigned ("new"/"ready"/empty)
+          // case to "assigned"; preserve contacted / not_reached /
+          // needs_followup / callback / … so manual reassignment keeps the
+          // patient's real progress.
+          const currentStatus = execCase.engagementStatus ?? "";
+          const nextEngagementStatus =
+            currentStatus === "" || currentStatus === "new" || currentStatus === "ready"
+              ? "assigned"
+              : execCase.engagementStatus;
 
-          // Option 2 (§2 + §4): set next_action_at via the shared policy so the
-          // case surfaces on the call list immediately. A pending future
-          // callback (e.g. a prior disposition) is preserved instead of being
-          // pulled forward; otherwise the fresh assignment surfaces now.
+          // Invariant #1: preserve a pending future callback EXACTLY (shared
+          // helper — identical logic to auto-distribution); otherwise surface
+          // now. Changing the owner never changes when the patient is due.
           const now = new Date();
-          const existingNext = execCase.nextActionAt
-            ? new Date(execCase.nextActionAt as unknown as string)
-            : null;
-          const existingFuture =
-            existingNext && !Number.isNaN(existingNext.getTime()) && existingNext.getTime() > now.getTime()
-              ? existingNext
-              : null;
-          const { nextActionAt: policyNext } = calculateNextActionAt({
-            isAssignment: true,
+          const nextActionAt = resolveAssignmentNextActionAt(
+            execCase.nextActionAt ?? null,
             now,
-          });
-          const nextActionAt = existingFuture ?? policyNext;
+          );
 
           await db
             .update(patientExecutionCases)

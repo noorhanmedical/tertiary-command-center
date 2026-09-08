@@ -38,6 +38,11 @@ import {
 import { fetchPatientCommandCenter, type CommandCenterResponse } from "@/lib/portal/commandCenterApi";
 import { schedulePatientAncillary } from "@/lib/workflow/teamMemberWorkspaceApi";
 import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
+// Phase 6 — ONE definition of availability: the Team Portal calendar consumes
+// the SAME canonical availability API + engine as UnifiedScheduler (no static
+// slots when a capacity-backed service is selected).
+import { fetchAvailability, pretty12h, type AvailabilityResult } from "@/lib/scheduling/availabilityApi";
+import { getAncillaryCategory } from "@shared/ancillaryCategory";
 
 const ACCENT = "#4863A0";
 const POLL_MS = 30_000;
@@ -345,6 +350,12 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
       setNote("");
     },
     onError: (err: unknown) => {
+      // A stale-slot conflict (server-side revalidation 409) surfaces here.
+      // Refresh availability so the grid reflects the current truth; the
+      // patient context + form stay intact (no data loss).
+      queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "sw-availability",
+      });
       toast({
         title: "Could not schedule",
         description: err instanceof Error ? err.message : "Schedule write failed.",
@@ -352,6 +363,28 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
       });
     },
   });
+
+  // Phase 6 — real feasible slots for the selected capacity-backed service on
+  // the selected date, from the canonical availability API (same engine as
+  // UnifiedScheduler). Non-capacity services ("other") fall back to the static
+  // grid below. Never invents times.
+  const swResourceType = getAncillaryCategory(appointmentType || "");
+  const swAvailabilityEnabled =
+    !!facilityId && swResourceType !== "other" && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate);
+  const { data: swAvailability } = useQuery<AvailabilityResult>({
+    queryKey: ["sw-availability", facilityId, selectedDate, appointmentType],
+    queryFn: () =>
+      fetchAvailability({
+        facility: facilityId,
+        date: selectedDate,
+        services: [{ resourceType: swResourceType as "brainwave" | "vitalwave" | "ultrasound" }],
+        patientKey: ctx.patientScreeningId != null ? `ps:${ctx.patientScreeningId}` : null,
+      }),
+    enabled: swAvailabilityEnabled,
+    staleTime: 10_000,
+  });
+  const swSlots = swAvailability?.slots ?? [];
+  const swRecommendations = swAvailability?.recommendations ?? [];
 
   const initials = ctx.patientName
     .split(/\s+/)
@@ -435,23 +468,72 @@ export function SchedulingWorkspace({ ctx, facility, selectedDate: initialDate, 
                 Available times
               </div>
               <div className="mb-3 text-[11px] text-slate-400">{prettyDateLong(selectedDate)}</div>
-              <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
-                {TIME_SLOTS.map((slot) => (
-                  <SketchButton
-                    key={slot}
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    active={slot === time}
-                    seedId={`sw-slot-${slot}`}
-                    onClick={() => setTime(slot)}
-                    className="justify-center"
-                    data-testid={`sw-slot-${slot}`}
-                  >
-                    {prettyTime(slot)}
-                  </SketchButton>
-                ))}
-              </div>
+              {swRecommendations.length > 0 ? (
+                <div className="mb-2 flex flex-col gap-1" data-testid="sw-recommendations">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Suggested times
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {swRecommendations.slice(0, 3).map((r) => (
+                      <button
+                        key={r.time}
+                        type="button"
+                        onClick={() => setTime(r.time)}
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-left text-[11px] hover:bg-slate-50"
+                        title={r.reasons.join(" · ")}
+                        data-testid={`sw-recommendation-${r.time}`}
+                      >
+                        <span className="font-semibold text-slate-900">{pretty12h(r.time)}</span>
+                        <span className="ml-1 text-slate-500">{r.reasons[0]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {swSlots.length > 0 ? (
+                // Real feasible slots from the canonical availability engine.
+                <div
+                  className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5"
+                  data-testid="sw-availability-grid"
+                >
+                  {swSlots.map((slot) => (
+                    <SketchButton
+                      key={slot.time}
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      active={slot.time === time}
+                      disabled={!slot.fits}
+                      seedId={`sw-slot-${slot.time}`}
+                      onClick={() => setTime(slot.time)}
+                      className="justify-center"
+                      data-testid={`sw-slot-${slot.time}`}
+                      title={slot.fits ? undefined : slot.reason ?? "Unavailable"}
+                    >
+                      {pretty12h(slot.time)}
+                    </SketchButton>
+                  ))}
+                </div>
+              ) : (
+                // Fallback (non-capacity "other" services): the generic grid.
+                <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
+                  {TIME_SLOTS.map((slot) => (
+                    <SketchButton
+                      key={slot}
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      active={slot === time}
+                      seedId={`sw-slot-${slot}`}
+                      onClick={() => setTime(slot)}
+                      className="justify-center"
+                      data-testid={`sw-slot-${slot}`}
+                    >
+                      {prettyTime(slot)}
+                    </SketchButton>
+                  ))}
+                </div>
+              )}
               <div className="mt-3">
                 <Label
                   htmlFor="sw-custom-time"

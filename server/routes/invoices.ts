@@ -4,14 +4,12 @@ import { storage } from "../storage";
 import { INVOICE_STATUSES, PAYMENT_METHODS } from "@shared/schema";
 import { logAudit } from "../services/auditService";
 import { sendOutreachEmail } from "../services/emailService";
+import { requireBillingView, requireBillingManage } from "../middleware/billingGuards";
 
-const requireBillerOrAdmin = (req: Request, res: Response, next: NextFunction) => {
-  const role = req.session?.role;
-  if (role !== "admin" && role !== "biller") {
-    return res.status(403).json({ error: "Forbidden — requires admin or biller role" });
-  }
-  return next();
-};
+// Phase 4A: invoice reads → billing.view; invoice mutations → billing.manage.
+// Enforcement OFF → legacy admin|biller fallback (behavior preserved).
+const requireBillerOrAdmin = requireBillingView;
+const requireInvoiceWrite = requireBillingManage;
 
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
 
@@ -187,7 +185,7 @@ export function registerInvoiceRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices", requireBillerOrAdmin, async (req, res) => {
+  app.post("/api/invoices", requireInvoiceWrite, async (req, res) => {
     try {
       const parsed = createInvoiceSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
@@ -256,7 +254,7 @@ export function registerInvoiceRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/invoices/:id/status", requireBillerOrAdmin, async (req, res) => {
+  app.patch("/api/invoices/:id/status", requireInvoiceWrite, async (req, res) => {
     try {
       const id = parseInt(String(req.params.id), 10);
       const parsed = updateStatusSchema.safeParse(req.body);
@@ -270,7 +268,7 @@ export function registerInvoiceRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/send-email", requireBillerOrAdmin, async (req, res) => {
+  app.post("/api/invoices/:id/send-email", requireInvoiceWrite, async (req, res) => {
     try {
       const id = parseInt(String(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid invoice id" });
@@ -354,7 +352,7 @@ export function registerInvoiceRoutes(app: Express) {
     }
   });
 
-  app.post("/api/invoices/:id/payments", requireBillerOrAdmin, async (req, res) => {
+  app.post("/api/invoices/:id/payments", requireInvoiceWrite, async (req, res) => {
     try {
       const id = parseInt(String(req.params.id), 10);
       const invoice = await storage.getInvoice(id);
@@ -381,7 +379,7 @@ export function registerInvoiceRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/invoices/:id/payments/:paymentId", requireBillerOrAdmin, async (req, res) => {
+  app.delete("/api/invoices/:id/payments/:paymentId", requireInvoiceWrite, async (req, res) => {
     try {
       const invoiceId = parseInt(String(req.params.id), 10);
       const paymentId = parseInt(String(req.params.paymentId), 10);
@@ -397,7 +395,7 @@ export function registerInvoiceRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/invoices/:id", requireBillerOrAdmin, async (req, res) => {
+  app.delete("/api/invoices/:id", requireInvoiceWrite, async (req, res) => {
     try {
       const id = parseInt(String(req.params.id), 10);
       await storage.deleteInvoice(id);

@@ -10,6 +10,7 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -486,18 +487,13 @@ export default function ClinicAnalyticsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/15 to-teal-500/15 text-emerald-700">
-            <BarChart3 className="w-5 h-5" strokeWidth={1.75} />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-slate-900" data-testid="text-clinic-analytics-title">
-              Clinic Analytics
-            </h1>
-            <p className="text-sm text-slate-500">Due diligence &amp; ancillary revenue opportunity</p>
-          </div>
-        </div>
+      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur px-6 py-4">
+        <InteriorPageTitle
+          title="Clinic Analytics"
+          context={clinic.name}
+          titleTestId="text-clinic-analytics-title"
+        />
+        <p className="mt-4 text-sm text-slate-500">Due diligence &amp; ancillary revenue opportunity</p>
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">

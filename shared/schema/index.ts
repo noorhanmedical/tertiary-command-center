@@ -25,6 +25,10 @@ export * from "./appSettings";
 export * from "./session";
 export * from "./clinics";
 export * from "./users";
+// Plexus OS Access Control (Phase 1) — organizations, roles, permissions,
+// role_permissions, user_roles, user_permission_overrides, user_organizations,
+// user_clinics, role/user service access. Additive; migration 0079.
+export * from "./access";
 export * from "./screening";
 export * from "./patientHistory";
 export * from "./notes";
@@ -78,6 +82,23 @@ export * from "./callHandoffs";
 // case is currently uncovered (category + reason). NOT a second ownership
 // store; the case stays canonically unassigned. Migration 0068.
 export * from "./needsCoverage";
+// Phase 2B — durable daily reconciliation RUN ledger: execution state
+// (started/succeeded/failed/configuration_error) of the clinic-local 5 AM
+// canonical engagement reconciliation, keyed by (clinic, operational date,
+// job type). NOT a scheduler/allocator and NOT the scheduler_assignments
+// history snapshot. Migration 0082 (applied manually). No PHI.
+export * from "./reconciliationRuns";
+// Phase 3 — workforce shifts + intra-day availability: per-(member, date)
+// shift window + real-time availability state (date overrides + early
+// departure / breaks). Recurring default lives on engagement_call_settings.
+// Full-day PTO stays in pto_requests. Migration 0083 (applied manually).
+export * from "./workforceShifts";
+// Phase 6 — telephony sessions: minimal, durable PROVIDER EVIDENCE for an
+// in-progress provider-backed call (state / timing / duration / provider
+// session id), kept strictly separate from the business disposition record
+// (outreach_calls). Evidence only; never a business outcome. Migration 0085
+// (applied manually).
+export * from "./telephonySessions";
 // Phase 6A (Team Ops resilience) — unified operational NOTIFICATIONS: a
 // lightweight delivery/signal layer that points at canonical records (task /
 // handoff / conversation / case) without duplicating them. Migration 0073.

@@ -20,7 +20,6 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
-import { DocumentReadinessPanel } from "@/components/patient/DocumentReadinessPanel";
 import { CanonicalAncillaryDocumentsList } from "@/components/ancillary-documents/CanonicalAncillaryDocuments";
 import { isUnifiedAncillaryDocumentsEnabled } from "@/lib/unifiedAncillaryDocumentsFlag";
 // Phase B2 — IA / interaction redesign. The archaic nested disclosure
@@ -39,6 +38,7 @@ import {
   RowActions,
   type PlexusStatusTone,
 } from "@/components/plexus-ui";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 
 type NoteSection = { heading: string; body: string };
 
@@ -403,7 +403,6 @@ export default function DocumentsPage() {
     activePatient?.allNotes[0] ??
     null;
 
-  const facilityContext = activeFacility ?? "Taylor Family Practice";
 
   // Active service context within the selected patient (§13). Multiple
   // ancillary services become compact tabs instead of duplicated card rows.
@@ -416,14 +415,13 @@ export default function DocumentsPage() {
   return (
     <PlexusPage className="plexus-workspace flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-[1520px] px-6 py-6">
-        {/* ── Title + subtitle only (no extra words, on canvas) ─────────── */}
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <h1 style={{ fontWeight: 600, fontSize: 36, lineHeight: 1.1, letterSpacing: "-0.02em", color: "#182234" }} data-testid="plexus-page-title">
-              Ancillary Documents
-            </h1>
-            <p className="mt-1" style={{ fontSize: 14, color: "#5b6b82" }}>{facilityContext}</p>
-          </div>
+        {/* ── Title + optional facility context + hairline ──────────────── */}
+        <div className="mb-5">
+          <InteriorPageTitle
+            title="Ancillary Documents"
+            context={selectedFacility ?? undefined}
+            titleTestId="plexus-page-title"
+          />
         </div>
 
         {/* ── Toolbar (one flat white bar) ──────────────────────────────── */}
@@ -473,10 +471,6 @@ export default function DocumentsPage() {
           <CanonicalAncillaryDocumentsList enabled />
         ) : (
           <>
-            <div className="mb-5">
-              <DocumentReadinessPanel />
-            </div>
-
             {isLoading ? (
               <div className="space-y-2" data-testid="documents-loading">
                 <SkeletonRow />

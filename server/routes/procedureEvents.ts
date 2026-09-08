@@ -8,6 +8,23 @@ import {
   type ProcedureEvent,
 } from "../repositories/procedureEvents.repo";
 import { updateGlobalScheduleEvent } from "../repositories/globalSchedule.repo";
+import {
+  getExecutionCaseById,
+  getExecutionCaseByScreeningId,
+} from "../repositories/executionCase.repo";
+import {
+  resolveTeamPortalScope,
+  scopeCapabilityForClinic,
+} from "../services/teamPortalScope";
+import {
+  resolveAuthorizedClinicScope,
+  scopePermitsClinic,
+} from "../services/access/authorizedClinicScope";
+import { getAncillaryCaseById } from "../repositories/ancillaryCases.repo";
+import { getGlobalScheduleEventById } from "../repositories/globalSchedule.repo";
+import { db } from "../db";
+import { clinics } from "@shared/schema/clinics";
+import { eq } from "drizzle-orm";
 import { featureFlags } from "../lib/featureFlags";
 import {
   completeCanonicalProcedure,
@@ -43,6 +60,111 @@ function requireClinicScope(req: Request, res: Response): number | null {
     return null;
   }
   return clinicId;
+}
+
+/** Map a facility NAME to its canonical clinic id (used only when a legacy
+ *  execution case has no clinic_id populated). */
+async function resolveClinicIdByFacilityName(name: string): Promise<number | null> {
+  const [row] = await db.select({ id: clinics.id }).from(clinics).where(eq(clinics.name, name)).limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * Per-clinic authorization for procedure completion.
+ *
+ * The TARGET CLINIC is derived from server-owned canonical identity (ancillary
+ * case → schedule event → execution case → screening), NEVER from the client
+ * body. Behavior:
+ *
+ *   • Target clinic RESOLVED:
+ *       - admin                          → allowed; completion runs against the
+ *                                          target clinic.
+ *       - non-admin in scope             → allowed (fast path: session clinic
+ *                                          matches; else canonical multi-clinic
+ *                                          scope). Completion runs against the
+ *                                          target clinic.
+ *       - non-admin NOT in scope         → 404 (tenant-safe not-found; never
+ *                                          discloses cross-tenant existence,
+ *                                          never mutates).
+ *   • Target clinic UNRESOLVED (only a not-yet-linkable id, or a lookup that
+ *     hit a missing schema element): DO NOT pre-empt with an error — defer to
+ *     the caller's own clinic scope and let completeCanonicalProcedure resolve
+ *     and return the truthful canonical status (migration_missing → 503,
+ *     invalid_schedule_event → 409, case_not_found → 404, …). This preserves
+ *     the canonical-writer contract that owns identity resolution.
+ *   • No clinic context at all (no target clinic AND no session clinic):
+ *     403 — missing clinic context fails closed.
+ *
+ * `ok.clinicId` is always a concrete clinic id to pass to the canonical writer.
+ */
+async function authorizeProcedureCompletion(
+  req: Request,
+  res: Response,
+  target: {
+    executionCaseId?: number | null;
+    patientScreeningId?: number | null;
+    ancillaryCaseId?: number | null;
+    globalScheduleEventId?: number | null;
+  },
+): Promise<{ ok: true; clinicId: number } | { ok: false }> {
+  const isAdmin = (req.session?.role ?? "") === "admin";
+  const sessionClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+
+  // Resolve the target clinic from any canonical identifier. A lookup that hits
+  // a missing schema element (migration) must NOT block — the canonical writer
+  // will surface migration_missing (→ 503). Best-effort; never throws out.
+  let targetClinicId: number | null = null;
+  try {
+    if (target.ancillaryCaseId != null) {
+      const ac = await getAncillaryCaseById(target.ancillaryCaseId);
+      if (ac) targetClinicId = ac.clinicId ?? null;
+    }
+    if (targetClinicId == null && target.globalScheduleEventId != null) {
+      const ev = await getGlobalScheduleEventById(target.globalScheduleEventId);
+      if (ev) {
+        targetClinicId = ev.clinicId ?? null;
+        if (targetClinicId == null && ev.facilityId) targetClinicId = await resolveClinicIdByFacilityName(ev.facilityId);
+      }
+    }
+    if (targetClinicId == null && (target.executionCaseId != null || target.patientScreeningId != null)) {
+      const caseRow = target.executionCaseId != null
+        ? await getExecutionCaseById(target.executionCaseId)
+        : await getExecutionCaseByScreeningId(target.patientScreeningId as number);
+      if (caseRow) {
+        targetClinicId = caseRow.clinicId ?? null;
+        if (targetClinicId == null && caseRow.facilityId) targetClinicId = await resolveClinicIdByFacilityName(caseRow.facilityId);
+      }
+    }
+  } catch {
+    // Lookup failed (e.g. migration-missing) — defer to the canonical writer.
+    targetClinicId = null;
+  }
+
+  if (targetClinicId != null) {
+    if (isAdmin) return { ok: true, clinicId: targetClinicId };
+    let permitted = sessionClinicId != null && sessionClinicId === targetClinicId;
+    if (!permitted) {
+      try {
+        const scope = await resolveAuthorizedClinicScope(req);
+        permitted = scopePermitsClinic(scope, targetClinicId);
+      } catch {
+        permitted = false;
+      }
+    }
+    if (!permitted) {
+      res.status(404).json({ error: "Not found" });
+      return { ok: false };
+    }
+    return { ok: true, clinicId: targetClinicId };
+  }
+
+  // Target clinic unresolved — need SOME clinic context to hand the canonical
+  // writer. Use the caller's session clinic; if there is none, fail closed.
+  if (sessionClinicId == null) {
+    res.status(403).json({ error: "Clinic scope required" });
+    return { ok: false };
+  }
+  return { ok: true, clinicId: sessionClinicId };
 }
 
 /** Clinic-facing DTO — omits internal global identity (Plexus patient /
@@ -86,12 +208,22 @@ export function registerProcedureEventRoutes(app: Express) {
   // POST /api/procedure-events/complete — clinic-scoped write.
   app.post("/api/procedure-events/complete", async (req, res) => {
     try {
-      const clinicId = requireClinicScope(req, res);
-      if (clinicId == null) return;
       const parsed = procedureCompleteSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
+      // Per-clinic authorization: derive the target clinic from canonical
+      // identity (ancillary case / schedule event / execution case / screening)
+      // and enforce tenant scope. Unresolved targets defer to the canonical
+      // writer for a truthful status (409/503/404).
+      const auth = await authorizeProcedureCompletion(req, res, {
+        executionCaseId: parsed.data.executionCaseId ?? null,
+        patientScreeningId: parsed.data.patientScreeningId ?? null,
+        ancillaryCaseId: parsed.data.ancillaryCaseId ?? null,
+        globalScheduleEventId: parsed.data.globalScheduleEventId ?? null,
+      });
+      if (!auth.ok) return;
+      const clinicId = auth.clinicId;
       const { completedAt, globalScheduleEventId, ...rest } = parsed.data;
 
       // Phase 2F canonical path — dedupe by ancillary case, awaited note ensure.
@@ -261,6 +393,87 @@ export function registerProcedureEventRoutes(app: Express) {
       const row = await getProcedureEventByIdForClinic(id, clinicId);
       if (!row) return res.status(404).json({ error: "Procedure event not found" });
       res.json(toClinicDto(row));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Procedure component evidence (P1 — was BACKEND-ONLY / unwired) ────────
+  // The performed-component record (BrainWave: neuropsych/EEG/ECG/VEP/AEP;
+  // VitalWave: autonomic/tilt/BP-HR/segmental/waveform/rhythm-ECG) is what the
+  // canonical Procedure Note renders and what billing CPT selection uses. The
+  // persistence function existed but was reachable from NO route, so BW/VW
+  // Procedure Notes could never render their real content. This exposes it.
+  //
+  // GET  → read the recorded components (clinic-scoped).
+  // POST → validate + persist components (requires the procedure to be
+  //        complete), then best-effort (re)generate the Procedure Note so it
+  //        reflects the recorded evidence. Never fabricates completion.
+  app.get("/api/procedure-events/:id/components", async (req, res) => {
+    try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
+      const id = parseInt(String(req.params.id), 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const row = await getProcedureEventByIdForClinic(id, clinicId);
+      if (!row) return res.status(404).json({ error: "Procedure event not found" });
+      const { loadProcedureComponents } = await import(
+        "../services/procedureLifecycle/procedureNoteContext"
+      );
+      const components = await loadProcedureComponents(id, row.serviceType);
+      res.json({ procedureEventId: id, serviceType: row.serviceType, components });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/procedure-events/:id/components", async (req, res) => {
+    try {
+      const clinicId = requireClinicScope(req, res);
+      if (clinicId == null) return;
+      const id = parseInt(String(req.params.id), 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const row = await getProcedureEventByIdForClinic(id, clinicId);
+      if (!row) return res.status(404).json({ error: "Procedure event not found" });
+      const rawComponents = (req.body ?? {}).components ?? req.body;
+      const { recordProcedureComponents } = await import(
+        "../services/procedureLifecycle/procedureNoteContext"
+      );
+      const result = await recordProcedureComponents({
+        clinicId,
+        procedureEventId: id,
+        serviceType: row.serviceType,
+        rawComponents,
+      });
+      if (result.status !== "recorded") {
+        const code =
+          result.status === "invalid_components" ? 400
+          : result.status === "not_complete" ? 409
+          : result.status === "cross_clinic_denied" ? 403
+          : 404;
+        return res.status(code).json({ status: result.status });
+      }
+      // Best-effort Procedure Note (re)generation from the recorded evidence.
+      // Non-throwing: recording succeeded regardless of note reconciliation.
+      let noteReconciliation = "not_attempted";
+      if (row.ancillaryCaseId != null) {
+        try {
+          const { ensureCanonicalProcedureNoteForAncillaryCase } = await import(
+            "../services/procedureLifecycle/procedureLifecycleOrchestration"
+          );
+          const note = await ensureCanonicalProcedureNoteForAncillaryCase({
+            clinicId,
+            ancillaryCaseId: row.ancillaryCaseId,
+            actorUserId: req.session?.userId ?? null,
+            source: "procedure_components_recorded",
+          });
+          noteReconciliation = note.status;
+        } catch (e) {
+          noteReconciliation = "note_reconciliation_failed";
+          console.error("[procedureEvents.route] component note reconcile failed:", e);
+        }
+      }
+      res.status(200).json({ status: "recorded", noteReconciliation });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

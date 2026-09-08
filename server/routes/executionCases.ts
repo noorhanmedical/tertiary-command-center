@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { patientExecutionCases } from "@shared/schema/executionCase";
@@ -13,10 +13,25 @@ import {
   listJourneyEvents,
   listEngagementCenterCases,
   listSchedulerPortalCases,
+  countSchedulerPortalCases,
   assignEngagementCases,
   recallExecutionCaseToCallList,
 } from "../repositories/executionCase.repo";
+import {
+  resolveAuthorizedClinicScope,
+  scopePermitsClinic,
+} from "../services/access/authorizedClinicScope";
+import {
+  resolveTeamPortalScope,
+  scopeFacilityIds,
+  scopeRosterIds,
+} from "../services/teamPortalScope";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import {
+  resolveActingSchedulerId,
+  decideClaimForCallResult,
+  StaleWorkClaimError,
+} from "../services/engagement/workClaimService";
 import { featureFlags } from "../lib/featureFlags";
 import {
   runCallResultScheduling,
@@ -41,7 +56,7 @@ import {
 } from "../services/callResult/callResultAuditIdentity";
 import { applyCallResultRouting } from "../services/callResult/applyCallResultRouting";
 import { getEffectiveAdminSettings } from "../services/adminSettings/adminSettingsEffectiveService";
-import { planCallAttempt } from "../services/callResult/callAttemptRuntime";
+import { planCallAttempt, resolveTerminalExecutionState } from "../services/callResult/callAttemptRuntime";
 import { deriveRoutingApplication } from "../services/callResult/callResultRoutingApplier";
 
 // ADMIN VIEW-AS — same shape as the helper in globalSchedule.ts so the
@@ -113,7 +128,13 @@ import type {
   UpsertTriageCaseArgs,
   CreateFollowUpTaskArgs,
 } from "../services/callResult/recordCallResultExecutionAdapter";
-import { ensureCanonicalCallRecord } from "../services/callResult/canonicalCallRecord";
+import { ensureCanonicalCallRecord, type CallRecordDbExecutor } from "../services/callResult/canonicalCallRecord";
+// Phase 2 — clinic-local business-day retry timing. The disposition next-action
+// computation below rolls a COMPUTED retry onto the clinic's next business day
+// (never a weekend/holiday, in the clinic's own timezone). Explicit
+// patient-requested callbacks are preserved exactly (never shifted).
+import { resolveClinicTimeZone } from "../services/engagement/clinicTimeZone";
+import { rollInstantToBusinessDay } from "../lib/clinicTime";
 
 /**
  * Outcomes the canonical recordCallResult planner understands. The
@@ -254,6 +275,64 @@ export function selectAncillaryCaseForRow(
   return sameClinic.length === 1 ? { ancillaryCaseId: sameClinic[0].id, serviceType: sameClinic[0].serviceType } : { ancillaryCaseId: null, serviceType: null };
 }
 
+// Phase 4 — the drizzle transaction handle type, for the claim helpers that run
+// INSIDE the call-result transaction.
+type CallResultTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Phase 4 — active-work-claim guard, run as the FIRST statement inside a
+ * call-result transaction. Reads the (committed) claim and applies the pure
+ * decision:
+ *   • no active claim            → allow, nothing to release (pre-Phase-4).
+ *   • claim held by the submitter → allow, release-on-success (returns true).
+ *   • claim held by someone else  → throw StaleWorkClaimError (→ 409) unless the
+ *                                   submitter is an admin override.
+ * Returns whether the submitter's own claim should be released on success.
+ *
+ * IMPORTANT: this is a plain (unlocked) read, NOT `SELECT … FOR UPDATE`. Holding
+ * a row lock on the case for the whole transaction would deadlock the delegation
+ * path's best-effort journey-event append, which runs on a SEPARATE pool
+ * connection inside the tx and needs a FOR-KEY-SHARE lock on that same case row
+ * (the exact cross-connection deadlock documented in applyDistribution). A
+ * committed-state read is sufficient for stale-tab protection: claim mutations
+ * are serialized in workClaimService (advisory lock + FOR UPDATE), and the
+ * disposition's own execution-case UPDATE still locks the row at write time.
+ */
+async function guardWorkClaimInTx(
+  tx: CallResultTx,
+  executionCase: { id: number } | null,
+  actingSchedulerId: number | null,
+  isAdmin: boolean,
+): Promise<boolean> {
+  if (!executionCase) return false;
+  const [claimRow] = await tx
+    .select({
+      activeClaimBy: patientExecutionCases.activeClaimBy,
+      activeClaimExpiresAt: patientExecutionCases.activeClaimExpiresAt,
+    })
+    .from(patientExecutionCases)
+    .where(eq(patientExecutionCases.id, executionCase.id))
+    .limit(1);
+  const decision = decideClaimForCallResult(
+    claimRow ?? { activeClaimBy: null, activeClaimExpiresAt: null },
+    actingSchedulerId,
+    isAdmin,
+    new Date(),
+  );
+  if (decision.reject) throw new StaleWorkClaimError(decision.holderSchedulerId);
+  return decision.heldBySubmitter;
+}
+
+/** Release the submitter's own active-work claim (clear the claim columns) as
+ *  part of the disposition transaction. NEVER touches engagement/lifecycle/
+ *  next-action/attempt state — only the three orthogonal claim columns. */
+async function releaseWorkClaimInTx(tx: CallResultTx, executionCaseId: number): Promise<void> {
+  await tx
+    .update(patientExecutionCases)
+    .set({ activeClaimBy: null, activeClaimAt: null, activeClaimExpiresAt: null })
+    .where(eq(patientExecutionCases.id, executionCaseId));
+}
+
 export function registerExecutionCaseRoutes(app: Express) {
   // GET /api/execution-cases
   // Filters: engagementBucket, lifecycleStatus, engagementStatus, facilityId,
@@ -263,6 +342,8 @@ export function registerExecutionCaseRoutes(app: Express) {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listExecutionCases>[0] = {};
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) filters.clinicIds = scope.clinicIds;
       if (q.engagementBucket) filters.engagementBucket = q.engagementBucket;
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
@@ -287,6 +368,8 @@ export function registerExecutionCaseRoutes(app: Express) {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listEngagementCenterCases>[0] = {};
+      const ecScope = await resolveAuthorizedClinicScope(req);
+      if (!ecScope.admin) filters.clinicIds = ecScope.clinicIds;
       if (q.engagementBucket) filters.engagementBucket = q.engagementBucket;
       if (q.facilityId) filters.facilityId = q.facilityId;
       if (q.assignedTeamMemberId) {
@@ -383,6 +466,29 @@ export function registerExecutionCaseRoutes(app: Express) {
       const parsed = assignBodySchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      // Tenant isolation (P0): bulk assignment mutates case ownership. Admin is
+      // cross-clinic. A non-admin actor MUST target a specific facility that is
+      // within their authorized clinic scope — an unscoped (facility-less) or
+      // foreign-clinic assignment by a non-admin is refused (never a
+      // cross-clinic bulk mutation).
+      const assignScope = await resolveAuthorizedClinicScope(req);
+      if (!assignScope.admin) {
+        const facilityId = parsed.data.facilityId?.trim() || null;
+        if (!facilityId) {
+          return res.status(403).json({ error: "Forbidden — facilityId required for non-admin assignment" });
+        }
+        let clinicId: number | null = null;
+        try {
+          const { createFacilityResolver } = await import("../services/facilityResolver");
+          const { resolve } = await createFacilityResolver();
+          clinicId = resolve(facilityId)?.clinicId ?? null;
+        } catch {
+          clinicId = null;
+        }
+        if (!scopePermitsClinic(assignScope, clinicId)) {
+          return res.status(403).json({ error: "Forbidden — clinic not assigned to this user" });
+        }
       }
       const result = await assignEngagementCases(parsed.data);
       return res.json({ ok: true, ...result });
@@ -627,6 +733,38 @@ export function registerExecutionCaseRoutes(app: Express) {
         });
       }
 
+      // ── Per-case clinic authorization (P0 — tenant isolation on a WRITE) ──
+      // A non-admin caller may only log a call result against a case whose
+      // clinic is within their authorized scope. Fast path: the resolved case's
+      // clinic matches the session clinic (no access-DB round trip — this is
+      // the common path and the one the canonical writer test harness exercises).
+      // On mismatch we fall back to the canonical multi-clinic access scope so a
+      // legitimately multi-clinic user is not wrongly blocked. Foreign clinic →
+      // 404 (never disclose cross-tenant existence; never mutate). Admin passes.
+      // This runs BEFORE the canonical scheduling bridge, so the canonical
+      // writer invariant (which independently rejects event-vs-request clinic
+      // mismatch with 409) remains intact for same-clinic callers.
+      {
+        const isAdminActor = (req.session.role ?? "") === "admin";
+        if (!isAdminActor && executionCase) {
+          const caseClinicId = executionCase.clinicId ?? null;
+          const sessionClinicId = (req as { clinicId?: number | null }).clinicId ?? null;
+          let permitted =
+            caseClinicId != null && sessionClinicId != null && caseClinicId === sessionClinicId;
+          if (!permitted) {
+            try {
+              const scope = await resolveAuthorizedClinicScope(req);
+              permitted = scopePermitsClinic(scope, caseClinicId);
+            } catch {
+              permitted = false;
+            }
+          }
+          if (!permitted) {
+            return res.status(404).json({ error: "Not found" });
+          }
+        }
+      }
+
       // ── Canonical call-record closeout — IDEMPOTENT REPLAY ─────────────
       // If the caller supplied a callKey that already maps to a durable call
       // record, this is a retry of the SAME attempt. Return the current state
@@ -695,6 +833,8 @@ export function registerExecutionCaseRoutes(app: Express) {
       // appropriate call list per admin settings instead of relying on
       // the canonical planner's hardcoded 4-hour fallback.
       let computedNextActionAt: Date | null = null;
+      // EXPLICIT patient-requested callback — preserved EXACTLY, never shifted
+      // (Phase 2 rule: "Call me Tuesday at 2:30 PM" stays Tuesday 2:30 PM).
       if (data.nextActionAt) {
         const dt = new Date(data.nextActionAt);
         if (!isNaN(dt.getTime())) computedNextActionAt = dt;
@@ -711,7 +851,15 @@ export function registerExecutionCaseRoutes(app: Express) {
         if (hours !== null) {
           const dt = new Date();
           dt.setHours(dt.getHours() + hours);
-          computedNextActionAt = dt;
+          // Phase 2 — TIME CORRECTNESS: a COMPUTED retry (now + policy hours)
+          // must land on a clinic-local BUSINESS day, in the clinic's OWN
+          // timezone (no Saturday/Sunday/holiday callbacks), preserving the
+          // local time-of-day. This does NOT change the cadence numbers — only
+          // the day the retry surfaces. The clinic timezone comes from the
+          // case's clinic (clinics.timezone) with an observable Central-time
+          // fallback. Explicit callbacks (above) are never rolled.
+          const clinicTz = (await resolveClinicTimeZone(executionCase?.clinicId ?? null)).timeZone;
+          computedNextActionAt = rollInstantToBusinessDay(dt, clinicTz);
         }
       }
 
@@ -735,6 +883,14 @@ export function registerExecutionCaseRoutes(app: Express) {
         outcome: data.callResult,
         maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
       });
+
+      // ── Phase 4 — resolve the acting scheduler + admin flag for the active-
+      // work-claim guard applied inside BOTH write transactions below. Resolved
+      // HERE (outside the tx) so no roster lookup runs while a FOR UPDATE row
+      // lock is held. A caller with no roster mapping resolves to null, which
+      // still lets the guard reject a genuine stale/concurrent submission.
+      const actingSchedulerId = await resolveActingSchedulerId(actorUserId);
+      const isAdminActor = (req.session.role ?? "") === "admin";
 
       // ─── Engagement-route DELEGATION (Batch 3 of Engagement completion run) ──
       //
@@ -803,12 +959,18 @@ export function registerExecutionCaseRoutes(app: Express) {
         // isCallAttempt:false to opt out. Idempotency via data.callKey.
         const shouldCreateCallRecord = data.isCallAttempt !== false;
         let delegatedCallRecordCreated = false;
+        // Phase 1B — the transaction handle for the MANDATORY writes (durable
+        // call record + execution-case advance). Set for the duration of the
+        // db.transaction below so those two writers commit atomically; null
+        // otherwise (derived writers run on the base pool, best-effort).
+        let txExec: CallRecordDbExecutor | null = null;
 
         const deps: CallResultExecutionDependencies = {
           createOutreachCall: async (args: CreateOutreachCallArgs) => {
             // Insert-only durable record. NEVER mutates appointmentStatus
             // (Item 2F) — that is the outreach surface's concern, applied
             // there via createOutreachCallAtomic. Idempotent by callKey.
+            // Written on txExec so it commits atomically with the EC advance.
             const { created } = await ensureCanonicalCallRecord({
               patientScreeningId: patientScreeningId as number,
               outcome: data.callResult,
@@ -821,7 +983,7 @@ export function registerExecutionCaseRoutes(app: Express) {
               durationSeconds: args.durationSeconds ?? null,
               externalCallId: data.callKey ?? null,
               sourceSurface: "engagement_center_route",
-            });
+            }, txExec ?? undefined);
             delegatedCallRecordCreated = created;
           },
           appendJourneyEvent: async (args: AppendJourneyEventArgs) => {
@@ -881,16 +1043,32 @@ export function registerExecutionCaseRoutes(app: Express) {
                 delegatedOwnershipUpdated = true;
               }
             }
-            try {
-              const [row] = await db
-                .update(patientExecutionCases)
-                .set(updates)
-                .where(eq(patientExecutionCases.id, executionCase.id))
-                .returning();
-              if (row) delegatedExecutionCase = row;
-            } catch (err: any) {
-              console.error("[call-result] execution case update failed:", err.message);
+            // Phase 1B — a terminal disposition makes the case NON-CALLABLE in
+            // BOTH eligibility paths (engagementStatus=closed/completed +
+            // lifecycleStatus=archived/completed + nextActionAt cleared). The
+            // disposition REASON is preserved on lastCallOutcome (set above).
+            // Respect the existing guard: never downgrade an already
+            // scheduled/completed/closed case from a stray disposition.
+            const terminalState = resolveTerminalExecutionState(data.callResult);
+            if (
+              terminalState &&
+              !TERMINAL_ENGAGEMENT_STATUSES_FOR_CALL_RESULT.has(executionCase.engagementStatus)
+            ) {
+              updates.engagementStatus = terminalState.engagementStatus;
+              updates.lifecycleStatus = terminalState.lifecycleStatus;
+              updates.nextActionAt = null;
             }
+            // Phase 1B — MANDATORY write on the caller's transaction (txExec) so
+            // the durable call record + this execution-case advance commit
+            // atomically. Errors are NOT swallowed: they propagate so the
+            // adapter marks this step failed and the route rolls the
+            // transaction back (no partial operational truth).
+            const [row] = await (txExec ?? db)
+              .update(patientExecutionCases)
+              .set(updates)
+              .where(eq(patientExecutionCases.id, executionCase.id))
+              .returning();
+            if (row) delegatedExecutionCase = row;
           },
           markAssignmentCompleted: () => {
             // engagement-suppressed step.
@@ -976,9 +1154,50 @@ export function registerExecutionCaseRoutes(app: Express) {
           patientDob: patientDob ?? null,
         };
 
-        await recordEngagementCallResult(execInput, deps, {
-          callbackHours,
-          engagementStatusSemantics: "coarse",
+        // Phase 1B — call-result atomicity. The MANDATORY writes (durable
+        // outreach_calls record + execution-case advance) run on ONE
+        // transaction via txExec; if either fails, BOTH roll back and the
+        // request surfaces a 500 (outer catch) instead of leaving partial
+        // operational truth (call logged but case not advanced, or vice
+        // versa). Derived writes (journey / triage / task) run on the base
+        // pool inside the callback and remain best-effort per the spec's B/C
+        // classification. Idempotency is already enforced by the callKey
+        // replay guard at the top of the handler, so a rollback + client
+        // retry resolves to exactly one attempt.
+        await db.transaction(async (tx) => {
+          txExec = tx;
+          try {
+            // Phase 4 — reject a stale/concurrent submitter BEFORE any write;
+            // capture whether to release the submitter's own claim on success.
+            const releaseClaimOnSuccess = await guardWorkClaimInTx(
+              tx,
+              executionCase,
+              actingSchedulerId,
+              isAdminActor,
+            );
+            const delegationResult = await recordEngagementCallResult(execInput, deps, {
+              callbackHours,
+              engagementStatusSemantics: "coarse",
+            });
+            const mandatoryFailed = delegationResult.steps.some(
+              (s) =>
+                (s.step === "outreachCallCreated" || s.step === "executionCaseUpdated") &&
+                s.status === "failed",
+            );
+            if (mandatoryFailed) {
+              throw new Error(
+                "call-result mandatory write failed (durable record / execution-case update)",
+              );
+            }
+            // Phase 4 — the disposition ended the interaction: release the
+            // submitter's own claim atomically with it. Failure above rolls
+            // back BOTH the disposition and this release (safe retry).
+            if (releaseClaimOnSuccess && executionCase) {
+              await releaseWorkClaimInTx(tx, executionCase.id);
+            }
+          } finally {
+            txExec = null;
+          }
         });
 
         if (isRecordCallResultEngagementPreviewEnabled()) {
@@ -1147,12 +1366,15 @@ export function registerExecutionCaseRoutes(app: Express) {
         }
       }
 
-      // Update execution case
+      // Build execution-case updates (applied atomically with the durable
+      // call record below).
       let updatedExecutionCase = executionCase;
       let ownershipUpdated = false;
+      let callRecordCreated = false;
+      let ecUpdates: Record<string, unknown> | null = null;
       if (executionCase) {
-        const updates: Record<string, unknown> = { updatedAt: new Date() };
         const nowTimestamp = new Date();
+        const updates: Record<string, unknown> = { updatedAt: nowTimestamp };
 
         if (computedNextActionAt) updates.nextActionAt = computedNextActionAt;
         if (!TERMINAL_ENGAGEMENT_STATUSES_FOR_CALL_RESULT.has(executionCase.engagementStatus)) {
@@ -1196,16 +1418,74 @@ export function registerExecutionCaseRoutes(app: Express) {
           }
         }
 
-        try {
-          const [row] = await db
-            .update(patientExecutionCases)
-            .set(updates)
-            .where(eq(patientExecutionCases.id, executionCase.id))
-            .returning();
-          if (row) updatedExecutionCase = row;
-        } catch (err: any) {
-          console.error("[call-result] execution case update failed:", err.message);
+        // Phase 1B — a terminal disposition makes the case NON-CALLABLE in BOTH
+        // eligibility paths (engagementStatus=closed/completed +
+        // lifecycleStatus=archived/completed + nextActionAt cleared). The
+        // disposition REASON is preserved on lastCallOutcome (set above).
+        // Respect the guard so an already scheduled/completed/closed case is
+        // not downgraded by a stray disposition.
+        const terminalState = resolveTerminalExecutionState(data.callResult);
+        if (
+          terminalState &&
+          !TERMINAL_ENGAGEMENT_STATUSES_FOR_CALL_RESULT.has(executionCase.engagementStatus)
+        ) {
+          updates.engagementStatus = terminalState.engagementStatus;
+          updates.lifecycleStatus = terminalState.lifecycleStatus;
+          updates.nextActionAt = null;
         }
+        ecUpdates = updates;
+      }
+
+      // Phase 1B — call-result atomicity for the legacy (non-canonical-outcome)
+      // path. The MANDATORY pair (durable outreach_calls record + execution-
+      // case advance) commits on ONE transaction; a failure rolls BOTH back and
+      // surfaces via the outer catch (no partial operational truth). The legacy
+      // path previously created NO durable record — every real disposition
+      // (refused_dnc / reached / busy / …) now appears in Call Results, and a
+      // refused_dnc / dnc / do_not_contact row is the durable DNC signal the
+      // eligibility gate reads. Idempotency is preserved by the callKey replay
+      // guard at the top of the handler, so a rollback + retry is exactly-once.
+      const legacyShouldCreateCallRecord =
+        data.isCallAttempt !== false && patientScreeningId != null;
+      if (legacyShouldCreateCallRecord || ecUpdates) {
+        await db.transaction(async (tx) => {
+          // Phase 4 — reject a stale/concurrent submitter BEFORE any write.
+          const releaseClaimOnSuccess = await guardWorkClaimInTx(
+            tx,
+            executionCase,
+            actingSchedulerId,
+            isAdminActor,
+          );
+          if (legacyShouldCreateCallRecord) {
+            const { created } = await ensureCanonicalCallRecord(
+              {
+                patientScreeningId: patientScreeningId as number,
+                outcome: data.callResult,
+                attemptNumber: attemptPlan.newAttemptCount,
+                schedulerUserId: actorUserId,
+                callbackAt: computedNextActionAt ?? null,
+                notes: data.note ?? null,
+                externalCallId: data.callKey ?? null,
+                sourceSurface: "engagement_center_route",
+              },
+              tx,
+            );
+            callRecordCreated = created;
+          }
+          if (executionCase && ecUpdates) {
+            const [row] = await tx
+              .update(patientExecutionCases)
+              .set(ecUpdates)
+              .where(eq(patientExecutionCases.id, executionCase.id))
+              .returning();
+            if (row) updatedExecutionCase = row;
+          }
+          // Phase 4 — release the submitter's own claim atomically with the
+          // disposition (no-op when they did not hold it).
+          if (releaseClaimOnSuccess && executionCase) {
+            await releaseWorkClaimInTx(tx, executionCase.id);
+          }
+        });
       }
 
       // Batch H Step 2 — dormant recordCallResult preview parity check.
@@ -1245,8 +1525,22 @@ export function registerExecutionCaseRoutes(app: Express) {
         triageCase,
         task,
         ownershipUpdated,
+        callRecordCreated,
       });
     } catch (error: any) {
+      // Phase 4 — a stale/concurrent claim is a CONFLICT, not a server error:
+      // the submitter no longer holds the active work (someone else took over
+      // or the lease lapsed and was reclaimed). Surface 409 so the client shows
+      // a clear "this patient is being worked by someone else" state and does
+      // NOT silently double-write. No disposition was persisted (the guard runs
+      // before any write, and threw inside the transaction → full rollback).
+      if (error instanceof StaleWorkClaimError) {
+        return res.status(409).json({
+          error: error.message,
+          code: "stale_work_claim",
+          claimedBySchedulerId: error.holderSchedulerId,
+        });
+      }
       return res.status(500).json({ error: error.message });
     }
   };
@@ -1272,6 +1566,64 @@ export function registerExecutionCaseRoutes(app: Express) {
   // provides explicit filters.
   // PHASE-1 FACILITY SCOPE: same role + facility access pattern as
   // /api/technician-liaison/clinic-visits in globalSchedule.ts.
+  // Call List BADGE count. Reuses the SAME filter builder as the list read
+  // (countSchedulerPortalCases → buildSchedulerPortalConditions) so the badge
+  // and the visible queue can never disagree. Counts actionable outstanding
+  // ASSIGNED calls (non-terminal engagement + lifecycle) for the caller across
+  // their authorized clinics (or a single requested clinic), on the requested
+  // operational day (default today, backlog included).
+  app.get("/api/scheduler-portal/cases/count", requirePortalRole, async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const wsParam = q.workspace === "acs" || q.workspace === "pcs" ? q.workspace : undefined;
+      const filters: Parameters<typeof countSchedulerPortalCases>[0] = {};
+      const isAdmin = (req.session.role ?? "") === "admin";
+      const viewAsRoster = await resolveViewAsRosterMember(req, q.viewAsTeamMemberId);
+      const useMultiClinic = !isAdmin && !viewAsRoster && !!req.session.userId;
+      if (useMultiClinic) {
+        const portalScope = await resolveTeamPortalScope(req.session.userId as string);
+        const requested = (q.facilityId ?? "").trim() || null;
+        const facilityIds = scopeFacilityIds(portalScope, requested);
+        if (facilityIds == null) {
+          return res.status(403).json({ error: "Forbidden — clinic not assigned to this user" });
+        }
+        filters.facilityIds = facilityIds;
+        filters.assignedTeamMemberIds = scopeRosterIds(portalScope, facilityIds);
+      } else {
+        const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, wsParam);
+        if (!scope.ok) return;
+        const assignmentScope = await resolveCallListAssignmentScope(req, scope.facilityId, viewAsRoster);
+        if (assignmentScope.locked) filters.assignedTeamMemberId = assignmentScope.schedulerId ?? -1;
+        else if (q.assignedTeamMemberId) {
+          const id = parseInt(q.assignedTeamMemberId, 10);
+          if (!isNaN(id)) filters.assignedTeamMemberId = id;
+        }
+        if (scope.facilityId) filters.facilityId = scope.facilityId;
+      }
+      // Match the visible queue's operational-day window (default today,
+      // backlog included). Historical counts are not surfaced as a badge.
+      const todayLocal = (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      })();
+      const requestedDate =
+        typeof q.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : todayLocal;
+      if (requestedDate >= todayLocal) {
+        const dayStart = new Date(`${requestedDate}T00:00:00.000`);
+        const dayEnd = new Date(`${requestedDate}T23:59:59.999`);
+        if (!Number.isNaN(dayStart.getTime()) && !Number.isNaN(dayEnd.getTime())) {
+          filters.dateStart = dayStart;
+          filters.dateEnd = dayEnd;
+          filters.includeBacklog = true;
+        }
+      }
+      const count = await countSchedulerPortalCases(filters);
+      return res.json({ count });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/scheduler-portal/cases", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
@@ -1281,37 +1633,54 @@ export function registerExecutionCaseRoutes(app: Express) {
       // narrows view-as role-compat to that workspace's role; when
       // omitted the helper accepts any active team member.
       const wsParam = q.workspace === "acs" || q.workspace === "pcs" ? q.workspace : undefined;
-      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, wsParam);
-      if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listSchedulerPortalCases>[0] = {};
-      // PR B — Engagement→workspace feed wiring. Resolve the caller's
-      // (or viewed-as user's) outreach_schedulers.id and narrow the
-      // call list by patient_execution_cases.assignedTeamMemberId.
-      // Without this, an Engagement-assigned case never appears in the
-      // assigned team-member's workspace queue. See
-      // docs/architecture/complete-team-portal-operations-runtime.md
-      // §B (Anthony / Callista root cause).
-      // View-as identity is a ROSTER id (outreach_schedulers.id), not a
-      // login user — resolve it directly so the locked filter matches the
-      // Engagement-assigned cases (assignedTeamMemberId = roster id).
+
+      const isAdmin = (req.session.role ?? "") === "admin";
       const viewAsRoster = await resolveViewAsRosterMember(req, q.viewAsTeamMemberId);
-      const assignmentScope = await resolveCallListAssignmentScope(
-        req,
-        scope.facilityId,
-        viewAsRoster,
-      );
-      if (assignmentScope.locked) {
-        // When locked, ignore any client-supplied override (defense
-        // in depth). If schedulerId is null (caller has no row in
-        // outreach_schedulers for this facility) the feed returns []
-        // because no assignment can match the impossible filter.
-        filters.assignedTeamMemberId = assignmentScope.schedulerId ?? -1;
-      } else if (q.assignedTeamMemberId) {
-        const id = parseInt(q.assignedTeamMemberId, 10);
-        if (!isNaN(id)) filters.assignedTeamMemberId = id;
+      // MULTI-CLINIC unified call list for a real (non-admin, non-view-as) team
+      // member: aggregate across EVERY authorized clinic by default, or a single
+      // requested clinic when facilityId is supplied. ACCESS (authorized
+      // clinics) and ASSIGNMENT (the caller's roster ids across those clinics)
+      // stay distinct — access alone never surfaces unassigned clinic work.
+      // Admin + admin view-as keep the existing single-facility path unchanged.
+      const useMultiClinic = !isAdmin && !viewAsRoster && !!req.session.userId;
+      // Roster-id set consumed by the historical (past-date) branch below.
+      let histSchedulerIds: number[] = [];
+      if (useMultiClinic) {
+        const portalScope = await resolveTeamPortalScope(req.session.userId as string);
+        const requested = (q.facilityId ?? "").trim() || null;
+        const facilityIds = scopeFacilityIds(portalScope, requested);
+        if (facilityIds == null) {
+          return res.status(403).json({ error: "Forbidden — clinic not assigned to this user" });
+        }
+        filters.facilityIds = facilityIds;
+        const rosterIds = scopeRosterIds(portalScope, facilityIds);
+        filters.assignedTeamMemberIds = rosterIds;
+        histSchedulerIds = rosterIds;
+      } else {
+        // PR B — Engagement→workspace feed wiring (single-facility path).
+        // View-as identity is a ROSTER id (outreach_schedulers.id); resolve it
+        // directly so the locked filter matches Engagement-assigned cases.
+        const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, wsParam);
+        if (!scope.ok) return;
+        const assignmentScope = await resolveCallListAssignmentScope(
+          req,
+          scope.facilityId,
+          viewAsRoster,
+        );
+        if (assignmentScope.locked) {
+          filters.assignedTeamMemberId = assignmentScope.schedulerId ?? -1;
+          if (assignmentScope.schedulerId != null) histSchedulerIds = [assignmentScope.schedulerId];
+        } else if (q.assignedTeamMemberId) {
+          const id = parseInt(q.assignedTeamMemberId, 10);
+          if (!isNaN(id)) {
+            filters.assignedTeamMemberId = id;
+            histSchedulerIds = [id];
+          }
+        }
+        if (scope.facilityId) filters.facilityId = scope.facilityId;
       }
-      if (scope.facilityId) filters.facilityId = scope.facilityId;
       if (q.engagementBucket) filters.engagementBucket = q.engagementBucket;
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
@@ -1345,16 +1714,17 @@ export function registerExecutionCaseRoutes(app: Express) {
       // assignments is used ONLY as history here — never for current ownership.
       // schedulerId is the SAME roster-id space as the locked current filter.
       if (isHistorical) {
-        const histSchedulerId = assignmentScope.locked
-          ? assignmentScope.schedulerId
-          : (q.assignedTeamMemberId ? parseInt(q.assignedTeamMemberId, 10) : null);
-        if (histSchedulerId == null || Number.isNaN(histSchedulerId)) {
+        if (histSchedulerIds.length === 0) {
           return res.json([]);
         }
-        const snapshot = await storage.listSchedulerAssignmentsForSchedulerOnDate(
-          histSchedulerId,
-          requestedDate!,
+        // Aggregate the immutable per-day snapshot across ALL of the caller's
+        // roster ids (multi-clinic) — typically one id for a single-clinic user.
+        const snapshotArrays = await Promise.all(
+          histSchedulerIds.map((sid) =>
+            storage.listSchedulerAssignmentsForSchedulerOnDate(sid, requestedDate!),
+          ),
         );
+        const snapshot = snapshotArrays.flat();
         if (snapshot.length === 0) {
           // Honest empty — no snapshot recorded for that PCS/day. We do NOT
           // fabricate membership from current nextActionAt.
@@ -1621,7 +1991,13 @@ export function registerExecutionCaseRoutes(app: Express) {
       const dob = (q.dob ?? "").trim() || null;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 5, 20) : 5;
       const matches = await findSimilarExecutionCases(name, dob, limit);
-      return res.json({ matches });
+      // Tenant isolation (P0): a scoped caller only sees matches in their
+      // authorized clinics (admin sees all).
+      const scope = await resolveAuthorizedClinicScope(req);
+      const visible = scope.admin
+        ? matches
+        : matches.filter((m) => scopePermitsClinic(scope, (m as { clinicId?: number | null }).clinicId ?? null));
+      return res.json({ matches: visible });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
@@ -1635,6 +2011,10 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (isNaN(screeningId)) return res.status(400).json({ error: "Invalid patientScreeningId" });
       const row = await getExecutionCaseByScreeningId(screeningId);
       if (!row) return res.status(404).json({ error: "Execution case not found" });
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scopePermitsClinic(scope, row.clinicId)) {
+        return res.status(404).json({ error: "Execution case not found" });
+      }
       res.json(row);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1648,6 +2028,10 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const row = await getExecutionCaseById(id);
       if (!row) return res.status(404).json({ error: "Execution case not found" });
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scopePermitsClinic(scope, row.clinicId)) {
+        return res.status(404).json({ error: "Execution case not found" });
+      }
       res.json(row);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1662,17 +2046,41 @@ export function registerExecutionCaseRoutes(app: Express) {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listJourneyEvents>[0] = {};
+      let scopeExecutionCaseId: number | null = null;
+      let scopeScreeningId: number | null = null;
       if (q.executionCaseId) {
         const id = parseInt(q.executionCaseId, 10);
-        if (!isNaN(id)) filters.executionCaseId = id;
+        if (!isNaN(id)) { filters.executionCaseId = id; scopeExecutionCaseId = id; }
       }
       if (q.patientScreeningId) {
         const id = parseInt(q.patientScreeningId, 10);
-        if (!isNaN(id)) filters.patientScreeningId = id;
+        if (!isNaN(id)) { filters.patientScreeningId = id; scopeScreeningId = id; }
       }
       if (q.patientName) filters.patientName = q.patientName;
       if (q.patientDob) filters.patientDob = q.patientDob;
       if (q.eventType) filters.eventType = q.eventType;
+
+      // Tenant isolation (P0): patient_journey_events has no clinic_id column,
+      // so a scoped (non-admin) caller MUST target a specific patient/case, and
+      // that entity's clinic must be authorized. An unscoped journey query by a
+      // non-admin fails closed (empty), never a cross-clinic dump.
+      const scope = await resolveAuthorizedClinicScope(req);
+      if (!scope.admin) {
+        let ownerClinicId: number | null = null;
+        if (scopeExecutionCaseId != null) {
+          const ec = await getExecutionCaseById(scopeExecutionCaseId).catch(() => null);
+          ownerClinicId = ec?.clinicId ?? null;
+        } else if (scopeScreeningId != null) {
+          const ec = await getExecutionCaseByScreeningId(scopeScreeningId).catch(() => null);
+          ownerClinicId = ec?.clinicId ?? null;
+        } else {
+          // No patient/case anchor → refuse to enumerate cross-clinic events.
+          return res.json([]);
+        }
+        if (!scopePermitsClinic(scope, ownerClinicId)) {
+          return res.json([]);
+        }
+      }
       const rows = await listJourneyEvents(filters, limit);
       res.json(rows);
     } catch (error: any) {

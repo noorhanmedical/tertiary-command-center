@@ -1,5 +1,5 @@
 import {
-  sql, pgTable, serial, integer, text, boolean, timestamp, uniqueIndex,
+  sql, pgTable, serial, integer, text, boolean, timestamp, jsonb, uniqueIndex,
   createInsertSchema, z,
 } from "./_common";
 import { outreachSchedulers } from "./outreach";
@@ -58,6 +58,17 @@ export const engagementCallSettings = pgTable("engagement_call_settings", {
   // Tri-state working override. Null = follow platform calendar/PTO.
   manualWorkingToday: boolean("manual_working_today"),
   active: boolean("active").notNull().default(true),
+  // ─── Phase 3 — recurring DEFAULT shift pattern ───────────────────────────
+  // The member's usual daily shift window (wall-clock "HH:MM" in the clinic
+  // timezone) and which weekdays they work. A date-specific team_member_shifts
+  // row overrides these for a given date. All nullable → OPT-IN: a member with
+  // no default shift and no override behaves exactly as pre-Phase-3 (available
+  // the whole working day; capacity from callWorkdayPercent).
+  defaultShiftStart: text("default_shift_start"), // "HH:MM"
+  defaultShiftEnd: text("default_shift_end"), // "HH:MM"
+  // Weekdays worked (0=Sun … 6=Sat) as an int[] JSON array. Null → when a
+  // default shift is set, defaults to Mon–Fri; when no default shift, ignored.
+  workWeekdays: jsonb("work_weekdays"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -81,6 +92,10 @@ export const insertEngagementCallSettingsSchema = createInsertSchema(engagementC
   maxDailyCapacity: z.number().int().min(0).max(1000).optional().nullable(),
   manualWorkingToday: z.boolean().optional().nullable(),
   active: z.boolean().optional(),
+  // Phase 3 — recurring default shift pattern.
+  defaultShiftStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "defaultShiftStart must be HH:MM").optional().nullable(),
+  defaultShiftEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "defaultShiftEnd must be HH:MM").optional().nullable(),
+  workWeekdays: z.array(z.number().int().min(0).max(6)).optional().nullable(),
 });
 
 export type EngagementCallSettings = typeof engagementCallSettings.$inferSelect;

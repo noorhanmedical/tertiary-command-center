@@ -62,6 +62,11 @@ export type TeamWorkspaceAncillaryAppointment = {
   assignedUserId?: string | null;
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
+  /** Durable per-service ancillary occurrence id (patient_ancillary_cases.id).
+   *  Present once the canonical ancillary-case flag/migration is live; null in
+   *  the pre-canonical world. Used as the preferred identity for per-occurrence
+   *  readiness ownership and threaded into the doc workflows. */
+  ancillaryCaseId?: number | null;
   readiness?: AncillaryReadinessSummary | null;
 };
 
@@ -90,6 +95,23 @@ export type TeamWorkspaceCallListItem = {
   lastCallOutcome?: string | null;
   /** Engagement bucket: 'visit' | 'outreach' | 'scheduling_triage'. */
   engagementBucket?: string | null;
+  /** CANONICAL attempt count for THIS execution case / outreach objective
+   *  (patient_execution_cases.call_attempt_count). This is the ONLY correct
+   *  source for an "Attempt N" label — never all-time patient calls.length,
+   *  which spans every service/objective. Already emitted by
+   *  /api/scheduler-portal/cases (full execution-case row). */
+  callAttemptCount?: number | null;
+  /** Timestamp of the most recent call attempt for THIS execution case
+   *  (patient_execution_cases.last_attempt_at). Emitted by the same full-row
+   *  /api/scheduler-portal/cases response; drives the header "last contact". */
+  lastAttemptAt?: string | null;
+  /** Phase 5B — active-work claim columns (patient_execution_cases). The portal
+   *  read already SUPPRESSES cases claimed by a NON-owner, so on the caller's
+   *  own queue an active claim here means the CALLER is actively working the
+   *  case (activeClaimBy === assignedTeamMemberId). Drives a subtle "working
+   *  now" indicator; never a claim dashboard. */
+  activeClaimBy?: number | null;
+  activeClaimExpiresAt?: string | null;
   // ── Historical snapshot fields (present only for past-date views, sourced
   //    from the read-only scheduler_assignments snapshot + that day's calls).
   /** True when this row is a historical snapshot entry, not current work. */
@@ -108,63 +130,63 @@ export type TeamWorkspaceCallListItem = {
   completed?: boolean;
 };
 
-// Short, human-readable explanation of why a patient is on the call list,
-// derived entirely from existing execution-case fields (no new backend data).
-// Examples: "BrainWave outreach", "VitalWave follow-up", "Ultrasound
-// scheduling", "Missed call follow-up", "Order follow-up".
-export function deriveCallReason(item: TeamWorkspaceCallListItem): string {
+// Human-readable "why am I calling?" — ALWAYS combines the SERVICE with the
+// current operational reason so the employee never loses service context
+// (Phase 5A, Part 2). Derived entirely from existing execution-case fields (no
+// new backend data). Shape: "Service · Reason" (e.g. "VitalWave · Callback
+// requested"), or just the reason when no service is attached to the case.
+// Examples: "VitalWave · New qualified patient", "BrainWave · Missed-call
+// follow-up", "Ultrasound · Patient requested callback".
+export function niceServiceLabel(s: string): string {
+  const v = s.toLowerCase();
+  if (v.includes("brainwave") || v.includes("brain")) return "BrainWave";
+  if (v.includes("vitalwave") || v.includes("vital")) return "VitalWave";
+  if (
+    v.includes("ultrasound") ||
+    v.includes("duplex") ||
+    v.includes("doppler") ||
+    v.includes("echo") ||
+    v.includes("carotid")
+  )
+    return "Ultrasound";
+  return s;
+}
+
+/** The current operational reason WITHOUT the service prefix. */
+function deriveReasonPhrase(item: TeamWorkspaceCallListItem): string {
   const outcome = (item.lastCallOutcome ?? "").toLowerCase();
-  const services = (item.selectedServices ?? []).filter(Boolean);
-  const primary = services[0] ?? null;
-
-  const niceService = (s: string): string => {
-    const v = s.toLowerCase();
-    if (v.includes("brainwave") || v.includes("brain")) return "BrainWave";
-    if (v.includes("vitalwave") || v.includes("vital")) return "VitalWave";
-    if (
-      v.includes("ultrasound") ||
-      v.includes("duplex") ||
-      v.includes("doppler") ||
-      v.includes("echo") ||
-      v.includes("carotid")
-    )
-      return "Ultrasound";
-    return s;
-  };
-
   // Outcome-driven reasons take priority — they describe the next action.
   if (outcome) {
-    if (outcome.includes("no_answer") || outcome.includes("missed"))
-      return "Missed call follow-up";
+    if (outcome.includes("no_answer") || outcome.includes("missed")) return "Missed-call follow-up";
     if (outcome.includes("voicemail")) return "Voicemail follow-up";
-    if (outcome.includes("callback")) return "Patient requested callback";
+    if (outcome.includes("callback") || outcome.includes("call_later")) return "Patient requested callback";
     if (outcome.includes("reschedule")) return "Reschedule follow-up";
-    if (outcome.includes("needs_records") || outcome.includes("document"))
-      return "Document follow-up";
+    if (outcome.includes("needs_records") || outcome.includes("document")) return "Document follow-up";
+    if (outcome.includes("reached")) return "Scheduling follow-up";
   }
-
   const bucket = (item.engagementBucket ?? "").toLowerCase();
   if (bucket === "scheduling_triage") return "Scheduling follow-up";
-
-  if (primary) {
-    const label = niceService(primary);
-    if (label === "Ultrasound") return "Ultrasound scheduling";
-    const verb =
-      item.engagementStatus === "contacted" ? "follow-up" : "outreach";
-    return `${label} ${verb}`;
-  }
-
-  // Fallbacks based on engagement status when no service is attached.
   switch ((item.engagementStatus ?? "").toLowerCase()) {
     case "new":
-      return "New outreach";
+    case "ready":
+      return item.qualificationStatus === "qualified" ? "New qualified patient" : "New patient";
     case "contacted":
-      return "Follow-up call";
+      return "Follow-up";
     case "scheduled":
       return "Confirm appointment";
     default:
-      return "Outreach call";
+      return "Outreach";
   }
+}
+
+export function deriveCallReason(item: TeamWorkspaceCallListItem): string {
+  const services = (item.selectedServices ?? []).filter(Boolean);
+  const primary = services[0] ?? null;
+  const reason = deriveReasonPhrase(item);
+  if (!primary) return reason;
+  const service = niceServiceLabel(primary);
+  // Never let the reason hide the service — service always leads.
+  return `${service} · ${reason}`;
 }
 
 type ScheduleParams = {
@@ -424,6 +446,50 @@ export async function fetchWorkspaceCallList(
     });
   }
   return out;
+}
+
+// Call List BADGE count — reuses the SAME server filter as the call list
+// (/api/scheduler-portal/cases/count) so the badge and the visible queue can
+// never disagree. `facilityId` omitted → All Clinics (authorized set).
+export async function fetchWorkspaceCallListCount(
+  params: { facilityId?: string | null; date?: string | null; viewAsTeamMemberId?: string | null; workspace?: "pcs" | "acs" | null } = {},
+): Promise<number> {
+  const qs = new URLSearchParams();
+  appendIf(qs, "facilityId", params.facilityId);
+  appendIf(qs, "date", params.date);
+  appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
+  appendIf(qs, "workspace", params.workspace);
+  const url = `/api/scheduler-portal/cases/count${qs.toString() ? `?${qs}` : ""}`;
+  try {
+    const body = await fetchJson<{ count?: number }>(url);
+    return typeof body?.count === "number" ? body.count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Multi-clinic scope for the current team member: authorized clinics +
+// per-clinic PCS/ACS capability (from facility-scoped teams).
+export type ClinicCapability = { pcs: boolean; acs: boolean };
+export type TeamPortalClinicScope = {
+  authorizedFacilities: string[];
+  perClinicCapability: Record<string, ClinicCapability>;
+  hasTeamCapability: boolean;
+  globalWorkspaceType: "patientCareSpecialist" | "ancillaryCareSpecialist" | null;
+};
+
+export async function fetchTeamPortalClinicScope(): Promise<TeamPortalClinicScope> {
+  try {
+    const body = await fetchJson<TeamPortalClinicScope>("/api/portal/clinic-scope");
+    return {
+      authorizedFacilities: Array.isArray(body?.authorizedFacilities) ? body.authorizedFacilities : [],
+      perClinicCapability: body?.perClinicCapability ?? {},
+      hasTeamCapability: !!body?.hasTeamCapability,
+      globalWorkspaceType: body?.globalWorkspaceType ?? null,
+    };
+  } catch {
+    return { authorizedFacilities: [], perClinicCapability: {}, hasTeamCapability: false, globalWorkspaceType: null };
+  }
 }
 
 // ADMIN VIEW-AS — list of team members the admin observer can select

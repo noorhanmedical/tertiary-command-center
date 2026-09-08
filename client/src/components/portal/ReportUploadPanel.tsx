@@ -86,6 +86,16 @@ export function ReportUploadPanel({ executionCaseId, patientScreeningId, service
       queryClient.invalidateQueries({ queryKey: ["acs-workflow-snapshot", executionCaseId] });
       queryClient.invalidateQueries({ queryKey: ["portal-command-center", patientScreeningId] });
       queryClient.invalidateQueries({ queryKey: ["communication-timeline", patientScreeningId] });
+      // Refresh the canonical case-readiness cards (Consent/Screening/Report)
+      // that AncillaryWorkflowWorkspace renders — keyed
+      // ["/api/portal/case-readiness", executionCaseId, service]. Without this
+      // the Report card kept its prior status until staleTime lapsed.
+      queryClient.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) &&
+          q.queryKey[0] === "/api/portal/case-readiness" &&
+          q.queryKey[1] === executionCaseId,
+      });
       setFile(null);
     },
     onError: (err: Error) => {

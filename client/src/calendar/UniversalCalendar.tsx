@@ -48,6 +48,13 @@ export type UniversalCalendarProps = {
   // calendar is being shown in a patient-scoped context that pre-loads
   // the patient's appointment month.
   initialMonth?: Date;
+  // Header treatment. Defaults to the light look every existing surface
+  // uses. "navy" renders the title block as a solid navy blue bar — opt-in
+  // per surface so no other calendar is affected.
+  headerTone?: "default" | "navy";
+  // Optional title override for the header. When omitted the profile label
+  // is used (existing behavior).
+  title?: string;
 };
 
 export function UniversalCalendar({
@@ -62,6 +69,8 @@ export function UniversalCalendar({
   unscheduledItems,
   onUnscheduledItemAction,
   initialMonth,
+  headerTone = "default",
+  title,
 }: UniversalCalendarProps) {
   const profile = useMemo(
     () => resolveCalendarProfileSettings(profileId, context, settings),
@@ -92,12 +101,26 @@ export function UniversalCalendar({
       data-testid="canonical-universal-calendar"
       data-profile-id={profile.id}
     >
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div
+        className={`flex items-center justify-between gap-3 flex-wrap ${
+          headerTone === "navy"
+            ? "rounded-xl bg-plexus-navy-800 px-4 py-3"
+            : ""
+        }`}
+      >
         <div className="min-w-0">
-          <h2 className="text-base font-semibold tracking-tight text-slate-900 truncate">
-            {profile.label}
+          <h2
+            className={`text-base font-semibold tracking-tight truncate ${
+              headerTone === "navy" ? "text-white" : "text-slate-900"
+            }`}
+          >
+            {title ?? profile.label}
           </h2>
-          <p className="text-[11px] text-slate-500">
+          <p
+            className={`text-[11px] ${
+              headerTone === "navy" ? "text-blue-100/70" : "text-slate-500"
+            }`}
+          >
             Canonical calendar profile active · default view:{" "}
             {profile.defaultView}
           </p>

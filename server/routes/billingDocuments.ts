@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { requireBillingView } from "../middleware/billingGuards";
 import {
   listBillingDocumentRequests,
   getBillingDocumentRequestById,
@@ -8,7 +9,7 @@ export function registerBillingDocumentRoutes(app: Express) {
   // GET /api/billing-document-requests
   // Filters: executionCaseId, patientScreeningId, procedureEventId,
   //          billingReadinessCheckId, serviceType, requestStatus, limit
-  app.get("/api/billing-document-requests", async (req, res) => {
+  app.get("/api/billing-document-requests", requireBillingView, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
@@ -41,9 +42,9 @@ export function registerBillingDocumentRoutes(app: Express) {
   });
 
   // GET /api/billing-document-requests/:id
-  app.get("/api/billing-document-requests/:id", async (req, res) => {
+  app.get("/api/billing-document-requests/:id", requireBillingView, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const request = await getBillingDocumentRequestById(id);
       if (!request) return res.status(404).json({ error: "Billing document request not found" });

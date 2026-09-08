@@ -15,6 +15,8 @@ import {
   reconcileBankEvent,
 } from "../repositories/plexusBank.repo";
 import { BANK_EVENT_TYPES, COUNTERPARTY_TYPES, RECONCILIATION_STATUSES } from "@shared/schema/plexusBankEvents";
+import { requirePermission, legacyRequireAdmin, legacyRequireAnyRole, permissionEnforcementEnabled, ensureAccessContext } from "../middleware/accessControl";
+import { clinicOrganizationId } from "../services/access/accessAdminService";
 
 const createEventSchema = z.object({
   clinicId: z.number().int().optional().nullable(),
@@ -38,19 +40,17 @@ const createEventSchema = z.object({
 });
 
 export function registerPlexusBankRoutes(app: Express) {
-  const requireFinanceAccess = (req: Request, res: Response): boolean => {
-    const role = req.session.role ?? "";
-    if (!["admin", "biller"].includes(role)) {
-      res.status(403).json({ error: "Admin or biller access required" });
-      return false;
-    }
-    return true;
-  };
+  // Phase 3.5: Plexus Bank is FINANCE. Reads → finance.view; writes →
+  // finance.manage. Enforcement OFF → legacy fallback preserves prior behavior
+  // (reads admin|biller, writes admin). NOTE: per-clinic financial scope for
+  // org-scoped finance roles requires clinic→org resolution — deferred to
+  // Phase 4 (capability is enforced here; see report).
+  const requireFinanceView = requirePermission("finance.view", { legacy: legacyRequireAnyRole("admin", "biller") });
+  const requireFinanceManage = requirePermission("finance.manage", { legacy: legacyRequireAdmin });
 
   // ─── LIST bank events ────────────────────────────────────────────────────
-  app.get("/api/plexus-bank/events", async (req: Request, res: Response) => {
+  app.get("/api/plexus-bank/events", requireFinanceView, async (req: Request, res: Response) => {
     try {
-      if (!requireFinanceAccess(req, res)) return;
       const q = req.query as Record<string, string | undefined>;
       const events = await listBankEvents({
         clinicId: q.clinicId ? parseInt(q.clinicId, 10) : undefined,
@@ -70,9 +70,8 @@ export function registerPlexusBankRoutes(app: Express) {
   });
 
   // ─── GET single event ────────────────────────────────────────────────────
-  app.get("/api/plexus-bank/events/:id", async (req: Request, res: Response) => {
+  app.get("/api/plexus-bank/events/:id", requireFinanceView, async (req: Request, res: Response) => {
     try {
-      if (!requireFinanceAccess(req, res)) return;
       const id = parseInt(String(req.params.id), 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid ID" });
       const event = await getBankEvent(id);
@@ -85,11 +84,22 @@ export function registerPlexusBankRoutes(app: Express) {
   });
 
   // ─── GET facility balance summary ────────────────────────────────────────
-  app.get("/api/plexus-bank/summary/:clinicId", async (req: Request, res: Response) => {
+  app.get("/api/plexus-bank/summary/:clinicId", requireFinanceView, async (req: Request, res: Response) => {
     try {
-      if (!requireFinanceAccess(req, res)) return;
       const clinicId = parseInt(String(req.params.clinicId), 10);
       if (!Number.isFinite(clinicId)) return res.status(400).json({ error: "Invalid clinic ID" });
+      // Phase 4A: organization-scope enforcement via PERSISTED clinic→org
+      // ownership. An org-scoped finance user may read a clinic's balances only
+      // when that clinic belongs to their organization (or is in clinic scope).
+      if (permissionEnforcementEnabled()) {
+        const actor = await ensureAccessContext(req);
+        if (actor && !actor.scope.platform) {
+          const orgId = await clinicOrganizationId(clinicId);
+          const inOrg = orgId != null && actor.scope.organizationIds.includes(orgId);
+          const inClinic = actor.scope.clinicIds.includes(clinicId);
+          if (!inOrg && !inClinic) return res.status(403).json({ error: "Forbidden — clinic outside your organization scope" });
+        }
+      }
       const summary = await getFacilityBalanceSummary(clinicId);
       res.json(summary);
     } catch (error: any) {
@@ -99,11 +109,8 @@ export function registerPlexusBankRoutes(app: Express) {
   });
 
   // ─── CREATE bank event (admin only) ──────────────────────────────────────
-  app.post("/api/plexus-bank/events", async (req: Request, res: Response) => {
+  app.post("/api/plexus-bank/events", requireFinanceManage, async (req: Request, res: Response) => {
     try {
-      if (req.session.role !== "admin") {
-        return res.status(403).json({ error: "Admin access required" });
-      }
       const parsed = createEventSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
@@ -120,11 +127,8 @@ export function registerPlexusBankRoutes(app: Express) {
   });
 
   // ─── RECONCILE event (admin only) ────────────────────────────────────────
-  app.post("/api/plexus-bank/events/:id/reconcile", async (req: Request, res: Response) => {
+  app.post("/api/plexus-bank/events/:id/reconcile", requireFinanceManage, async (req: Request, res: Response) => {
     try {
-      if (req.session.role !== "admin") {
-        return res.status(403).json({ error: "Admin access required" });
-      }
       const id = parseInt(String(req.params.id), 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid ID" });
       const event = await reconcileBankEvent(id, req.session.userId!);

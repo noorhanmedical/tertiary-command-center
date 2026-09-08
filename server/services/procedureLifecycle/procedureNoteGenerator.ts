@@ -37,7 +37,8 @@ import { renderProcedureNoteBody } from "./procedureNoteBody";
 import { resolveProcedureNoteContext, loadProcedureComponents, procedureServiceLabel } from "./procedureNoteContext";
 import { procedureRequiresSignedOrderNote } from "../ancillaryDocuments/orderNoteServiceConfig";
 import { evaluateSignedOrderNoteFreshness } from "../ancillaryDocuments/orderNoteFreshness";
-import { serviceKeyForComponents } from "@shared/schema/procedureComponents";
+// (Structured component evidence is optional for generation — see the
+// component-loading note in buildCanonicalProcedureNoteBody below.)
 
 const MIGRATION_MISSING_CODES = new Set(["42P01", "42703", "ANCILLARY_DOCUMENT_MIGRATION_MISSING"]);
 const GENERATOR_TEMPLATE_VERSION = "procedure_completion_certification_v1";
@@ -352,27 +353,36 @@ async function buildCanonicalProcedureNoteBody(
   // EXACT current, non-superseded, same-clinic Order Note is SIGNED, so this
   // fails closed on: no signed order, superseded/invalid note, wrong case, or
   // cross-clinic. The rendered body then references that exact signed note id.
+  // The SIGNED Order Note is the clinician authorization for the procedure. It
+  // is REQUIRED and ENFORCED UPSTREAM at procedure_start (the
+  // signedOrderNoteForProcedure prerequisite), so by the time a procedure is
+  // complete a signed order exists in the normal flow. At generation time it is
+  // treated as an ASSOCIATION, not a blocking gate: when a current signed order
+  // exists it is referenced (and must be FRESH — see below); when it is absent
+  // (legacy/bypass), the Procedure Note is still generated and honestly records
+  // "No signed Order Note is associated" (renderProcedureNoteBody) rather than
+  // fabricating one OR permanently starving billing. Never generates a
+  // fabricated signature.
   const requiresSignedOrder = procedureRequiresSignedOrderNote(note.serviceType ?? "");
-  if (requiresSignedOrder && !ctx.associatedOrder) return { ok: false, code: "missing_signed_order_note" };
-  // FRESHNESS BACKSTOP (mirrors the procedure_start gate): even if procedure
-  // start was bypassed via a legacy/alternate route, a Procedure Note must NOT
-  // be generated against a STALE signed Order Note. ctx.associatedOrder is the
-  // current active signed note; verify it is still fresh vs current canonical
-  // evidence and fail closed on drift (or if freshness is indeterminate).
+  // FRESHNESS BACKSTOP: when a signed order IS associated, it must not be stale
+  // vs current canonical evidence — fail closed on drift (or indeterminate
+  // freshness) so a Procedure Note never references an out-of-date authorization.
   if (requiresSignedOrder && ctx.associatedOrder) {
     const freshness = await evaluateSignedOrderNoteFreshness({ clinicId, ancillaryCaseId });
     if (!freshness.fresh) return { ok: false, code: "order_note_stale_review_required" };
   }
 
-  // Validated component evidence is a SEPARATE requirement that applies only to
-  // services that HAVE a structured component contract (BrainWave/VitalWave).
-  // This is determined by the existence of a component schema for the service
-  // (serviceKeyForComponents), not by the signed-order requirement — a vascular
-  // service requires a signed order but has no component schema, so it renders
-  // its modular body without component evidence.
+  // Structured component evidence (BrainWave/VitalWave) is OPTIONAL for
+  // generation — it ENRICHES the note but never blocks it. When present (the
+  // ACS captures it via POST /api/procedure-events/:id/components) the body
+  // claims only performed components; when absent, renderProcedureNoteBody
+  // emits a neutral "component detail was not recorded" statement and NEVER
+  // fabricates findings (see procedureNoteBodyF: "no components ⇒ neutral
+  // statement, no fabricated component claims"). A completed procedure with a
+  // signed order + report is therefore never left permanently un-noted (and
+  // billing never permanently starved) merely because components weren't keyed;
+  // `procedure_components_present` in sourceData records whether they were.
   const components = await loadProcedureComponents(pe.id, note.serviceType);
-  const requiresComponentEvidence = serviceKeyForComponents(note.serviceType ?? "") != null;
-  if (requiresComponentEvidence && !components) return { ok: false, code: "invalid_or_missing_component_evidence" };
 
   const rendered = renderProcedureNoteBody({
     service: note.serviceType,

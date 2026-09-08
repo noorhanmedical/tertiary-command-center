@@ -56,6 +56,10 @@ export type AncillaryServiceContext = {
   instanceId: string;
   serviceType: string;
   executionCaseId: number | null;
+  /** Durable per-service ancillary occurrence id (patient_ancillary_cases.id),
+   *  when known. Threaded so document workflows bind completion to the exact
+   *  occurrence rather than carrying it forward across occurrences. */
+  ancillaryCaseId: number | null;
   patientScreeningId: number | null;
   readiness: AncillaryReadinessSummary | null;
   // Instance-level schedule metadata for operational context in the selector

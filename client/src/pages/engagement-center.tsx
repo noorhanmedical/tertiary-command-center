@@ -350,7 +350,7 @@ export default function EngagementCenterPage() {
     <div className="flex h-full flex-col bg-slate-50 dark:bg-slate-950">
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
-        <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
+        <div className="flex flex-wrap items-center gap-3 px-6 py-3">
           <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
               Plexus Ancillary · Engagement Center
@@ -496,7 +496,7 @@ export default function EngagementCenterPage() {
 
         {/* Summary strip */}
         {view === "pool" ? (
-        <div className="flex flex-wrap gap-2 px-4 pb-3 sm:px-6">
+        <div className="flex flex-wrap gap-2 px-6 pb-3">
           <HeaderMetric label="Ready to Assign" value={smartCounts.ready_to_assign} tone="indigo" />
           <HeaderMetric label="Due Today" value={smartCounts.due_today} tone="emerald" />
           <HeaderMetric label="Follow-up" value={smartCounts.follow_up} tone="slate" />
@@ -507,7 +507,7 @@ export default function EngagementCenterPage() {
       </header>
 
       {view === "repository" ? (
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <main className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="mx-auto max-w-6xl">
             <EngagementRepository
               multiListFlagOn={multiListFlagOn}
@@ -516,7 +516,7 @@ export default function EngagementCenterPage() {
           </div>
         </main>
       ) : view === "callSettings" ? (
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <main className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="mx-auto max-w-6xl space-y-4">
             {/* Phase 6D — consolidated operational exceptions (self-hides for
                 non-managers via backend 403). One at-a-glance summary of
@@ -531,7 +531,7 @@ export default function EngagementCenterPage() {
           </div>
         </main>
       ) : view === "callResults" ? (
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <main className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="mx-auto max-w-6xl">
             {/* KPI summary (retained) + the operational record list beneath it. */}
             <EngagementTeamMetrics />
@@ -551,7 +551,7 @@ export default function EngagementCenterPage() {
         </aside>
 
         {/* Center worklist */}
-        <main className="min-w-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <main className="min-w-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="mx-auto max-w-3xl space-y-4">
             <EngagementDuplicateBanner />
             <EngagementWorklist
