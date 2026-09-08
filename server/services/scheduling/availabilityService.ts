@@ -33,6 +33,7 @@ import {
   type Conflict,
   type VisitPlan,
 } from "@shared/scheduling/availabilityEngine";
+import { rankSlots, type PartOfDay, type RankedRecommendation } from "@shared/scheduling/slotRanking";
 
 const ANCILLARY_EVENT_TYPES = new Set([
   "ancillary_appointment",
@@ -221,6 +222,10 @@ export type AvailabilityResult = {
     oneVisit: VisitPlan | null;
     splitVisit: VisitPlan | null;
   };
+  /** Phase 6 — DETERMINISTIC ranked recommendations over the FEASIBLE slots
+   *  above (never invented). Each carries a fact-derived explanation. The
+   *  engine remains the authority on feasibility; this only orders the picks. */
+  recommendations: RankedRecommendation[];
 };
 
 export async function computeAvailability(params: {
@@ -230,6 +235,8 @@ export async function computeAvailability(params: {
   services: ServiceRequest[];
   patientKey?: string | null;
   preferredTime?: string | null;
+  /** Optional STRUCTURED part-of-day preference (drives ranking only). */
+  partOfDay?: PartOfDay | null;
 }): Promise<AvailabilityResult> {
   const { capacity, existing, clinicId, facilityName } = await loadDayContext({
     facilityName: params.facilityName,
@@ -324,6 +331,23 @@ export async function computeAvailability(params: {
       rt === "brainwave" ? "BrainWave" : rt === "vitalwave" ? "VitalWave" : "Ultrasound",
   }));
 
+  // Phase 6 — deterministic ranking over the FEASIBLE primary-service slots.
+  // Same-day coordination uses the patient's OWN existing blocks for this date
+  // (structured occupancy filtered by candidate patient key) — never fabricated.
+  const patientSameDayStartMinutes = existing
+    .filter((e) => e.patientKey === candidatePatientKey)
+    .map((e) => e.startMinutes);
+  const recommendations = rankSlots({
+    slots,
+    isoDate: params.isoDate,
+    preference: {
+      partOfDay: params.partOfDay ?? null,
+      preferredTime: params.preferredTime ?? null,
+    },
+    patientSameDayStartMinutes,
+    oneVisit: visit.oneVisit,
+  });
+
   return {
     clinicId,
     facility: facilityName,
@@ -337,6 +361,7 @@ export async function computeAvailability(params: {
     equipment,
     operatingDays,
     visit,
+    recommendations,
   };
 }
 
@@ -346,6 +371,78 @@ export async function computeAvailability(params: {
  * Keeps the planner's cross-day capacity checks accurate without scanning the
  * whole calendar.
  */
+// ─── Phase 6 — server-side BOOKING REVALIDATION ─────────────────────────────
+//
+// Discovery-time availability can go stale before the canonical write (a
+// concurrent booking takes the last machine). This re-runs the SAME engine
+// against fresh capacity + occupancy immediately before booking. It reuses
+// loadDayContext + conflictForRequest — NOT a second engine. Off-day is a soft,
+// override-able constraint and is NOT treated as a race conflict here; only
+// CAPACITY (full / outage) blocks a non-overridden write.
+
+// FAIL-CLOSED three-way outcome. UNKNOWN AVAILABILITY ≠ AVAILABLE:
+//   • ok            → the slot still fits capacity → safe to book.
+//   • conflict      → known capacity conflict (full/outage) → 409, no booking.
+//   • cannot_verify → a feasibility dependency errored (engine/capacity/
+//                     occupancy/DB read) → we could NOT determine validity →
+//                     the caller MUST fail closed (5xx, no booking). Never
+//                     treat "cannot verify" as "probably okay".
+export type RevalidateOutcome =
+  | { status: "ok" }
+  | { status: "conflict"; constraint: "full" | "outage"; conflict: Conflict }
+  | { status: "cannot_verify"; reason: string };
+
+// Test-only fault injector for the fail-closed contract (see phase6 tests).
+// Never set in production paths. When set, revalidateSlot's feasibility read
+// throws, exercising the cannot_verify branch deterministically.
+let __revalidationErrorInjector: (() => void) | null = null;
+export function __setRevalidationErrorForTest(fn: (() => void) | null): void {
+  __revalidationErrorInjector = fn;
+}
+
+export async function revalidateSlot(params: {
+  facilityName: string | null;
+  clinicId?: number | null;
+  startsAt: Date;
+  serviceType: string;
+  studyCount?: number | null;
+  patientKey?: string | null;
+}): Promise<RevalidateOutcome> {
+  try {
+    if (__revalidationErrorInjector) __revalidationErrorInjector();
+    const cat = getAncillaryCategory(params.serviceType);
+    // No resource pool for this service → not machine-bound; nothing to
+    // capacity-check. This is a KNOWN "ok" (not an "unknown"), so it books.
+    if (cat === "other") return { status: "ok" };
+    const resourceType = cat as ResourceType;
+    const isoDate = isoDateOf(params.startsAt);
+    const startMinutes = localMinutesOf(params.startsAt);
+
+    const { capacity, existing } = await loadDayContext({
+      facilityName: params.facilityName,
+      clinicId: params.clinicId ?? null,
+      isoDate,
+    });
+
+    const conflict = conflictForRequest(
+      { resourceType, studyCount: params.studyCount ?? undefined },
+      startMinutes,
+      capacity,
+      existing,
+      params.patientKey ?? "__candidate__",
+      isoDate,
+    );
+    // Only a CAPACITY constraint (full / outage) is a hard race-conflict here.
+    if (conflict && (conflict.constraint === "full" || conflict.constraint === "outage")) {
+      return { status: "conflict", constraint: conflict.constraint, conflict };
+    }
+    return { status: "ok" };
+  } catch (e) {
+    // Could NOT determine feasibility → FAIL CLOSED. The caller must not book.
+    return { status: "cannot_verify", reason: e instanceof Error ? e.message : "revalidation error" };
+  }
+}
+
 async function loadOccupancyForCandidateDays(params: {
   facilityName: string | null;
   capacity: CapacityByResource;

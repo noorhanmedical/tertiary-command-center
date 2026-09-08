@@ -25,8 +25,32 @@
 // outreach route via the recordCallResult executors). This keeps Item 2F
 // intact: logging a call never mutates appointmentStatus on its own.
 
+import { eq } from "drizzle-orm";
+import { db } from "../../db";
 import { storage } from "../../storage";
-import type { InsertOutreachCall, OutreachCall } from "@shared/schema/outreach";
+import { outreachCalls, type InsertOutreachCall, type OutreachCall } from "@shared/schema/outreach";
+
+// Any drizzle executor — the base `db` or an open transaction handle. When a
+// caller passes a transaction handle, the durable call record is written on
+// that transaction so it commits atomically with the caller's other mandatory
+// writes (e.g. the execution-case advance) — Phase 1B call-result atomicity.
+type CallRecordTxClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type CallRecordDbExecutor = typeof db | CallRecordTxClient;
+
+async function findCallByExternalId(
+  externalCallId: string,
+  exec?: CallRecordDbExecutor,
+): Promise<OutreachCall | undefined> {
+  if (exec) {
+    const [row] = await exec
+      .select()
+      .from(outreachCalls)
+      .where(eq(outreachCalls.externalCallId, externalCallId))
+      .limit(1);
+    return row;
+  }
+  return storage.findOutreachCallByExternalId(externalCallId);
+}
 
 export type CanonicalCallRecordInput = {
   patientScreeningId: number;
@@ -68,10 +92,11 @@ export type CanonicalCallRecordResult = {
  */
 export async function ensureCanonicalCallRecord(
   input: CanonicalCallRecordInput,
+  exec?: CallRecordDbExecutor,
 ): Promise<CanonicalCallRecordResult> {
   // Idempotency: if a key is supplied and a row already exists, return it.
   if (input.externalCallId) {
-    const existing = await storage.findOutreachCallByExternalId(input.externalCallId);
+    const existing = await findCallByExternalId(input.externalCallId, exec);
     if (existing) return { call: existing, created: false };
   }
 
@@ -90,6 +115,17 @@ export async function ensureCanonicalCallRecord(
     externalCallId: input.externalCallId ?? null,
     sourceSystem: input.sourceSurface ?? "plexus",
   };
+
+  // Transactional path: the caller owns idempotency pre-check (above). A
+  // concurrent-race unique violation must NOT be caught-and-resolved here —
+  // an errored statement aborts the whole Postgres transaction, so an in-tx
+  // recovery SELECT would itself fail. Instead we let it propagate: the tx
+  // rolls back and the caller's retry hits its idempotent-replay path, which
+  // preserves exactly-once without touching an aborted transaction.
+  if (exec) {
+    const [call] = await exec.insert(outreachCalls).values(record).returning();
+    return { call, created: true };
+  }
 
   try {
     const call = await storage.createOutreachCall(record);

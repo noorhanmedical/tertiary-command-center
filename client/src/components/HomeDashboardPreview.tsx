@@ -249,7 +249,7 @@ export function HomeDashboardPreview({ batches, onOpenSidebar }: HomeDashboardPr
   return (
     <div className="winter-home winter-canvas flex flex-col h-full" data-testid="home-dashboard">
       <main className="relative z-[1] flex-1 overflow-auto">
-        <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8 pt-7 pb-16">
+        <div className="mx-auto w-full max-w-[1600px] px-6 pt-7 pb-16">
           <div className="space-y-6">
             {/* Page header (§11) — sits directly on the icy canvas */}
             <div className="mt-2">

@@ -328,6 +328,9 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     staleTime: 10_000,
   });
   const slots = availability?.slots ?? [];
+  // Phase 6 — server-computed DETERMINISTIC ranked recommendations over the
+  // engine's FEASIBLE slots (never invented). Each carries a fact-derived reason.
+  const recommendations = availability?.recommendations ?? [];
   const agenda = availability?.agenda ?? [];
   const equipment = availability?.equipment ?? [];
   const operatingDays = availability?.operatingDays ?? [];
@@ -996,6 +999,33 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
     </button>
   ) : null;
 
+  // ── Phase 6 — DETERMINISTIC ranked "Suggested times" (top 3) ──────────────
+  // Server-computed over the engine's FEASIBLE slots (never invented); each
+  // carries a fact-derived reason. Clicking one populates the pending time
+  // (does NOT commit — the canonical Schedule button revalidates + books).
+  const recommendationsBlock = active && !time && recommendations.length > 0 ? (
+    <div className="flex flex-col gap-1.5" data-testid="scheduler-recommendations">
+      <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Suggested times</span>
+      {recommendations.slice(0, 3).map((r) => (
+        <button
+          key={r.time}
+          type="button"
+          onClick={() => { setLastScheduled(null); setTime(r.time); }}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50"
+          data-testid={`scheduler-recommendation-${r.time}`}
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-900">{pretty12h(r.time)}</span>
+            <span className="block truncate text-[11px] text-slate-500" data-testid={`scheduler-recommendation-reason-${r.time}`}>
+              {r.reasons.join(" · ")}
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full border border-slate-300 px-2 py-0.5 text-[9px] font-semibold uppercase text-slate-600">Use</span>
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   // ── Selected (pending) appointment + explicit Schedule button ──
   const pendingSlot = activeRequest && time ? slots.find((s) => s.time === time) ?? null : null;
   const pendingConflict = !!pendingSlot && !pendingSlot.fits;
@@ -1251,7 +1281,7 @@ export function UnifiedScheduler({ context }: { context: UnifiedSchedulerContext
       {(active || time || lastScheduled) ? (
         <div className="flex flex-col gap-2" data-testid="scheduler-pending-area">
           {selectedBlock}
-          {suggestionBlock}
+          {recommendations.length > 0 ? recommendationsBlock : suggestionBlock}
           {successBlock}
         </div>
       ) : null}

@@ -26,6 +26,7 @@ import {
   VendorsModule, PayrollModule, BankingModule, ReportsModule,
   ApprovalsModule, AuditLogsModule, SettingsPermissionsModule,
 } from "@/pages/plexus-bank/modules-ops";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 
 // ─── Global filter context ──────────────────────────────────────────────────
 
@@ -193,6 +194,11 @@ export default function PlexusBankPage() {
 
   const anyFilterActive = Object.values(filters).some(Boolean);
 
+  // Major workspace/module becomes the title context (never the filters).
+  // The default "dashboard" landing shows the base title only.
+  const activeModuleLabel = BANK_MODULES.find((m) => m.id === activeModule)?.label;
+  const bankContext = activeModule === "dashboard" ? undefined : activeModuleLabel;
+
   return (
     <PlexusBankContext.Provider value={ctxValue}>
       <div className="flex h-full min-h-0 w-full bg-slate-50" data-testid="plexus-bank-page">
@@ -233,6 +239,10 @@ export default function PlexusBankPage() {
 
         {/* Main column */}
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* Page-level title — base + active module context. */}
+          <div className="shrink-0 bg-white px-5 pt-6 pb-2">
+            <InteriorPageTitle title="Plexus Bank" context={bankContext} />
+          </div>
           {/* Global filter bar — persists across module switches */}
           <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 bg-white px-5 py-3" data-testid="bank-filter-bar">
             <FilterSelect label="Clinic" value={filters.clinic} options={BANK_CLINICS} onChange={(v) => ctxValue.setFilter("clinic", v)} testId="bank-filter-clinic" />

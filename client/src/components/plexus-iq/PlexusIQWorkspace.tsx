@@ -918,7 +918,7 @@ export function PlexusIQWorkspace({
 
   if (grouped.length === 0) {
     return (
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-12">
+      <div className="w-full px-6 py-12">
         <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
           <div className="text-sm font-semibold text-slate-900">No patients yet</div>
           <p className="mt-2 text-xs text-slate-500">
@@ -979,7 +979,7 @@ export function PlexusIQWorkspace({
     // facility-first rule. Clicking a tile opens its facility interior.
     return (
       <div
-        className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3"
+        className="mx-auto w-full max-w-[1400px] px-6 py-6 space-y-3"
         data-testid="plexus-iq-facility-overview"
       >
         <div className="flex items-center justify-between gap-2">
@@ -1062,7 +1062,7 @@ export function PlexusIQWorkspace({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
+    <div className="mx-auto w-full max-w-[1400px] px-6 py-6 space-y-3">
       <div className="flex items-center justify-end">
         <button
           type="button"

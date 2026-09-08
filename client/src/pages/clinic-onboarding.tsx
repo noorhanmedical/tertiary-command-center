@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -354,18 +355,13 @@ export default function ClinicOnboardingPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/15 to-indigo-500/15 text-purple-700">
-            <Rocket className="w-5 h-5" strokeWidth={1.75} />
-          </span>
-          <div>
-            <h1 className="text-xl font-semibold text-slate-900" data-testid="text-clinic-onboarding-title">
-              Clinic Onboarding
-            </h1>
-            <p className="text-sm text-slate-500">Implementation, SOPs &amp; go-live readiness</p>
-          </div>
-        </div>
+      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur px-6 py-4">
+        <InteriorPageTitle
+          title="Clinic Onboarding"
+          context={clinic.name}
+          titleTestId="text-clinic-onboarding-title"
+        />
+        <p className="mt-4 text-sm text-slate-500">Implementation, SOPs &amp; go-live readiness</p>
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">

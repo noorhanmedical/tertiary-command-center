@@ -88,10 +88,16 @@ export async function recoverDeactivatedUser(
         ),
       );
 
+    // Phase 4 — a DEACTIVATED account (security / offboarding) is the explicit
+    // emergency exception: its active work MUST be reclaimed even if a stale
+    // claim is still held, so force-release clears the claim as it reassigns.
+    // (Ordinary absence / PTO / early-departure never force — they protect
+    // actively-worked cases.)
     const summary = await releaseAndRedistributeCanonical(
       sched.id,
       `deactivated_user:${userId}`,
       actorUserId,
+      { forceReleaseClaims: true },
     );
     result.released += summary.released;
     result.redistributed += summary.redistributed;

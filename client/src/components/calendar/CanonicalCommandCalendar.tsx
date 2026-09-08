@@ -40,6 +40,9 @@ type CommonProps = {
   unscheduledItems?: CanonicalCalendarUnscheduledItem[];
   onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
   initialMonth?: Date;
+  // Opt-in navy blue header bar for the inline calendar. Defaults to the
+  // standard light header used by every existing surface.
+  headerTone?: "default" | "navy";
 };
 
 type InlineProps = CommonProps & {
@@ -93,6 +96,7 @@ export function CanonicalCommandCalendar(props: CanonicalCommandCalendarProps) {
   const {
     profileId,
     context,
+    title,
     settings,
     cells,
     summary,
@@ -100,11 +104,13 @@ export function CanonicalCommandCalendar(props: CanonicalCommandCalendarProps) {
     unscheduledItems,
     onUnscheduledItemAction,
     initialMonth,
+    headerTone,
   } = props;
   return (
     <UniversalCalendar
       profileId={profileId}
       context={context}
+      title={title}
       settings={settings}
       cells={cells}
       summary={summary}
@@ -112,6 +118,7 @@ export function CanonicalCommandCalendar(props: CanonicalCommandCalendarProps) {
       unscheduledItems={unscheduledItems}
       onUnscheduledItemAction={onUnscheduledItemAction}
       initialMonth={initialMonth}
+      headerTone={headerTone}
     />
   );
 }

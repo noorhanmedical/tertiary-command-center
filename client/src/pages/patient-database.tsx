@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
@@ -305,7 +306,13 @@ export default function PatientDatabasePage() {
   const resolving = resolveQuery.isLoading && !rosterMatch;
 
   return (
-    <div className="flex h-full relative z-10 bg-finance-bg overflow-hidden">
+    <div className="flex flex-col h-full relative z-10 bg-finance-bg overflow-hidden">
+      {/* Page-level title (base only — clinic filter is not navigation context,
+          and a merely-selected patient is not a dedicated patient workspace). */}
+      <div className="shrink-0 px-6 pt-6 pb-2">
+        <InteriorPageTitle title="Plexus EHR" />
+      </div>
+      <div className="flex min-h-0 flex-1">
       {/* ── Left rail: roster + filters (collapsible) ── */}
       {railCollapsed && hasSelection ? (
         <div
@@ -328,29 +335,27 @@ export default function PatientDatabasePage() {
         data-testid="patient-directory-rail"
       >
         <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-slate-900/8 text-slate-700 flex items-center justify-center shrink-0">
-                <Database className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Plexus Ancillary</div>
-                <h1 className="text-base font-bold leading-tight truncate">Plexus EHR</h1>
-              </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-slate-900/8 text-slate-700 flex items-center justify-center shrink-0">
+              <Database className="w-4 h-4" />
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button size="sm" variant="default" onClick={() => setAddPatientOpen(true)} className="gap-1.5" data-testid="button-add-patient-ehr">
-                <Plus className="w-3.5 h-3.5" />Add Patient
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5" data-testid="button-import-test-history">
-                <Upload className="w-3.5 h-3.5" />Import
-              </Button>
-              {hasSelection && (
-                <Button size="icon" variant="ghost" className="h-8 w-8 hidden lg:inline-flex" onClick={() => setRailCollapsed(true)} title="Collapse patient list" data-testid="button-rail-collapse">
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-              )}
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">Plexus Ancillary</div>
+              <h2 className="text-base font-bold leading-tight truncate">Patients</h2>
             </div>
+            {hasSelection && (
+              <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 hidden lg:inline-flex" onClick={() => setRailCollapsed(true)} title="Collapse patient list" data-testid="button-rail-collapse">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="default" onClick={() => setAddPatientOpen(true)} className="flex-1 gap-1.5" data-testid="button-add-patient-ehr">
+              <Plus className="w-3.5 h-3.5" />Add Patient
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="flex-1 gap-1.5" data-testid="button-import-test-history">
+              <Upload className="w-3.5 h-3.5" />Import
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground" data-testid="text-roster-summary">
             {totalPatients} patient{totalPatients !== 1 ? "s" : ""}{loadedCount < totalPatients ? ` · showing ${loadedCount}` : ""}
@@ -368,27 +373,27 @@ export default function PatientDatabasePage() {
             />
           </div>
 
-          {/* Clinic chips */}
+          {/* Clinic filter */}
           {allClinics.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap" data-testid="row-clinic-chips">
-              <button
-                onClick={() => setClinicFilter("")}
-                className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors ${clinicFilter === "" ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-muted dark:text-foreground"}`}
-                data-testid="chip-clinic-all"
-              >
-                All
-              </button>
-              {allClinics.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setClinicFilter(clinicFilter === c ? "" : c)}
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors flex items-center gap-1 ${clinicFilter === c ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-muted dark:text-foreground"}`}
-                  data-testid={`chip-clinic-${c.replace(/\s+/g, "-")}`}
-                >
-                  <Building2 className="w-3 h-3" />{c}
-                </button>
-              ))}
-            </div>
+            <Select
+              value={clinicFilter === "" ? "__all__" : clinicFilter}
+              onValueChange={(v) => setClinicFilter(v === "__all__" ? "" : v)}
+            >
+              <SelectTrigger className="h-9 text-sm" data-testid="select-clinic-filter">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="All clinics" />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__" data-testid="select-clinic-all">All clinics</SelectItem>
+                {allClinics.map((c) => (
+                  <SelectItem key={c} value={c} data-testid={`select-clinic-${c.replace(/\s+/g, "-")}`}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
           {(clinicFilter || windowFilter || debouncedSearch) && (
             <Button size="sm" variant="ghost" onClick={() => { setSearch(""); setClinicFilter(""); setWindowFilter(""); }} className="gap-1 text-xs h-7 px-2" data-testid="button-clear-all-filters">
@@ -519,6 +524,7 @@ export default function PatientDatabasePage() {
           </div>
         )}
       </section>
+      </div>
 
       {/* Import history dialog */}
       <Dialog open={importOpen} onOpenChange={setImportOpen}>

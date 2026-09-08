@@ -73,7 +73,7 @@ export default function SharedSchedule() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background">
+      <div className="flex items-center justify-center h-full min-h-[60vh] bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     );
@@ -81,7 +81,7 @@ export default function SharedSchedule() {
 
   if (!batch) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background px-4">
+      <div className="flex items-center justify-center h-full min-h-[60vh] bg-background px-4">
         <div className="text-center">
           <Stethoscope className="w-14 h-14 text-slate-300 mx-auto mb-5" />
           <h2 className="text-xl font-bold text-slate-900" data-testid="text-not-found">Schedule not found</h2>
@@ -93,7 +93,7 @@ export default function SharedSchedule() {
 
   if (!unlocked) {
     return (
-      <div className="h-screen bg-background flex items-center justify-center px-4">
+      <div className="h-full min-h-[60vh] bg-background flex items-center justify-center px-4">
         <Card className="w-full max-w-sm rounded-3xl shadow-xl border-slate-200/60 overflow-hidden">
           <div className="bg-[#1a365d] px-6 py-6 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-white/10 mb-3">
@@ -148,15 +148,15 @@ export default function SharedSchedule() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-full bg-background">
       <div className="sticky top-0 z-50">
-        <div className="bg-[#1a365d] px-4 md:px-8 py-2">
+        <div className="bg-[#1a365d] px-6 py-2">
           <div className="max-w-5xl mx-auto flex items-center gap-2">
             <Stethoscope className="w-4 h-4 text-blue-200/80 shrink-0" />
             <p className="text-xs text-blue-200/80 font-semibold tracking-wider uppercase truncate">Plexus Ancillary Screening</p>
           </div>
         </div>
-        <div className="bg-blue-100/90 border-b border-blue-200/60 px-4 md:px-8 py-3 backdrop-blur-sm">
+        <div className="bg-blue-100/90 border-b border-blue-200/60 px-6 py-3 backdrop-blur-sm">
           <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
               <h1 className="text-base font-bold text-slate-800 tracking-tight leading-tight truncate" data-testid="text-shared-schedule-title">{batch.name}</h1>
@@ -206,7 +206,7 @@ export default function SharedSchedule() {
         </div>
       </div>
 
-      <main className="max-w-5xl mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-8">
+      <main className="max-w-5xl mx-auto px-6 py-4 sm:py-8">
         <div className="space-y-2 sm:space-y-3" data-testid="shared-schedule-list">
           {patients.map((patient) => {
             const allTests = patient.qualifyingTests || [];
@@ -397,7 +397,7 @@ export default function SharedSchedule() {
       </main>
 
       <footer className="border-t border-slate-200/60 bg-white/60 backdrop-blur-sm">
-        <div className="max-w-5xl mx-auto px-4 md:px-8 py-4">
+        <div className="max-w-5xl mx-auto px-6 py-4">
           <p className="text-xs text-slate-400 text-center">Plexus Ancillary Screening · AI-powered patient qualification</p>
         </div>
       </footer>

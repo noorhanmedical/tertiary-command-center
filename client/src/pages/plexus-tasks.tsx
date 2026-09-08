@@ -2,7 +2,7 @@ import { PlexusTasksWorkspace } from "@/features/plexus-tasks/PlexusTasksWorkspa
 
 export default function PlexusTasksPage() {
   return (
-    <div className="h-screen w-full overflow-hidden bg-slate-50">
+    <div className="h-full w-full overflow-hidden bg-slate-50">
       <PlexusTasksWorkspace />
     </div>
   );

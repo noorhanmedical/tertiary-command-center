@@ -46,6 +46,9 @@ const SETTINGS_DEFAULTS = {
   facilitiesCovered: null as string[] | null,
   manualWorkingToday: null as boolean | null,
   active: true,
+  defaultShiftStart: null as string | null,
+  defaultShiftEnd: null as string | null,
+  workWeekdays: null as number[] | null,
 };
 
 const updateSettingsSchema = z
@@ -62,6 +65,25 @@ const updateSettingsSchema = z
     facilitiesCovered: z.array(z.string()).nullable().optional(),
     manualWorkingToday: z.boolean().nullable().optional(),
     active: z.boolean().optional(),
+    // Phase 3 — recurring default shift pattern (opt-in). No default shift +
+    // no per-day override ⇒ pre-Phase-3 behavior (available the whole working
+    // day; capacity from callWorkdayPercent). Times are HH:MM in the member's
+    // clinic timezone; workWeekdays is 0=Sun…6=Sat (null ⇒ Mon–Fri).
+    defaultShiftStart: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "defaultShiftStart must be HH:MM")
+      .nullable()
+      .optional(),
+    defaultShiftEnd: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "defaultShiftEnd must be HH:MM")
+      .nullable()
+      .optional(),
+    workWeekdays: z
+      .array(z.number().int().min(0).max(6))
+      .max(7)
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -126,6 +148,13 @@ export function registerEngagementCallSettingsRoutes(
             manualWorkingToday:
               saved?.manualWorkingToday ?? SETTINGS_DEFAULTS.manualWorkingToday,
             active: saved?.active ?? SETTINGS_DEFAULTS.active,
+            defaultShiftStart:
+              saved?.defaultShiftStart ?? SETTINGS_DEFAULTS.defaultShiftStart,
+            defaultShiftEnd:
+              saved?.defaultShiftEnd ?? SETTINGS_DEFAULTS.defaultShiftEnd,
+            workWeekdays:
+              (saved?.workWeekdays as number[] | null) ??
+              SETTINGS_DEFAULTS.workWeekdays,
           };
 
           const targets = computeCallTargets(
@@ -243,6 +272,21 @@ export function registerEngagementCallSettingsRoutes(
       if (!parsed.success) {
         return res.status(400).json({
           error: parsed.error.issues[0]?.message ?? "Invalid settings",
+          code: "bad_request",
+        });
+      }
+
+      // Default shift window consistency: when both ends are provided, end must
+      // be after start (a partial/one-sided update is allowed — the other end
+      // may already be stored). String HH:MM compares lexicographically.
+      const { defaultShiftStart, defaultShiftEnd } = parsed.data;
+      if (
+        typeof defaultShiftStart === "string" &&
+        typeof defaultShiftEnd === "string" &&
+        defaultShiftEnd <= defaultShiftStart
+      ) {
+        return res.status(400).json({
+          error: "defaultShiftEnd must be after defaultShiftStart",
           code: "bad_request",
         });
       }

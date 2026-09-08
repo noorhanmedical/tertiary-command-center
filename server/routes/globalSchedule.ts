@@ -25,6 +25,7 @@ import {
 } from "../services/scheduling/scheduleStatusService";
 import { featureFlags } from "../lib/featureFlags";
 import { scheduleCanonicalAncillaryAppointment } from "../services/canonicalAppointments/scheduleAncillaryOrchestrator";
+import { revalidateSlot } from "../services/scheduling/availabilityService";
 import { applyCanonicalAncillaryTransition } from "../services/canonicalAppointments/transitionOrchestrator";
 import {
   getCanonicalAppointmentProjection,
@@ -515,6 +516,59 @@ export function registerGlobalScheduleRoutes(app: Express) {
         }
       }
 
+      // ── Phase 6 — server-side BOOKING REVALIDATION ────────────────────────
+      // Availability seen at discovery can go stale before this write (a
+      // concurrent booking took the last machine). Re-run the SAME engine
+      // against fresh capacity/occupancy and REJECT a now-full slot with a
+      // clear conflict — never book over capacity silently. An explicit,
+      // authorized override (metadata.override) intentionally bypasses this
+      // (the scheduler already captured a reason). Fails OPEN on an engine
+      // error so a capacity-read hiccup never blocks a legitimate booking
+      // (preserves pre-Phase-6 behavior, which had no revalidation at all).
+      const hasAuthorizedOverride = !!(data.metadata as { override?: unknown } | undefined)?.override;
+      if (!hasAuthorizedOverride) {
+        // revalidateSlot NEVER throws — it returns a three-way outcome. An
+        // explicit authorized override (above) is the ONLY sanctioned bypass;
+        // an ordinary system failure must NEVER behave like an override.
+        const reval = await revalidateSlot({
+          facilityName: data.facilityId ?? null,
+          clinicId: reqClinicIdIn,
+          startsAt,
+          serviceType: data.serviceType,
+          studyCount:
+            (data.metadata as { ultrasoundStudyCount?: number } | undefined)?.ultrasoundStudyCount ?? null,
+          patientKey:
+            data.patientScreeningId != null ? `ps:${data.patientScreeningId}` : null,
+        });
+        if (reval.status === "conflict") {
+          // KNOWN capacity conflict (full/outage) — do not book.
+          return {
+            httpStatus: 409,
+            body: {
+              error: "That time is no longer available — please pick another.",
+              code: "slot_unavailable",
+              constraint: reval.constraint,
+              conflict: reval.conflict,
+            },
+          };
+        }
+        if (reval.status === "cannot_verify") {
+          // FAIL CLOSED: we could not determine availability (engine/capacity/
+          // occupancy/DB read error). UNKNOWN AVAILABILITY ≠ AVAILABLE — do NOT
+          // create an appointment, do NOT advance engagement; the employee can
+          // retry once the availability service recovers. No writes happen
+          // because we return BEFORE any of them.
+          return {
+            httpStatus: 503,
+            body: {
+              error: "We couldn't verify that this time is still available. Please try again in a moment.",
+              code: "revalidation_unavailable",
+            },
+          };
+        }
+        // reval.status === "ok" → verified feasible → proceed to book.
+      }
+
       // Resolve patient context — must be able to identify the case
       let executionCaseId: number | null = data.executionCaseId ?? null;
       let patientScreeningId: number | null = data.patientScreeningId ?? null;
@@ -706,23 +760,54 @@ export function registerGlobalScheduleRoutes(app: Express) {
         }
       }
 
-      // Upsert ancillary appointment (dedup happens inside the repo helper)
-      const { event, created } = await upsertAncillaryScheduleEvent({
-        executionCaseId: executionCase.id,
-        patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
-        patientName: executionCase.patientName,
-        patientDob: executionCase.patientDob ?? null,
-        facilityId,
-        serviceType: data.serviceType,
-        startsAt,
-        endsAt,
-        assignedUserId: data.assignedUserId ?? null,
-        source: "scheduler_portal",
-        note: data.note ?? null,
-        metadata: { actorUserId, ...(data.metadata ?? {}) },
+      // Phase 1 (#4): the appointment write AND the execution-case advance
+      // commit as ONE transaction. This makes the operational invariant hold —
+      // if Plexus reports the patient scheduled (engagementStatus="scheduled")
+      // then a durable appointment row MUST exist, and vice versa. A failure
+      // in either statement rolls BOTH back and surfaces as a 500 (the outer
+      // catch), instead of the previous best-effort path that could leave
+      // engagementStatus="scheduled" with no appointment (or an appointment
+      // with the case left un-advanced). The journey/audit append stays
+      // best-effort AFTER commit (never rolls back a committed schedule).
+      let updatedExecutionCase = executionCase;
+      const { event, created } = await db.transaction(async (tx) => {
+        const upserted = await upsertAncillaryScheduleEvent(
+          {
+            executionCaseId: executionCase.id,
+            patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+            patientName: executionCase.patientName,
+            patientDob: executionCase.patientDob ?? null,
+            facilityId,
+            serviceType: data.serviceType,
+            startsAt,
+            endsAt,
+            assignedUserId: data.assignedUserId ?? null,
+            source: "scheduler_portal",
+            note: data.note ?? null,
+            metadata: { actorUserId, ...(data.metadata ?? {}) },
+          },
+          tx,
+        );
+
+        // Advance execution case state — engagementStatus=scheduled,
+        // nextActionAt=startsAt. Update unconditionally because scheduling
+        // is the operationally-correct next state regardless of prior state.
+        const [row] = await tx
+          .update(patientExecutionCases)
+          .set({
+            engagementStatus: "scheduled",
+            nextActionAt: startsAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(patientExecutionCases.id, executionCase.id))
+          .returning();
+        if (row) updatedExecutionCase = row;
+
+        return { event: upserted.event, created: upserted.created };
       });
 
-      // Append journey event (best-effort)
+      // Append journey event (best-effort, POST-COMMIT — an audit-write miss
+      // must never roll back a committed appointment).
       let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {
         journeyEvent = await appendJourneyEvent({
@@ -748,25 +833,6 @@ export function registerGlobalScheduleRoutes(app: Express) {
         });
       } catch (err: any) {
         console.error("[schedule-ancillary] journey event append failed:", err.message);
-      }
-
-      // Advance execution case state — engagementStatus=scheduled,
-      // nextActionAt=startsAt. Update unconditionally because scheduling
-      // is the operationally-correct next state regardless of prior state.
-      let updatedExecutionCase = executionCase;
-      try {
-        const [row] = await db
-          .update(patientExecutionCases)
-          .set({
-            engagementStatus: "scheduled",
-            nextActionAt: startsAt,
-            updatedAt: new Date(),
-          })
-          .where(eq(patientExecutionCases.id, executionCase.id))
-          .returning();
-        if (row) updatedExecutionCase = row;
-      } catch (err: any) {
-        console.error("[schedule-ancillary] execution case update failed:", err.message);
       }
 
       return {

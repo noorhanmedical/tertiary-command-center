@@ -1559,7 +1559,7 @@ export default function ClinicalIntelligencePage() {
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col bg-slate-50/60">
-      <header className="border-b border-slate-200 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-5 py-3">
+      <header className="border-b border-slate-200 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-6 py-3">
         <div className="flex items-center gap-3">
           <Link
             href="/plexus-iq"
@@ -1610,7 +1610,7 @@ export default function ClinicalIntelligencePage() {
             </div>
           ))}
         </nav>
-        <main className="min-w-0 flex-1 overflow-y-auto p-4">{content()}</main>
+        <main className="min-w-0 flex-1 overflow-y-auto px-6 py-4">{content()}</main>
       </div>
     </div>
   );

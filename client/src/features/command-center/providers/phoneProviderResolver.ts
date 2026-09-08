@@ -24,10 +24,15 @@
 import type { PhoneProviderAdapter, PhoneProviderId, PhoneProviderConfig } from "./phoneProviderTypes";
 import { manualPhoneProvider } from "./manualPhoneProvider";
 import { ringCentralProvider } from "./ringCentralProvider";
-import type {
-  PhoneProviderPreferencesDTO,
-  PhoneProviderDescriptor,
-  SelectablePhoneProviderId,
+import { doximityPhoneProvider } from "./doximityPhoneProvider";
+import {
+  providerModeFromCapabilities,
+  NO_PHONE_PROVIDER_CAPABILITIES,
+  type PhoneProviderCapabilities,
+  type PhoneProviderMode,
+  type PhoneProviderPreferencesDTO,
+  type PhoneProviderDescriptor,
+  type SelectablePhoneProviderId,
 } from "@shared/phoneProvider";
 
 // Registry of KNOWN adapters. Additional providers (dialpad/aircall/8x8/goto)
@@ -35,11 +40,12 @@ import type {
 // have concrete adapters. Unknown/unimplemented ids resolve to manual.
 const REGISTRY: Partial<Record<PhoneProviderId, PhoneProviderAdapter>> = {
   manual: manualPhoneProvider,
+  doximity: doximityPhoneProvider,
   ringcentral: ringCentralProvider,
 };
 
 // Provider ids that have a concrete, selectable adapter today.
-export const AVAILABLE_PROVIDER_IDS: PhoneProviderId[] = ["manual", "ringcentral"];
+export const AVAILABLE_PROVIDER_IDS: PhoneProviderId[] = ["manual", "doximity", "ringcentral"];
 
 export type PhoneProviderPreferences = {
   /** Team-member's explicit override (highest precedence). */
@@ -55,23 +61,54 @@ export type ResolvedPhoneProvider = {
   providerId: PhoneProviderId;
   /** Which precedence layer supplied the choice. */
   source: "team_member" | "facility" | "organization" | "manual_fallback";
-  /** Whether the resolved provider is actually live/ready. RingCentral is
-   *  provider-ready but NOT live unless credentials are configured; the UI
-   *  uses this to show an honest boundary rather than faking a call. */
+  /** Declarative capabilities of the resolved provider (UX branches on these). */
+  capabilities: PhoneProviderCapabilities;
+  /** Operating mode derived from capabilities: integrated / external_assisted /
+   *  manual. The Team Portal renders per MODE, never per provider name. */
+  mode: PhoneProviderMode;
+  /** Fail-closed readiness: the provider's REQUIRED config is actually valid.
+   *  Integrated providers (RingCentral) are ready ONLY behind the enabled flag/
+   *  credentials; manual + external-assisted are always ready (no creds needed). */
+  ready: boolean;
+  /** Back-compat: a provider that can place a VERIFIED in-app call right now
+   *  (integrated AND ready). External-assisted/manual are NOT "live" — they use
+   *  launch/manual paths. */
   live: boolean;
 };
 
-// Is a given provider actually LIVE (has real credentials/API), vs merely a
-// registered adapter? Manual is always live (it's a tel:/log fallback).
-// RingCentral is live only when the click-to-call flag/credentials are present.
+// Capability ceiling for a registered adapter (or none for unknown ids).
+function capabilitiesOf(providerId: PhoneProviderId): PhoneProviderCapabilities {
+  return REGISTRY[providerId]?.capabilities ?? NO_PHONE_PROVIDER_CAPABILITIES;
+}
+
+/**
+ * Fail-closed readiness. A capable provider is only READY when its required
+ * configuration is actually present:
+ *   • manual            → always ready (dial on your own phone).
+ *   • external_assisted → always ready (deep-link/tel: launch needs no creds).
+ *   • integrated        → ready ONLY behind valid config/flag (RingCentral =
+ *                         ringCentralEnabled). Unknown integrated → NOT ready.
+ */
+export function isProviderReady(
+  providerId: PhoneProviderId,
+  opts: { ringCentralEnabled: boolean },
+): boolean {
+  const mode = providerModeFromCapabilities(capabilitiesOf(providerId));
+  if (mode === "manual" || mode === "external_assisted") return true;
+  if (providerId === "ringcentral") return opts.ringCentralEnabled;
+  return false;
+}
+
+// Is a given provider actually LIVE — i.e. INTEGRATED and ready to place a
+// verified in-app call? Manual + external-assisted are never "live" in this
+// sense (they use the manual/launch paths). RingCentral is live only behind the
+// enabled flag/credentials (fail closed).
 export function isProviderLive(
   providerId: PhoneProviderId,
   opts: { ringCentralEnabled: boolean },
 ): boolean {
-  if (providerId === "manual") return true;
-  if (providerId === "ringcentral") return opts.ringCentralEnabled;
-  // Other providers have no live implementation yet.
-  return false;
+  const mode = providerModeFromCapabilities(capabilitiesOf(providerId));
+  return mode === "integrated" && isProviderReady(providerId, opts);
 }
 
 function resolveId(prefs: PhoneProviderPreferences): {
@@ -117,11 +154,17 @@ export function resolvePhoneProvider(
   }
   const adapter = REGISTRY[providerId] ?? manualPhoneProvider;
   const resolvedId = adapter.id;
+  const capabilities = adapter.capabilities ?? NO_PHONE_PROVIDER_CAPABILITIES;
+  const ready = isProviderReady(resolvedId, { ringCentralEnabled: opts.ringCentralEnabled });
+  const mode = providerModeFromCapabilities(capabilities);
   return {
     adapter,
     providerId: resolvedId,
     source,
-    live: isProviderLive(resolvedId, { ringCentralEnabled: opts.ringCentralEnabled }),
+    capabilities,
+    mode,
+    ready,
+    live: mode === "integrated" && ready,
   };
 }
 
@@ -203,11 +246,15 @@ export function listProviderDescriptors(opts: {
 }): PhoneProviderDescriptor[] {
   return AVAILABLE_PROVIDER_IDS.map((id) => {
     const adapter = REGISTRY[id] ?? manualPhoneProvider;
+    const capabilities = adapter.capabilities ?? NO_PHONE_PROVIDER_CAPABILITIES;
     return {
       providerId: id as SelectablePhoneProviderId,
       displayName: adapter.label,
       facilityId: opts.facilityId ?? null,
       live: isProviderLive(id, { ringCentralEnabled: opts.ringCentralEnabled }),
+      ready: isProviderReady(id, { ringCentralEnabled: opts.ringCentralEnabled }),
+      mode: providerModeFromCapabilities(capabilities),
+      capabilities,
     };
   });
 }

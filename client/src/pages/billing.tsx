@@ -900,7 +900,7 @@ export default function BillingPage() {
             eyebrow="PLEXUS ANCILLARY · BILLING"
             icon={DollarSign}
             iconAccent="bg-emerald-100 text-emerald-700"
-            title="Billing Tracker"
+            title="Billing"
             subtitle="Ancillary service claims & payments"
             titleTestId="text-billing-title"
             actions={

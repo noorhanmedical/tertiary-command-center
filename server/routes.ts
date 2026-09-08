@@ -15,6 +15,8 @@ import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssi
 import { registerEngagementBasketsRoutes } from "./routes/engagementBaskets";
 import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
 import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
+import { registerWorkforceRoutes } from "./routes/workforce";
+import { registerWorkClaimRoutes } from "./routes/workClaims";
 import { registerCallHandoffRoutes } from "./routes/callHandoffs";
 import { registerEngagementTeamMetricsRoutes } from "./routes/engagementTeamMetrics";
 import { registerBillingRoutes } from "./routes/billing";
@@ -398,6 +400,12 @@ export async function registerRoutes(
   registerEngagementBasketsRoutes(app);
   registerEngagementCallSettingsRoutes(app, requireRole);
   registerEngagementDistributionRoutes(app, requireRole);
+  registerWorkforceRoutes(app);
+  registerWorkClaimRoutes(app);
+  // Phase 6 — telephony: claim-guarded integrated-provider initiation + a
+  // signature-verified, idempotent provider webhook that records PROVIDER
+  // EVIDENCE (telephony_sessions) and emits a live signal. Never a disposition.
+  (await import("./routes/telephony")).registerTelephonyRoutes(app);
   registerCallHandoffRoutes(app);
   (await import("./routes/teams")).registerTeamRoutes(app, requireRole);
   registerEngagementTeamMetricsRoutes(app, requireRole);

@@ -199,7 +199,8 @@ export default function AdminSettingsPage() {
         <PageHeader
           eyebrow="PLEXUS ANCILLARY · ADMIN"
           icon={Shield}
-          title="Admin Settings"
+          title="Admin"
+          context={meta.label}
           subtitle="System, billing, team, facility, and logs — every administrative surface in one place."
         />
 

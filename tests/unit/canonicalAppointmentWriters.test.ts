@@ -103,7 +103,12 @@ async function testScheduleAncillaryRouteWiredCanonical() {
     "schedule-ancillary route must call the canonical orchestrator",
   );
   const flagIdx = src.indexOf("featureFlags.canonicalAppointment");
-  const legacyIdx = src.indexOf("upsertAncillaryScheduleEvent({");
+  // Match the call regardless of same-line vs multi-line argument formatting.
+  // The legacy upsert now runs inside the transactional block
+  // (`upsertAncillaryScheduleEvent(\n  {...}, tx)`), so the historical
+  // `upsertAncillaryScheduleEvent({` one-line literal no longer matches even
+  // though the legacy flag-OFF upsert is still retained.
+  const legacyIdx = src.indexOf("upsertAncillaryScheduleEvent(");
   assert.ok(flagIdx > 0, "route must reference featureFlags.canonicalAppointment");
   assert.ok(legacyIdx > 0, "route must retain the legacy upsert for flag-OFF");
   assert.ok(flagIdx < legacyIdx, "canonical flag branch must precede the legacy upsert");
@@ -143,7 +148,7 @@ async function testLegacyUpsertUnreachableUnderFlagOn() {
   // `return` in every canonical outcome (created/reused/deferred/503).
   const flagBlock = src.slice(
     src.indexOf("if (featureFlags.canonicalAppointment)"),
-    src.indexOf("upsertAncillaryScheduleEvent({"),
+    src.indexOf("upsertAncillaryScheduleEvent("),
   );
   const returns = (flagBlock.match(/return res\./g) ?? []).length;
   assert.ok(returns >= 3, "flag-ON branch must return for created/reused, deferred, and 503 outcomes");

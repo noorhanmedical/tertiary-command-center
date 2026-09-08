@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Calendar as CalendarIcon, CalendarDays, Users, Building2, Filter, X } from "lucide-react";
-import { PageHeader } from "@/components/PageHeader";
+import { Calendar as CalendarIcon, Users, Building2, Filter, X } from "lucide-react";
+import { CanonicalCommandCalendar } from "@/components/calendar/CanonicalCommandCalendar";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { ScreeningBatch, OutreachScheduler } from "@shared/schema";
 import { VALID_FACILITIES } from "@shared/plexus";
 
@@ -82,12 +84,13 @@ export default function SchedulePage() {
     });
   }, [batches, clinicFilter, statusFilter, schedulerFilter, startDate, endDate]);
 
-  const hasActiveFilters =
-    clinicFilter !== "all" ||
-    statusFilter !== "all" ||
-    schedulerFilter !== "all" ||
-    !!startDate ||
-    !!endDate;
+  const activeFilterCount =
+    (clinicFilter !== "all" ? 1 : 0) +
+    (statusFilter !== "all" ? 1 : 0) +
+    (schedulerFilter !== "all" ? 1 : 0) +
+    (startDate ? 1 : 0) +
+    (endDate ? 1 : 0);
+  const hasActiveFilters = activeFilterCount > 0;
 
   const clearFilters = () => {
     setClinicFilter("all");
@@ -100,95 +103,135 @@ export default function SchedulePage() {
   return (
     <div className="min-h-full bg-gradient-to-br from-slate-50 via-white to-blue-50/40">
       <div className="mx-auto max-w-[1400px] px-6 py-8">
-        <PageHeader
-          eyebrow="PLEXUS ANCILLARY · SCHEDULE"
-          icon={CalendarDays}
-          iconAccent="bg-blue-600/10 text-blue-700"
-          title="Global Schedule"
-          subtitle="All screening batches across every clinic."
-          titleTestId="text-page-title"
-          className="mb-6"
-        />
+        <div className="mb-6">
+          <InteriorPageTitle title="Global Schedule" titleTestId="text-page-title" />
+        </div>
 
-        <Card className="p-4 mb-6">
-          <div className="flex items-center gap-2 mb-3 text-sm font-medium text-slate-700">
-            <Filter className="w-4 h-4" />
-            Filters
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto h-7 text-xs gap-1"
-                onClick={clearFilters}
-                data-testid="button-clear-filters"
-              >
-                <X className="w-3 h-3" /> Clear
-              </Button>
-            )}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <div>
-              <label className="text-xs text-slate-500 mb-1 block">Clinic</label>
-              <Select value={clinicFilter} onValueChange={setClinicFilter}>
-                <SelectTrigger data-testid="select-clinic-filter">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All clinics</SelectItem>
-                  {clinicOptions.map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 mb-1 block">Status</label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger data-testid="select-status-filter">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 mb-1 block">Scheduler</label>
-              <Select value={schedulerFilter} onValueChange={setSchedulerFilter}>
-                <SelectTrigger data-testid="select-scheduler-filter">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All schedulers</SelectItem>
-                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {schedulers.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 mb-1 block">From date</label>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                data-testid="input-start-date"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 mb-1 block">To date</label>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                data-testid="input-end-date"
-              />
-            </div>
-          </div>
+        {/* Cross-clinic calendar (canonical shared calendar, admin profile). */}
+        <Card className="p-3 mb-6">
+          <CanonicalCommandCalendar
+            profileId="admin"
+            title="Global Schedule"
+            headerTone="navy"
+          />
         </Card>
+
+        <div className="flex items-center gap-2 mb-4">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 gap-2"
+                data-testid="button-open-filters"
+              >
+                <Filter className="w-4 h-4" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span
+                    className="inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full bg-[#1e2a5a] text-white text-[11px] font-semibold"
+                    data-testid="text-active-filter-count"
+                  >
+                    {activeFilterCount}
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-80 p-4 space-y-3"
+              data-testid="popover-filters"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-700">Filters</span>
+                {hasActiveFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs gap-1"
+                    onClick={clearFilters}
+                    data-testid="button-clear-filters"
+                  >
+                    <X className="w-3 h-3" /> Clear
+                  </Button>
+                )}
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Clinic</label>
+                <Select value={clinicFilter} onValueChange={setClinicFilter}>
+                  <SelectTrigger data-testid="select-clinic-filter">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All clinics</SelectItem>
+                    {clinicOptions.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Status</label>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger data-testid="select-status-filter">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STATUS_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Scheduler</label>
+                <Select value={schedulerFilter} onValueChange={setSchedulerFilter}>
+                  <SelectTrigger data-testid="select-scheduler-filter">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All schedulers</SelectItem>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                    {schedulers.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">From date</label>
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    data-testid="input-start-date"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">To date</label>
+                  <Input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    data-testid="input-end-date"
+                  />
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 text-xs gap-1 text-slate-500"
+              onClick={clearFilters}
+              data-testid="button-clear-filters-inline"
+            >
+              <X className="w-3 h-3" /> Clear all
+            </Button>
+          )}
+        </div>
 
         <div className="text-xs text-slate-500 mb-2" data-testid="text-result-count">
           {isLoading ? "Loading…" : `${filtered.length} of ${batches.length} batches`}

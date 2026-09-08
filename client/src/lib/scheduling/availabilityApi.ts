@@ -114,6 +114,18 @@ export type AvailabilityResult = {
   equipment: EquipmentItem[];
   operatingDays: OperatingDayInfo[];
   visit: { oneVisit: VisitPlan | null; splitVisit: VisitPlan | null };
+  /** Phase 6 — deterministic ranked recommendations over the FEASIBLE slots.
+   *  Optional so an older server response still type-checks. */
+  recommendations?: SlotRecommendation[];
+};
+
+/** A ranked recommendation with a fact-derived explanation (server-computed). */
+export type SlotRecommendation = {
+  time: string;
+  startMinutes: number;
+  isoDate: string;
+  score: number;
+  reasons: string[];
 };
 
 export async function fetchAvailability(body: {
@@ -122,6 +134,7 @@ export async function fetchAvailability(body: {
   services: ServiceRequest[];
   patientKey?: string | null;
   preferredTime?: string | null;
+  partOfDay?: "morning" | "afternoon" | null;
 }): Promise<AvailabilityResult> {
   const res = await fetch("/api/scheduling/availability", {
     method: "POST",

@@ -79,6 +79,7 @@ function mergeQualificationJobs(
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
+import { InteriorPageTitle } from "@/components/InteriorPageTitle";
 
 // Plexus IQ page — patient workspace center + calendar drawer.
 //
@@ -986,6 +987,13 @@ export default function PlexusIQPage() {
             points live inside the operating-list view's inline toolbar
             (relocated via onAddPatient / onOpenCalendar below). Jobs still
             run; only the always-on status chrome is removed. */}
+        <div className="px-6 pt-6 pb-2">
+          <InteriorPageTitle
+            title="Plexus IQ"
+            context={focusBatch?.facility}
+            titleTestId="text-plexus-iq-title"
+          />
+        </div>
         <PlexusIQActiveBatchHeader
           batches={batches}
           summary={summary}
@@ -994,31 +1002,8 @@ export default function PlexusIQPage() {
           onChangeBatch={() => setBatchFlowOpen(true)}
           onViewBatch={(id, facility) => setFocusBatch({ id, facility })}
         />
-        {/* Clinical Intelligence & Governance knowledge tile (prototype).
-            Pure navigation — no effect on batch/qualification flows. */}
-        <div className="px-4 pt-3">
-          <Link
-            href="/clinical-intelligence"
-            className="group flex items-center gap-3 rounded-2xl border border-violet-200/70 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
-            data-testid="tile-clinical-intelligence"
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
-              <Sparkles className="h-4 w-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-slate-900">
-                Clinical Intelligence &amp; Governance
-              </span>
-              <span className="block truncate text-xs text-slate-500">
-                AI Logic knowledge layer — learning center, rule library, approvals, and audit. CMS audit-ready
-                and legally defensible.
-              </span>
-            </span>
-            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-700 sm:inline-flex">
-              <ShieldCheck className="h-3.5 w-3.5" /> Governance
-            </span>
-          </Link>
-        </div>
+        {/* Clinical Intelligence & Governance now lives in the left nav as its
+            own workspace — the in-page tile was removed per product direction. */}
         {/* Repeat Testing Review — prototype shell. Plexus IQ supports two
             review types: Initial Qualification Review (the batch board below)
             and Repeat Testing / Re-Eligibility Review (this queue). The repeat
@@ -1026,7 +1011,7 @@ export default function PlexusIQPage() {
             created by Clinical Intelligence after report upload, opening ~1
             month before the payer repeat-due date. Blueprint:
             docs/architecture/clinical-intelligence-repeat-testing-loop.md */}
-        <div className="px-4 pt-3">
+        <div className="px-6 pt-3">
           <Link
             href="/clinical-intelligence"
             className="group flex items-center gap-3 rounded-2xl border border-sky-200/70 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"

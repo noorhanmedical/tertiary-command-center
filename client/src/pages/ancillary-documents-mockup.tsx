@@ -101,7 +101,7 @@ export default function AncillaryDocumentsMockup() {
         color: C.ink,
       }}
     >
-      <div className="mx-auto w-full max-w-[1180px] px-8 py-7">
+      <div className="mx-auto w-full max-w-[1180px] px-6 py-7">
         {/* ── Title row + user chip ─────────────────────────────────── */}
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>

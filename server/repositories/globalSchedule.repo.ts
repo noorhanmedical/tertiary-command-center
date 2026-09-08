@@ -253,13 +253,23 @@ export type UpsertAncillaryScheduleInput = {
   metadata?: Record<string, unknown>;
 };
 
+// Any drizzle executor: the base `db` or an open transaction handle. Lets the
+// caller (scheduleAncillaryCore) commit the appointment write and the
+// execution-case advance in ONE transaction (Phase 1 #4).
+type ScheduleTxClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type ScheduleDbExecutor = typeof db | ScheduleTxClient;
+
 /** Upsert an ancillary_appointment global_schedule_event. Dedup contract:
  *  one row per (patient_screening_id, service_type, starts_at). Falls back
  *  to (execution_case_id, service_type, starts_at) when patient_screening_id
  *  is unavailable. status defaults to "scheduled"; metadata is merged with
- *  existing JSON when updating an existing row. */
+ *  existing JSON when updating an existing row.
+ *
+ *  `exec` defaults to the base db; pass a transaction handle to make the
+ *  upsert participate in the caller's transaction. */
 export async function upsertAncillaryScheduleEvent(
   input: UpsertAncillaryScheduleInput,
+  exec: ScheduleDbExecutor = db,
 ): Promise<{ event: GlobalScheduleEvent; created: boolean }> {
   if (!input.serviceType) throw new Error("serviceType is required");
   if (!(input.startsAt instanceof Date) || isNaN(input.startsAt.getTime())) {
@@ -277,7 +287,7 @@ export async function upsertAncillaryScheduleEvent(
   dedupeConditions.push(eq(globalScheduleEvents.serviceType, input.serviceType));
   dedupeConditions.push(eq(globalScheduleEvents.startsAt, input.startsAt));
 
-  const [existing] = await db
+  const [existing] = await exec
     .select()
     .from(globalScheduleEvents)
     .where(and(...dedupeConditions))
@@ -294,7 +304,7 @@ export async function upsertAncillaryScheduleEvent(
       ...((existing.metadata as Record<string, unknown> | null) ?? {}),
       ...baseMetadata,
     };
-    const [updated] = await db
+    const [updated] = await exec
       .update(globalScheduleEvents)
       .set({
         executionCaseId: input.executionCaseId ?? existing.executionCaseId ?? undefined,
@@ -316,7 +326,7 @@ export async function upsertAncillaryScheduleEvent(
     return { event: updated, created: false };
   }
 
-  const [created] = await db
+  const [created] = await exec
     .insert(globalScheduleEvents)
     .values({
       executionCaseId: input.executionCaseId ?? undefined,

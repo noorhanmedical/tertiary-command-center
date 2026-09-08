@@ -120,6 +120,11 @@ type Props = {
   /** Number of prior call attempts. Sheet shows the auto-incremented next # (priorAttempts + 1). */
   priorAttempts?: number;
   defaultOutcome?: OutreachCallOutcome;
+  /** Phase 6 — provider telephony session id for an INTEGRATED call. When
+   *  present, it is sent as the disposition's callKey so the ONE canonical
+   *  outreach_calls row links to this telephony evidence (external_call_id ==
+   *  telephony_sessions.provider_session_id). Manual/assisted omit it. */
+  providerCallKey?: string | null;
   onLogged?: () => void;
   /** Phase 5B — invoked when the disposition is REJECTED because the claim is
    *  now held by someone else (stale work). The host should refetch the queue/
@@ -156,6 +161,7 @@ export function DispositionSheet({
   executionCaseId,
   priorAttempts = 0,
   defaultOutcome,
+  providerCallKey,
   onLogged,
   onClaimLost,
   onPushToPlayground,
@@ -289,6 +295,10 @@ export function DispositionSheet({
         assignedUserId: schedulerUserId ?? undefined,
         schedulerUserId: schedulerUserId ?? undefined,
       };
+      // Phase 6 — link this disposition to the provider telephony evidence:
+      // the server stores callKey as outreach_calls.external_call_id, which
+      // equals telephony_sessions.provider_session_id (business ↔ evidence).
+      if (providerCallKey) canonicalBody.callKey = providerCallKey;
       if (nextActionIso) canonicalBody.nextActionAt = nextActionIso;
       const canonicalRes = await apiRequest("POST", engagementCallResultEndpoint(), canonicalBody);
       if (!canonicalRes.ok) {

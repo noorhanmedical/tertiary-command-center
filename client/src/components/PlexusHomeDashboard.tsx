@@ -110,9 +110,9 @@ export type PlexusHomeDashboardProps = {
 */
 export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPatient }: PlexusHomeDashboardProps) {
   return (
-    <div className="min-h-full bg-[#f4f7fb] text-[#172033]">
+    <div className="min-h-full bg-[#e2e8f0] text-[#172033]">
       {/* pb-28 keeps the bottom Platform Apps row clear of the floating GlobalDock. */}
-      <div className="mx-auto w-full max-w-[1600px] px-5 pt-6 pb-28 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] px-6 pt-6 pb-28">
         {/* PAGE HEADER */}
         <section className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
@@ -136,13 +136,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
         </section>
 
         {/* PRACTICE PULSE */}
-        <section className="mb-4 rounded-[13px] border border-[#e1e7ef] bg-white px-6 py-5 shadow-[0_5px_20px_rgba(23,32,51,0.04)]">
-          <div className="mb-5 flex items-center gap-2">
-            <Activity className="h-4 w-4 text-[#516de0]" />
-            <span className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#354665]">
-              Practice Pulse
-            </span>
-          </div>
+        <section className="mb-4 rounded-[13px] border border-[#e1e7ef] bg-white/85 backdrop-blur-sm px-6 py-6 shadow-[0_5px_20px_rgba(23,32,51,0.04)]">
           <div className="grid grid-cols-2 divide-x divide-[#e4eaf1] md:grid-cols-4 xl:grid-cols-8">
             <PulseCell icon={<Users />} metric={data.pulse.patients} />
             <PulseCell icon={<Phone />} metric={data.pulse.calls} />
@@ -167,7 +161,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               <div className="mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Building2 className="h-5 w-5 text-[#415578]" />
-                  <h2 className="text-[17px] font-medium">Network Overview</h2>
+                  <h2 className="text-[18px] font-semibold text-[#101a2e]">Network Overview</h2>
                 </div>
                 <button className="text-[12px] font-medium text-[#365fd5]">View all clinics</button>
               </div>
@@ -212,54 +206,67 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               </div>
             </DashboardPanel>
 
-            {/* PLEXUS IQ */}
-            <section className="relative min-h-[180px] overflow-hidden rounded-[14px] bg-[#0a0f24] text-white shadow-lg ring-1 ring-white/5">
-              {/* Network art as a real foreground element on the right of the card. */}
-              <img
-                src="/plexus-iq-network.png"
-                alt=""
+            {/* PLEXUS IQ — full-card dark ethereal hero button (whole thing clickable) */}
+            <button
+              type="button"
+              onClick={onOpenPlexusIq}
+              data-testid="home-open-plexus-iq"
+              className="group relative flex min-h-[180px] w-full items-center justify-center overflow-hidden rounded-[14px] text-white shadow-lg ring-1 ring-white/10 transition hover:ring-white/20"
+              style={{
+                background:
+                  "radial-gradient(120% 140% at 50% 0%, rgba(92,88,220,0.30) 0%, rgba(10,15,36,0) 55%), linear-gradient(160deg, #0c1230 0%, #070a1a 60%, #05070f 100%)",
+              }}
+            >
+              {/* Soft ethereal glow that lifts on hover */}
+              <span
                 aria-hidden="true"
-                className="pointer-events-none absolute right-0 top-1/2 h-[150%] max-w-none -translate-y-1/2 object-contain"
-                style={{ filter: "brightness(1.35) saturate(1.15)" }}
+                className="pointer-events-none absolute inset-0 opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+                style={{ background: "radial-gradient(65% 90% at 50% 50%, rgba(120,150,255,0.26) 0%, transparent 70%)" }}
               />
-              {/* Left→center scrim so the heading/description stay readable while the
-                  art shows fully on the right. */}
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#05070f] via-[#05070f]/70 to-transparent" />
-
-              {/* Left content: icon tile + text + CTA */}
-              <div className="relative z-10 flex items-center gap-5 p-6 pl-7">
-                <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/[0.06] ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,.35)]">
-                  {/* Soft radial glow behind the mark so it reads as a lit star */}
+              {/* Brighter core bloom behind the wordmark */}
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-1/2 top-1/2 h-32 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-70 blur-2xl transition-opacity duration-300 group-hover:opacity-100"
+                style={{ background: "radial-gradient(circle, rgba(150,175,255,0.45) 0%, transparent 70%)" }}
+              />
+              {/* Shining stars */}
+              <span aria-hidden="true" className="pointer-events-none absolute inset-0">
+                {[
+                  { l: "12%", t: "30%", s: 2, d: "0s" },
+                  { l: "20%", t: "66%", s: 1, d: "0.6s" },
+                  { l: "31%", t: "42%", s: 1, d: "1.2s" },
+                  { l: "42%", t: "22%", s: 2, d: "0.3s" },
+                  { l: "57%", t: "72%", s: 1, d: "0.9s" },
+                  { l: "66%", t: "32%", s: 2, d: "1.5s" },
+                  { l: "76%", t: "60%", s: 1, d: "0.4s" },
+                  { l: "85%", t: "26%", s: 2, d: "1.1s" },
+                  { l: "90%", t: "64%", s: 1, d: "0.7s" },
+                  { l: "16%", t: "50%", s: 1, d: "1.8s" },
+                  { l: "62%", t: "52%", s: 1, d: "2.1s" },
+                  { l: "48%", t: "78%", s: 2, d: "1.4s" },
+                ].map((st, i) => (
                   <span
-                    className="pointer-events-none absolute inset-0 rounded-2xl"
-                    style={{ background: "radial-gradient(circle at 50% 45%, rgba(147,180,255,.55), transparent 65%)" }}
-                    aria-hidden="true"
+                    key={i}
+                    className="absolute rounded-full bg-white animate-pulse"
+                    style={{
+                      left: st.l,
+                      top: st.t,
+                      width: `${st.s}px`,
+                      height: `${st.s}px`,
+                      boxShadow: "0 0 6px rgba(200,215,255,0.95), 0 0 12px rgba(120,150,255,0.65)",
+                      animationDelay: st.d,
+                      animationDuration: "2.4s",
+                    }}
                   />
-                  <Sparkles
-                    className="relative h-7 w-7 text-white"
-                    strokeWidth={1.6}
-                    style={{ filter: "drop-shadow(0 0 6px rgba(160,190,255,.95)) drop-shadow(0 0 12px rgba(120,150,255,.6))" }}
-                  />
-                </div>
-                <div className="max-w-[470px]">
-                  <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-white/45">
-                    Plexus Ancillary
-                  </div>
-                  <h2 className="mt-1 text-[24px] font-semibold leading-none tracking-[-0.01em]">Plexus IQ</h2>
-                  <p className="mt-2 max-w-[430px] text-[13px] leading-5 text-white/65">
-                    AI-powered insights to optimize operations, improve utilization, and elevate patient care.
-                  </p>
-                  <button
-                    className="mt-4 flex h-9 items-center gap-2 rounded-[9px] bg-[#5c58dc] px-4 text-[12px] font-semibold text-white shadow-sm transition hover:bg-[#6b67e6]"
-                    onClick={onOpenPlexusIq}
-                    data-testid="home-open-plexus-iq"
-                  >
-                    Open Plexus IQ
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            </section>
+                ))}
+              </span>
+              <span
+                className="relative text-[26px] font-light tracking-[0.05em] text-white"
+                style={{ textShadow: "0 2px 18px rgba(120,150,255,0.55)" }}
+              >
+                Plexus IQ
+              </span>
+            </button>
           </div>
 
           {/* RIGHT */}
@@ -268,7 +275,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
             <DashboardPanel>
               <div className="mb-5 flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-[#435ee2]" />
-                <h2 className="text-[17px] font-medium">Today&apos;s Summary</h2>
+                <h2 className="text-[18px] font-semibold text-[#101a2e]">Today&apos;s Summary</h2>
               </div>
               <div className="grid grid-cols-3 divide-x divide-[#e4eaf1]">
                 <SummaryMetric metric={data.today.newPatients} />
@@ -282,7 +289,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckSquare className="h-5 w-5 text-[#405ed9]" />
-                  <h2 className="text-[17px] font-medium">Tasks</h2>
+                  <h2 className="text-[18px] font-semibold text-[#101a2e]">Tasks</h2>
                 </div>
                 <button className="text-[12px] font-medium text-[#365fd5]">View all</button>
               </div>
@@ -305,7 +312,7 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-5 w-5 text-[#405ed9]" />
-                  <h2 className="text-[17px] font-medium">Schedule Snapshot</h2>
+                  <h2 className="text-[18px] font-semibold text-[#101a2e]">Schedule Snapshot</h2>
                 </div>
                 <button className="text-[12px] font-medium text-[#365fd5]">View calendar</button>
               </div>
@@ -372,10 +379,10 @@ function PulseCell({ icon, metric }: { icon: React.ReactElement; metric: PulseMe
     <div className="min-w-0 px-4 py-1 text-center">
       <div className="mb-2 flex items-center justify-center gap-2">
         {cloneIcon(icon, "h-5 w-5 text-[#263b86]")}
-        <span className="text-[11px] font-medium text-[#34445e]">{metric.label}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#3a4a66]">{metric.label}</span>
       </div>
       <div className="flex items-baseline justify-center gap-2">
-        <span className="text-[27px] font-medium tracking-[-0.025em]">{metric.value}</span>
+        <span className="text-[28px] font-bold tracking-[-0.03em] text-[#0f1a2e]">{metric.value}</span>
         {metric.delta && (
           <span className="text-[11px] font-semibold text-emerald-600">{metric.delta}</span>
         )}
@@ -402,7 +409,7 @@ function SummaryMetric({ metric }: { metric: PulseMetric }) {
 
 function DashboardPanel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-[13px] border border-[#e0e6ee] bg-white p-5 shadow-[0_4px_16px_rgba(23,32,51,0.035)]">
+    <div className="rounded-[13px] border border-[#e0e6ee] bg-white/85 backdrop-blur-sm p-5 shadow-[0_4px_16px_rgba(23,32,51,0.035)]">
       {children}
     </div>
   );
@@ -450,7 +457,7 @@ function AppTile({
   return (
     <button
       onClick={() => onClick?.(label)}
-      className="group relative flex min-h-[70px] items-center gap-3 rounded-[10px] border border-[#e2e8ef] bg-white px-5 text-left shadow-[0_3px_10px_rgba(23,32,51,0.03)] transition hover:-translate-y-[1px] hover:shadow-md"
+      className="group relative flex min-h-[70px] items-center gap-3 rounded-[10px] border border-[#e2e8ef] bg-white/85 backdrop-blur-sm px-5 text-left shadow-[0_3px_10px_rgba(23,32,51,0.03)] transition hover:-translate-y-[1px] hover:shadow-md"
       data-testid={`home-app-tile-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
     >
       <span className="relative">

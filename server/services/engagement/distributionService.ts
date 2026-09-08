@@ -29,8 +29,17 @@ import { engagementCallSettingsRepository } from "../../repositories/engagementC
 import { callHandoffsRepository } from "../../repositories/callHandoffs.repo";
 import { needsCoverageRepository } from "../../repositories/needsCoverage.repo";
 import { facilityCoverageRepository } from "../../repositories/facilityCoverage.repo";
+import {
+  dncExclusionCondition,
+  activeEngagementStatusCondition,
+  activeLifecycleCondition,
+  patientScreeningHasDncColumn,
+  noActivePatientClaimCondition,
+  contactFrequencySuppressionCondition,
+  resolveContactContext,
+} from "../../repositories/executionCase.repo";
 import { appendJourneyEvent, type AppendJourneyEventInput } from "../journey/appendJourneyEvent";
-import { calculateNextActionAt } from "../callList/nextActionPolicy";
+import { resolveAssignmentNextActionAt } from "../callList/nextActionPolicy";
 import {
   computeCallTargets,
   remainingCapacity,
@@ -42,6 +51,32 @@ import {
   startOfTodayUtc,
   getGlobalCallConfig,
 } from "./callSettingsService";
+// Phase 3 — workforce shift + real-time availability wiring.
+import { listShiftsForDate } from "../../repositories/workforceShifts.repo";
+import { resolveClinicTimeZone } from "./clinicTimeZone";
+import {
+  operationalDateInTimeZone,
+  weekdayInTimeZone,
+  localMinutesInTimeZone,
+  DEFAULT_CLINIC_TIME_ZONE,
+} from "../../lib/clinicTime";
+import {
+  resolveShiftDay,
+  resolvePlannedWorking,
+  resolveRealTimeAvailability,
+  resolveShiftFraction,
+  resolveCapacityInputs,
+} from "./workforceService";
+import type { WorkforceAvailabilityState, TeamMemberShift } from "@shared/schema/workforceShifts";
+
+/** Gather mode: "planned" (5 AM reconciliation — scheduled-that-day, no
+ *  time-of-day gating) vs "realtime" (live daytime — within shift window +
+ *  availability state). Default realtime. */
+export type DistributionGatherMode = "planned" | "realtime";
+export interface GatherMembersOptions {
+  mode?: DistributionGatherMode;
+  now?: Date;
+}
 
 // Any drizzle executor (the base `db` or a transaction handle).
 type TxClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -56,10 +91,20 @@ export interface DistributionMemberInput {
   name: string;
   facility: string | null;
   active: boolean;
+  // PLANNED working-today (scheduled to work this operational date). Used by
+  // the 5 AM reconciliation and as the base gate.
   workingToday: boolean;
+  // Phase 3 — REAL-TIME availability for NEW assignments (within shift window
+  // + availability state). Optional; defaults to true (⇒ pre-Phase-3 behavior
+  // for members with no shift configured, and for "planned" gathers). The
+  // allocator assigns NEW work only when active && workingToday && acceptingNewWork.
+  acceptingNewWork?: boolean;
   // Empty/null => member covers ANY facility.
   facilitiesCovered: string[] | null;
-  // Hard ceiling on NEW work today = max(0, completedCallKpi − carryover).
+  // Hard ceiling on NEW work today = max(0, dailyCallCapacity − alreadyOwned).
+  // `alreadyOwned` is the member's full live queue and INCLUDES carryover
+  // (carryover ⊆ owned), so carryover is not subtracted twice. Fed from
+  // callSettingsService.computeMemberCapacityState().availableForNewWork.
   remainingCapacity: number;
   // Per-lane sub-caps; visitTarget + outreachTarget == completedCallKpi.
   visitTarget: number;
@@ -213,7 +258,11 @@ export function buildDistributionPlan(
     assignedVisit: 0,
     assignedOutreach: 0,
   }));
-  const workingPool = state.filter((m) => m.active && m.workingToday);
+  // Phase 3 — eligible for NEW work = active AND planned-working AND currently
+  // accepting new assignments (real-time availability). acceptingNewWork
+  // defaults to true so no-shift members and "planned"-mode gathers behave
+  // exactly as before.
+  const workingPool = state.filter((m) => m.active && m.workingToday && (m.acceptingNewWork ?? true));
 
   const assignments: ProposedAssignment[] = [];
   const unplaced: UnplacedCase[] = [];
@@ -354,21 +403,45 @@ function explainUnplaced(
  *  mirroring the assignment-board read model. */
 export async function gatherEligibleCases(
   exec: DbExecutor = db,
+  opts: { clinicId?: number } = {},
 ): Promise<DistributionCaseInput[]> {
+  // Phase 1B — SHARED suppression predicates (the SAME functions the scheduler-
+  // portal call list uses) so the distribution allocator and the call list can
+  // never disagree on which cases have LEFT active calling: terminal
+  // dispositions + scheduled (activeEngagementStatusCondition), terminal
+  // lifecycle (activeLifecycleCondition), and do-not-contact
+  // (dncExclusionCondition — outreach_calls refusal signal always, plus the
+  // do_not_contact column when the DB has migration 0027).
+  const includeDncColumn = await patientScreeningHasDncColumn();
+  // Phase 4 — active-work + contact-fatigue suppression (SAME shared predicates
+  // the scheduler-portal call list uses, so the allocator and the list agree).
+  // noActivePatientClaimCondition keeps the allocator from handing out a NEW
+  // case for a patient any of whose sibling cases is being actively worked
+  // right now; the contact-fatigue predicate is a no-op unless an admin enables
+  // the policy. Both are no-ops when there are no claims (pre-Phase-4 behavior).
+  const now = new Date();
+  const contact = await resolveContactContext(now);
   const cases = await exec
     .select()
     .from(patientExecutionCases)
     .where(
       and(
         isNull(patientExecutionCases.assignedTeamMemberId),
-        or(
-          isNull(patientExecutionCases.lifecycleStatus),
-          eq(patientExecutionCases.lifecycleStatus, "active"),
-        ),
-        or(
-          isNull(patientExecutionCases.engagementStatus),
-          sql`${patientExecutionCases.engagementStatus} NOT IN ('archived','closed','cancelled','completed')`,
-        ),
+        activeLifecycleCondition(),
+        activeEngagementStatusCondition(),
+        dncExclusionCondition(includeDncColumn),
+        noActivePatientClaimCondition(now),
+        contactFrequencySuppressionCondition(contact.policy, now, contact.dayStarts),
+        // Phase 2 — OPTIONAL per-clinic scoping for the 5 AM clinic-local
+        // reconciliation. When omitted (the global manual / event-driven
+        // callers) it is undefined, which drizzle's and() ignores → the
+        // pool is byte-identical to the pre-Phase-2 global gather. When set,
+        // it restricts the pool to ONE clinic's cases so each clinic's 5 AM
+        // reconciliation touches only that clinic's work. It ANDs on top of
+        // every Phase 1/1B suppression predicate above (no bypass).
+        opts.clinicId != null
+          ? eq(patientExecutionCases.clinicId, opts.clinicId)
+          : undefined,
       ),
     );
   if (cases.length === 0) return [];
@@ -430,9 +503,11 @@ export async function gatherEligibleCases(
 /** Build the roster of distribution members with DERIVED targets, live
  *  carryover, remaining capacity, and working-today status — reusing the Call
  *  Settings math so the two surfaces never drift. */
-export async function gatherDistributionMembers(): Promise<
-  DistributionMemberInput[]
-> {
+export async function gatherDistributionMembers(
+  opts: GatherMembersOptions = {},
+): Promise<DistributionMemberInput[]> {
+  const now = opts.now ?? new Date();
+  const mode: DistributionGatherMode = opts.mode ?? "realtime";
   const { config, tiers } = await getGlobalCallConfig();
   const schedulers = await storage.getOutreachSchedulers();
   const schedulerIds = schedulers.map((s) => s.id);
@@ -459,6 +534,43 @@ export async function gatherDistributionMembers(): Promise<
     facilityCoverageRepository.coveredFacilitiesForUsers(userIds),
   ]);
 
+  // ─── Phase 3 — resolve each member's clinic timezone → local date / weekday
+  // / minutes, then batch-load their shift row(s) for the relevant date(s).
+  // Shift times are interpreted in the member's roster-clinic timezone (a
+  // multi-facility member uses their home clinic tz — deterministic). Members
+  // with no clinic fall back to the Central default. This adds a couple of
+  // cached tz reads + one shift query per distinct date; no per-member N+1.
+  const distinctClinicIds = Array.from(
+    new Set(schedulers.map((s) => s.clinicId).filter((c): c is number => c != null)),
+  );
+  const tzByClinic = new Map<number, string>();
+  await Promise.all(
+    distinctClinicIds.map(async (cid) => {
+      const r = await resolveClinicTimeZone(cid);
+      tzByClinic.set(cid, r.timeZone);
+    }),
+  );
+  const tzOf = (clinicId: number | null | undefined): string =>
+    clinicId != null ? tzByClinic.get(clinicId) ?? DEFAULT_CLINIC_TIME_ZONE : DEFAULT_CLINIC_TIME_ZONE;
+  const localOf = new Map<number, { tz: string; date: string; weekday: number; minutes: number }>();
+  for (const s of schedulers) {
+    const tz = tzOf(s.clinicId ?? null);
+    localOf.set(s.id, {
+      tz,
+      date: operationalDateInTimeZone(now, tz),
+      weekday: weekdayInTimeZone(now, tz),
+      minutes: localMinutesInTimeZone(now, tz),
+    });
+  }
+  const distinctDates = Array.from(new Set(Array.from(localOf.values()).map((v) => v.date)));
+  const shiftByKey = new Map<string, TeamMemberShift>();
+  await Promise.all(
+    distinctDates.map(async (d) => {
+      const m = await listShiftsForDate(schedulerIds, d);
+      for (const [sid, row] of m) shiftByKey.set(`${sid}:${d}`, row);
+    }),
+  );
+
   return schedulers.map((s) => {
     const saved = settingsByScheduler.get(s.id);
     const callWorkdayPercent = saved?.callWorkdayPercent ?? 100;
@@ -477,27 +589,75 @@ export async function gatherDistributionMembers(): Promise<
     const manualWorkingToday = saved?.manualWorkingToday ?? null;
     const active = saved?.active ?? true;
 
+    // ── Phase 3 — SHIFT dimension (opt-in; no shift ⇒ pre-Phase-3 behavior).
+    const local = localOf.get(s.id)!;
+    const shiftRow = shiftByKey.get(`${s.id}:${local.date}`) ?? null;
+    const shiftDay = resolveShiftDay({
+      weekday: local.weekday,
+      override: shiftRow
+        ? {
+            working: shiftRow.working,
+            shiftStart: shiftRow.shiftStart,
+            shiftEnd: shiftRow.shiftEnd,
+            capacityOverride: shiftRow.capacityOverride,
+          }
+        : null,
+      defaultShiftStart: saved?.defaultShiftStart ?? null,
+      defaultShiftEnd: saved?.defaultShiftEnd ?? null,
+      workWeekdays: (saved?.workWeekdays as number[] | null) ?? null,
+    });
+    if (shiftDay.invalidWindow) {
+      console.warn(
+        `[workforce] scheduler ${s.id} "${s.name}" has an invalid shift window for ${local.date} ` +
+          `— ignoring the window (member available all working day). Fix the shift times.`,
+      );
+    }
+
+    // Working-today = existing whole-day signal (manual > PTO > roster) AND the
+    // shift is not scheduled OFF this date. Shift never forces working against
+    // manual-off / PTO.
+    const working = deriveWorkingStatus(s.userId, ptoUserIds);
+    const legacyWorkingToday = resolveWorkingToday(manualWorkingToday, working.calendarWorkingToday);
+    const workingToday = resolvePlannedWorking(legacyWorkingToday, shiftDay.shiftWorking);
+
+    // Capacity follows the actual workday: shift proration on top of the
+    // configured workday %, unless an explicit per-day / per-member KPI wins.
+    const shiftFraction = resolveShiftFraction(shiftDay.window);
+    const capInputs = resolveCapacityInputs({
+      callWorkdayPercent,
+      explicitCompletedKpi,
+      capacityOverride: shiftDay.capacityOverride,
+      shiftFraction,
+    });
     const targets = computeCallTargets(
       {
-        callWorkdayPercent,
+        callWorkdayPercent: capInputs.callWorkdayPercent,
         visitPercent,
-        explicitCompletedKpi,
+        explicitCompletedKpi: capInputs.explicitCompletedKpi,
         explicitScheduledKpi,
         maxDailyCapacity,
       },
       config,
       tiers,
     );
+
+    // REAL-TIME availability (live) vs PLANNED (5 AM). Planned ignores
+    // time-of-day + availability state (members haven't started their shift).
+    const acceptingNewWork =
+      mode === "planned"
+        ? workingToday
+        : resolveRealTimeAvailability({
+            plannedWorking: workingToday,
+            window: shiftDay.window,
+            nowLocalMinutes: local.minutes,
+            availabilityState: (shiftRow?.availabilityState as WorkforceAvailabilityState | null) ?? null,
+          }).acceptingNewWork;
+
     const carryover = carryoverBySched.get(s.id) ?? 0;
     const assigned = activeQueueBySched.get(s.id) ?? 0;
     const priorityHandoffs = s.userId
       ? priorityHandoffByUser.get(s.userId) ?? 0
       : 0;
-    const working = deriveWorkingStatus(s.userId, ptoUserIds);
-    const workingToday = resolveWorkingToday(
-      manualWorkingToday,
-      working.calendarWorkingToday,
-    );
 
     // Canonical capacity state — one source of truth shared with the workload
     // display (teamMetricsService uses the same computeMemberCapacityState).
@@ -516,8 +676,12 @@ export async function gatherDistributionMembers(): Promise<
       facility: s.facility,
       active,
       workingToday,
+      acceptingNewWork,
       facilitiesCovered,
-      remainingCapacity: capacity.remainingCapacity,
+      // Phase 1 (Invariant #2/#3): allocator ceiling = headroom for NEW work
+      // (capacity − owned queue), NOT capacity − carryover. Prevents repeated
+      // distribution runs from over-assigning a member who already owns work.
+      remainingCapacity: capacity.availableForNewWork,
       visitTarget: targets.visitTarget,
       outreachTarget: targets.outreachTarget,
       configuredWorkloadPercent: capacity.configuredWorkloadPercent,
@@ -994,7 +1158,9 @@ export interface ApplyDistributionResult {
   };
 }
 
-const NEW_ENGAGEMENT_STATES = new Set(["new", "ready", "assigned", "not_reached"]);
+// Phase 1 (Invariant #4): assignment no longer remaps a broad "new-ish" set to
+// "assigned" (that clobbered not_reached). Only genuinely-unassigned
+// new/ready/empty cases are promoted; see applyDistribution.
 const TERMINAL_ENGAGEMENT = new Set(["archived", "closed", "cancelled", "completed"]);
 
 function siblingKey(name: string, dob: string | null, scheduleDate: string | null): string {
@@ -1150,10 +1316,20 @@ export async function applyDistribution(
       }
 
       const now = new Date();
-      const nextStatus = NEW_ENGAGEMENT_STATES.has(row.engagementStatus ?? "")
-        ? "assigned"
-        : row.engagementStatus;
-      const { nextActionAt } = calculateNextActionAt({ isAssignment: true, now });
+      // Invariant #4: a pure ownership change must NOT reset workflow state.
+      // Only promote a genuinely-unassigned ("new"/"ready"/empty) case to
+      // "assigned"; preserve every other workflow state (contacted,
+      // not_reached, needs_followup, callback, …) so redistribution keeps the
+      // patient's real progress.
+      const currentStatus = row.engagementStatus ?? "";
+      const nextStatus =
+        currentStatus === "" || currentStatus === "new" || currentStatus === "ready"
+          ? "assigned"
+          : row.engagementStatus;
+      // Invariant #1: preserve a pending future callback EXACTLY; only surface
+      // "now" when the case has no future next-action. Owner change ≠ timing
+      // change (shared helper — identical logic to the assignment board).
+      const nextActionAt = resolveAssignmentNextActionAt(row.nextActionAt ?? null, now);
 
       await tx
         .update(patientExecutionCases)

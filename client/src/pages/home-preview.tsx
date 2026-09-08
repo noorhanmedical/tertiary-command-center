@@ -509,7 +509,7 @@ export default function HomePreview() {
       <div className="flex flex-col flex-1 min-w-0 relative bg-background">
         {view === "history" ? (
           <div className="flex flex-col h-full relative z-10">
-            <div className="flex-1 overflow-auto p-4">
+            <div className="flex-1 overflow-auto px-6 py-4">
               <div className="max-w-5xl mx-auto space-y-4">
                 <PageHeader
                   eyebrow="PLEXUS ANCILLARY · PATIENT HISTORY"

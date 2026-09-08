@@ -427,7 +427,7 @@ export function HomeDashboard({
   return (
     <div className="flex flex-col h-full" data-testid="home-dashboard">
       <main className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
+        <div className="max-w-7xl mx-auto px-6 pt-10 pb-16">
           <div className="max-w-5xl mx-auto">
             <div className="space-y-6">
               <div className="flex justify-end">
