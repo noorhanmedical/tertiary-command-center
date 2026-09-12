@@ -41,6 +41,7 @@ export * from "./invoiceFinancialEvents";
 export * from "./billing";
 export * from "./appointments";
 export * from "./analysisJobs";
+export * from "./importJobs";
 export * from "./plexus";
 export * from "./audit";
 export * from "./outreach";

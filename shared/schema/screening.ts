@@ -1,5 +1,5 @@
 import {
-  sql, pgTable, serial, text, integer, timestamp, jsonb, index, boolean, varchar,
+  sql, pgTable, serial, text, integer, timestamp, jsonb, index, uniqueIndex, boolean, varchar,
   createInsertSchema, z,
 } from "./_common";
 import { users } from "./users";
@@ -69,6 +69,10 @@ export const patientScreenings = pgTable("patient_screenings", {
   dob: text("dob"),
   phoneNumber: text("phone_number"),
   email: text("email"),
+  // Clinic MRN (migration 0026). Present in the DB but was previously absent
+  // from the drizzle model, so imports could not persist it — added here so
+  // bulk imports store MRN and cross-import dedup (MRN+DOB tier) works.
+  mrn: text("mrn"),
   insurance: text("insurance"),
   facility: text("facility"),
   diagnoses: text("diagnoses"),
@@ -120,6 +124,13 @@ export const patientScreenings = pgTable("patient_screenings", {
   ),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   isTest: boolean("is_test").notNull().default(false),
+  // Large-file ingestion (migration 0086). Populated ONLY for rows written by
+  // the durable large-import runner; both nullable so every existing insert
+  // path is unchanged. Together they give per-row idempotency on retry:
+  // (import_job_id, import_row_index) is UNIQUE (partial) so re-processing a
+  // chunk cannot create a duplicate patient for the same source row.
+  importJobId: integer("import_job_id"),
+  importRowIndex: integer("import_row_index"),
 }, (table) => [
   index("idx_patient_screenings_batch_id").on(table.batchId),
   index("idx_patient_screenings_status").on(table.status),
@@ -132,6 +143,10 @@ export const patientScreenings = pgTable("patient_screenings", {
   index("idx_patient_screenings_admin_approval_status").on(table.adminApprovalStatus),
   index("idx_ps_pcm").on(table.patientClinicMembershipId),
   index("idx_ps_gpp").on(table.globalPlexusPatientId),
+  index("idx_patient_screenings_mrn").on(table.mrn),
+  uniqueIndex("uq_patient_screenings_import_job_row")
+    .on(table.importJobId, table.importRowIndex)
+    .where(sql`import_job_id IS NOT NULL AND import_row_index IS NOT NULL`),
 ]);
 
 export const ADMIN_APPROVAL_STATUSES = [

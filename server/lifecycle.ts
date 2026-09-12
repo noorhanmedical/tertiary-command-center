@@ -16,6 +16,7 @@ import { startAbsenceWatcher, stopAbsenceWatcher } from "./services/absenceWatch
 import { startMorningRebuildScheduler, stopMorningRebuildScheduler } from "./services/morningRebuildScheduler";
 import { startInvoiceReminderWatcher, stopInvoiceReminderWatcher } from "./services/invoiceReminderService";
 import { startLiveActivityBridge, stopLiveActivityBridge } from "./services/engagement/liveActivityBus";
+import { startImportArtifactSweeper, stopImportArtifactSweeper } from "./services/largeImport/importArtifactSweeper";
 
 let started = false;
 
@@ -28,6 +29,8 @@ export function startBackgroundServices(): void {
   // Cross-instance live-activity fan-out (Postgres LISTEN/NOTIFY) so the
   // Live Team Activity feed pushes events written on any server instance.
   startLiveActivityBridge();
+  // Hourly cleanup of expired, never-confirmed large-import temp artifacts.
+  startImportArtifactSweeper();
 }
 
 export async function stopBackgroundServices(): Promise<void> {
@@ -36,5 +39,6 @@ export async function stopBackgroundServices(): Promise<void> {
   stopAbsenceWatcher();
   stopMorningRebuildScheduler();
   stopInvoiceReminderWatcher();
+  stopImportArtifactSweeper();
   await stopLiveActivityBridge();
 }
