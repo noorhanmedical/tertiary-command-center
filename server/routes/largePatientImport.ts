@@ -9,6 +9,7 @@
 // SAME canonical target (patient_screenings), so patient semantics never fork.
 
 import type { Express, Request, Response } from "express";
+import { z } from "zod";
 import multer from "multer";
 import os from "node:os";
 import fs from "node:fs";
@@ -191,6 +192,40 @@ export function registerLargePatientImportRoutes(app: Express) {
     }
   });
 
+  // ── PATCH global column mapping — re-normalize the whole staged import ────
+  app.patch("/api/patient-import/large/:id/mapping", async (req: Request, res: Response) => {
+    const job = await getImportJob(parseInt(String(req.params.id), 10));
+    if (!job) return res.status(404).json({ error: "Import job not found" });
+    if (!assertScope(req, res, job)) return;
+    if (!["preview_ready", "failed", "uploaded", "validating", "parsing"].includes(job.status)) {
+      return res.status(409).json({ error: `Mapping cannot be changed from status "${job.status}".` });
+    }
+    const schema = z.object({ columnOverrides: z.record(z.string()) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "columnOverrides map required" });
+    // Persist the approved mapping and re-run analysis (re-parse + reclassify).
+    await updateImportJob(job.id, { columnOverrides: parsed.data.columnOverrides as never });
+    void runAnalysis(job.id).catch((e) => console.error("[largeImport] re-analysis error:", e));
+    return res.status(202).json({ jobId: job.id, status: "parsing" });
+  });
+
+  // ── PATCH one staged row override (row wins over global mapping) ─────────
+  app.patch("/api/patient-import/large/:id/rows/:rowIndex", async (req: Request, res: Response) => {
+    const job = await getImportJob(parseInt(String(req.params.id), 10));
+    if (!job) return res.status(404).json({ error: "Import job not found" });
+    if (!assertScope(req, res, job)) return;
+    const rowIndex = parseInt(String(req.params.rowIndex), 10);
+    if (!Number.isFinite(rowIndex)) return res.status(400).json({ error: "Invalid rowIndex" });
+    const schema = z.object({ override: z.record(z.unknown()) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "override object required" });
+    const current = (job.rowOverrides ?? {}) as Record<string, Record<string, unknown>>;
+    const merged = { ...current, [String(rowIndex)]: { ...(current[String(rowIndex)] ?? {}), ...parsed.data.override } };
+    await updateImportJob(job.id, { rowOverrides: merged as never });
+    void runAnalysis(job.id).catch((e) => console.error("[largeImport] re-analysis error:", e));
+    return res.status(202).json({ jobId: job.id, status: "parsing", rowIndex });
+  });
+
   // ── POST confirm — start (or resume) the chunked import ──────────────────
   app.post("/api/patient-import/large/:id/confirm", async (req: Request, res: Response) => {
     const job = await getImportJob(parseInt(String(req.params.id), 10));
@@ -350,6 +385,8 @@ function shapeJob(job: Record<string, unknown>) {
     facilitySource: job.facilitySource,
     detectedSheet: job.detectedSheet,
     detectedColumns: job.detectedColumns,
+    columnOverrides: job.columnOverrides,
+    rowOverrides: job.rowOverrides,
     workbookInfo: job.workbookInfo,
     counts: {
       total: job.totalRows,

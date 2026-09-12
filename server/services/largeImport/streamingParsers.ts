@@ -15,8 +15,27 @@ import fs from "node:fs";
 import ExcelJS from "exceljs";
 import { parse as csvParse } from "csv-parse";
 import type { ImportFileFormat } from "@shared/schema";
-import { detectColumns, type ColumnDetectionResult } from "@shared/patientColumnMap";
+import { detectColumns, type ColumnDetectionResult, type CanonicalPatientField } from "@shared/patientColumnMap";
 import { buildNormalizedRow, type NormalizedImportRow } from "@shared/patientImportRow";
+
+/** Correction options applied during (re)parse — never mutate the source file. */
+export type ParseOverrides = {
+  defaultFacility?: string | null;
+  columnOverrides?: Record<string, CanonicalPatientField | "ignore">;
+  rowOverrides?: Record<string, Record<string, unknown>>;
+};
+
+/** Merge a per-row override (by 1-based row index) onto a normalized row. */
+function applyRowOverride(row: NormalizedImportRow, overrides?: Record<string, Record<string, unknown>>): NormalizedImportRow {
+  if (!overrides) return row;
+  const ov = overrides[String(row.rowIndex)];
+  if (!ov) return row;
+  const merged: Record<string, unknown> = { ...row };
+  for (const [k, v] of Object.entries(ov)) {
+    if (k in merged) merged[k] = v === "" ? null : v;
+  }
+  return merged as unknown as NormalizedImportRow;
+}
 
 export type WorkbookInfo = {
   sheets: Array<{ name: string; rowCount: number; chosen: boolean }>;
@@ -71,7 +90,7 @@ function firstNonEmptyHeader(records: string[][]): { headerIdx: number; headers:
 export async function parseDelimitedFile(
   path: string,
   format: "csv" | "tsv",
-  opts: { defaultFacility?: string | null } = {},
+  opts: ParseOverrides = {},
 ): Promise<ParseResult> {
   const delimiter = format === "tsv" ? "\t" : ",";
   const warnings: string[] = [];
@@ -99,7 +118,7 @@ export async function parseDelimitedFile(
       const cells = record.map((c) => (c ?? "").toString());
       if (!cells.some((c) => c.trim().length > 0)) continue; // skip leading blanks
       headers = cells;
-      detection = detectColumns(headers);
+      detection = detectColumns(headers, opts.columnOverrides);
       sawHeader = true;
       if (detection.ambiguous) {
         warnings.push("ambiguous_headers");
@@ -114,10 +133,13 @@ export async function parseDelimitedFile(
     dataRowIndex += 1;
     const rawLine = record.join(delimiter).slice(0, RAW_SNIPPET_MAX);
     rows.push(
-      buildNormalizedRow(record, detection.mapping, dataRowIndex, {
-        rawLine,
-        defaultFacility: opts.defaultFacility ?? null,
-      }),
+      applyRowOverride(
+        buildNormalizedRow(record, detection.mapping, dataRowIndex, {
+          rawLine,
+          defaultFacility: opts.defaultFacility ?? null,
+        }),
+        opts.rowOverrides,
+      ),
     );
   }
 
@@ -151,7 +173,7 @@ const SAFE_INMEMORY_XLSX_BYTES = 60 * 1024 * 1024;
 function collectSheet(
   name: string,
   rowCellArrays: Iterable<string[]>,
-  opts: { defaultFacility?: string | null },
+  opts: ParseOverrides,
   warnings: string[],
 ): SheetCollect {
   let headers: string[] = [];
@@ -162,7 +184,7 @@ function collectSheet(
     if (!detection) {
       if (!cells.some((c) => c.trim().length > 0)) continue;
       headers = cells;
-      detection = detectColumns(headers);
+      detection = detectColumns(headers, opts.columnOverrides);
       continue;
     }
     if (rows.length >= MAX_ROWS) { warnings.push(`row_cap_reached:${MAX_ROWS}`); break; }
@@ -170,10 +192,13 @@ function collectSheet(
     dataRowIndex += 1;
     const rawLine = cells.join("\t").slice(0, RAW_SNIPPET_MAX);
     rows.push(
-      buildNormalizedRow(cells, detection.mapping, dataRowIndex, {
-        rawLine,
-        defaultFacility: opts.defaultFacility ?? null,
-      }),
+      applyRowOverride(
+        buildNormalizedRow(cells, detection.mapping, dataRowIndex, {
+          rawLine,
+          defaultFacility: opts.defaultFacility ?? null,
+        }),
+        opts.rowOverrides,
+      ),
     );
   }
   return {
@@ -187,7 +212,7 @@ function collectSheet(
 /** Streaming collection — incremental, never loads media. */
 async function collectSheetsStreaming(
   path: string,
-  opts: { defaultFacility?: string | null },
+  opts: ParseOverrides,
   warnings: string[],
 ): Promise<SheetCollect[]> {
   const sheets: SheetCollect[] = [];
@@ -213,7 +238,7 @@ async function collectSheetsStreaming(
 /** Non-streaming fallback — loads the workbook (bounded by size guard). */
 async function collectSheetsReadFile(
   path: string,
-  opts: { defaultFacility?: string | null },
+  opts: ParseOverrides,
   warnings: string[],
 ): Promise<SheetCollect[]> {
   const wb = new ExcelJS.Workbook();
@@ -242,7 +267,7 @@ async function collectSheetsReadFile(
  */
 export async function parseXlsxFile(
   path: string,
-  opts: { defaultFacility?: string | null } = {},
+  opts: ParseOverrides = {},
 ): Promise<ParseResult> {
   const warnings: string[] = [];
   let sheets: SheetCollect[];
@@ -332,7 +357,7 @@ function cellToString(v: unknown): string {
 export async function parseLargeFile(
   path: string,
   format: ImportFileFormat,
-  opts: { defaultFacility?: string | null } = {},
+  opts: ParseOverrides = {},
 ): Promise<ParseResult> {
   switch (format) {
     case "csv":

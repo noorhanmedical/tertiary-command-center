@@ -17,12 +17,15 @@ export type CanonicalPatientField =
   | "gender"
   | "age"
   | "insurance"
+  | "memberId"
   | "mrn"
   | "facility"
   | "provider"
+  | "address"
   | "diagnoses"
   | "medications"
   | "history"
+  | "allergies"
   | "previousTests"
   | "notes"
   | "time"
@@ -42,7 +45,10 @@ const FIELD_ALIASES: Record<CanonicalPatientField, string[]> = {
   gender: ["gender", "sex", "gender identity"],
   age: ["age", "patient age"],
   insurance: ["insurance", "payer", "payor", "insurance type", "insurancetype", "insurance plan", "insuranceplan", "carrier", "plan", "coverage", "primary insurance"],
-  mrn: ["mrn", "medical record number", "medicalrecordnumber", "record number", "patient id", "patientid", "chart number", "chartnumber", "chart id", "account number", "acct", "external id", "externalid", "emr id"],
+  memberId: ["member id", "memberid", "subscriber id", "subscriberid", "policy number", "policynumber", "group id", "groupid", "insurance id", "insuranceid"],
+  address: ["address", "street", "street address", "streetaddress", "home address", "mailing address", "residence"],
+  allergies: ["allergies", "allergy", "allergen", "allergens", "drug allergies"],
+  mrn: ["mrn", "medical record number", "medicalrecordnumber", "medical record", "medical record no", "med rec", "medrec", "record number", "record no", "patient id", "patientid", "chart number", "chartnumber", "chart id", "account number", "account", "account no", "acct", "acct number", "external id", "externalid", "emr id"],
   facility: ["facility", "clinic", "location", "site", "practice", "office", "clinic name", "facility name"],
   provider: ["provider", "physician", "doctor", "pcp", "referring provider", "rendering provider", "clinician", "attending", "npi provider"],
   diagnoses: ["diagnoses", "diagnosis", "dx", "conditions", "condition", "problem list", "problems", "assessment", "icd", "icd10", "icd 10"],
@@ -74,6 +80,24 @@ for (const [field, aliases] of Object.entries(FIELD_ALIASES) as [CanonicalPatien
   }
 }
 
+/** Map ONE header/label to a canonical field (exact-normalized alias first,
+ *  then a bounded whole-word contains pass). Returns null when unmapped.
+ *  Reused by smart-paste label:value parsing. */
+export function mapHeaderToField(header: string): CanonicalPatientField | null {
+  const norm = normalizeHeader(header);
+  if (!norm) return null;
+  const exact = ALIAS_TO_FIELD.get(norm);
+  if (exact) return exact;
+  let best: { field: CanonicalPatientField; len: number } | null = null;
+  for (const [alias, f] of ALIAS_TO_FIELD) {
+    if (alias.length < 3) continue;
+    if (norm === alias || norm.includes(` ${alias} `) || norm.startsWith(`${alias} `) || norm.endsWith(` ${alias}`)) {
+      if (!best || alias.length > best.len) best = { field: f, len: alias.length };
+    }
+  }
+  return best?.field ?? null;
+}
+
 export type ColumnDetectionResult = {
   // headerIndex → canonical field (only confident deterministic mappings).
   mapping: Record<number, CanonicalPatientField>;
@@ -92,11 +116,22 @@ export type ColumnDetectionResult = {
  * "Patient Name (Last, First)". Returns `ambiguous: true` when no name signal
  * is found so the server can decide to fall back to AI.
  */
-export function detectColumns(headers: ReadonlyArray<string>): ColumnDetectionResult {
+export function detectColumns(
+  headers: ReadonlyArray<string>,
+  // Manager-approved global corrections keyed by source header (exact or
+  // normalized). Value is a canonical field or "ignore" to drop the column.
+  overrides?: Record<string, CanonicalPatientField | "ignore">,
+): ColumnDetectionResult {
   const mapping: Record<number, CanonicalPatientField> = {};
   const fieldToHeader: Partial<Record<CanonicalPatientField, string>> = {};
   const unmapped: Array<{ index: number; header: string }> = [];
   const usedFields = new Set<CanonicalPatientField>();
+
+  // Normalize override keys for tolerant lookup.
+  const normOverrides = new Map<string, CanonicalPatientField | "ignore">();
+  if (overrides) {
+    for (const [k, v] of Object.entries(overrides)) normOverrides.set(normalizeHeader(k), v);
+  }
 
   headers.forEach((raw, index) => {
     const norm = normalizeHeader(raw);
@@ -104,6 +139,11 @@ export function detectColumns(headers: ReadonlyArray<string>): ColumnDetectionRe
       unmapped.push({ index, header: raw });
       return;
     }
+    // A manager override wins over auto-detection (and can force a field even
+    // when a different field is already used — the override is authoritative).
+    const ov = normOverrides.get(norm);
+    if (ov === "ignore") { unmapped.push({ index, header: raw }); return; }
+    if (ov) { mapping[index] = ov; fieldToHeader[ov] = raw; usedFields.add(ov); return; }
     let field = ALIAS_TO_FIELD.get(norm);
 
     // Bounded contains-pass: longest alias that appears as a whole word run.

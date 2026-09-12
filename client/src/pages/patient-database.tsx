@@ -22,6 +22,8 @@ import {
 import { PatientProfileWorkspace } from "@/components/patient-directory/PatientProfileWorkspace";
 import { PatientChartSkeleton } from "@/components/patient-directory/PatientChart";
 import { RecentImportsPanel } from "@/components/patient-directory/RecentImportsPanel";
+import { BulkImportPatientsDialog } from "@/components/patient-directory/BulkImportPatientsDialog";
+import { AddEditPatientDialog, type EditPatientSeed } from "@/components/patient-directory/AddEditPatientDialog";
 import { fmtDate } from "@/components/patient-directory/profileTypes";
 
 type RosterPatient = {
@@ -110,6 +112,11 @@ export default function PatientDatabasePage() {
 
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  // Unified Add/Edit patient dialog (canonical create/update).
+  const [patientDialogOpen, setPatientDialogOpen] = useState(false);
+  const [patientDialogMode, setPatientDialogMode] = useState<"add" | "edit">("add");
+  const [editSeed, setEditSeed] = useState<EditPatientSeed | null>(null);
   const [addPatientOpen, setAddPatientOpen] = useState(false);
   const [addPatientText, setAddPatientText] = useState("");
   const [addPatientFacility, setAddPatientFacility] = useState("");
@@ -307,10 +314,53 @@ export default function PatientDatabasePage() {
 
   return (
     <div className="flex flex-col h-full relative z-10 bg-finance-bg overflow-hidden">
-      {/* Page-level title (base only — clinic filter is not navigation context,
-          and a merely-selected patient is not a dedicated patient workspace). */}
-      <div className="shrink-0 px-6 pt-6 pb-2">
+      {/* Page-level header: title + primary patient ACTIONS (not navigation).
+          Add Patient / Import Patients live here in the top action area — never
+          buried in the left rail. Edit Patient appears contextually when a
+          patient is open. */}
+      <div className="shrink-0 px-6 pt-6 pb-3 flex flex-wrap items-center justify-between gap-3 border-b border-border/50">
         <InteriorPageTitle title="Plexus EHR" />
+        <div className="flex items-center gap-2">
+          {selectedRepId != null && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 rounded-md border-slate-300 text-slate-800"
+              data-testid="button-edit-selected-patient"
+              onClick={() => {
+                setPatientDialogMode("edit");
+                setEditSeed({
+                  screeningId: selectedRepId,
+                  name: rosterMatch?.name ?? seedName ?? "",
+                  dob: rosterMatch?.dob ?? "",
+                  phoneNumber: rosterMatch?.phoneNumber ?? "",
+                  insurance: rosterMatch?.insurance ?? "",
+                  facility: rosterMatch?.clinic && rosterMatch.clinic !== "Unassigned" ? rosterMatch.clinic : "",
+                });
+                setPatientDialogOpen(true);
+              }}
+            >
+              <UserIcon className="w-3.5 h-3.5" />Edit Patient
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 rounded-md border-slate-300 text-slate-800"
+            onClick={() => setBulkImportOpen(true)}
+            data-testid="button-bulk-import-patients"
+          >
+            <Users className="w-3.5 h-3.5" />Import Patients
+          </Button>
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 rounded-md bg-slate-900 text-white hover:bg-slate-800"
+            onClick={() => { setPatientDialogMode("add"); setEditSeed(null); setPatientDialogOpen(true); }}
+            data-testid="button-add-patient-ehr"
+          >
+            <Plus className="w-3.5 h-3.5" />Add Patient
+          </Button>
+        </div>
       </div>
       <div className="flex min-h-0 flex-1">
       {/* ── Left rail: roster + filters (collapsible) ── */}
@@ -349,14 +399,12 @@ export default function PatientDatabasePage() {
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="default" onClick={() => setAddPatientOpen(true)} className="flex-1 gap-1.5" data-testid="button-add-patient-ehr">
-              <Plus className="w-3.5 h-3.5" />Add Patient
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="flex-1 gap-1.5" data-testid="button-import-test-history">
-              <Upload className="w-3.5 h-3.5" />Import
-            </Button>
-          </div>
+          {/* Test History import is a DIFFERENT action from patient creation/
+              import (those live in the page header). Kept here, clearly labeled,
+              as a secondary roster tool. */}
+          <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="w-full gap-1.5" data-testid="button-import-test-history">
+            <Upload className="w-3.5 h-3.5" />Import Test History
+          </Button>
           <p className="text-xs text-muted-foreground" data-testid="text-roster-summary">
             {totalPatients} patient{totalPatients !== 1 ? "s" : ""}{loadedCount < totalPatients ? ` · showing ${loadedCount}` : ""}
           </p>
@@ -573,6 +621,18 @@ export default function PatientDatabasePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Import Patients dialog (large-file pipeline — separate from Test History) */}
+      <BulkImportPatientsDialog open={bulkImportOpen} onOpenChange={setBulkImportOpen} />
+
+      {/* Unified Add / Edit Patient dialog (canonical create/update) */}
+      <AddEditPatientDialog
+        open={patientDialogOpen}
+        onOpenChange={setPatientDialogOpen}
+        mode={patientDialogMode}
+        seed={editSeed}
+        onSaved={(id) => setLocation(`/patient-directory?patientId=${id}`)}
+      />
 
       {/* Add Patient dialog */}
       <Dialog open={addPatientOpen} onOpenChange={(v) => { setAddPatientOpen(v); if (!v) { setAddPatientText(""); setAddPatientFacility(""); } }}>

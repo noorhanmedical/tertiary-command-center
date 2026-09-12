@@ -79,6 +79,15 @@ export const importJobs = pgTable(
     detectedSheet: text("detected_sheet"),
     detectedColumns: jsonb("detected_columns").notNull().default(sql`'{}'::jsonb`),
     workbookInfo: jsonb("workbook_info").notNull().default(sql`'{}'::jsonb`),
+    // Manager corrections applied BEFORE canonical write (migration 0090):
+    //   columnOverrides: { "<sourceHeader>": "<canonicalField>" | "ignore" }
+    //     — a manager-approved global header→field remap, applied to ALL rows.
+    //   rowOverrides: { "<rowIndex>": { "<field>": "<value>" } }
+    //     — per-row field corrections. Row override wins over global mapping.
+    // The uploaded file is NEVER mutated; staged rows are re-normalized from
+    // (raw row + columnOverrides + rowOverrides). No patients written pre-confirm.
+    columnOverrides: jsonb("column_overrides").notNull().default(sql`'{}'::jsonb`),
+    rowOverrides: jsonb("row_overrides").notNull().default(sql`'{}'::jsonb`),
 
     chunkSize: integer("chunk_size").notNull().default(500),
     totalChunks: integer("total_chunks").notNull().default(0),

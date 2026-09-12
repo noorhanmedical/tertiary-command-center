@@ -15,6 +15,9 @@
 
 import { db } from "../../db";
 import { patientScreenings } from "@shared/schema";
+import { featureFlags } from "../../lib/featureFlags";
+import { resolveAndLinkPlexusIdentityForScreeningsBulk } from "../plexusIdentity/screeningIntegration";
+import { buildScreeningInsertValues } from "@shared/canonicalPatientDraft";
 import type { ClassifiedRow } from "./dedupClassifier";
 
 export const DEFAULT_CHUNK_SIZE = 500;
@@ -49,32 +52,31 @@ export type WriteResult = {
   lastRowIndex: number;
 };
 
+// Bulk import builds its insert through the SAME shared core builder as manual /
+// paste (buildScreeningInsertValues) so the core write semantics + provenance
+// can never drift. Bulk-specific columns (previousTests, appointmentStatus,
+// bulk patientType default) are layered on top — legitimate specialized
+// orchestration, not a reimplementation of core insert semantics.
 function toInsertValues(cr: ClassifiedRow, opts: WriteOptions) {
   const r = cr.row;
-  return {
-    batchId: opts.batchId,
-    clinicId: opts.clinicId ?? undefined,
-    name: r.name,
-    dob: r.dob ?? undefined,
-    gender: r.gender ?? undefined,
-    age: r.age ?? undefined,
-    phoneNumber: r.phone ?? undefined,
-    email: r.email ?? undefined,
-    mrn: r.mrn ?? undefined,
-    insurance: r.insurance ?? undefined,
-    facility: r.facility ?? undefined,
-    diagnoses: r.diagnoses ?? undefined,
-    history: r.history ?? undefined,
-    medications: r.medications ?? undefined,
-    previousTests: r.previousTests ?? undefined,
-    notes: r.notes ?? undefined,
-    patientType: (r.patientType ?? "outreach") as "visit" | "outreach",
-    status: "draft" as const,
-    appointmentStatus: "pending" as const,
-    importJobId: opts.importJobId,
-    importRowIndex: r.rowIndex,
-    isTest: opts.isTest ?? false,
-  };
+  const core = buildScreeningInsertValues(
+    {
+      name: r.name, dob: r.dob, gender: r.gender, age: r.age, phoneNumber: r.phone,
+      email: r.email, mrn: r.mrn, insurance: r.insurance, facility: r.facility,
+      diagnoses: r.diagnoses, medications: r.medications, history: r.history, notes: r.notes,
+      patientType: r.patientType,
+    },
+    {
+      batchId: opts.batchId,
+      sourceType: "bulk_import",
+      clinicId: opts.clinicId ?? null,
+      importJobId: opts.importJobId,
+      importRowIndex: r.rowIndex,
+      isTest: opts.isTest ?? false,
+      patientTypeDefault: "outreach",
+    },
+  );
+  return { ...core, previousTests: r.previousTests ?? undefined, appointmentStatus: "pending" as const };
 }
 
 /**
@@ -127,8 +129,30 @@ export async function writeClassifiedRows(
         .insert(patientScreenings)
         .values(values as never)
         .onConflictDoNothing()
-        .returning({ id: patientScreenings.id });
+        .returning({ id: patientScreenings.id, importRowIndex: patientScreenings.importRowIndex });
     });
+
+    // Converge on canonical identity: link each newly-inserted screening to the
+    // global identity registry (reuse-or-create). Flag-gated inside the helper
+    // (zero cost when FEATURE_PLEXUS_IDENTITY_WRITE is OFF, the default) — this
+    // closes the one bulk path that previously never linked identity at all.
+    if (featureFlags.plexusIdentityWrite && insertedRows.length > 0) {
+      const byRow = new Map(slice.map((cr) => [cr.row.rowIndex, cr.row]));
+      await resolveAndLinkPlexusIdentityForScreeningsBulk(
+        insertedRows
+          .filter((r) => r.importRowIndex != null && byRow.has(r.importRowIndex))
+          .map((r) => {
+            const row = byRow.get(r.importRowIndex as number)!;
+            return {
+              screeningId: r.id,
+              clinicId: opts.clinicId ?? null,
+              sourceSystem: "bulk_import",
+              clinicMrn: row.mrn ?? null,
+              demographics: { displayName: row.name, dob: row.dob, phone: row.phone, email: row.email },
+            };
+          }),
+      );
+    }
 
     result.attempted += slice.length;
     result.inserted += insertedRows.length;

@@ -21,6 +21,7 @@ import {
   resolveAndLinkPlexusIdentityForScreeningsBulk,
   recordScreeningIdentityLinkFailure,
 } from "../services/plexusIdentity/screeningIntegration";
+import { buildScreeningInsertValues } from "@shared/canonicalPatientDraft";
 
 // Clinical-paste bulk import + durable qualification job routes for
 // Plexus IQ. Re-uses the existing analysis_jobs infra so the client can
@@ -480,22 +481,32 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
             raw: r.raw ?? null,
             existingNotes: null,
           });
+          // Core patient columns + provenance via the SHARED canonical builder
+          // (same one manual/paste/bulk use) so core insert semantics can't
+          // drift. IQ layers its clinical-trace columns (time, previousTests,
+          // notes, qualifyingTests, appointmentStatus) on top — specialized
+          // orchestration, not a reimplementation of the core insert.
+          const core = buildScreeningInsertValues(
+            {
+              name: r.name.trim(),
+              dob: r.dob?.trim() || null,
+              gender: r.sex?.trim() || null,
+              age: ageNum,
+              phoneNumber: r.phone?.trim() || null,
+              email: r.email?.trim() || null,
+              insurance: r.insurance?.trim() || null,
+              facility,
+              diagnoses: r.diagnoses?.trim() || null,
+              history: r.history?.trim() || null,
+              medications: r.medications?.trim() || null,
+              notes,
+              patientType: r.patientType,
+            },
+            { batchId, sourceType: "plexus_iq" },
+          );
           return {
-            batchId,
-            name: r.name.trim(),
+            ...core,
             time: r.time?.trim() || null,
-            age: ageNum,
-            gender: r.sex?.trim() || null,
-            dob: r.dob?.trim() || null,
-            // BatchFlow imports phone and email into patient records.
-            // SOURCE MARKER: BatchFlow imports phone and email into patient records
-            phoneNumber: r.phone?.trim() || null,
-            email: r.email?.trim() || null,
-            insurance: r.insurance?.trim() || null,
-            facility,
-            diagnoses: r.diagnoses?.trim() || null,
-            history: r.history?.trim() || null,
-            medications: r.medications?.trim() || null,
             previousTests: r.previousAncillaries?.trim() || null,
             previousTestsDate:
               extractDateFromPrevTests(r.previousAncillaries?.trim() || null) ||
@@ -503,18 +514,15 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
             noPreviousTests: /no\s+record/i.test(
               r.previousAncillaries?.trim() ?? "",
             ),
-            notes,
             qualifyingTests: [] as string[],
             reasoning: {} as Record<string, unknown>,
-            status: "draft" as const,
             appointmentStatus: "pending" as const,
-            patientType: r.patientType,
           };
         });
 
         const insertedRows = await db
           .insert(patientScreenings)
-          .values(inserts)
+          .values(inserts as never)
           .returning();
 
         // Reconciliation guard: every row we attempted to insert must

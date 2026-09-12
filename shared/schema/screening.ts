@@ -131,6 +131,12 @@ export const patientScreenings = pgTable("patient_screenings", {
   // chunk cannot create a duplicate patient for the same source row.
   importJobId: integer("import_job_id"),
   importRowIndex: integer("import_row_index"),
+  // First-class source provenance (migration 0089). Records WHICH intake path
+  // created the row (manual / manual_paste / bulk_import / plexus_iq / api /
+  // emr_import) without source becoming identity. Replaces the prior practice
+  // of stuffing source markers into `notes`. Nullable so every existing row is
+  // unaffected; stamped by the canonical patient write service.
+  sourceType: text("source_type"),
 }, (table) => [
   index("idx_patient_screenings_batch_id").on(table.batchId),
   index("idx_patient_screenings_status").on(table.status),
@@ -144,6 +150,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   index("idx_ps_pcm").on(table.patientClinicMembershipId),
   index("idx_ps_gpp").on(table.globalPlexusPatientId),
   index("idx_patient_screenings_mrn").on(table.mrn),
+  index("idx_patient_screenings_source_type").on(table.sourceType),
   uniqueIndex("uq_patient_screenings_import_job_row")
     .on(table.importJobId, table.importRowIndex)
     .where(sql`import_job_id IS NOT NULL AND import_row_index IS NOT NULL`),

@@ -49,6 +49,9 @@ async function parseAndClassify(job: ImportJob): Promise<{ parse: ParseResult; c
   if (!job.tempPath) throw new Error("import job has no staged file");
   const parse = await parseLargeFile(job.tempPath, (job.fileFormat ?? "unknown") as ImportFileFormat, {
     defaultFacility: job.facility ?? null,
+    // Manager-approved corrections (re-normalize deterministically; file never mutated).
+    columnOverrides: (job.columnOverrides ?? {}) as Record<string, never>,
+    rowOverrides: (job.rowOverrides ?? {}) as Record<string, Record<string, unknown>>,
   });
   const existingIndex = await loadExistingIdentityIndex(job.clinicId ?? null);
   const classified = classifyRows(parse.rows, existingIndex);
@@ -83,7 +86,13 @@ export async function runAnalysis(jobId: number): Promise<void> {
       fileFormat: parse.format,
       detectedSheet: parse.workbookInfo?.chosenSheet ?? null,
       detectedColumns: (parse.detection.fieldToHeader ?? {}) as never,
-      workbookInfo: (parse.workbookInfo ?? {}) as never,
+      workbookInfo: {
+        ...(parse.workbookInfo ?? {}),
+        // Full source-header list + current header→field mapping so the UI can
+        // offer a mapping-correction editor (remap or ignore any source column).
+        sourceHeaders: parse.headers,
+        headerFieldMapping: parse.headers.map((h, i) => ({ header: h, field: parse.detection.mapping[i] ?? null })),
+      } as never,
       totalRows: counts.total,
       validRows: counts.valid,
       invalidRows: counts.invalid,
