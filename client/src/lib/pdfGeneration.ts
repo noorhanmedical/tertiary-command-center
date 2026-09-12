@@ -992,3 +992,190 @@ export function openSchedulerPacketPrintPreview(input: {
   win.focus();
   return { ok: true, renderedGroupCount: sections.length, droppedGroups };
 }
+
+// ─── Engagement Call List PACKAGE — combined durable PDF ────────────────────
+//
+// One combined PDF per team member: a Call List Summary section (employee /
+// facility / date / totals / ancillary mix / call-status mix + a roster table)
+// followed by the Clinician Atlas for each patient. The summary is allowed to
+// span multiple pages when a member has 40–60 patients — readability wins over
+// forcing one physical page (correction 11/20).
+//
+// Rendered from the FROZEN package snapshot (call_list_package_members), so the
+// same package always reproduces the same document. atlasPayloadSnapshot mirrors
+// PatientScreening field names, so it feeds buildClinicianPdfBody directly.
+
+import {
+  computeRosterSummary,
+  type AtlasPayloadSnapshot,
+} from "@shared/engagement/callListSnapshot";
+
+export type CallListPackageHeaderView = {
+  teamMemberName: string | null;
+  facility: string | null;
+  serviceDate: string | null;
+  cohortLabel: string | null;
+  patientCount: number;
+};
+
+export type CallListPackageMemberView = {
+  patientNameSnapshot: string;
+  patientDobSnapshot: string | null;
+  patientPhoneSnapshot: string | null;
+  demographicsSnapshot: {
+    age?: number | null;
+    gender?: string | null;
+    insurance?: string | null;
+    facility?: string | null;
+    email?: string | null;
+    time?: string | null;
+  } | null;
+  servicesSnapshot: string[] | null;
+  reasonForCallSnapshot: string | null;
+  cohortClassificationSnapshot: string | null;
+  atlasPayloadSnapshot: AtlasPayloadSnapshot | null;
+};
+
+const CALL_STATUS_LABELS: Record<string, string> = {
+  never_called: "Never Called",
+  callback_due: "Callback Due",
+  lvm: "LVM",
+  no_answer: "No Answer",
+  reached_not_scheduled: "Reached — Not Scheduled",
+  other: "Other",
+};
+
+/** Build the combined package body HTML (summary section + Atlas per patient). */
+export function buildCallListPackageBody(
+  pkg: CallListPackageHeaderView,
+  members: CallListPackageMemberView[],
+): string {
+  const summary = computeRosterSummary(members);
+  const dateLabel = pkg.serviceDate
+    ? formatScheduleDate(pkg.serviceDate, null)
+    : formatScheduleDate(null, new Date());
+  const memberName = pkg.teamMemberName ?? "Team Member";
+
+  const mixChips = [
+    `BrainWave: ${summary.ancillaryMix.brainwave}`,
+    `VitalWave: ${summary.ancillaryMix.vitalwave}`,
+    `Ultrasound: ${summary.ancillaryMix.ultrasound}`,
+  ]
+    .map(
+      (t) =>
+        `<span style="display:inline-block;font-size:10px;font-weight:700;color:#1a365d;background:#eef2ff;border-radius:5px;padding:2px 8px;margin:2px 4px 2px 0;">${esc(t)}</span>`,
+    )
+    .join("");
+
+  const statusChips = Object.entries(summary.statusMix)
+    .map(
+      ([k, v]) =>
+        `<span style="display:inline-block;font-size:9.5px;font-weight:600;color:#475569;background:#f1f5f9;border-radius:5px;padding:2px 8px;margin:2px 4px 2px 0;">${esc(
+          CALL_STATUS_LABELS[k] ?? k,
+        )}: ${v}</span>`,
+    )
+    .join("");
+
+  const rosterRows = members
+    .map((m, i) => {
+      const d = m.demographicsSnapshot ?? {};
+      const demo = [d.age != null ? `${d.age}yo` : "", d.gender ?? "", d.insurance ?? ""]
+        .filter(Boolean)
+        .map(esc)
+        .join(" · ");
+      const services = (m.servicesSnapshot ?? []).map(esc).join(", ");
+      const reason = m.cohortClassificationSnapshot
+        ? CALL_STATUS_LABELS[m.cohortClassificationSnapshot] ?? m.reasonForCallSnapshot ?? ""
+        : m.reasonForCallSnapshot ?? "";
+      const zebra = i % 2 === 1 ? "background:#f8fafc;" : "";
+      return `
+        <tr style="${zebra}break-inside:avoid;">
+          <td style="padding:4px 6px;font-size:9.5px;color:#1e293b;font-weight:600;border-bottom:1px solid #e2e8f0;">${esc(m.patientNameSnapshot)}</td>
+          <td style="padding:4px 6px;font-size:9px;color:#475569;border-bottom:1px solid #e2e8f0;white-space:nowrap;">${esc(m.patientDobSnapshot ?? "")}</td>
+          <td style="padding:4px 6px;font-size:9px;color:#475569;border-bottom:1px solid #e2e8f0;white-space:nowrap;">${esc(m.patientPhoneSnapshot ?? "")}</td>
+          <td style="padding:4px 6px;font-size:9px;color:#475569;border-bottom:1px solid #e2e8f0;">${demo}</td>
+          <td style="padding:4px 6px;font-size:9px;color:#334155;border-bottom:1px solid #e2e8f0;">${services}</td>
+          <td style="padding:4px 6px;font-size:9px;color:#475569;border-bottom:1px solid #e2e8f0;">${esc(reason)}</td>
+        </tr>`;
+    })
+    .join("");
+
+  const summarySection = `
+    <div class="page" style="padding:18px 22px;">
+      <div style="border-bottom:2px solid #1a365d;padding-bottom:10px;margin-bottom:14px;">
+        <div style="font-size:22px;font-weight:800;color:#1a365d;">Call List — ${esc(memberName)}</div>
+        <div style="font-size:12px;color:#475569;margin-top:2px;">${esc(pkg.facility ?? "")} · ${esc(dateLabel)}</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px;">
+        <div style="font-size:13px;font-weight:700;color:#1e293b;">Total: ${summary.total}</div>
+      </div>
+      <div style="margin-bottom:8px;">${mixChips}</div>
+      <div style="margin-bottom:14px;">${statusChips}</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#1a365d;color:#fff;">
+            <th style="text-align:left;padding:5px 6px;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;">Name</th>
+            <th style="text-align:left;padding:5px 6px;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;">DOB</th>
+            <th style="text-align:left;padding:5px 6px;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;">Phone</th>
+            <th style="text-align:left;padding:5px 6px;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;">Demographics</th>
+            <th style="text-align:left;padding:5px 6px;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;">Ancillaries</th>
+            <th style="text-align:left;padding:5px 6px;font-size:9px;text-transform:uppercase;letter-spacing:0.05em;">Reason</th>
+          </tr>
+        </thead>
+        <tbody>${rosterRows}</tbody>
+      </table>
+    </div>`;
+
+  // Clinician Atlas for each patient, from the frozen bounded payloads. Cast is
+  // safe: AtlasPayloadSnapshot field names mirror PatientScreening.
+  const atlasPatients = members
+    .map((m) => m.atlasPayloadSnapshot)
+    .filter((p): p is AtlasPayloadSnapshot => p != null) as unknown as PatientScreening[];
+  const atlasBody =
+    atlasPatients.length > 0
+      ? buildClinicianPdfBody(`Call List — ${memberName}`, atlasPatients, pkg.serviceDate ?? null)
+      : "";
+
+  return summarySection + atlasBody;
+}
+
+// Render the combined package body to a base64-encoded PDF (for durable upload
+// to the server — Option A). Mirrors the invoices generatePdfBase64 flow.
+export async function generateCallListPackagePdfBase64(
+  pkg: CallListPackageHeaderView,
+  members: CallListPackageMemberView[],
+): Promise<{ base64: string; filename: string }> {
+  const body = buildCallListPackageBody(pkg, members);
+  if (!body || body.trim().length === 0) {
+    throw new Error("Call list package body is empty — nothing to render");
+  }
+  const html2pdfModule = await import("html2pdf.js");
+  const html2pdf = (html2pdfModule as { default: any }).default;
+  if (typeof html2pdf !== "function") throw new Error("html2pdf module did not load");
+
+  const container = document.createElement("div");
+  container.style.cssText = "width:8.5in;background:#ffffff;color:#1e293b;";
+  container.innerHTML = `<style>${PDF_BASE_STYLES}</style>${body}`;
+  document.body.appendChild(container);
+  try {
+    const options = {
+      margin: [0.5, 0.4, 0.5, 0.4],
+      image: { type: "jpeg", quality: 0.92 },
+      html2canvas: { scale: 1.5, useCORS: true },
+      jsPDF: { unit: "in", format: "letter", orientation: "portrait", compress: true },
+      pagebreak: { mode: ["css", "legacy"] },
+    } as Record<string, unknown>;
+    const blob: Blob = await html2pdf().set(options).from(container).outputPdf("blob");
+    const buf = await blob.arrayBuffer();
+    let binary = "";
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+    const safeName = `${(pkg.teamMemberName ?? "call-list").replace(/[^A-Za-z0-9._-]+/g, "_")}_${
+      pkg.serviceDate ?? "list"
+    }.pdf`;
+    return { base64, filename: safeName };
+  } finally {
+    container.remove();
+  }
+}

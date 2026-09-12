@@ -55,6 +55,8 @@ import { EngagementFilterRail } from "@/components/engagement/EngagementFilterRa
 import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel";
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
+import { GenerateCallListDialog } from "@/components/engagement/GenerateCallListDialog";
+import { RecentCallListsDialog } from "@/components/engagement/RecentCallListsDialog";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
 import { ManagerWorkloadPanel, NeedsCoveragePanel, ManagerExceptionsPanel } from "@/components/portal/handoff/ManagerWorkforcePanel";
 import { EngagementCallResults } from "@/components/engagement/EngagementCallResults";
@@ -177,6 +179,16 @@ export default function EngagementCenterPage() {
     return () => window.removeEventListener("popstate", onPop);
   }, [multiListFlagOn]);
   const [distributeOpen, setDistributeOpen] = useState(false);
+  const [callListOpen, setCallListOpen] = useState(false);
+  const [recentListsOpen, setRecentListsOpen] = useState(false);
+  const callListPackagesFlagOn = (() => {
+    try {
+      return (import.meta as { env?: Record<string, string | undefined> })?.env
+        ?.VITE_FEATURE_ENGAGEMENT_CALL_LIST_PACKAGES === "true";
+    } catch {
+      return false;
+    }
+  })();
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -434,6 +446,29 @@ export default function EngagementCenterPage() {
             </Button>
           ) : null}
 
+          {/* Generate Call List — cohort → distribute → confirm → share packages */}
+          {view === "pool" && callListPackagesFlagOn ? (
+            <>
+              <Button
+                size="sm"
+                className="h-9 gap-1.5"
+                onClick={() => setCallListOpen(true)}
+                data-testid="button-open-generate-call-list"
+              >
+                Generate Call List
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9 gap-1.5"
+                onClick={() => setRecentListsOpen(true)}
+                data-testid="button-open-recent-call-lists"
+              >
+                Recent Lists
+              </Button>
+            </>
+          ) : null}
+
           {/* Search */}
           {view === "pool" ? (
           <div className="relative w-full max-w-xs">
@@ -607,6 +642,23 @@ export default function EngagementCenterPage() {
           <EngagementDistributionPanel />
         </DialogContent>
       </Dialog>
+
+      {/* Generate Call List — cohort preview → auto-distribute → confirm →
+          Generated Call Lists (share link + durable PDF per member). */}
+      {callListPackagesFlagOn ? (
+        <>
+          <GenerateCallListDialog
+            open={callListOpen}
+            onOpenChange={setCallListOpen}
+            facilities={facilityOptions}
+          />
+          <RecentCallListsDialog
+            open={recentListsOpen}
+            onOpenChange={setRecentListsOpen}
+            facility={clinicFilter !== ALL ? clinicFilter : null}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

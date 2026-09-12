@@ -128,6 +128,12 @@ export * from "./ancillaryCases";
 // flags (all default OFF); migration 0051 is not applied automatically.
 export * from "./adminReviewEvents";
 export * from "./engagementLists";
+// Engagement Call List — frozen distribution snapshot / secure share packages
+// (call_list_packages + call_list_package_members). Immutable historical
+// record of what a manager distributed to an employee at a moment in time; NOT
+// the live source of truth. Guarded by FEATURE_ENGAGEMENT_CALL_LIST_PACKAGES
+// (default OFF); migration 0088 is not applied automatically.
+export * from "./callListPackages";
 // Phase 2D — Canonical ancillary appointments in global_schedule_events.
 // Additive columns added to globalScheduleEvents; new failures ledger.
 // Guarded by FEATURE_CANONICAL_APPOINTMENT (default OFF); migration

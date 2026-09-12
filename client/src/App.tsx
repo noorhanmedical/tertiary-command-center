@@ -14,6 +14,7 @@ import ClinicAnalyticsPage from "@/pages/clinic-analytics";
 import ClinicOnboardingPage from "@/pages/clinic-onboarding";
 import SchedulePage from "@/pages/SchedulePage";
 import SharedSchedule from "@/pages/shared-schedule";
+import SharedCallListPage from "@/pages/shared-call-list";
 import PatientDatabasePage from "@/pages/patient-database";
 import DocumentsPage from "@/pages/documents";
 import BillingPage from "@/pages/billing";
@@ -534,6 +535,14 @@ function AppShell() {
     queryClient.clear();
     refetch();
     navigate("/");
+  }
+
+  // PUBLIC token-authenticated share surface. The share URL itself is the
+  // credential (no login / no PIN), so this MUST bypass the auth gate and the
+  // auth-loading spinner. It renders full-screen with no app shell and exposes
+  // only the one frozen package the token resolves.
+  if (location.startsWith("/shared-call-list/")) {
+    return <SharedCallListPage />;
   }
 
   if (isLoading) {

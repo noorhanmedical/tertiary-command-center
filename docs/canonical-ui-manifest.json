@@ -9,7 +9,10 @@
     "client/src/pages/ancillary-care-specialist-portal.tsx",
     "client/src/pages/drive.tsx",
     "client/src/pages/patient-care-specialist-portal.tsx",
-    "client/src/pages/admin-settings.tsx"
+    "client/src/pages/admin-settings.tsx",
+    "client/src/pages/engagement-center.tsx",
+    "client/src/App.tsx",
+    "client/src/lib/pdfGeneration.ts"
   ],
   "totalFiles": 441,
   "files": [

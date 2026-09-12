@@ -239,6 +239,17 @@ export const featureFlags = {
    *  transmission adapter in the repo — this flag does NOT imply transmission exists
    *  and gates only the documented external boundary. Default OFF. */
   canonicalClaimTransmission: readBool("FEATURE_CANONICAL_CLAIM_TRANSMISSION", false),
+
+  // ─── Engagement Call List Distribution & Secure Share Packages ──────
+  // Default OFF. Gates the manager "Generate Call List" flow inside the
+  // Engagement Center: canonical cohort preview → auto-distribute → confirm
+  // (canonical assignment) → frozen per-member snapshot package → secure
+  // tokenized share link + durable combined PDF. The flag ONLY gates the new
+  // generation/package UX + endpoints; it never forks or duplicates the
+  // canonical assignment/call-list source of truth (patient_execution_cases).
+  // The package tables migration is NOT applied automatically — apply it
+  // before enabling. See shared/schema/callListPackages.ts.
+  callListPackages: readBool("FEATURE_ENGAGEMENT_CALL_LIST_PACKAGES", false),
 } as const;
 
 export type FeatureFlagName = keyof typeof featureFlags;
