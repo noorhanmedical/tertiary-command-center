@@ -29,6 +29,41 @@ export function packageFacilityInScope(
 }
 
 /**
+ * Defense-in-depth CLINIC tenant check. Admin → any clinic. For a manager,
+ * `allowedClinicIds` is their in-scope clinic id set (resolved via
+ * clinicIdsInScope); the package's clinicId must be present. A null/unknown
+ * package clinicId can NEVER satisfy a non-admin (fail-closed) — we do not
+ * assume facility strings are globally unique. `allowedClinicIds === null`
+ * means admin (no narrowing).
+ */
+export function clinicInScope(
+  scope: ManagerScope,
+  allowedClinicIds: Set<number> | null,
+  pkgClinicId: number | null | undefined,
+): boolean {
+  if (scope.isAdmin || allowedClinicIds === null) return true;
+  if (pkgClinicId == null) return false;
+  return allowedClinicIds.has(pkgClinicId);
+}
+
+/**
+ * Combined package tenant gate: the caller must be in scope for BOTH the
+ * package's facility AND its clinic. This is the single check every
+ * authenticated package operation should use (read, list-item, revoke, extend,
+ * regenerate, PDF, set-PIN). Fail-closed.
+ */
+export function packageInScope(
+  scope: ManagerScope,
+  allowedClinicIds: Set<number> | null,
+  pkg: { facilityId?: string | null; clinicId?: number | null },
+): boolean {
+  return (
+    packageFacilityInScope(scope, pkg.facilityId) &&
+    clinicInScope(scope, allowedClinicIds, pkg.clinicId)
+  );
+}
+
+/**
  * True when EVERY proposed team-member (roster scheduler id) is within the
  * caller's assignment scope. `allowedSchedulerIds === null` means admin (no
  * restriction). For a manager, the set is their in-scope roster ids; an empty

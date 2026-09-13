@@ -323,6 +323,9 @@ export async function listPackagesByOperation(
  *  → returns nothing (fail-closed), never all. */
 export async function listRecentPackages(args: {
   clinicId?: number | null;
+  /** Defense-in-depth clinic tenant filter (a SET). null = no narrowing
+   *  (admin); [] = fail-closed (no authorized clinic → nothing). */
+  clinicIds?: number[] | null;
   facilityId?: string | null;
   facilityIds?: string[] | null;
   limit?: number;
@@ -332,6 +335,10 @@ export async function listRecentPackages(args: {
     async () => {
       const conds = [];
       if (args.clinicId != null) conds.push(eq(callListPackages.clinicId, args.clinicId));
+      if (args.clinicIds != null) {
+        if (args.clinicIds.length === 0) return [] as CallListPackage[]; // fail-closed
+        conds.push(inArray(callListPackages.clinicId, args.clinicIds));
+      }
       if (args.facilityIds != null) {
         if (args.facilityIds.length === 0) return [] as CallListPackage[]; // fail-closed
         conds.push(inArray(callListPackages.facilityId, args.facilityIds));
@@ -419,6 +426,25 @@ export async function regeneratePackageShareToken(
     .returning();
   if (!row) return null;
   return { pkg: row, token: minted.token };
+}
+
+// ─── Optional share PIN (second factor) ──────────────────────────────────────
+
+/** Set/replace the OPTIONAL share PIN. `pinHash` is a bcrypt hash — the caller
+ *  hashes the plaintext (never persisted here). Stamps share_pin_set_at. */
+export async function setPackagePin(
+  id: number,
+  pinHash: string,
+  now: Date = new Date(),
+): Promise<CallListPackage | null> {
+  guardWrite();
+  return touch(id, { sharePinHash: pinHash, sharePinSetAt: now });
+}
+
+/** Remove the PIN (revert to token-only access). */
+export async function clearPackagePin(id: number): Promise<CallListPackage | null> {
+  guardWrite();
+  return touch(id, { sharePinHash: null, sharePinSetAt: null });
 }
 
 // ─── Retention purge (90-day snapshot PHI purge) ─────────────────────────────

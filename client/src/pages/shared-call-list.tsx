@@ -12,9 +12,10 @@
 // reasoning, and a Download Combined PDF button (streams the durable stored
 // PDF from the server — never regenerated client-side here).
 
+import { useState } from "react";
 import { useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, FileText, ShieldAlert, Stethoscope } from "lucide-react";
+import { Loader2, FileText, ShieldAlert, Stethoscope, Lock } from "lucide-react";
 
 type BoundedReasoning = {
   clinician_understanding?: string;
@@ -57,7 +58,10 @@ type SharedPackage = {
   summaryMetrics: Record<string, unknown> | null;
   generationStatus: string | null;
   pdfAvailable: boolean;
-  members: SharedMember[];
+  /** Present (true) when the package is PIN-gated and not yet unlocked — the
+   *  server returns metadata only, no members/PHI, until verify-pin succeeds. */
+  pinRequired?: boolean;
+  members?: SharedMember[];
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -86,9 +90,103 @@ function Unavailable() {
   );
 }
 
+/** PIN entry gate for a PIN-protected package. Submits the PIN to verify-pin;
+ *  on success hands the unlocked (full) snapshot + the validated PIN back up so
+ *  the page can render PHI and append the PIN to the PDF download. */
+function PinGate({
+  token,
+  meta,
+  onUnlocked,
+}: {
+  token: string;
+  meta: SharedPackage;
+  onUnlocked: (pkg: SharedPackage, pin: string) => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (pin.trim().length < 4) {
+      setError("Enter the PIN provided by your manager.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/shared-call-list/${encodeURIComponent(token)}/verify-pin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pin.trim() }),
+      });
+      if (res.status === 429) {
+        setError("Too many attempts. Please wait a moment and try again.");
+        return;
+      }
+      if (!res.ok) {
+        setError("Incorrect PIN.");
+        return;
+      }
+      const pkg = (await res.json()) as SharedPackage;
+      onUnlocked(pkg, pin.trim());
+    } catch {
+      setError("Something went wrong. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+      <form
+        onSubmit={submit}
+        className="max-w-sm w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-center"
+        data-testid="shared-call-list-pin-gate"
+      >
+        <Lock className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+        <h1 className="text-lg font-semibold text-slate-900">Enter access PIN</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          {[meta.teamMemberName, meta.facility].filter(Boolean).join(" · ") ||
+            "This list is protected."}
+        </p>
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          value={pin}
+          onChange={(e) => setPin(e.target.value)}
+          className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-center tracking-widest"
+          placeholder="PIN"
+          data-testid="shared-call-list-pin-input"
+        />
+        {error && (
+          <p className="text-xs text-red-600 mt-2" data-testid="shared-call-list-pin-error">
+            {error}
+          </p>
+        )}
+        <button
+          type="submit"
+          disabled={busy}
+          className="mt-4 w-full rounded-lg bg-[#1a365d] text-white py-2 text-sm font-medium disabled:opacity-60"
+          data-testid="shared-call-list-pin-submit"
+        >
+          {busy ? "Checking…" : "Unlock"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function SharedCallListPage() {
   const [, params] = useRoute("/shared-call-list/:token");
   const token = params?.token ?? null;
+  const [unlocked, setUnlocked] = useState<SharedPackage | null>(null);
+  // The validated PIN is held ONLY in component memory for this view — never in
+  // the URL, localStorage, sessionStorage, IndexedDB, or logs.
+  const [usedPin, setUsedPin] = useState<string | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const { data, isLoading, isError } = useQuery<SharedPackage>({
     queryKey: ["/api/shared-call-list", token],
@@ -110,7 +208,54 @@ export default function SharedCallListPage() {
   }
   if (isError || !data) return <Unavailable />;
 
-  const dateLabel = data.serviceDate ?? "";
+  // PIN gate: the server returns { pinRequired: true } (no members/PHI) when a
+  // PIN is set. Show the gate until verify-pin returns the full snapshot.
+  if (data.pinRequired && !unlocked && token) {
+    return (
+      <PinGate
+        token={token}
+        meta={data}
+        onUnlocked={(pkg, pin) => {
+          setUnlocked(pkg);
+          setUsedPin(pin);
+        }}
+      />
+    );
+  }
+
+  const view = unlocked ?? data;
+  const dateLabel = view.serviceDate ?? "";
+  const members = view.members ?? [];
+
+  // Secure PDF download: fetch with the PIN in a header (when set) and trigger
+  // a LOCAL blob download. The browser never navigates to a PIN-bearing URL.
+  async function downloadPdf() {
+    if (!token) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const res = await fetch(`/api/shared-call-list/${encodeURIComponent(token)}/pdf`, {
+        headers: usedPin ? { "x-share-pin": usedPin } : {},
+      });
+      if (!res.ok) {
+        setPdfError("Could not download the PDF. The link may have expired.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `call-list-${view.serviceDate ?? "list"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setPdfError("Something went wrong downloading the PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -122,30 +267,37 @@ export default function SharedCallListPage() {
               <p className="text-xs uppercase tracking-wider text-blue-200/80">Plexus Call List</p>
             </div>
             <h1 className="text-xl font-bold mt-1 truncate" data-testid="shared-call-list-title">
-              {data.teamMemberName ?? "Call List"}
+              {view.teamMemberName ?? "Call List"}
             </h1>
             <p className="text-sm text-blue-100/80">
-              {[data.facility, dateLabel, data.cohortLabel].filter(Boolean).join(" · ")}
+              {[view.facility, dateLabel, view.cohortLabel].filter(Boolean).join(" · ")}
             </p>
           </div>
-          {data.pdfAvailable && (
-            <a
-              href={`/api/shared-call-list/${encodeURIComponent(token ?? "")}/pdf`}
-              className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-white/10 hover:bg-white/20 px-3 py-2 text-sm font-medium"
+          {view.pdfAvailable && (
+            <button
+              type="button"
+              onClick={downloadPdf}
+              disabled={pdfBusy}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-white/10 hover:bg-white/20 px-3 py-2 text-sm font-medium disabled:opacity-60"
               data-testid="shared-call-list-download-pdf"
             >
-              <FileText className="w-4 h-4" /> Download Combined PDF
-            </a>
+              <FileText className="w-4 h-4" /> {pdfBusy ? "Preparing…" : "Download Combined PDF"}
+            </button>
           )}
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-6 space-y-3">
         <div className="text-sm text-slate-600" data-testid="shared-call-list-total">
-          {data.patientCount} patient{data.patientCount === 1 ? "" : "s"}
+          {view.patientCount} patient{view.patientCount === 1 ? "" : "s"}
         </div>
+        {pdfError && (
+          <div className="text-xs text-red-600" data-testid="shared-call-list-pdf-error">
+            {pdfError}
+          </div>
+        )}
 
-        {data.members.map((m, i) => {
+        {members.map((m, i) => {
           const demo = m.demographics ?? {};
           const demoLine = [
             demo.age != null ? `${demo.age}yo` : "",

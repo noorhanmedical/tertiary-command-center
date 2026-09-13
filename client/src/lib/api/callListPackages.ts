@@ -140,7 +140,13 @@ export type ConfirmMemberResult = {
   generationStatus: string | null;
   visibility: "visible" | "missing_user_mapping";
   packageError: boolean;
+  /** True when this member's package already existed (reused on a retry). */
+  alreadyExisted: boolean;
 };
+
+export type CallListOperationStatus =
+  | "fully_complete"
+  | "assignment_complete_package_incomplete";
 
 export type ConfirmResult = {
   distributionOperationId: string;
@@ -148,6 +154,8 @@ export type ConfirmResult = {
   serviceDate: string | null;
   cohort: CallListCohortKey;
   alreadyProcessed: boolean;
+  /** Derived operation completion — a retry finishes an incomplete one. */
+  operationStatus: CallListOperationStatus;
   members: ConfirmMemberResult[];
   totalCommitted: number;
   conflicts: Array<{ executionCaseId: number; reason: string }>;
@@ -269,6 +277,7 @@ export type RecentPackage = {
   shareExpiresAt: string | null;
   shareRevokedAt: string | null;
   pdfAvailable: boolean;
+  pinProtected?: boolean;
   createdAt: string;
 };
 
@@ -305,6 +314,27 @@ export async function extendPackage(id: number, hours: number): Promise<{ ok: bo
 
 export async function regeneratePackage(id: number): Promise<{ ok: boolean; shareToken: string; shareExpiresAt: string }> {
   const res = await fetch(`/api/engagement/call-lists/packages/${id}/regenerate`, {
+    method: "POST",
+    credentials: "include",
+  });
+  return jsonOrThrow(res);
+}
+
+/** Set/replace the OPTIONAL share PIN (second factor). Plaintext is sent over
+ *  the authenticated manager channel; only a bcrypt hash is stored server-side. */
+export async function setPackagePin(id: number, pin: string): Promise<{ ok: boolean; pinProtected: boolean }> {
+  const res = await fetch(`/api/engagement/call-lists/packages/${id}/set-pin`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin }),
+  });
+  return jsonOrThrow(res);
+}
+
+/** Remove the share PIN (revert to token-only access). */
+export async function clearPackagePin(id: number): Promise<{ ok: boolean; pinProtected: boolean }> {
+  const res = await fetch(`/api/engagement/call-lists/packages/${id}/clear-pin`, {
     method: "POST",
     credentials: "include",
   });

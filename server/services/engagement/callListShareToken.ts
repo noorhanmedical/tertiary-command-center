@@ -69,6 +69,39 @@ export function extendShareExpiry(
   return extended;
 }
 
+/** True when a package is gated by an OPTIONAL share PIN (second factor). PURE.
+ *  A blank/absent hash means token-only access (the default). */
+export function requiresPin(pkg: { sharePinHash?: string | null }): boolean {
+  return typeof pkg.sharePinHash === "string" && pkg.sharePinHash.length > 0;
+}
+
+/** Canonical header carrying a share PIN. Lowercase (Express normalizes). */
+export const SHARE_PIN_HEADER = "x-share-pin";
+
+/**
+ * Extract a presented share PIN from a request — HEADER ONLY. A PIN must NEVER
+ * be accepted from the URL query string or path (it would leak into browser
+ * history, referrers, redirects, analytics, and server access logs). Query is
+ * deliberately ignored even if present. PURE.
+ */
+export function extractHeaderPin(headers: Record<string, unknown> | undefined): string {
+  const v = headers?.[SHARE_PIN_HEADER];
+  return typeof v === "string" ? v : "";
+}
+
+/**
+ * Build the audit `changes` payload for a public share access event. Contains
+ * ONLY safe metadata — never the bearer token, never the PIN, never PHI. PURE
+ * so the exclusion is unit-testable.
+ */
+export function buildShareAccessAudit(
+  result: string,
+  ip: string,
+  userAgent: string | null,
+): { result: string; ip: string; userAgent: string | null } {
+  return { result, ip, userAgent };
+}
+
 // ─── Access resolution ──────────────────────────────────────────────────────
 // The precise state is for INTERNAL use (logging/audit). The public endpoint
 // must collapse every non-"ok" state into ONE uniform external response so a

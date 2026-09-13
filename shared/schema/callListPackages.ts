@@ -97,6 +97,11 @@ export const callListPackages = pgTable(
     shareExpiresAt: timestamp("share_expires_at"),
     shareRevokedAt: timestamp("share_revoked_at"),
     shareRegeneratedAt: timestamp("share_regenerated_at"),
+    // ─ Optional share PIN (second factor) ─
+    // Only a bcrypt hash is stored; plaintext PIN is never persisted. Null =
+    // no PIN (token-only access, the default). Migration 0091.
+    sharePinHash: text("share_pin_hash"),
+    sharePinSetAt: timestamp("share_pin_set_at"),
     // ─ Retention (approved: 90 days) ─
     // Snapshot/audit PHI retention cutoff (SEPARATE from the 72h share expiry).
     // Set to created_at + 90 days on creation. At/after this instant a purge

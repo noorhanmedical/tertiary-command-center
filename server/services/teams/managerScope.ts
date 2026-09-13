@@ -123,6 +123,29 @@ export async function schedulerIdsInScope(scope: ManagerScope): Promise<number[]
   return ids;
 }
 
+/**
+ * Resolve the set of clinic ids a manager is authorized for — defense-in-depth
+ * tenant isolation for surfaces (e.g. Engagement call-list packages) that carry
+ * a clinicId alongside a facility string, so authorization never relies on
+ * facility strings being globally unique. Derived from the SAME roster the
+ * assignment scope uses (outreach_schedulers within the manager's user scope),
+ * taking each in-scope scheduler's clinicId. Returns null for admin ("no clinic
+ * narrowing — all"), matching schedulerIdsInScope. A manager with no resolvable
+ * clinic → empty set (fail-closed at the call site).
+ */
+export async function clinicIdsInScope(scope: ManagerScope): Promise<Set<number> | null> {
+  if (scope.isAdmin) return null;
+  const { storage } = await import("../../storage");
+  const rosters = await storage.getOutreachSchedulers();
+  const ids = new Set<number>();
+  for (const r of rosters) {
+    if (r.userId && scope.userIds.has(r.userId) && r.clinicId != null) {
+      ids.add(r.clinicId);
+    }
+  }
+  return ids;
+}
+
 // ─── Express middleware: allow admin OR any active team manager ──────────────
 // Attaches the resolved ManagerScope to req.managerScope for the handler to
 // filter with. Ordinary staff (no management authority) get 403.

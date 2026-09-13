@@ -28,6 +28,8 @@ import {
   revokePackageShare,
   extendPackageShare,
   regeneratePackageShareToken,
+  setPackagePin,
+  clearPackagePin,
   callListPackagesTableExists,
 } from "../repositories/callListPackages.repo";
 import { getPackageByTokenHash } from "../repositories/callListPackages.repo";
@@ -35,18 +37,32 @@ import { saveBlob, readBlob } from "../services/blobStore";
 import {
   hashShareToken,
   resolveShareAccess,
+  requiresPin,
+  extractHeaderPin,
+  buildShareAccessAudit,
+  type ShareAccessState,
 } from "../services/engagement/callListShareToken";
 import {
   requireManagerOrAdmin,
   schedulerIdsInScope,
+  clinicIdsInScope,
   type ManagerScope,
 } from "../services/teams/managerScope";
 import {
   facilityInScope,
-  packageFacilityInScope,
+  packageInScope,
   allMembersInScope,
   resolveListFacilityScope,
 } from "../services/engagement/callListAuthz";
+import { logAudit } from "../services/auditService";
+import bcrypt from "bcryptjs";
+import {
+  consumeShareRateLimit,
+  SHARE_ACCESS_MAX,
+  SHARE_ACCESS_WINDOW_MS,
+  SHARE_PIN_MAX,
+  SHARE_PIN_WINDOW_MS,
+} from "../services/engagement/callListShareRateLimit";
 
 type RequireRole = (
   ...roles: string[]
@@ -99,7 +115,11 @@ async function loadPackageInScope(req: Request, res: Response, id: number) {
     res.status(404).json({ error: "Package not found" });
     return null;
   }
-  if (!packageFacilityInScope(scopeOf(req), pkg.facilityId)) {
+  const scope = scopeOf(req);
+  // Defense-in-depth: enforce BOTH facility AND clinic scope (fail-closed) so
+  // authorization never relies on facility strings being globally unique.
+  const allowedClinicIds = await clinicIdsInScope(scope);
+  if (!packageInScope(scope, allowedClinicIds, pkg)) {
     // Do not reveal cross-scope existence — uniform 404.
     res.status(404).json({ error: "Package not found" });
     return null;
@@ -132,6 +152,16 @@ const pdfFailedBodySchema = z.object({
 
 const extendBodySchema = z.object({
   hours: z.number().int().positive().max(24 * 30),
+});
+
+// Optional share PIN: 4–12 chars (digits or letters). Hashed with bcrypt;
+// plaintext never persisted or logged.
+const pinBodySchema = z.object({
+  pin: z
+    .string()
+    .trim()
+    .min(4, "PIN must be at least 4 characters")
+    .max(12, "PIN must be at most 12 characters"),
 });
 
 const confirmBodySchema = z.object({
@@ -320,6 +350,10 @@ export function registerEngagementCallListPackageRoutes(
       if (!allMembersInScope(scope, memberIds, allowedSchedulers)) {
         return res.status(403).json({ error: "One or more team members are outside your scope" });
       }
+      // Defense-in-depth clinic tenant gate. Admin → null (no narrowing). A
+      // manager may only confirm cases in an authorized clinic; the service
+      // excludes out-of-clinic cases as conflicts (never assigns them).
+      const allowedClinicIds = await clinicIdsInScope(scope);
       const actorUserId = (req.session as { userId?: string })?.userId ?? null;
       try {
         const result = await confirmCallListDistribution({
@@ -330,6 +364,7 @@ export function registerEngagementCallListPackageRoutes(
           services: services && services.length > 0 ? services : null,
           mapping,
           actorUserId,
+          allowedClinicIds: allowedClinicIds === null ? null : [...allowedClinicIds],
         });
         return res.json(result);
       } catch (error: unknown) {
@@ -366,8 +401,13 @@ export function registerEngagementCallListPackageRoutes(
       const limit = req.query.limit ? Number(req.query.limit) : 25;
       try {
         const { facilityIds } = resolveListFacilityScope(scope, facility);
+        // Defense-in-depth clinic tenant filter. Admin → null (all clinics).
+        // Manager → their in-scope clinic id set (empty = fail-closed to none).
+        const allowedClinicIds = await clinicIdsInScope(scope);
+        const clinicIds = allowedClinicIds === null ? null : [...allowedClinicIds];
         const rows = await listRecentPackages({
           facilityIds,
+          clinicIds,
           limit: Number.isFinite(limit) ? limit : 25,
         });
         // Do not leak token hashes to the client list.
@@ -385,6 +425,7 @@ export function registerEngagementCallListPackageRoutes(
             shareExpiresAt: p.shareExpiresAt,
             shareRevokedAt: p.shareRevokedAt,
             pdfAvailable: p.pdfBlobId != null,
+            pinProtected: p.sharePinHash != null,
             createdAt: p.createdAt,
           })),
         );
@@ -623,84 +664,282 @@ export function registerEngagementCallListPackageRoutes(
     },
   );
 
-  // ─── PUBLIC secure share endpoints (Task 8) ───────────────────────────────
+  // POST /api/engagement/call-lists/packages/:id/set-pin { pin }
+  // Set/replace the OPTIONAL share PIN (second factor). Only a bcrypt hash is
+  // stored; plaintext is never persisted. Manager-scoped.
+  app.post(
+    "/api/engagement/call-lists/packages/:id/set-pin",
+    requireManagerOrAdmin,
+    async (req: Request, res: Response) => {
+      if (!ensureEnabled(res)) return;
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid package id" });
+      }
+      const parsed = pinBodySchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      try {
+        if (!(await loadPackageInScope(req, res, id))) return;
+        const pinHash = await bcrypt.hash(parsed.data.pin, 12);
+        const updated = await setPackagePin(id, pinHash);
+        if (!updated) return res.status(404).json({ error: "Package not found" });
+        await logAudit(req, "share_pin_set", "call_list_package", id, null);
+        return res.json({ ok: true, pinProtected: true });
+      } catch (error: unknown) {
+        console.error("[engagement/call-lists:set-pin] error:", error instanceof Error ? error.message : error);
+        return res.status(500).json({ error: "Failed to set share PIN" });
+      }
+    },
+  );
+
+  // POST /api/engagement/call-lists/packages/:id/clear-pin — revert to token-only.
+  app.post(
+    "/api/engagement/call-lists/packages/:id/clear-pin",
+    requireManagerOrAdmin,
+    async (req: Request, res: Response) => {
+      if (!ensureEnabled(res)) return;
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid package id" });
+      }
+      try {
+        if (!(await loadPackageInScope(req, res, id))) return;
+        const updated = await clearPackagePin(id);
+        if (!updated) return res.status(404).json({ error: "Package not found" });
+        await logAudit(req, "share_pin_cleared", "call_list_package", id, null);
+        return res.json({ ok: true, pinProtected: false });
+      } catch (error: unknown) {
+        console.error("[engagement/call-lists:clear-pin] error:", error instanceof Error ? error.message : error);
+        return res.status(500).json({ error: "Failed to clear share PIN" });
+      }
+    },
+  );
+
+  // ─── PUBLIC secure share endpoints (Task 8 + hardening) ────────────────────
   // Token-authenticated (NO session). The share URL itself is the credential.
   // The token resolves EXACTLY ONE package; no traversal into other patients,
   // members, facilities, packages, EHR, or the Patient Directory. Invalid,
   // expired, and revoked tokens return the SAME uniform 404 so a caller cannot
   // tell whether another package exists. Feature-off also returns the uniform
   // 404 (indistinguishable). No PHI in the URL.
+  //
+  // HARDENING: every public request is rate-limited by client IP BEFORE the
+  // token is resolved (so valid/invalid tokens throttle identically — no
+  // validity leak via 429). Access is audited (package id + coarse result +
+  // safe request metadata only — never the token, never PHI). An OPTIONAL
+  // per-package PIN gates the PHI snapshot + PDF behind a bcrypt-verified,
+  // rate-limited second factor.
 
   /** Uniform "not found" — used for invalid/expired/revoked/off, never leaking
    *  which. */
   function shareNotFound(res: Response) {
     return res.status(404).json({ error: "Not found" });
   }
+  /** Uniform 429 — identical regardless of token validity. */
+  function shareRateLimited(res: Response) {
+    return res.status(429).json({ error: "Too many requests" });
+  }
+  /** Real client IP (ALB first hop trusted via app.set("trust proxy", 1)). */
+  function clientIp(req: Request): string {
+    return req.ip || req.socket?.remoteAddress || "unknown";
+  }
+  /** Audit a PUBLIC access event. NEVER logs the token or any PHI — only the
+   *  internal package id, a coarse result, and safe request metadata. */
+  async function auditShareAccess(
+    req: Request,
+    packageId: number,
+    result: string,
+  ): Promise<void> {
+    // buildShareAccessAudit guarantees the payload carries ONLY safe metadata —
+    // never the token, never the PIN, never PHI.
+    await logAudit(
+      req,
+      "share_access",
+      "call_list_package",
+      packageId,
+      buildShareAccessAudit(
+        result,
+        clientIp(req),
+        (req.headers["user-agent"] as string | undefined) ?? null,
+      ),
+    );
+  }
 
-  /** Resolve a presented token → an accessible package, or null (uniform). */
-  async function resolveSharePackage(tokenParam: string | string[] | undefined) {
-    if (!featureFlags.callListPackages) return null;
+  type ResolvedShare = {
+    pkg: Awaited<ReturnType<typeof getPackageById>>;
+    state: ShareAccessState;
+  };
+
+  /** Resolve a presented token → { pkg, precise access state }. A null pkg
+   *  means the token hash matched nothing (unknown token — not audited, to
+   *  avoid unbounded writes; rate-limiting bounds unknown-token spam). */
+  async function resolveShareState(tokenParam: string | string[] | undefined): Promise<ResolvedShare> {
+    if (!featureFlags.callListPackages) return { pkg: null, state: "invalid" };
     const token = typeof tokenParam === "string" ? tokenParam : undefined;
-    if (!token) return null;
+    if (!token) return { pkg: null, state: "invalid" };
     const pkg = await getPackageByTokenHash(hashShareToken(token));
-    if (!pkg) return null;
+    if (!pkg) return { pkg: null, state: "invalid" };
     const state = resolveShareAccess(token, {
       storedHash: pkg.shareTokenHash,
       expiresAt: pkg.shareExpiresAt,
       revokedAt: pkg.shareRevokedAt,
       status: pkg.status,
     });
-    return state === "ok" ? pkg : null;
+    return { pkg, state };
   }
 
-  // GET /api/shared-call-list/:token — read-only frozen package snapshot.
+  /** The FROZEN public snapshot payload. Strips internal ids (executionCaseId /
+   *  patientScreeningId / clinicId / blob / token hash) so the token can never
+   *  pivot into live systems. */
+  function publicSnapshot(
+    pkg: NonNullable<Awaited<ReturnType<typeof getPackageById>>>,
+    withMembers: NonNullable<Awaited<ReturnType<typeof getPackageWithMembers>>>,
+  ) {
+    return {
+      teamMemberName: pkg.teamMemberNameSnapshot,
+      facility: pkg.facilityId,
+      serviceDate: pkg.serviceDate,
+      cohortLabel: pkg.cohortLabelSnapshot,
+      patientCount: pkg.patientCount,
+      summaryMetrics: pkg.summaryMetrics,
+      generationStatus: pkg.generationStatus,
+      pdfAvailable: pkg.pdfBlobId != null,
+      pinProtected: pkg.sharePinHash != null,
+      members: withMembers.members.map((m) => ({
+        patientName: m.patientNameSnapshot,
+        dob: m.patientDobSnapshot,
+        phone: m.patientPhoneSnapshot,
+        demographics: m.demographicsSnapshot,
+        services: m.servicesSnapshot,
+        reasonForCall: m.reasonForCallSnapshot,
+        cohortClassification: m.cohortClassificationSnapshot,
+        qualificationSummary: m.qualificationSummarySnapshot,
+        atlas: m.atlasPayloadSnapshot,
+      })),
+    };
+  }
+
+  /** PIN-gated metadata-only payload — NO members, NO PHI beyond the coarse
+   *  header the recipient needs to recognize their own list before entering a
+   *  PIN. */
+  function publicMetaOnly(pkg: NonNullable<Awaited<ReturnType<typeof getPackageById>>>) {
+    return {
+      pinRequired: true,
+      teamMemberName: pkg.teamMemberNameSnapshot,
+      facility: pkg.facilityId,
+      serviceDate: pkg.serviceDate,
+      cohortLabel: pkg.cohortLabelSnapshot,
+      patientCount: pkg.patientCount,
+      pdfAvailable: pkg.pdfBlobId != null,
+    };
+  }
+
+  // GET /api/shared-call-list/:token — frozen snapshot, OR pin-required stub.
   app.get("/api/shared-call-list/:token", async (req: Request, res: Response) => {
+    const ip = clientIp(req);
+    if (!consumeShareRateLimit(`share:${ip}`, SHARE_ACCESS_MAX, SHARE_ACCESS_WINDOW_MS)) {
+      return shareRateLimited(res);
+    }
     try {
-      const pkg = await resolveSharePackage(req.params.token);
-      if (!pkg) return shareNotFound(res);
+      const { pkg, state } = await resolveShareState(req.params.token);
+      if (!pkg || state !== "ok") {
+        if (pkg) await auditShareAccess(req, pkg.id, `denied_${state}`);
+        return shareNotFound(res);
+      }
+      // PIN gate: token alone reveals only non-PHI metadata.
+      if (requiresPin(pkg)) {
+        await auditShareAccess(req, pkg.id, "pin_required");
+        return res.json(publicMetaOnly(pkg));
+      }
       const withMembers = await getPackageWithMembers(pkg.id);
       if (!withMembers) return shareNotFound(res);
-      // Public view: expose ONLY the frozen presentation snapshot. Strip
-      // internal ids (executionCaseId / patientScreeningId / clinicId / blob /
-      // token hash) so the token can never be used to pivot into live systems.
-      return res.json({
-        teamMemberName: pkg.teamMemberNameSnapshot,
-        facility: pkg.facilityId,
-        serviceDate: pkg.serviceDate,
-        cohortLabel: pkg.cohortLabelSnapshot,
-        patientCount: pkg.patientCount,
-        summaryMetrics: pkg.summaryMetrics,
-        generationStatus: pkg.generationStatus,
-        pdfAvailable: pkg.pdfBlobId != null,
-        members: withMembers.members.map((m) => ({
-          patientName: m.patientNameSnapshot,
-          dob: m.patientDobSnapshot,
-          phone: m.patientPhoneSnapshot,
-          demographics: m.demographicsSnapshot,
-          services: m.servicesSnapshot,
-          reasonForCall: m.reasonForCallSnapshot,
-          cohortClassification: m.cohortClassificationSnapshot,
-          qualificationSummary: m.qualificationSummarySnapshot,
-          atlas: m.atlasPayloadSnapshot,
-        })),
-      });
+      await auditShareAccess(req, pkg.id, "granted");
+      return res.json(publicSnapshot(pkg, withMembers));
     } catch (error: unknown) {
-      console.error(
-        "[shared-call-list:get] error:",
-        error instanceof Error ? error.message : error,
-      );
+      console.error("[shared-call-list:get] error:", error instanceof Error ? error.message : error);
       // Even on internal error, do not reveal existence — uniform 404.
       return shareNotFound(res);
     }
   });
 
-  // GET /api/shared-call-list/:token/pdf — the durable stored combined PDF.
-  app.get("/api/shared-call-list/:token/pdf", async (req: Request, res: Response) => {
+  // POST /api/shared-call-list/:token/verify-pin { pin } — unlock a PIN-gated
+  // package. Rate-limited per token+IP (anti-brute-force). Returns the frozen
+  // snapshot on success; a package with no PIN returns it directly.
+  app.post("/api/shared-call-list/:token/verify-pin", async (req: Request, res: Response) => {
+    const ip = clientIp(req);
+    if (!consumeShareRateLimit(`share:${ip}`, SHARE_ACCESS_MAX, SHARE_ACCESS_WINDOW_MS)) {
+      return shareRateLimited(res);
+    }
+    const pin = typeof req.body?.pin === "string" ? req.body.pin : "";
     try {
-      const pkg = await resolveSharePackage(req.params.token);
-      if (!pkg || pkg.pdfBlobId == null) return shareNotFound(res);
+      const { pkg, state } = await resolveShareState(req.params.token);
+      if (!pkg || state !== "ok") {
+        if (pkg) await auditShareAccess(req, pkg.id, `denied_${state}`);
+        return shareNotFound(res);
+      }
+      // No PIN configured → token-only; return the snapshot.
+      if (!requiresPin(pkg)) {
+        const withMembers = await getPackageWithMembers(pkg.id);
+        if (!withMembers) return shareNotFound(res);
+        await auditShareAccess(req, pkg.id, "granted");
+        return res.json(publicSnapshot(pkg, withMembers));
+      }
+      // PIN-attempt rate limit keyed by package + IP.
+      if (!consumeShareRateLimit(`pin:${pkg.id}:${ip}`, SHARE_PIN_MAX, SHARE_PIN_WINDOW_MS)) {
+        await auditShareAccess(req, pkg.id, "pin_rate_limited");
+        return shareRateLimited(res);
+      }
+      const ok = pin.length > 0 && (await bcrypt.compare(pin, pkg.sharePinHash!));
+      if (!ok) {
+        await auditShareAccess(req, pkg.id, "pin_failed");
+        return res.status(401).json({ error: "Invalid PIN" });
+      }
+      const withMembers = await getPackageWithMembers(pkg.id);
+      if (!withMembers) return shareNotFound(res);
+      await auditShareAccess(req, pkg.id, "granted");
+      return res.json(publicSnapshot(pkg, withMembers));
+    } catch (error: unknown) {
+      console.error("[shared-call-list:verify-pin] error:", error instanceof Error ? error.message : error);
+      return shareNotFound(res);
+    }
+  });
+
+  // GET /api/shared-call-list/:token/pdf — the durable stored combined PDF.
+  // PIN-gated packages require the PIN via the x-share-pin HEADER only (never a
+  // query string). The public page fetches this with the header and triggers a
+  // local blob download — the browser never navigates to a PIN-bearing URL.
+  app.get("/api/shared-call-list/:token/pdf", async (req: Request, res: Response) => {
+    const ip = clientIp(req);
+    if (!consumeShareRateLimit(`share:${ip}`, SHARE_ACCESS_MAX, SHARE_ACCESS_WINDOW_MS)) {
+      return shareRateLimited(res);
+    }
+    try {
+      const { pkg, state } = await resolveShareState(req.params.token);
+      if (!pkg || state !== "ok") {
+        if (pkg) await auditShareAccess(req, pkg.id, `denied_${state}`);
+        return shareNotFound(res);
+      }
+      if (pkg.pdfBlobId == null) return shareNotFound(res);
+      if (requiresPin(pkg)) {
+        // PIN accepted ONLY via the x-share-pin header — NEVER a query string
+        // or path (that would leak the PIN into URLs, browser history,
+        // referrers, redirects, analytics, and server access logs).
+        const pin = extractHeaderPin(req.headers as Record<string, unknown>);
+        if (!consumeShareRateLimit(`pin:${pkg.id}:${ip}`, SHARE_PIN_MAX, SHARE_PIN_WINDOW_MS)) {
+          await auditShareAccess(req, pkg.id, "pin_rate_limited");
+          return shareRateLimited(res);
+        }
+        const ok = pin.length > 0 && (await bcrypt.compare(pin, pkg.sharePinHash!));
+        if (!ok) {
+          await auditShareAccess(req, pkg.id, "pin_failed");
+          return shareNotFound(res);
+        }
+      }
       const blob = await readBlob(pkg.pdfBlobId);
       if (!blob) return shareNotFound(res);
+      await auditShareAccess(req, pkg.id, "pdf_granted");
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
         "Content-Disposition",
@@ -708,10 +947,7 @@ export function registerEngagementCallListPackageRoutes(
       );
       return res.send(blob.buffer);
     } catch (error: unknown) {
-      console.error(
-        "[shared-call-list:pdf] error:",
-        error instanceof Error ? error.message : error,
-      );
+      console.error("[shared-call-list:pdf] error:", error instanceof Error ? error.message : error);
       return shareNotFound(res);
     }
   });
