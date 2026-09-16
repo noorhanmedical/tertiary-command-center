@@ -25,6 +25,22 @@ RUN npm run build
 FROM --platform=linux/amd64 node:20-slim AS production
 WORKDIR /app
 
+# ---------------------------------------------------------------------------
+# Amazon RDS global CA bundle.
+# RDS Postgres presents an AWS-managed certificate. We install the official RDS
+# global CA bundle and point Node at it via NODE_EXTRA_CA_CERTS so TLS is FULLY
+# VERIFIED (rejectUnauthorized stays true). This is the secure alternative to
+# NODE_TLS_REJECT_UNAUTHORIZED=0 / sslmode=no-verify, which we do NOT use.
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+         -o /etc/ssl/certs/rds-global-bundle.pem \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/rds-global-bundle.pem
+
 # Install ALL dependencies (need drizzle-kit for migrations)
 COPY package.json package-lock.json ./
 RUN npm ci && npm cache clean --force

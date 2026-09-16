@@ -102,7 +102,7 @@ export class PlexusStagingStack extends cdk.Stack {
     const albSg = new ec2.SecurityGroup(this, "AlbSg", {
       vpc,
       securityGroupName: `${PREFIX}-alb-sg`,
-      description: "Staging ALB — inbound HTTP/HTTPS from internet",
+      description: "Staging ALB - inbound HTTP/HTTPS from internet",
       allowAllOutbound: true,
     });
     albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), "HTTP");
@@ -111,7 +111,7 @@ export class PlexusStagingStack extends cdk.Stack {
     const appSg = new ec2.SecurityGroup(this, "AppSg", {
       vpc,
       securityGroupName: `${PREFIX}-app-sg`,
-      description: "Staging ECS tasks — inbound only from ALB",
+      description: "Staging ECS tasks - inbound only from ALB",
       allowAllOutbound: true,
     });
     appSg.addIngressRule(albSg, ec2.Port.tcp(5000), "App port from ALB");
@@ -119,7 +119,7 @@ export class PlexusStagingStack extends cdk.Stack {
     const dbSg = new ec2.SecurityGroup(this, "DbSg", {
       vpc,
       securityGroupName: `${PREFIX}-db-sg`,
-      description: "Staging RDS — inbound only from ECS tasks",
+      description: "Staging RDS - inbound only from ECS tasks",
       allowAllOutbound: false,
     });
     dbSg.addIngressRule(appSg, ec2.Port.tcp(5432), "Postgres from ECS only");
@@ -175,7 +175,7 @@ export class PlexusStagingStack extends cdk.Stack {
     // `aws secretsmanager put-secret-value`. Never store the real key in code.
     const openAiSecret = new secretsmanager.Secret(this, "OpenAiKey", {
       secretName: `${PREFIX}/openai-api-key`,
-      description: "OpenAI API key (staging) — populate value out-of-band",
+      description: "OpenAI API key (staging) - populate value out-of-band",
     });
 
     // Composed DATABASE_URL. We build it from the RDS secret's fields so the
@@ -377,11 +377,17 @@ export class PlexusStagingStack extends cdk.Stack {
     // =========================================================================
     // ECS Fargate service — private subnets, no public IP.
     // =========================================================================
+    // desiredCount is context-driven so the very first deploy can start at 0
+    // (empty ECR → nothing to pull yet). After the SHA image is pushed and the
+    // schema is bootstrapped, scale to 1 (`-c desiredCount=1`) or via the CLI.
+    const desiredCount = Number(
+      this.node.tryGetContext("desiredCount") ?? 1,
+    );
     const service = new ecs.FargateService(this, "Service", {
       cluster,
       serviceName: `${PREFIX}-service`,
       taskDefinition: appTaskDef,
-      desiredCount: 1,
+      desiredCount,
       assignPublicIp: false,
       securityGroups: [appSg],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
