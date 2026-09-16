@@ -98,6 +98,9 @@ export type RawBillingRow = {
 
 export type RawScreeningDetail = {
   reasoning?: Record<string, any> | null;
+  /** Canonical screening lifecycle status (draft | processing | completed |
+   *  error) — drives the EHR Plexus IQ status display. */
+  status?: string | null;
   adminApprovalStatus?: string | null;
   adminApprovalNote?: string | null;
   /** The single screening row's qualifying tests — the SAME set the Atlas
@@ -536,11 +539,23 @@ export function buildEmrChart(input: EmrModelInputs): EmrChart {
       approvalRequired: typeof obj?.approvalRequired === "boolean" ? obj.approvalRequired : null,
     };
   });
+  // Plexus IQ run state (canonical): status drives Not run / Running /
+  // Complete; the __analysisFailure/__analysisError sentinels mark a PROVIDER
+  // failure so the UI shows "Failed" (NOT "Not Qualified"). failure ≠ empty
+  // qualification. No per-patient run history / timestamp is fabricated.
+  const rk = (reasoning ?? {}) as Record<string, unknown>;
+  const iqFailureObj = (rk["__analysisFailure"] ?? rk["__analysisError"]) as
+    | { category?: string | null; reason?: string | null }
+    | undefined;
+  const iqFailed = !!iqFailureObj;
   const plexusIq = {
     qualifyingTests,
     supportingDiagnoses: diagnoses.map((d) => d.description!).filter(Boolean),
     adminApprovalStatus: input.screeningDetail?.adminApprovalStatus ?? null,
     adminApprovalNote: input.screeningDetail?.adminApprovalNote ?? null,
+    iqStatus: input.screeningDetail?.status ?? null,
+    iqFailed,
+    iqFailureReason: iqFailed ? (iqFailureObj?.category ?? "provider_unavailable") : null,
   };
 
   // ── Active execution cases (all rows for this patient) ─────────────────

@@ -29,6 +29,9 @@ export type CanonicalPatientDraft = {
   email?: string | null;
   address?: string | null;
   mrn?: string | null;
+  /** Distinct external/source patient identifier (NEVER the MRN). Persisted as
+   *  an external identifier, not a patient_screenings column. */
+  patientId?: string | null;
   insurance?: string | null;
   memberId?: string | null;
   facility?: string | null;
@@ -152,6 +155,7 @@ export function normalizePatientDraft(raw: Record<string, unknown>): CanonicalPa
     email: s(raw.email),
     address: s(raw.address),
     mrn: s(raw.mrn),
+    patientId: s(raw.patientId),
     insurance: s(raw.insurance),
     memberId: s(raw.memberId),
     facility: s(raw.facility),

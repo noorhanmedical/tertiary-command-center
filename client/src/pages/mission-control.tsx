@@ -82,7 +82,7 @@ import {
   type MissionLaneKey,
   type MissionLaneStatus,
   type MissionPriority,
-  type Wrapped,
+  type MissionMetric,
 } from "@/hooks/api/missionControl";
 import { qk } from "@/hooks/api/keys";
 import { formatCurrency } from "@/lib/format";
@@ -143,11 +143,41 @@ const laneLabel: Record<MissionLaneKey, string> = {
 
 /* ───────────────────────── Helpers ───────────────────────── */
 
-function WrappedValue({ w, fmt }: { w: Wrapped<number>; fmt?: (n: number) => string }) {
-  if (w.sourceMissing) {
-    return <span className="text-slate-300 text-base font-medium">N/A</span>;
+function WrappedValue({
+  w,
+  fmt,
+}: {
+  // Accepts any per-field metric shape (MissionMetric or the lane-scoped
+  // recompute). Missing source OR null value renders an honest "—".
+  w: { value: number | null; sourceMissing: boolean };
+  fmt?: (n: number) => string;
+}) {
+  if (w.sourceMissing || w.value === null) {
+    return <span className="text-slate-300 text-base font-medium">—</span>;
   }
   return <>{fmt ? fmt(w.value) : w.value.toLocaleString("en-US")}</>;
+}
+
+// Format a MissionMetric for display: missing/null → "—"; otherwise by unit.
+function formatMetricValue(m: MissionMetric): React.ReactNode {
+  if (m.sourceMissing || m.value === null) {
+    return <span className="text-slate-300">—</span>;
+  }
+  if (m.unit === "currency") return formatCurrency(m.value);
+  if (m.unit === "percent") return `${m.value}%`;
+  return m.value.toLocaleString("en-US");
+}
+
+// Derive a family/section state from its children — never stored, never an
+// authority over child availability. Used only to decide whether to show the
+// grid or a single quiet "no source" note (when NO child is live).
+function familySourceState(
+  metrics: MissionMetric[],
+): "available" | "partial" | "unavailable" {
+  const live = metrics.filter((m) => !m.sourceMissing).length;
+  if (live === 0) return "unavailable";
+  if (live === metrics.length) return "available";
+  return "partial";
 }
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -336,7 +366,7 @@ export default function MissionControlPage() {
               // the scoped lanes (honest: same case rows). Cards with no source
               // (sourceMissing) stay N/A; the non-lane "tasks" card stays
               // account-wide as the server reports it.
-              const w: Wrapped<number> =
+              const w: { value: number | null; sourceMissing: boolean } =
                 facilityScope !== "all" && c.laneKey && !serverW.sourceMissing
                   ? { value: lanesForScope.filter((l) => l.lane === c.laneKey).length, sourceMissing: false }
                   : serverW;
@@ -513,38 +543,38 @@ export default function MissionControlPage() {
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Operations Detail</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="mission-control-sections">
-            <MetricSection title="Calls & Communication" Icon={PhoneCall} missing={sections.calls.sourceMissing}
+            <MetricSection title="Calls & Communication" Icon={PhoneCall}
               metrics={[
-                { label: "Made today", value: sections.calls.madeToday },
-                { label: "Reached today", value: sections.calls.reachedToday },
-                { label: "Callbacks pending", value: sections.calls.callbacksPending },
-                { label: "Made (7d)", value: sections.calls.madeLast7 },
+                { label: "Made today", metric: sections.calls.madeToday },
+                { label: "Reached today", metric: sections.calls.reachedToday },
+                { label: "Callbacks pending", metric: sections.calls.callbacksPending },
+                { label: "Made (7d)", metric: sections.calls.madeLast7 },
               ]} />
-            <MetricSection title="Patient Services" Icon={Users} missing={sections.patientServices.sourceMissing}
+            <MetricSection title="Patient Services" Icon={Users}
               metrics={[
-                { label: "In pipeline", value: sections.patientServices.inPipeline },
-                { label: "Prescreen backlog", value: sections.patientServices.prescreenBacklog },
-                { label: "Pending ancillary", value: sections.patientServices.pendingAncillary },
-                { label: "Declined (7d)", value: sections.patientServices.declinedLast7 },
+                { label: "In pipeline", metric: sections.patientServices.inPipeline },
+                { label: "Prescreen backlog", metric: sections.patientServices.prescreenBacklog },
+                { label: "Pending ancillary", metric: sections.patientServices.pendingAncillary },
+                { label: "Declined (7d)", metric: sections.patientServices.declinedLast7 },
               ]} />
-            <MetricSection title="Finance & Revenue" Icon={DollarSign} missing={sections.finance.sourceMissing}
+            <MetricSection title="Finance & Revenue" Icon={DollarSign}
               metrics={[
-                { label: "Billing ready", value: sections.finance.billingReady },
-                { label: "Invoices submitted", value: sections.finance.invoicesSubmitted },
-                { label: "Paid", value: formatCurrency(sections.finance.paidAmount) },
-                { label: "Outstanding", value: formatCurrency(sections.finance.outstandingBalance) },
+                { label: "Billing ready", metric: sections.finance.billingReady },
+                { label: "Invoices submitted", metric: sections.finance.invoicesSubmitted },
+                { label: "Paid", metric: sections.finance.paidAmount },
+                { label: "Outstanding", metric: sections.finance.outstandingBalance },
               ]} />
-            <MetricSection title="Operations & Logistics" Icon={Layers} missing={sections.operations.sourceMissing}
+            <MetricSection title="Operations & Logistics" Icon={Layers}
               metrics={[
-                { label: "Tasks open", value: sections.operations.tasksOpen },
-                { label: "Overdue", value: sections.operations.tasksOverdue },
-                { label: "High priority", value: sections.operations.tasksHighPriority },
+                { label: "Tasks open", metric: sections.operations.tasksOpen },
+                { label: "Overdue", metric: sections.operations.tasksOverdue },
+                { label: "High priority", metric: sections.operations.tasksHighPriority },
               ]} />
-            <MetricSection title="Today's Ancillary Ops" Icon={FlaskConical} missing={sections.ancillaryToday.sourceMissing}
+            <MetricSection title="Today's Ancillary Ops" Icon={FlaskConical}
               metrics={[
-                { label: "Scheduled today", value: sections.ancillaryToday.scheduledToday },
-                { label: "Completed today", value: sections.ancillaryToday.completedToday },
-                { label: "Cancelled today", value: sections.ancillaryToday.cancelledToday },
+                { label: "Scheduled today", metric: sections.ancillaryToday.scheduledToday },
+                { label: "Completed today", metric: sections.ancillaryToday.completedToday },
+                { label: "Cancelled today", metric: sections.ancillaryToday.cancelledToday },
               ]} />
             {/* RingCentral integration */}
             <Card className="rounded-xl border-slate-200 p-4" data-testid="section-ringcentral">
@@ -856,14 +886,15 @@ function MetricSection({
   title,
   Icon,
   metrics,
-  missing,
 }: {
   title: string;
   Icon: typeof Activity;
-  metrics: { label: string; value: React.ReactNode }[];
-  missing: boolean;
+  // Per-field metrics. Each carries its own availability; a live metric is
+  // shown even when a sibling is unavailable (which renders "—").
+  metrics: { label: string; metric: MissionMetric }[];
 }) {
   const testId = title.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "");
+  const state = familySourceState(metrics.map((m) => m.metric));
   return (
     <Card className="rounded-xl border-slate-200 p-4" data-testid={`section-${testId}`}>
       <div className="flex items-center gap-2">
@@ -872,17 +903,19 @@ function MetricSection({
         </span>
         <span className="text-sm font-semibold text-slate-800">{title}</span>
       </div>
-      {missing ? (
+      {state === "unavailable" ? (
+        // Single quiet note ONLY when no child metric has a source — avoids
+        // repeating a "no source" line under every metric.
         <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center">
           <ShieldAlert className="w-5 h-5 text-slate-300 mx-auto mb-1" />
-          <div className="text-xs text-slate-500">No data available yet</div>
+          <div className="text-xs text-slate-500">No source connected yet</div>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 mt-4">
-          {metrics.map((m) => (
-            <div key={m.label}>
-              <div className="text-lg font-bold tabular-nums text-slate-900">{m.value}</div>
-              <div className="text-[11px] text-slate-500 leading-tight">{m.label}</div>
+          {metrics.map(({ label, metric }) => (
+            <div key={label} data-testid={`metric-${metric.key}`}>
+              <div className="text-lg font-bold tabular-nums text-slate-900">{formatMetricValue(metric)}</div>
+              <div className="text-[11px] text-slate-500 leading-tight">{label}</div>
             </div>
           ))}
         </div>

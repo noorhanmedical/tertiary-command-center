@@ -269,13 +269,15 @@ export default function SchedulePage() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <Link href={`/schedule/${b.id}`}>
-                          <a
-                            className="text-indigo-600 hover:underline font-medium"
-                            data-testid={`link-batch-${b.id}`}
-                          >
-                            {b.name}
-                          </a>
+                        {/* wouter's <Link> already renders the anchor; nesting a
+                            second <a> produced an invalid <a>-in-<a> DOM tree
+                            (validateDOMNesting warning + unreliable clicks). */}
+                        <Link
+                          href={`/schedule/${b.id}`}
+                          className="text-indigo-600 hover:underline font-medium"
+                          data-testid={`link-batch-${b.id}`}
+                        >
+                          {b.name}
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-slate-700">

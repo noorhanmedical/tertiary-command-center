@@ -22,13 +22,21 @@ export const ENGAGEMENT_TABS_LEGACY = [
   "callSettings",
 ] as const;
 export const ENGAGEMENT_TAB_REPOSITORY = "repository" as const;
+// The per-team-member Call Lists command center (side-by-side live call lists +
+// PDFs). Gated in the UI by the call-list-packages flag; added to the
+// recognized tab set so URL/back-forward sync accepts it.
+export const ENGAGEMENT_TAB_CALL_LISTS = "callLists" as const;
 
 export type EngagementTabLegacy = (typeof ENGAGEMENT_TABS_LEGACY)[number];
-export type EngagementTab = EngagementTabLegacy | typeof ENGAGEMENT_TAB_REPOSITORY;
+export type EngagementTab =
+  | EngagementTabLegacy
+  | typeof ENGAGEMENT_TAB_REPOSITORY
+  | typeof ENGAGEMENT_TAB_CALL_LISTS;
 
 const ALL_TABS: readonly string[] = [
   ...ENGAGEMENT_TABS_LEGACY,
   ENGAGEMENT_TAB_REPOSITORY,
+  ENGAGEMENT_TAB_CALL_LISTS,
 ];
 
 /**

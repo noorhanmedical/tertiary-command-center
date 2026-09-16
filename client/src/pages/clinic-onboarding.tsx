@@ -361,7 +361,7 @@ export default function ClinicOnboardingPage() {
           context={clinic.name}
           titleTestId="text-clinic-onboarding-title"
         />
-        <p className="mt-4 text-sm text-slate-500">Implementation, SOPs &amp; go-live readiness</p>
+        <p className="mt-4 text-sm text-finance-text-secondary">Implementation, SOPs &amp; go-live readiness</p>
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">

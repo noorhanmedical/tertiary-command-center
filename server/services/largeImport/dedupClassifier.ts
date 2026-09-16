@@ -129,6 +129,56 @@ export function classifyRows(
   return out;
 }
 
+// Wire shape of a preview row. `patientId` (external/source id) is ALWAYS
+// carried distinctly from `mrn` — never folded together (see patientColumnMap).
+export type PreviewRowShape = {
+  rowIndex: number;
+  name: string;
+  dob: string | null;
+  gender: string | null;
+  phone: string | null;
+  email: string | null;
+  mrn: string | null;
+  patientId: string | null;
+  facility: string | null;
+  provider: string | null;
+  insurance: string | null;
+  diagnoses: string | null;
+  medications: string | null;
+  history: string | null;
+  classification: ClassifiedRow["classification"];
+  matchTier: ClassifiedRow["matchTier"];
+  reasons: string[];
+};
+
+/**
+ * Map a classified row to the preview wire shape. Pure (no DB) so it is shared
+ * by the analyze-phase preview builder, the paginated preview route, and the
+ * unit tests. Preserves BOTH mrn and the distinct external patientId.
+ */
+export function toPreviewRow(cr: ClassifiedRow): PreviewRowShape {
+  return {
+    rowIndex: cr.row.rowIndex,
+    name: cr.row.name,
+    dob: cr.row.dob,
+    gender: cr.row.gender,
+    phone: cr.row.phone,
+    email: cr.row.email,
+    mrn: cr.row.mrn,
+    // External/source Patient ID — ALWAYS distinct from MRN.
+    patientId: cr.row.patientId ?? null,
+    facility: cr.row.facility,
+    provider: cr.row.provider,
+    insurance: cr.row.insurance,
+    diagnoses: cr.row.diagnoses,
+    medications: cr.row.medications,
+    history: cr.row.history,
+    classification: cr.classification,
+    matchTier: cr.matchTier,
+    reasons: cr.reasons,
+  };
+}
+
 export type ClassificationCounts = {
   total: number;
   valid: number;

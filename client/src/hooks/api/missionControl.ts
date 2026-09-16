@@ -1,7 +1,36 @@
 import { useQuery } from "@tanstack/react-query";
 import { qk } from "./keys";
 
+// Legacy per-field wrapper. Retained for backward compatibility; new code
+// uses the canonical MissionMetric below.
 export type Wrapped<T> = { value: T; sourceMissing: boolean };
+
+// ─── Canonical Mission Control metric contract (MC-DATA-001) ───────────────
+// ONE representation for every Mission Control metric. Availability is
+// per-field: a real measured 0 is { value: 0, sourceMissing: false }; an
+// unavailable source is { value: null, sourceMissing: true }. A `0` is NEVER
+// used to represent "no source", and no metric's availability depends on a
+// sibling's.
+export type MetricUnit = "count" | "currency" | "percent" | "duration";
+
+export type MetricDelta = {
+  value: number;
+  pct: number | null;
+  direction: "up" | "down" | "flat";
+  comparisonMissing?: boolean;
+};
+
+export type MissionMetric = {
+  key: string;
+  value: number | null;
+  unit: MetricUnit;
+  sourceMissing: boolean;
+  reason?: string;
+  // delta / freshnessAt are part of the contract but NOT computed in
+  // MC-DATA-001 (comparison work lands in a later phase).
+  delta?: MetricDelta;
+  freshnessAt?: string;
+};
 
 export type MissionLaneStatus = "Watch" | "Blocked" | "Ready" | "In Progress" | "Complete";
 export type MissionPriority = "Urgent" | "High" | "Medium" | "Low";
@@ -50,24 +79,27 @@ export interface MissionRoleQueue {
 }
 
 export interface MissionSpine {
-  prescreen: Wrapped<number>;
-  readyToCall: Wrapped<number>;
-  followUp: Wrapped<number>;
-  callbacks: Wrapped<number>;
-  pending: Wrapped<number>;
-  noReport: Wrapped<number>;
-  reEligible: Wrapped<number>;
-  declined: Wrapped<number>;
-  readyForBilling: Wrapped<number>;
-  tasks: Wrapped<number>;
+  prescreen: MissionMetric;
+  readyToCall: MissionMetric;
+  followUp: MissionMetric;
+  callbacks: MissionMetric;
+  pending: MissionMetric;
+  noReport: MissionMetric;
+  reEligible: MissionMetric;
+  declined: MissionMetric;
+  readyForBilling: MissionMetric;
+  tasks: MissionMetric;
 }
 
+// Per-field metric contract: NO section-level `sourceMissing`. Each metric
+// carries its own availability so a live sibling is never blanked by an
+// unavailable one. Presentation derives a family state from the children.
 export interface MissionSections {
-  calls: { madeToday: number; reachedToday: number; callbacksPending: number; madeLast7: number; sourceMissing: boolean };
-  patientServices: { inPipeline: number; prescreenBacklog: number; pendingAncillary: number; declinedLast7: number; sourceMissing: boolean };
-  finance: { billingReady: number; invoicesSubmitted: number; paidAmount: number; outstandingBalance: number; sourceMissing: boolean };
-  operations: { tasksOpen: number; tasksOverdue: number; tasksHighPriority: number; sourceMissing: boolean };
-  ancillaryToday: { scheduledToday: number; completedToday: number; cancelledToday: number; sourceMissing: boolean };
+  calls: { madeToday: MissionMetric; reachedToday: MissionMetric; callbacksPending: MissionMetric; madeLast7: MissionMetric };
+  patientServices: { inPipeline: MissionMetric; prescreenBacklog: MissionMetric; pendingAncillary: MissionMetric; declinedLast7: MissionMetric };
+  finance: { billingReady: MissionMetric; invoicesSubmitted: MissionMetric; paidAmount: MissionMetric; outstandingBalance: MissionMetric };
+  operations: { tasksOpen: MissionMetric; tasksOverdue: MissionMetric; tasksHighPriority: MissionMetric };
+  ancillaryToday: { scheduledToday: MissionMetric; completedToday: MissionMetric; cancelledToday: MissionMetric };
 }
 
 export interface MissionControlSpine {

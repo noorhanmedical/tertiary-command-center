@@ -29,7 +29,10 @@ async function main() {
   assert.equal(mapHeaderToField("Patient Name"), "name");
   assert.equal(mapHeaderToField("Date of Birth"), "dob");
   assert.equal(mapHeaderToField("Medical Record #"), "mrn");
-  assert.equal(mapHeaderToField("Account Number"), "mrn", "account number also maps to mrn (this is the ambiguity source)");
+  // Rebuild: an external/account identifier is NOT an MRN. "Account Number"
+  // maps to the DISTINCT patientId field so it can never corrupt the clinic
+  // MRN identity key (prior bug: account number → mrn).
+  assert.equal(mapHeaderToField("Account Number"), "patientId", "account number is an external id → patientId, never mrn");
   assert.equal(mapHeaderToField("Member ID"), "memberId");
   assert.equal(mapHeaderToField("Carrier"), "insurance");
   assert.equal(mapHeaderToField("Sex"), "gender");
@@ -52,15 +55,25 @@ async function main() {
   assert.equal(r1.draft.insurance, "UnitedHealthcare");
   assert.equal(r1.ambiguities.length, 0, "single MRN → no ambiguity");
 
-  // 2) Account # AND Medical Record # both present → MRN ambiguity, NOT guessed.
+  // 2) Two DIFFERENT true-MRN labels with different values → MRN ambiguity,
+  //    surfaced, NOT arbitrarily resolved.
   const r2 = await parsePatientDraft(
-    "Patient: John Roe\nDOB: 1960-02-02\nAccount #: 883912\nMedical Record #: 221944",
+    "Patient: John Roe\nDOB: 1960-02-02\nMedical Record #: 221944\nMed Rec No: 998877",
   );
   assert.equal(r2.method, "deterministic");
   const mrnAmb = r2.ambiguities.find((a) => a.field === "mrn");
   assert.ok(mrnAmb, "mrn ambiguity surfaced");
-  assert.equal(mrnAmb!.candidates.length, 2, "both account# and MRN offered as candidates");
+  assert.equal(mrnAmb!.candidates.length, 2, "both MRN labels offered as candidates");
   assert.equal(r2.draft.mrn, null, "MRN not arbitrarily chosen");
+
+  // 2a) An external identifier (Account Number) NEVER contaminates MRN. The
+  //     true MRN comes from the Medical Record # label; the account number
+  //     does not overwrite or block it.
+  const r2b = await parsePatientDraft(
+    "Patient: Ann Fox\nDOB: 1962-04-04\nAccount Number: 883912\nMedical Record #: 221944",
+  );
+  assert.equal(r2b.draft.mrn, "221944", "true MRN preserved; account number does not become MRN");
+  assert.equal(r2b.ambiguities.find((a) => a.field === "mrn"), undefined, "no MRN ambiguity — account number is not an MRN candidate");
 
   // 3) provider present as its own field → captured as provider, not patient name.
   const r3 = await parsePatientDraft(

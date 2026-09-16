@@ -303,13 +303,27 @@ export function registerEngagementDistributionRoutes(
           code: "bad_request",
         });
       }
+      // DEPRECATED COMMIT PATH. This allocator-apply commits execution-case
+      // assignments WITHOUT creating the frozen call-list package that is the
+      // actual delivered artifact — which historically caused package/assignment
+      // drift. The CANONICAL operational path is the call-list flow
+      // (POST /api/engagement/call-lists/distribution-preview →
+      // /distribution-confirm), which commits assignments AND creates the
+      // immutable package + secure link + server PDF in one operation. This
+      // endpoint is retained for planning/back-compat only.
+      console.warn(JSON.stringify({
+        level: "warn",
+        source: "engagement_distribution",
+        kind: "deprecated_apply_path_used",
+        message: "Use /api/engagement/call-lists/distribution-confirm (canonical package-backed commit).",
+      }));
       try {
         const actorUserId = (req.session as { userId?: string }).userId ?? null;
         const result = await applyDistribution(
           actorUserId,
           parsed.data.assignedRole ?? "scheduler",
         );
-        return res.json(result);
+        return res.json({ ...result, deprecated: true, canonicalPath: "/api/engagement/call-lists/distribution-confirm" });
       } catch (error: unknown) {
         console.error(
           "[engagement/distribution:apply] error:",

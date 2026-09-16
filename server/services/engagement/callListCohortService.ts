@@ -172,6 +172,17 @@ function latestOutcomeEquals(o: string) {
   ) = ${o}`;
 }
 
+/** SQL: the outcome of the patient's MOST RECENT outreach attempt is one of
+ *  `outcomes` (current-outcome semantics — a later resolving outcome wins). */
+function latestOutcomeIn(outcomes: string[]) {
+  return sql`(
+    SELECT oc.outcome FROM outreach_calls oc
+    WHERE oc.patient_screening_id = ${patientExecutionCases.patientScreeningId}
+    ORDER BY oc.started_at DESC, oc.id DESC
+    LIMIT 1
+  ) IN (${sql.join(outcomes.map((o) => sql`${o}`), sql`, `)})`;
+}
+
 /** SQL: the patient has NO outreach attempt at all (never called). */
 function noOutreachEver() {
   return sql`NOT EXISTS (
@@ -340,6 +351,18 @@ function cohortConditions(cohort: CallListCohortKey, ctx: CohortBuildContext) {
       // "reached" = successful contact; the baseline already excludes
       // scheduled/terminal, so a still-active reached case = objective open.
       return [latestOutcomeEquals("reached")];
+    case "scheduled":
+      // Canonical scheduled STATE (set by the canonical scheduling write, and by
+      // the shared call-result service's terminal mapping) — NOT a UI string.
+      // Baseline is skipped for this cohort (scheduled is non-callable) so it
+      // surfaces the booked population rather than the actionable pool.
+      return [eq(patientExecutionCases.engagementStatus, "scheduled")];
+    case "refused":
+      // Current refusal outcome (declined / refused). Distinct from DNC — the
+      // DNC family (dnc / do_not_contact) is deliberately NOT included so a
+      // refusal is never silently converted into Do-Not-Contact. Baseline is
+      // skipped (a refusal is terminal/non-callable).
+      return [latestOutcomeIn(["refused_dnc", "declined", "not_interested"])];
     case "scheduling_follow_up":
       return [eq(patientExecutionCases.engagementBucket, "scheduling_triage")];
     case "callback_due":
@@ -419,10 +442,20 @@ async function buildContext(params: CohortQueryParams): Promise<CohortBuildConte
   };
 }
 
+/** Cohorts that describe a TERMINAL / booked state the callable baseline gate
+ *  would otherwise suppress (scheduled = non-callable; refused = terminal).
+ *  For these we report the state population directly (facility-scoped) instead
+ *  of the actionable-callable pool. */
+const NON_CALLABLE_STATE_COHORTS: ReadonlySet<CallListCohortKey> = new Set([
+  "scheduled",
+  "refused",
+]);
+
 function allConditions(params: CohortQueryParams, ctx: CohortBuildContext) {
+  const skipBaseline = NON_CALLABLE_STATE_COHORTS.has(params.cohort);
   return [
     ...scopeConditions(params, ctx),
-    ...baselineConditions(ctx),
+    ...(skipBaseline ? [] : baselineConditions(ctx)),
     ...cohortConditions(params.cohort, ctx),
   ];
 }

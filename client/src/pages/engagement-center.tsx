@@ -57,6 +57,7 @@ import { EngagementCallSettings } from "@/components/engagement/EngagementCallSe
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { GenerateCallListDialog } from "@/components/engagement/GenerateCallListDialog";
 import { RecentCallListsDialog } from "@/components/engagement/RecentCallListsDialog";
+import { CallListBoard } from "@/components/engagement/CallListBoard";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
 import { ManagerWorkloadPanel, NeedsCoveragePanel, ManagerExceptionsPanel } from "@/components/portal/handoff/ManagerWorkforcePanel";
 import { EngagementCallResults } from "@/components/engagement/EngagementCallResults";
@@ -181,14 +182,15 @@ export default function EngagementCenterPage() {
   const [distributeOpen, setDistributeOpen] = useState(false);
   const [callListOpen, setCallListOpen] = useState(false);
   const [recentListsOpen, setRecentListsOpen] = useState(false);
-  const callListPackagesFlagOn = (() => {
-    try {
-      return (import.meta as { env?: Record<string, string | undefined> })?.env
-        ?.VITE_FEATURE_ENGAGEMENT_CALL_LIST_PACKAGES === "true";
-    } catch {
-      return false;
-    }
-  })();
+  // Operational date the Call Lists board hands to the Generate dialog so the
+  // distribution/package targets the chosen day (never a silent "today").
+  const [generateServiceDate, setGenerateServiceDate] = useState<string | null>(null);
+  // Vite statically injects import.meta.env.VITE_* at transform time. Use the
+  // DIRECT member form (not optional-chaining): Vite only replaces the exact
+  // `import.meta.env.VITE_X` token, so the optional-chained variant is left
+  // un-replaced and reads undefined at runtime (the flag would never turn on).
+  const callListPackagesFlagOn =
+    import.meta.env.VITE_FEATURE_ENGAGEMENT_CALL_LIST_PACKAGES === "true";
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -362,7 +364,10 @@ export default function EngagementCenterPage() {
     <div className="flex h-full flex-col bg-slate-50 dark:bg-slate-950">
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
-        <div className="flex flex-wrap items-center gap-3 px-6 py-3">
+        {/* Nav-stability: the title + view switcher live in their OWN fixed row.
+            No mode-specific controls share this row, so the switcher's X/Y
+            position is identical in every mode (no "tab jumping"). */}
+        <div className="flex items-center gap-3 px-6 py-3">
           <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
               Plexus Ancillary · Engagement Center
@@ -406,6 +411,20 @@ export default function EngagementCenterPage() {
             >
               Assignment Pool
             </button>
+            {callListPackagesFlagOn ? (
+              <button
+                type="button"
+                onClick={() => setView("callLists")}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  view === "callLists"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                }`}
+                data-testid="button-view-call-lists-board"
+              >
+                Call Lists
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setView("callResults")}
@@ -431,7 +450,12 @@ export default function EngagementCenterPage() {
               Call Settings
             </button>
           </div>
+        </div>
 
+        {/* Pool-only toolbar — isolated in its own row BELOW the switcher so the
+            switcher position never depends on these controls (nav-stability). */}
+        {view === "pool" ? (
+        <div className="flex flex-wrap items-center gap-3 px-6 pb-3">
           {/* Distribution as an ACTION inside Assignment Pool */}
           {view === "pool" ? (
             <Button
@@ -528,6 +552,7 @@ export default function EngagementCenterPage() {
           </>
           ) : null}
         </div>
+        ) : null}
 
         {/* Summary strip */}
         {view === "pool" ? (
@@ -572,6 +597,21 @@ export default function EngagementCenterPage() {
             <EngagementTeamMetrics />
             <EngagementCallResults />
           </div>
+        </main>
+      ) : view === "callLists" ? (
+        <main className="min-h-0 flex-1 overflow-hidden">
+          {/* Call Lists command center — side-by-side per-member LIVE call lists
+              for the selected date, with PDFs + date-driven generate/assign. */}
+          <CallListBoard
+            facility={clinicFilter !== ALL ? clinicFilter : null}
+            facilityOptions={facilityOptions}
+            onFacilityChange={(f) => setClinicFilter(f ?? ALL)}
+            schedulers={schedulers}
+            onGenerateForDate={(iso) => {
+              setGenerateServiceDate(iso);
+              setCallListOpen(true);
+            }}
+          />
         </main>
       ) : (
       /* Assignment Pool — Repository-style 3-zone body */
@@ -649,8 +689,12 @@ export default function EngagementCenterPage() {
         <>
           <GenerateCallListDialog
             open={callListOpen}
-            onOpenChange={setCallListOpen}
+            onOpenChange={(o) => {
+              setCallListOpen(o);
+              if (!o) setGenerateServiceDate(null);
+            }}
             facilities={facilityOptions}
+            initialServiceDate={generateServiceDate}
           />
           <RecentCallListsDialog
             open={recentListsOpen}

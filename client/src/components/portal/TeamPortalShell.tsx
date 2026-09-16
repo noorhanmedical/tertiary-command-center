@@ -68,6 +68,7 @@ import {
   type SchedulePatientDialogPatient,
 } from "@/components/portal/SchedulePatientDialog";
 import { CalendarQuickScheduleDialog } from "@/components/portal/CalendarQuickScheduleDialog";
+import { SchedulingPickerDialog } from "@/components/scheduling/SchedulingPickerDialog";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
 import { HandoffDialog } from "@/components/portal/handoff/HandoffDialog";
@@ -1294,6 +1295,14 @@ export function TeamPortalShell({
   const [scheduleDialogPatient, setScheduleDialogPatient] = useState<TodayPatient | null>(null);
   const [schedulePatientDialog, setSchedulePatientDialog] =
     useState<SchedulePatientDialogPatient | null>(null);
+  // Shared simplified SchedulingPicker context — the LIVE patient Schedule
+  // surface for the Team Portal + Manual Call List. Replaces the old
+  // UnifiedScheduler workspace for the patient-scheduling action (the generic
+  // Calendar tool still opens the full workspace).
+  const [pickerScheduleCtx, setPickerScheduleCtx] = useState<{
+    patient: SchedulePatientDialogPatient;
+    initialDate: string | null;
+  } | null>(null);
   // Patient context for the left-rail PatientMiniCalendar. Clicking the
   // calendar icon on a clinic/ancillary patient card sets this so the
   // mini calendar header switches from "facility month view" to
@@ -2196,16 +2205,9 @@ export function TeamPortalShell({
   ) {
     if (input.patientScreeningId != null) setSelectedPatientId(input.patientScreeningId);
     setSelectedPatientForScheduling(input);
-    dispatchOpenWorkspace({
-      type: "calendar",
-      title: input.patientName ?? "Schedule",
-      patientScreeningId: input.patientScreeningId ?? null,
-      executionCaseId: input.executionCaseId ?? null,
-      patientDob: input.patientDob ?? null,
-      serviceKey: input.serviceType ?? null,
-      facilityId: input.facilityId ?? facility ?? null,
-      initialDate: opts?.date ?? null,
-    });
+    // Open the shared simplified SchedulingPicker (one-click date/time), NOT the
+    // old full UnifiedScheduler workspace, for the patient-scheduling action.
+    setPickerScheduleCtx({ patient: input, initialDate: opts?.date ?? null });
   }
 
   function openSchedulePatientPlayground(payload: {
@@ -4942,6 +4944,60 @@ export function TeamPortalShell({
           role={role}
         />
       )}
+
+      {/* Shared simplified SchedulingPicker — the LIVE patient Schedule surface
+          for the Team Portal + Manual Call List. One-click date/time, canonical
+          availability + write. On success from a call-list row (executionCase
+          present) we also record the canonical SCHEDULED call outcome so the
+          outreach result + journey + execution state advance in lockstep with
+          the appointment (§11). */}
+      <SchedulingPickerDialog
+        open={!!pickerScheduleCtx}
+        onOpenChange={(o) => {
+          if (!o) setPickerScheduleCtx(null);
+        }}
+        patient={{
+          patientScreeningId: pickerScheduleCtx?.patient.patientScreeningId ?? null,
+          executionCaseId: pickerScheduleCtx?.patient.executionCaseId ?? null,
+          patientName: pickerScheduleCtx?.patient.patientName ?? null,
+          patientDob: pickerScheduleCtx?.patient.patientDob ?? null,
+        }}
+        facilityId={pickerScheduleCtx?.patient.facilityId ?? facility ?? null}
+        services={
+          pickerScheduleCtx?.patient.serviceType
+            ? [pickerScheduleCtx.patient.serviceType]
+            : []
+        }
+        initialDate={pickerScheduleCtx?.initialDate ?? null}
+        onScheduled={() => {
+          const ctx = pickerScheduleCtx;
+          if (ctx && (ctx.patient.executionCaseId != null || ctx.patient.patientScreeningId != null)) {
+            // Best-effort canonical SCHEDULED outcome (never blocks the booking
+            // that already committed). isCallAttempt:false → schedule-only, no
+            // fake dial; still advances outreach result + journey + case state.
+            void fetch("/api/engagement-center/call-result", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                executionCaseId: ctx.patient.executionCaseId ?? null,
+                patientScreeningId: ctx.patient.patientScreeningId ?? null,
+                patientName: ctx.patient.patientName ?? null,
+                patientDob: ctx.patient.patientDob ?? null,
+                callResult: "scheduled",
+                callDisposition: "scheduled",
+                isCallAttempt: false,
+                facilityId: ctx.patient.facilityId ?? facility ?? null,
+              }),
+            }).catch(() => {});
+          }
+          queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
+          queryClient.invalidateQueries({
+            predicate: (q) =>
+              Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
+          });
+        }}
+      />
 
       <SchedulePatientDialog
         open={!!schedulePatientDialog}

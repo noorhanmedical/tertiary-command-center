@@ -9,14 +9,25 @@ const OpenAI = ((OpenAI_import as any).default ?? OpenAI_import) as typeof OpenA
 // We fall back to a placeholder key so construction succeeds; any actual AI
 // call still requires a real key (the request will fail at call time, as it
 // should) and non-AI features run normally.
+// Resolve the first NON-EMPTY provider key. An empty string is treated as
+// MISSING — a set-but-blank AI_INTEGRATIONS_OPENAI_API_KEY must not mask a
+// valid OPENAI_API_KEY fallback (previously `??` kept the empty string). Falls
+// back to a placeholder so the module still constructs at import time; a real
+// call still fails at call time when no valid key is present, as it should.
 const OPENAI_API_KEY =
-  process.env.AI_INTEGRATIONS_OPENAI_API_KEY ??
-  process.env.OPENAI_API_KEY ??
-  "missing-openai-key";
+  [process.env.AI_INTEGRATIONS_OPENAI_API_KEY, process.env.OPENAI_API_KEY].find(
+    (v): v is string => typeof v === "string" && v.trim() !== "",
+  ) ?? "missing-openai-key";
+
+// An empty AI_INTEGRATIONS_OPENAI_BASE_URL must fall through to the SDK default
+// (api.openai.com) rather than being passed as an empty base URL (which would
+// break every request even with a valid key).
+const OPENAI_BASE_URL =
+  process.env.AI_INTEGRATIONS_OPENAI_BASE_URL?.trim() || undefined;
 
 export const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  baseURL: OPENAI_BASE_URL,
 });
 
 const AI_TIMEOUT_MS = 60_000;

@@ -100,8 +100,11 @@ if (spineOut.spine.pending.sourceMissing !== true) {
     `§B spine.pending must be sourceMissing:true when repo returned available:false (got ${JSON.stringify(spineOut.spine.pending)})`,
   );
 }
-if (spineOut.spine.pending.value !== 0) {
-  fail(`§B spine.pending.value should be 0 fallback (got ${spineOut.spine.pending.value})`);
+// Contract (MC-DATA-001): an UNAVAILABLE source must surface value:null —
+// never a fake 0 — so the UI renders an honest "—" instead of a real zero.
+// (Real measured zero is asserted in §A as { value: 0, sourceMissing: false }.)
+if (spineOut.spine.pending.value !== null) {
+  fail(`§B spine.pending.value must be null for an unavailable source, never a 0 fallback (got ${spineOut.spine.pending.value})`);
 }
 // §D: injected clock reached the repo.
 if (!callbackNowSeen || callbackNowSeen.toISOString() !== fixedNow.toISOString()) {

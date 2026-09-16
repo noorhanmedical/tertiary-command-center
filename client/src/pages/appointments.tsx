@@ -261,8 +261,8 @@ export default function AppointmentsPage() {
   const [activeTab, setActiveTab] = useState<Facility>("Taylor Family Practice");
 
   return (
-    <div className="min-h-screen bg-[hsl(210,35%,96%)]">
-      <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 px-6 py-6">
         <PageHeader
           variant="light"
           icon={Calendar}
@@ -284,7 +284,9 @@ export default function AppointmentsPage() {
           {FACILITIES.map((f) => (
             <button
               key={f}
+              type="button"
               onClick={() => setActiveTab(f)}
+              aria-pressed={activeTab === f}
               data-testid={`tab-facility-${f.replace(/\s+/g, "-").toLowerCase()}`}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                 activeTab === f

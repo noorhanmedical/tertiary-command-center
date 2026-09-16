@@ -39,7 +39,11 @@ import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { patientScreenings } from "@shared/schema/screening";
 import { featureFlags } from "../../lib/featureFlags";
-import { recordLinkFailure } from "../../repositories/plexusIdentity.repo";
+import {
+  recordLinkFailure,
+  createExternalIdentifier,
+  findExternalIdentifiersByMatchValue,
+} from "../../repositories/plexusIdentity.repo";
 import {
   commitResolution,
   resolveIdentity,
@@ -52,6 +56,14 @@ export type ScreeningIdentityOrchestrationInput = {
   sourceSystem?: string | null;
   sourcePatientIdentifier?: string | null;
   clinicMrn?: string | null;
+  /**
+   * Distinct external/source patient identifier (Patient ID / External ID /
+   * EMR ID) — NEVER the MRN. When present and the screening links, it is
+   * persisted as a canonical `ehr_patient_id` row in
+   * patient_external_identifiers (idempotent per global patient). This is the
+   * P0 "preserve BOTH MRN and Patient ID" persistence path.
+   */
+  externalPatientId?: string | null;
   demographics: {
     displayName?: string | null;
     dob?: string | null;
@@ -80,6 +92,59 @@ export type ScreeningIdentityOrchestrationResult =
       resolutionOutcome: "definitive_match" | "possible_match" | "no_match";
       queuedCandidateIds: number[];
     };
+
+/** Normalize an external patient identifier for the match-value column
+ *  (deterministic: trim + collapse whitespace + uppercase). */
+function normalizeExternalId(v: string | null | undefined): string | null {
+  if (v == null) return null;
+  const s = String(v).trim().replace(/\s+/g, " ").toUpperCase();
+  return s.length > 0 ? s : null;
+}
+
+/** Persist a distinct external Patient ID as an `ehr_patient_id` row,
+ *  idempotently per global patient. Never throws — an identifier failure must
+ *  not break identity linkage; the caller has already linked the screening. */
+async function persistExternalPatientIdentifier(args: {
+  externalPatientId: string | null;
+  globalPlexusPatientId: number;
+  patientClinicMembershipId: number;
+  clinicId: number;
+  sourceSystem: string | null;
+}): Promise<void> {
+  const normalized = normalizeExternalId(args.externalPatientId);
+  if (!normalized) return;
+  try {
+    const existing = await findExternalIdentifiersByMatchValue({
+      identifierType: "ehr_patient_id",
+      normalizedOrHashedMatchValue: normalized,
+    });
+    if (existing.some((e) => e.globalPlexusPatientId === args.globalPlexusPatientId)) {
+      return; // already linked — idempotent no-op
+    }
+    await createExternalIdentifier({
+      globalPlexusPatientId: args.globalPlexusPatientId,
+      patientClinicMembershipId: args.patientClinicMembershipId,
+      clinicId: args.clinicId,
+      sourceSystem: args.sourceSystem,
+      identifierType: "ehr_patient_id",
+      // ehr_patient_id is NON-sensitive (SENSITIVE_IDENTIFIER_TYPES = payer/
+      // medicare only), so the raw value is allowed; the normalized value drives
+      // matching. MRN is NOT stored here — it lives on the clinic membership.
+      identifierValueEncrypted: String(args.externalPatientId).trim(),
+      normalizedOrHashedMatchValue: normalized,
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error",
+      source: "plexus_identity_integration",
+      kind: "external_patient_id_persist_failed",
+      globalPlexusPatientId: args.globalPlexusPatientId,
+      code: (e as { code?: string })?.code,
+      message: (e as Error)?.message ?? String(e),
+    }));
+  }
+}
 
 export async function resolveAndLinkPlexusIdentityForScreening(
   input: ScreeningIdentityOrchestrationInput,
@@ -115,6 +180,20 @@ export async function resolveAndLinkPlexusIdentityForScreening(
         globalPlexusPatientId: commit.globalPlexusPatientId,
       })
       .where(eq(patientScreenings.id, input.screeningId));
+
+    // P0 — preserve the DISTINCT external Patient ID as a canonical
+    // `ehr_patient_id` external identifier (never folded into the MRN, which is
+    // carried on the clinic membership). Idempotent per global patient so a
+    // re-import never creates a duplicate identifier row. `ehr_patient_id` is a
+    // NON-sensitive type (only payer/medicare are blocked), so it persists
+    // through the existing repo without an encryption dependency.
+    await persistExternalPatientIdentifier({
+      externalPatientId: input.externalPatientId ?? null,
+      globalPlexusPatientId: commit.globalPlexusPatientId,
+      patientClinicMembershipId: commit.membershipId,
+      clinicId: input.clinicId as number,
+      sourceSystem: input.sourceSystem ?? null,
+    });
 
     return {
       status: "linked",

@@ -46,6 +46,7 @@ export type CallListPackageStatus = (typeof CALL_LIST_PACKAGE_STATUSES)[number];
 // canonical assignments failed — assignments commit first and independently.
 export const CALL_LIST_PACKAGE_GENERATION_STATUSES = [
   "pending",
+  "generating",
   "ready",
   "failed",
 ] as const;

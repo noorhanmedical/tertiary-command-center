@@ -819,7 +819,7 @@ export default function ImagingCentralPage() {
       <header className="sticky top-0 z-10 bg-white/95 backdrop-blur px-6 py-4">
         <InteriorPageTitle title="Imaging Central" />
         <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-slate-500">Imaging execution · ultrasound focus</p>
+          <p className="text-sm text-finance-text-secondary">Imaging execution · ultrasound focus</p>
           {/* Demo state switcher — moved below the hairline. */}
           <div className="flex items-center gap-2">
             <Select value={view} onValueChange={(v) => setView(v as ViewState)}>

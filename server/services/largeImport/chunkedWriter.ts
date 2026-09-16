@@ -18,6 +18,7 @@ import { patientScreenings } from "@shared/schema";
 import { featureFlags } from "../../lib/featureFlags";
 import { resolveAndLinkPlexusIdentityForScreeningsBulk } from "../plexusIdentity/screeningIntegration";
 import { buildScreeningInsertValues } from "@shared/canonicalPatientDraft";
+import { isRowImportable, type ImportRowDecisionLike, type PreviewClassification } from "@shared/patientImportPreview";
 import type { ClassifiedRow } from "./dedupClassifier";
 
 export const DEFAULT_CHUNK_SIZE = 500;
@@ -49,6 +50,10 @@ export type WriteResult = {
   inserted: number;
   skippedExisting: number;
   skippedInvalid: number;
+  // Rows the manager explicitly removed from THIS preview (per-row "skip"
+  // decision). Excluded regardless of classification — never written, never
+  // deletes anything already in the DB.
+  skippedRemoved: number;
   lastRowIndex: number;
 };
 
@@ -96,6 +101,7 @@ export async function writeClassifiedRows(
     inserted: 0,
     skippedExisting: 0,
     skippedInvalid: 0,
+    skippedRemoved: 0,
     lastRowIndex: fromRowIndex,
   };
 
@@ -104,13 +110,18 @@ export async function writeClassifiedRows(
   const eligible: ClassifiedRow[] = [];
   for (const cr of rows) {
     if (cr.row.rowIndex <= fromRowIndex) continue;
-    if (cr.classification === "INVALID") { result.skippedInvalid += 1; continue; }
-    if (cr.classification === "EXISTING_MATCH") { result.skippedExisting += 1; continue; }
-    if (cr.classification === "POSSIBLE_MATCH") {
-      // Only import when the manager explicitly resolved this row to
-      // "import_as_new". Unresolved / use_existing / skip are NEVER written.
-      const decision = opts.decisions?.get(cr.row.rowIndex)?.decision;
-      if (decision !== "import_as_new") { result.skippedExisting += 1; continue; }
+    const decision = (opts.decisions?.get(cr.row.rowIndex)?.decision ?? undefined) as ImportRowDecisionLike;
+    // Manager removed this row from the preview (Remove Selected / Remove
+    // Invalid). A persisted "skip" decision excludes the row REGARDLESS of
+    // classification, so a removed NEW row is never written. This only affects
+    // the current import — no existing patient/screening/identity is touched.
+    if (decision === "skip") { result.skippedRemoved += 1; continue; }
+    // Ready-only import semantics live in one shared predicate so the client
+    // preview, the writer, and the tests can never disagree.
+    if (!isRowImportable(cr.classification as PreviewClassification, decision)) {
+      if (cr.classification === "INVALID") result.skippedInvalid += 1;
+      else result.skippedExisting += 1;
+      continue;
     }
     eligible.push(cr);
   }
@@ -148,6 +159,11 @@ export async function writeClassifiedRows(
               clinicId: opts.clinicId ?? null,
               sourceSystem: "bulk_import",
               clinicMrn: row.mrn ?? null,
+              // Distinct external Patient ID (NEVER the MRN) — persisted as a
+              // canonical ehr_patient_id external identifier, and recorded as
+              // the membership source identifier.
+              externalPatientId: row.patientId ?? null,
+              sourcePatientIdentifier: row.patientId ?? null,
               demographics: { displayName: row.name, dob: row.dob, phone: row.phone, email: row.email },
             };
           }),

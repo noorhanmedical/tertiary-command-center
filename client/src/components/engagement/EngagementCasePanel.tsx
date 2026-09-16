@@ -763,8 +763,10 @@ export function EngagementCasePanel({
         </Section>
       </div>
 
-      {/* Assignment form (sticky footer) */}
-      <div className="space-y-2.5 border-t border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40">
+      {/* Preview-only panel: the assignment/control footer is hidden so this
+          right panel is a clean single-column PREVIEW. Assignment happens from
+          the worklist (center) + Auto-Distribute — not from this panel. */}
+      <div className="hidden">
         {/* Triage controls — priority + next action. Currently derived
             and read-only: the assignment data spine has no field to
             persist these, so the controls are explicit stubs. */}

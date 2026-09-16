@@ -318,6 +318,15 @@ export async function registerRoutes(
     if (req.path === "/sms/twilio/inbound" && req.method === "POST") {
       return next();
     }
+    // Public team-facing call-list share endpoints are INTENTIONALLY
+    // unauthenticated: the bearer token in the URL is the credential
+    // (256-bit, sha256-hashed at rest, 72h expiry, optional PIN, rate-limited,
+    // uniform 404 on any non-ok state). A team member opening their secure
+    // link has no Plexus session, so these must bypass the global /api session
+    // gate. Auth is enforced inside the handler via the token/PIN.
+    if (req.path.startsWith("/shared-call-list/")) {
+      return next();
+    }
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }

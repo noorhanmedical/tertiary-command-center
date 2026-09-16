@@ -26,6 +26,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/plexus-ui/status";
+import type { PlexusStatusTone } from "@/components/plexus-ui/tokens";
 import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2, Mail, TrendingUp, Wallet, AlertTriangle, DollarSign } from "lucide-react";
 import { VALID_FACILITIES, DEFAULT_CLINIC, CLINIC_HUMBLE, formatClinicAddress, type ClinicProfile } from "@shared/plexus";
 
@@ -63,11 +65,14 @@ function fmtDateTime(iso: string | null | undefined): string {
   });
 }
 
-function statusBadgeClass(status: string): string {
-  if (status === "Paid") return "bg-emerald-100 text-emerald-800 border-emerald-200";
-  if (status === "Partially Paid") return "bg-amber-100 text-amber-800 border-amber-200";
-  if (status === "Sent") return "bg-blue-100 text-blue-800 border-blue-200";
-  return "bg-slate-100 text-slate-700 border-slate-200";
+// Maps an invoice status label to a canonical Plexus semantic tone. The status
+// text and all business logic are unchanged — only the badge presentation is
+// normalized. Unknown/other statuses (e.g. Draft/Void) render as neutral.
+function statusTone(status: string): PlexusStatusTone {
+  if (status === "Paid") return "completed";
+  if (status === "Partially Paid") return "pending";
+  if (status === "Sent") return "scheduled";
+  return "neutral";
 }
 
 function readInvoiceIdFromUrl(): number | null {
@@ -150,7 +155,8 @@ function InvoicesShell({
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 px-6 py-6">
       <PageHeader
         eyebrow="Billing"
         title="Invoices"
@@ -206,6 +212,7 @@ function InvoicesShell({
         onClose={() => setCreateOpen(false)}
         onCreated={(id) => { setCreateOpen(false); onOpen(id); }}
       />
+      </div>
     </div>
   );
 }
@@ -420,8 +427,17 @@ function InvoicesList({
         {filterBucket && (
           <Badge
             variant="outline"
+            role="button"
+            tabIndex={0}
+            aria-label={`Clear aging filter: ${bucketLabel[filterBucket]}`}
             className="bg-amber-50 border-amber-200 text-amber-800 cursor-pointer hover:bg-amber-100"
             onClick={() => setFilterBucket("")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setFilterBucket("");
+              }
+            }}
             data-testid="badge-bucket-filter"
           >
             Aging: {bucketLabel[filterBucket]} <span className="ml-1.5 text-amber-600">×</span>
@@ -434,8 +450,17 @@ function InvoicesList({
         ) : filtered.length === 0 ? (
           <div className="py-16 text-center" data-testid="empty-invoices">
             <FileText className="w-12 h-12 mx-auto text-slate-300 mb-3" />
-            <p className="text-slate-500">No invoices yet.</p>
-            <p className="text-xs text-slate-400 mt-1">Click "New Invoice" to generate one for a clinic.</p>
+            {filterFacility || filterBucket ? (
+              <>
+                <p className="text-slate-500">No invoices match these filters.</p>
+                <p className="text-xs text-slate-400 mt-1">Try clearing the clinic or aging filter.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-slate-500">No invoices yet.</p>
+                <p className="text-xs text-slate-400 mt-1">Click "New Invoice" to generate one for a clinic.</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -470,9 +495,9 @@ function InvoicesList({
                     <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">{fmtMoney(inv.totalCharges)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-medium text-slate-900">{fmtMoney(inv.totalBalance)}</td>
                     <td className="px-3 py-2.5">
-                      <Badge variant="outline" className={statusBadgeClass(inv.status)} data-testid={`badge-status-${inv.id}`}>
+                      <StatusBadge tone={statusTone(inv.status)} data-testid={`badge-status-${inv.id}`}>
                         {inv.status}
-                      </Badge>
+                      </StatusBadge>
                     </td>
                     <td className="px-3 py-2.5 text-xs text-slate-500" data-testid={`text-emailed-${inv.id}`}>
                       {inv.sentAt ? (
@@ -497,6 +522,7 @@ function InvoicesList({
                           });
                         }}
                         data-testid={`button-delete-invoice-${inv.id}`}
+                        aria-label={`Delete invoice ${inv.invoiceNumber}`}
                       >
                         <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-500" />
                       </Button>
@@ -751,7 +777,7 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 </div>
               )}
               <div className="mt-3">
-                <Badge variant="outline" className={statusBadgeClass(invoice.status)}>{invoice.status}</Badge>
+                <StatusBadge tone={statusTone(invoice.status)}>{invoice.status}</StatusBadge>
               </div>
             </div>
           </div>

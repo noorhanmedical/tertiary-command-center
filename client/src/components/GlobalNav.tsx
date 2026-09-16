@@ -108,7 +108,12 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
                   const isSchedule = item.id === "global-schedule";
                   const isPlexusTasks = item.id === "plexus-tasks";
                   return (
-                    <Link key={item.id} href={item.canonicalRoute}>
+                    <Link
+                      key={item.id}
+                      href={item.canonicalRoute}
+                      aria-label={item.title}
+                      aria-current={active ? "page" : undefined}
+                    >
                       <div
                         className={`relative flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
                           active

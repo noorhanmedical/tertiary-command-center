@@ -19,6 +19,7 @@ export type CanonicalPatientField =
   | "insurance"
   | "memberId"
   | "mrn"
+  | "patientId"
   | "facility"
   | "provider"
   | "address"
@@ -48,7 +49,15 @@ const FIELD_ALIASES: Record<CanonicalPatientField, string[]> = {
   memberId: ["member id", "memberid", "subscriber id", "subscriberid", "policy number", "policynumber", "group id", "groupid", "insurance id", "insuranceid"],
   address: ["address", "street", "street address", "streetaddress", "home address", "mailing address", "residence"],
   allergies: ["allergies", "allergy", "allergen", "allergens", "drug allergies"],
-  mrn: ["mrn", "medical record number", "medicalrecordnumber", "medical record", "medical record no", "med rec", "medrec", "record number", "record no", "patient id", "patientid", "chart number", "chartnumber", "chart id", "account number", "account", "account no", "acct", "acct number", "external id", "externalid", "emr id"],
+  // MRN = TRUE medical-record-number headers ONLY. Distinct identifiers
+  // (Patient ID / External ID / Account / Chart / EMR ID / MPI) are NOT MRN —
+  // they map to `patientId` below so both can be preserved separately and the
+  // clinic MRN identity key is never corrupted by a non-MRN column.
+  mrn: ["mrn", "mrn number", "medical record number", "medicalrecordnumber", "medical record", "medical record no", "medical record #", "med rec", "medrec", "med rec no", "record number", "record no"],
+  // Distinct external / source patient identifiers. Preserved as an external
+  // identifier (never folded into MRN). Intentionally conservative — these are
+  // identifiers, not MRNs.
+  patientId: ["patient id", "patientid", "patient identifier", "external id", "externalid", "external patient id", "emr id", "emrid", "ehr id", "chart number", "chartnumber", "chart id", "chartid", "account number", "accountnumber", "account no", "acct", "acct number", "mpi", "mpi id", "enterprise id", "source id", "source patient id"],
   facility: ["facility", "clinic", "location", "site", "practice", "office", "clinic name", "facility name"],
   provider: ["provider", "physician", "doctor", "pcp", "referring provider", "rendering provider", "clinician", "attending", "npi provider"],
   diagnoses: ["diagnoses", "diagnosis", "dx", "conditions", "condition", "problem list", "problems", "assessment", "icd", "icd10", "icd 10"],
@@ -70,6 +79,11 @@ export function normalizeHeader(value: string | null | undefined): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+// Identity-bearing canonical fields. A duplicate mapping to one of these is a
+// correctness hazard (silent loss of a real MRN / external id), so it triggers
+// a review instead of first-column-wins.
+export const IDENTITY_FIELDS = new Set<CanonicalPatientField>(["mrn", "patientId"]);
 
 // Precompute alias → field lookup for O(1) exact-normalized matching.
 const ALIAS_TO_FIELD = new Map<string, CanonicalPatientField>();
@@ -105,6 +119,14 @@ export type ColumnDetectionResult = {
   fieldToHeader: Partial<Record<CanonicalPatientField, string>>;
   // Headers we could not confidently map (candidates for AI or "notes").
   unmapped: Array<{ index: number; header: string }>;
+  // IDENTITY SAFETY: when two or more headers both resolve to the SAME identity
+  // field (e.g. two "MRN" columns), we do NOT silently keep the first and drop
+  // the rest. Each extra identity-bearing column is recorded here and
+  // `identityReviewRequired` is set so the caller can surface a review instead
+  // of guessing by column order. Non-identity duplicate columns keep the prior
+  // first-wins behavior (the extra goes to `unmapped`).
+  identityReviewRequired?: boolean;
+  identityConflicts?: Array<{ field: CanonicalPatientField; index: number; header: string }>;
   // True when the header row lacks even a name/first+last signal — the caller
   // should fall back to AI parsing rather than trusting positional columns.
   ambiguous: boolean;
@@ -126,6 +148,7 @@ export function detectColumns(
   const fieldToHeader: Partial<Record<CanonicalPatientField, string>> = {};
   const unmapped: Array<{ index: number; header: string }> = [];
   const usedFields = new Set<CanonicalPatientField>();
+  const identityConflicts: Array<{ field: CanonicalPatientField; index: number; header: string }> = [];
 
   // Normalize override keys for tolerant lookup.
   const normOverrides = new Map<string, CanonicalPatientField | "ignore">();
@@ -163,10 +186,23 @@ export function detectColumns(
       fieldToHeader[field] = raw;
       usedFields.add(field);
     } else {
+      // A duplicate mapping. For IDENTITY fields this is a correctness hazard:
+      // record the conflict (do NOT silently keep column-order winner) so the
+      // caller can require review. Non-identity duplicates keep first-wins.
+      if (field && IDENTITY_FIELDS.has(field)) {
+        identityConflicts.push({ field, index, header: raw });
+      }
       unmapped.push({ index, header: raw });
     }
   });
 
   const hasName = usedFields.has("name") || (usedFields.has("firstName") && usedFields.has("lastName")) || usedFields.has("lastName");
-  return { mapping, fieldToHeader, unmapped, ambiguous: !hasName };
+  return {
+    mapping,
+    fieldToHeader,
+    unmapped,
+    ambiguous: !hasName,
+    identityReviewRequired: identityConflicts.length > 0,
+    identityConflicts: identityConflicts.length > 0 ? identityConflicts : undefined,
+  };
 }

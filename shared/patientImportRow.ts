@@ -17,6 +17,10 @@ export type NormalizedImportRow = {
   email: string | null;
   insurance: string | null;
   mrn: string | null;
+  // Distinct external/source patient identifier (Patient ID / External ID /
+  // Account / Chart / EMR ID). NEVER the MRN. Preserved separately so a source
+  // file with BOTH keeps both; persisted as an external identifier downstream.
+  patientId: string | null;
   facility: string | null;
   provider: string | null;
   diagnoses: string | null;
@@ -84,6 +88,7 @@ export function buildNormalizedRow(
     email: get("email"),
     insurance: get("insurance"),
     mrn: get("mrn"),
+    patientId: get("patientId"),
     facility: get("facility") ?? opts.defaultFacility ?? null,
     provider: get("provider"),
     diagnoses: get("diagnoses"),

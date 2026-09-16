@@ -23,7 +23,7 @@ import { screeningBatches } from "@shared/schema";
 import type { ImportJob } from "@shared/schema";
 import { getImportJob, updateImportJob, loadImportRowDecisions } from "../../repositories/importJobs.repo";
 import { parseLargeFile, type ParseResult } from "./streamingParsers";
-import { classifyRows, tallyClassifications, type ClassifiedRow } from "./dedupClassifier";
+import { classifyRows, tallyClassifications, toPreviewRow, type ClassifiedRow } from "./dedupClassifier";
 import { loadExistingIdentityIndex } from "./existingIdentityIndex";
 import { writeClassifiedRows, DEFAULT_CHUNK_SIZE } from "./chunkedWriter";
 import type { ImportFileFormat } from "@shared/schema";
@@ -31,18 +31,7 @@ import type { ImportFileFormat } from "@shared/schema";
 const PREVIEW_SIZE = 50;
 
 function previewFromClassified(rows: ClassifiedRow[]) {
-  return rows.slice(0, PREVIEW_SIZE).map((cr) => ({
-    rowIndex: cr.row.rowIndex,
-    name: cr.row.name,
-    dob: cr.row.dob,
-    phone: cr.row.phone,
-    mrn: cr.row.mrn,
-    facility: cr.row.facility,
-    insurance: cr.row.insurance,
-    classification: cr.classification,
-    matchTier: cr.matchTier,
-    reasons: cr.reasons,
-  }));
+  return rows.slice(0, PREVIEW_SIZE).map(toPreviewRow);
 }
 
 async function parseAndClassify(job: ImportJob): Promise<{ parse: ParseResult; classified: ClassifiedRow[] }> {
@@ -181,6 +170,33 @@ export async function runImport(jobId: number): Promise<void> {
     });
 
     await cleanupTempFile(jobId);
+
+    // P0 — auto-enqueue Plexus IQ for the freshly imported batch through the
+    // CANONICAL durable runner. startBatchAnalysis creates the analysis_jobs
+    // row and runs runAnalysisLoop in the background (no per-patient browser
+    // requests, no second inline loop). Import completion is already durable;
+    // an IQ-enqueue failure (e.g. empty eligible set) is logged, never fatal.
+    try {
+      const { startBatchAnalysis, EmptyBatchError, NoSuchBatchError } = await import(
+        "../batchAnalysisRunner"
+      );
+      const iq = await startBatchAnalysis(batchId, job.createdByUserId ?? null);
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify({
+        level: "info", source: "import_job_runner", kind: "iq_enqueued",
+        importJobId: jobId, batchId, analysisJobId: iq.jobId,
+        totalPatients: iq.totalPatients, eligibleCount: iq.eligibleCount ?? null,
+        duplicate: iq.duplicate ? iq.duplicate.reason : null,
+      }));
+      void EmptyBatchError; void NoSuchBatchError;
+    } catch (iqErr) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        level: "warn", source: "import_job_runner", kind: "iq_enqueue_skipped",
+        importJobId: jobId, batchId,
+        message: (iqErr as Error)?.message ?? String(iqErr),
+      }));
+    }
   } catch (err) {
     await updateImportJob(jobId, {
       status: "failed",

@@ -1,5 +1,6 @@
 import { openai, withRetry } from "./aiClient";
 import { storage } from "../storage";
+import { buildBudgetedClinicalContext, estimateTokens } from "./screening/clinicalContextBudget";
 
 export type QualificationMode = "permissive" | "standard" | "conservative";
 
@@ -113,16 +114,56 @@ const USER_PROMPT_SUFFIX: Record<QualificationMode, string> = {
 };
 
 export async function screenSinglePatientWithAI(patient: ScreeningPatientInput, mode: QualificationMode = "permissive"): Promise<any | null> {
-  const parts = [`Patient:`];
-  if (patient.name) parts.push(`Name: ${patient.name}`);
-  if (patient.time) parts.push(`Time: ${patient.time}`);
-  if (patient.age) parts.push(`Age: ${patient.age}`);
-  if (patient.gender) parts.push(`Gender: ${patient.gender}`);
-  if (patient.diagnoses) parts.push(`Diagnoses: ${patient.diagnoses}`);
-  if (patient.history) parts.push(`History/HPI: ${patient.history}`);
-  if (patient.medications) parts.push(`Medications: ${patient.medications}`);
-  if (patient.notes) parts.push(`Notes: ${patient.notes}`);
-  const description = parts.join("\n");
+  // Core identity/demographics header — ALWAYS kept, never truncated (§7). MRN /
+  // Patient ID are intentionally excluded: they do not drive qualification and
+  // must not consume clinical-context budget.
+  const headerParts = [`Patient:`];
+  if (patient.name) headerParts.push(`Name: ${patient.name}`);
+  if (patient.time) headerParts.push(`Time: ${patient.time}`);
+  if (patient.age) headerParts.push(`Age: ${patient.age}`);
+  if (patient.gender) headerParts.push(`Gender: ${patient.gender}`);
+  const header = headerParts.join("\n");
+
+  // Clinical sections pass through the ONE shared deterministic token budgeter
+  // (dedup copy-forward duplicates, then priority-ordered truncation with an
+  // explicit marker) so a bloated record can never exceed the model context.
+  const { sectionBlocks, meta: contextBudget } = buildBudgetedClinicalContext(
+    {
+      diagnoses: patient.diagnoses,
+      history: patient.history,
+      medications: patient.medications,
+      notes: patient.notes,
+    },
+    estimateTokens(header),
+  );
+  if (!contextBudget.withinLimit) {
+    // Still too large after deterministic compaction. This is a provider-INPUT
+    // failure, NEVER a Not-Qualified result — throw a classified error so the
+    // runner records status=error (retryable) and leaves qualifying_tests untouched.
+    const err = new Error("context_too_large_after_compaction") as Error & {
+      code?: string;
+      plexusIqFailureCategory?: string;
+    };
+    err.code = "context_too_large_after_compaction";
+    err.plexusIqFailureCategory = "context_too_large_after_compaction";
+    throw err;
+  }
+  if (contextBudget.compactedSections.length || contextBudget.truncatedSections.length) {
+    // Non-PHI observability: counts + which sections were shaped, no patient text.
+    console.log(JSON.stringify({
+      level: "info",
+      source: "plexus_iq_context_budget",
+      kind: "compacted",
+      originalTokens: contextBudget.originalTokens,
+      finalTokens: contextBudget.finalTokens,
+      maxInputTokens: contextBudget.maxInputTokens,
+      tokensRemoved: contextBudget.tokensRemoved,
+      compactedSections: contextBudget.compactedSections,
+      truncatedSections: contextBudget.truncatedSections,
+      droppedSections: contextBudget.droppedSections,
+    }));
+  }
+  const description = [header, ...sectionBlocks].join("\n");
 
   const systemPrompt = buildScreeningSystemPrompt(mode);
   const userPromptSuffix = USER_PROMPT_SUFFIX[mode];

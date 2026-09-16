@@ -41,12 +41,21 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertTriangle,
+  Scale,
+  Trash2,
 } from "lucide-react";
 import {
   CALL_LIST_COHORTS,
   NOT_CONTACTED_DEFAULT_DAYS,
   type CallListCohortKey,
 } from "@shared/engagement/callListCohorts";
+import {
+  resolveSelectedCount,
+  computeAllocationSummary,
+  autoBalance,
+  buildManualMapping,
+  type ManualAllocationMember,
+} from "@shared/engagement/manualAllocation";
 import {
   fetchCohortPreview,
   fetchDistributionPreview,
@@ -88,10 +97,15 @@ export function GenerateCallListDialog({
   open,
   onOpenChange,
   facilities,
+  initialServiceDate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   facilities: string[];
+  /** Operational date (YYYY-MM-DD) to distribute for. When set it is threaded
+   *  through preview → confirm → package so the backend never falls back to
+   *  today. Driven by the Call Lists board's selected date. */
+  initialServiceDate?: string | null;
 }) {
   const { toast } = useToast();
   const [step, setStep] = useState<Step>("select");
@@ -110,6 +124,15 @@ export function GenerateCallListDialog({
   const [distributing, setDistributing] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [confirming, setConfirming] = useState(false);
+
+  // ── Manual override (permanent manual mode) ──
+  // The admin may override the auto-suggested per-member counts for THIS
+  // operation only (never global settings). All state below is client-side; the
+  // resulting custom mapping is handed VERBATIM to the same canonical confirm.
+  const [manualMode, setManualMode] = useState(false);
+  const [countMode, setCountMode] = useState<"all" | "custom">("all");
+  const [customCount, setCustomCount] = useState<number>(0);
+  const [manualMembers, setManualMembers] = useState<ManualAllocationMember[]>([]);
 
   // ── results ──
   const [results, setResults] = useState<ResultMember[]>([]);
@@ -166,8 +189,23 @@ export function GenerateCallListDialog({
         facility,
         serviceCategories: serviceCategories.length ? serviceCategories : undefined,
         notContactedDays: cohort === "not_contacted_in_x_days" ? notContactedDays : undefined,
+        // Honor the caller-chosen operational date (Call Lists board). When
+        // omitted the server derives the clinic-local today (unchanged).
+        serviceDate: initialServiceDate ?? undefined,
       });
       setDistribution(result);
+      // Seed the manual editor from the auto-suggested plan so toggling to
+      // manual starts from the allocator's proposal (admin can then override).
+      setManualMembers(
+        result.members.map((m) => ({
+          teamMemberId: m.teamMemberId,
+          name: m.name,
+          count: m.patientCount,
+        })),
+      );
+      setCountMode("all");
+      setCustomCount(result.totalMatches);
+      setManualMode(false);
       setStep("distribute");
     } catch (e) {
       toast({ title: "Distribution failed", description: e instanceof Error ? e.message : "", variant: "destructive" });
@@ -176,8 +214,15 @@ export function GenerateCallListDialog({
     }
   }
 
-  async function handleConfirm() {
+  async function handleConfirm(
+    mappingOverride?: Array<{ executionCaseId: number; teamMemberId: number }>,
+  ) {
     if (!distribution) return;
+    const mapping = mappingOverride ?? distribution.mapping;
+    if (mapping.length === 0) {
+      toast({ title: "Nothing to distribute", description: "Allocate at least one patient.", variant: "destructive" });
+      return;
+    }
     setConfirming(true);
     try {
       const res = await confirmDistribution({
@@ -186,7 +231,7 @@ export function GenerateCallListDialog({
         facility: distribution.facility,
         serviceDate: distribution.serviceDate,
         services: distribution.services ?? undefined,
-        mapping: distribution.mapping,
+        mapping,
       });
       setConflicts(res.conflicts);
       const members: ResultMember[] = res.members.map((m) => ({
@@ -247,14 +292,46 @@ export function GenerateCallListDialog({
     }
   }
 
+  // ── Derived manual-allocation state (cheap; safe when distribution null) ──
+  const manualPool = distribution ? distribution.mapping.map((m) => m.executionCaseId) : [];
+  const manualEligibleTotal = distribution?.totalMatches ?? manualPool.length;
+  // Assignable pool is what the preview actually returned (server caps the
+  // distribution pull); the count can never exceed it.
+  const manualSelected = Math.min(
+    resolveSelectedCount(countMode, manualEligibleTotal, customCount),
+    manualPool.length,
+  );
+  const manualSummary = computeAllocationSummary(manualSelected, manualMembers);
+  const manualMapping = buildManualMapping(manualPool, manualMembers);
+
+  function updateManualCount(teamMemberId: number, value: number) {
+    setManualMembers((prev) =>
+      prev.map((m) => (m.teamMemberId === teamMemberId ? { ...m, count: Math.max(0, Math.floor(value) || 0) } : m)),
+    );
+  }
+  function removeManualMember(teamMemberId: number) {
+    setManualMembers((prev) => prev.filter((m) => m.teamMemberId !== teamMemberId));
+  }
+  function handleAutoBalance() {
+    setManualMembers((prev) => autoBalance(manualSelected, prev));
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Generate Call List</DialogTitle>
+          <DialogTitle>
+            Generate Call List
+            {initialServiceDate ? (
+              <span className="ml-2 rounded-full bg-slate-900 px-2 py-0.5 text-xs font-medium text-white align-middle" data-testid="gcl-service-date">
+                {initialServiceDate}
+              </span>
+            ) : null}
+          </DialogTitle>
           <DialogDescription>
             Pick a facility + cohort, review the distribution, then confirm to
             assign, push to Team Portals, and generate secure share packages.
+            {initialServiceDate ? ` Distributing for ${initialServiceDate}.` : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -389,12 +466,142 @@ export function GenerateCallListDialog({
 
         {step === "distribute" && distribution && (
           <div className="space-y-3">
-            <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
-              <span className="font-semibold">{distribution.facility}</span> · {distribution.cohortLabel} ·{" "}
-              {distribution.serviceDate} · <span className="font-semibold">{distribution.totalMatches}</span> matches
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+              <div>
+                <span className="font-semibold">{distribution.facility}</span> · {distribution.cohortLabel} ·{" "}
+                {distribution.serviceDate} · <span className="font-semibold">{distribution.totalMatches}</span> eligible
+              </div>
+              <div className="flex items-center gap-1 rounded-full bg-white p-0.5 ring-1 ring-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setManualMode(false)}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium ${!manualMode ? "bg-slate-900 text-white" : "text-slate-600"}`}
+                  data-testid="gcl-mode-auto"
+                >
+                  Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setManualMode(true)}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium ${manualMode ? "bg-slate-900 text-white" : "text-slate-600"}`}
+                  data-testid="gcl-mode-manual"
+                >
+                  Manual
+                </button>
+              </div>
             </div>
 
-            {distribution.members.length === 0 ? (
+            {manualMode ? (
+              <div className="space-y-3" data-testid="gcl-manual-panel">
+                {/* Patient count: All eligible vs Custom */}
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Patients to distribute
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCountMode("all")}
+                      className={`rounded-full border px-3 py-1 text-xs ${countMode === "all" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 text-slate-600"}`}
+                      data-testid="gcl-count-all"
+                    >
+                      All Eligible ({manualEligibleTotal})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCountMode("custom")}
+                      className={`rounded-full border px-3 py-1 text-xs ${countMode === "custom" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 text-slate-600"}`}
+                      data-testid="gcl-count-custom"
+                    >
+                      Custom
+                    </button>
+                    {countMode === "custom" ? (
+                      <Input
+                        type="number"
+                        min={0}
+                        max={manualPool.length}
+                        value={customCount}
+                        onChange={(e) => setCustomCount(Number(e.target.value) || 0)}
+                        className="h-8 w-24"
+                        data-testid="gcl-count-input"
+                      />
+                    ) : null}
+                    {manualEligibleTotal > manualPool.length ? (
+                      <span className="text-[11px] text-amber-600">
+                        (distributing up to {manualPool.length} this run)
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* Allocation summary */}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="gcl-alloc-summary">
+                  <div className="rounded-lg bg-slate-50 p-2 text-center">
+                    <div className="text-lg font-bold text-slate-900" data-testid="gcl-alloc-selected">{manualSummary.selected}</div>
+                    <div className="text-[11px] text-slate-500">Selected</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2 text-center">
+                    <div className="text-lg font-bold text-slate-900" data-testid="gcl-alloc-allocated">{manualSummary.allocated}</div>
+                    <div className="text-[11px] text-slate-500">Allocated</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2 text-center">
+                    <div className="text-lg font-bold text-slate-900" data-testid="gcl-alloc-remaining">{manualSummary.remaining}</div>
+                    <div className="text-[11px] text-slate-500">Remaining</div>
+                  </div>
+                  <div className={`rounded-lg p-2 text-center ${manualSummary.overallocated > 0 ? "bg-rose-50" : "bg-slate-50"}`}>
+                    <div className={`text-lg font-bold ${manualSummary.overallocated > 0 ? "text-rose-600" : "text-slate-900"}`} data-testid="gcl-alloc-over">
+                      {manualSummary.overallocated}
+                    </div>
+                    <div className="text-[11px] text-slate-500">Overallocated</div>
+                  </div>
+                </div>
+
+                {manualSummary.overallocated > 0 ? (
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700" data-testid="gcl-overalloc-warning">
+                    You've allocated more patients than selected. Reduce counts to confirm.
+                  </div>
+                ) : null}
+
+                {/* Per-member editable counts */}
+                <div className="space-y-1.5">
+                  {manualMembers.length === 0 ? (
+                    <div className="rounded-lg border border-slate-200 p-3 text-sm text-slate-400">
+                      No team members. Auto-Distribute first to populate the roster.
+                    </div>
+                  ) : (
+                    manualMembers.map((m) => (
+                      <div key={m.teamMemberId} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2" data-testid={`gcl-manual-member-${m.teamMemberId}`}>
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{m.name}</span>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={m.count}
+                          onChange={(e) => updateManualCount(m.teamMemberId, Number(e.target.value))}
+                          className="h-8 w-20"
+                          data-testid={`gcl-manual-count-${m.teamMemberId}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeManualMember(m.teamMemberId)}
+                          className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-500"
+                          title="Remove"
+                          data-testid={`gcl-manual-remove-${m.teamMemberId}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <Button variant="outline" size="sm" onClick={handleAutoBalance} disabled={manualMembers.length === 0} data-testid="gcl-auto-balance">
+                    <Scale className="mr-1.5 h-3.5 w-3.5" /> Auto Balance
+                  </Button>
+                  <span className="text-[11px] text-slate-400">Overrides apply to this list only — not global settings.</span>
+                </div>
+              </div>
+            ) : distribution.members.length === 0 ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
                 No working members with capacity to receive this cohort.
               </div>
@@ -452,12 +659,19 @@ export function GenerateCallListDialog({
             <div className="flex justify-between">
               <Button variant="ghost" onClick={() => setStep("select")}>Back</Button>
               <Button
-                onClick={handleConfirm}
-                disabled={confirming || distribution.members.length === 0}
+                onClick={() => handleConfirm(manualMode ? manualMapping : undefined)}
+                disabled={
+                  confirming ||
+                  (manualMode
+                    ? !manualSummary.canConfirm
+                    : distribution.members.length === 0)
+                }
                 data-testid="gcl-confirm"
               >
                 {confirming ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-                Confirm &amp; Generate
+                {manualMode
+                  ? `Confirm ${manualSummary.allocated} & Generate`
+                  : "Confirm & Generate"}
               </Button>
             </div>
           </div>

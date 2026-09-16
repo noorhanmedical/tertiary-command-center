@@ -623,7 +623,7 @@ export default function TeamOpsPage() {
 
   return (
     <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-5 px-6 py-6">
+      <div className="mx-auto flex w-full max-w-[1520px] flex-col gap-6 px-6 py-6">
 
         {/* Header */}
         <PageHeader

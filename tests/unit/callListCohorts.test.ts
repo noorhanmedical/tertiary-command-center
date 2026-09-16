@@ -122,4 +122,33 @@ check("computeClinicDayWindow — overdue vs due-today classification", () => {
   );
 });
 
+check("refused + scheduled cohorts are canonical keys with correct defs", () => {
+  assert.ok(isCallListCohortKey("refused"), "refused should be a cohort key");
+  assert.ok(isCallListCohortKey("scheduled"), "scheduled should be a cohort key");
+  const refused = getCallListCohort("refused");
+  const scheduled = getCallListCohort("scheduled");
+  assert.equal(refused.label, "Refused");
+  assert.equal(scheduled.label, "Scheduled");
+  // refused reads the latest outreach outcome; scheduled reads canonical state.
+  assert.equal(refused.usesOutreachHistory, true);
+  assert.equal(scheduled.usesOutreachHistory, false);
+  // Neither is parameterized.
+  assert.equal(refused.parameterized, false);
+  assert.equal(scheduled.parameterized, false);
+});
+
+check("§17 required Call Status cohorts all present", () => {
+  for (const k of [
+    "never_called", // Never Contacted
+    "lvm",
+    "no_answer",
+    "callback_due",
+    "reached_not_scheduled", // Reached
+    "scheduled",
+    "refused",
+  ] as const) {
+    assert.ok(isCallListCohortKey(k), `${k} required by §17`);
+  }
+});
+
 console.log(`\ncallListCohorts: ${passed} checks passed\n`);

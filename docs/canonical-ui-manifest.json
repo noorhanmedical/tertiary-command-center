@@ -10,7 +10,6 @@
     "client/src/pages/drive.tsx",
     "client/src/pages/patient-care-specialist-portal.tsx",
     "client/src/pages/admin-settings.tsx",
-    "client/src/pages/engagement-center.tsx",
     "client/src/App.tsx",
     "client/src/lib/pdfGeneration.ts"
   ],
@@ -60,7 +59,7 @@
     },
     {
       "path": "client/src/calendar/UniversalCalendar.tsx",
-      "blob": "daccb0d4548c91f203b0b3c9db8c34dbe45250cd",
+      "blob": "de50dce33163c47b8f513e4a0259125ed4f93fd4",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -144,7 +143,7 @@
     },
     {
       "path": "client/src/components/DocumentSection.tsx",
-      "blob": "d26a88d36ab0fa8465ee00e1d603318ff7d26b26",
+      "blob": "e7f0a2cc3615dd88460c90ed0173d9040151a5d4",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -158,21 +157,21 @@
     },
     {
       "path": "client/src/components/GlobalNav.tsx",
-      "blob": "fecd5cec34fe367e2143dff5fdfd88fd99b7040a",
+      "blob": "110ba6bb19ce2016e7654e12d0e9a4979bc03180",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/components/HomeDashboard.tsx",
-      "blob": "37bc30474a8db97d9c8088c0fa08736fc9e8695e",
+      "blob": "bd720160fe288427b0b99d65559fd31c490c7d33",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/HomeDashboardPreview.tsx",
-      "blob": "874de560591b0ec1fa69dbf83abc08d876b4d5ec",
+      "blob": "e207249200d3f6f6b6fc355e1762c35857079cec",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -186,7 +185,7 @@
     },
     {
       "path": "client/src/components/HomeLiveDashboardPreview.tsx",
-      "blob": "6504d1737ada1136ead91460bff2298909f953a5",
+      "blob": "b01696cd1e7b2f7dc0f3fd502a0139866d752fb6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -200,7 +199,7 @@
     },
     {
       "path": "client/src/components/HomeWorldClocks.tsx",
-      "blob": "70a5ee544d1f308530715bef5d559f082b8bd73e",
+      "blob": "24d88fea0ecdbcb060938f28d3db371d151c163d",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -214,7 +213,7 @@
     },
     {
       "path": "client/src/components/PageHeader.tsx",
-      "blob": "2c3f26ada434a76636fb50abb4758229e895bb19",
+      "blob": "ac100cb13d7254f6b4b6f963958fcc48f7c180a6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -256,7 +255,7 @@
     },
     {
       "path": "client/src/components/PdfPatientSelectDialog.tsx",
-      "blob": "36ebb9416b581ffa6d474472270b347e5cffcba2",
+      "blob": "22be8cc1aec33e0ed8233133c9cb76e84dcc9edd",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -277,7 +276,7 @@
     },
     {
       "path": "client/src/components/ResultsView.tsx",
-      "blob": "456dce6d0b3bce4cac59a16ae4ec4a8f95bd9a0e",
+      "blob": "7b3a99a1814f93d51a1385764dabd32380c3563b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -298,7 +297,7 @@
     },
     {
       "path": "client/src/components/TopBanner.tsx",
-      "blob": "a9affc41d453f646fc821b1fc25c83ba999298e5",
+      "blob": "80a206f875d2ff06ce11389c491f2f6757d9ec05",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -326,7 +325,7 @@
     },
     {
       "path": "client/src/components/calendar/CanonicalCommandCalendar.tsx",
-      "blob": "f7f328b67355c760ca9d7025596299f3c36ab14e",
+      "blob": "4a5279cbed6201ec9e7992254e056fc7aac0dda5",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -361,14 +360,14 @@
     },
     {
       "path": "client/src/components/engagement/EngagementCallSettings.tsx",
-      "blob": "c5b136cd7cb90c7f36bd7b274ff3326e1dc236af",
+      "blob": "4f558d0e2c0d044738d8cfe333fb5de24f99c29f",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/engagement/EngagementCasePanel.tsx",
-      "blob": "17dd1449e496ebc459048654732521a3f58bb623",
+      "blob": "b0a166e568dcc115c04dd34bb6e0e11d92b918f7",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -410,7 +409,7 @@
     },
     {
       "path": "client/src/components/engagement/engagementShared.ts",
-      "blob": "101c91a80bf05da0f3984336c4c5c4b9b1c5cba8",
+      "blob": "1e3bcce3ad437a0a4715126bd55b212b13fe598f",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -431,7 +430,7 @@
     },
     {
       "path": "client/src/components/navigation/GlobalFloatingDock.tsx",
-      "blob": "fab3eeb9857584976570a833aaa3b3b7d44bd0ea",
+      "blob": "41abd62f2b87d67fba6386faa1a734ec6fd5e780",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -501,7 +500,7 @@
     },
     {
       "path": "client/src/components/outreach/DispositionSheet.tsx",
-      "blob": "1f16992846ad02c9b4c5d42a535b41e90edaef16",
+      "blob": "122e4baefcb8f79ebdbb443344977b4e069bfe8c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -571,7 +570,7 @@
     },
     {
       "path": "client/src/components/outreach/useOutreachData.ts",
-      "blob": "117e6d2961925cbbcca60395f56ca03c749e5fdb",
+      "blob": "6784bcaa5156638a4595b13a48f1449f3d181ec9",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -620,14 +619,14 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientChart.tsx",
-      "blob": "6ad9d9408664aa0bf1fab9d9f81f1541d16882cc",
+      "blob": "405cbbfa0ab08bfb65feac535a0e2fad6afb6f7b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/patient-directory/PatientChartSections.tsx",
-      "blob": "34b08526450b4464cb7147c423dd70e00e144fe9",
+      "blob": "ac4efd9067e8129dda6325e6675315f86b7c5482",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -676,7 +675,7 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientProfileWorkspace.tsx",
-      "blob": "de4199d9df30628c76606a01ae39110418c3f18b",
+      "blob": "c534142dab1e28a59ee9d0567fbad24f5911abae",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -690,14 +689,14 @@
     },
     {
       "path": "client/src/components/patient-directory/emrModel.ts",
-      "blob": "156d378a78cc5f2c7dc66b6817e6a312d1687e52",
+      "blob": "52c98e4d7f9505314a476e486b60b2a9fd5d398b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/patient-directory/profileTypes.ts",
-      "blob": "d57a607ef01dbd9c38ec9943ae30d78047417308",
+      "blob": "dfdf520c0d2de3202bb8b3f2dc78d54e83b3106c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -781,7 +780,7 @@
     },
     {
       "path": "client/src/components/physician/SignaturesTab.tsx",
-      "blob": "c92609ab0050ec25d9c223c3691b67019a0c23b8",
+      "blob": "012ca3303637c0e9c66f14bc3f73c156256cd7ae",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -809,14 +808,14 @@
     },
     {
       "path": "client/src/components/physician/orders/OrdersNotesPage.tsx",
-      "blob": "c3059d7863fbcd545b787aa0cdad8757df8ae32f",
+      "blob": "61af1dfe542983a1786f4542c367238557711587",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/physician/portalContext.tsx",
-      "blob": "86d627659681af3666049449da4084d3aa07e37e",
+      "blob": "b57d0299fa1f3833769a6c332852736944db36f0",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -865,7 +864,7 @@
     },
     {
       "path": "client/src/components/plexus-iq/PlexusIQActiveBatchHeader.tsx",
-      "blob": "88f703d5fa5690e8c4e438cd4e1e549f346ff327",
+      "blob": "9cc95d99fdcd80b55d7b31ab1a8b7e8f2258cab9",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -879,7 +878,7 @@
     },
     {
       "path": "client/src/components/plexus-iq/PlexusIQAddPatientModal.tsx",
-      "blob": "7e6eaba262d4ce3647ea99286475ad4335c5a481",
+      "blob": "86a60e662a887385086f07c3c4fa99c25a3b8b78",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -893,14 +892,14 @@
     },
     {
       "path": "client/src/components/plexus-iq/PlexusIQBatchFlowDialog.tsx",
-      "blob": "b05f46b41c6bcbbc9aa6ee46e9f8eaa00a449fda",
+      "blob": "9b9a43b900dda3d7749d39e1a3d6dc7e7e00f6b0",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/plexus-iq/PlexusIQBulkImportModal.tsx",
-      "blob": "2f61dfa7d43f2249e58c0dec5e59be5978c530ce",
+      "blob": "72c4f46321992443de571364d0cb302044e735c8",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -921,7 +920,7 @@
     },
     {
       "path": "client/src/components/plexus-iq/PlexusIQDayModal.tsx",
-      "blob": "7851ff8b1d91fa21cce4040309cccb7ad7047388",
+      "blob": "832c4d42670fc8066289fa1a55fb951239b7497c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -963,7 +962,7 @@
     },
     {
       "path": "client/src/components/plexus-iq/PlexusIQWorkspace.tsx",
-      "blob": "682d043e87ab2b26e0747bca2dbdaa43aba26179",
+      "blob": "c2432c55c63a10b0446581f3896c9327d15b1d7a",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -977,28 +976,28 @@
     },
     {
       "path": "client/src/components/plexus-iq/design-prototypes/PlexusIQOperatingCanvasPrototype.tsx",
-      "blob": "4e7cf57ba65b2f6cffad22115e82f9ec025b1d1c",
+      "blob": "95483c34683dd86e44d4cc383e85423249450039",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/plexus-iq/operating/PlexusIQDatePanel.tsx",
-      "blob": "afb4bc4a60bd0e98b1a79c78851939e8d0cb77f4",
+      "blob": "ab46eee721a1852225d903f66e20562f7e3f185e",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/plexus-iq/operating/PlexusIQListBar.tsx",
-      "blob": "bad55272ea9b4dd6acdba7e413882e51bf47a6c9",
+      "blob": "1fe31291d9aed88b276ba24aa1aeb6cd91f881f1",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/plexus-iq/operating/PlexusIQOperatingList.tsx",
-      "blob": "769137aba7ddb79a715930a91a2c704f199e15e9",
+      "blob": "0c9f67f879360ec3068b63b36fb2919da454bd9a",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1047,35 +1046,35 @@
     },
     {
       "path": "client/src/components/portal/AncillaryDocModals.tsx",
-      "blob": "80e4b2160280a4c3bcdfda1ae1c8de47846d7636",
+      "blob": "c0b1dc470d7d67000d82969c5ea6559537b27dbd",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/AncillaryReadinessRow.tsx",
-      "blob": "2f923a3fa0f62ef5e6c2459fcedde4f52aae1c66",
+      "blob": "e085d2d754602db3648a4e1a18017da022d5ff9e",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/CalendarQuickScheduleDialog.tsx",
-      "blob": "c0f0f51148f3b0f08e7d6a82f8e9e284ccda835f",
+      "blob": "e113527266f5121b8387840abdc349517c22a191",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/CallRowQuickActions.tsx",
-      "blob": "098ce74b31d8398f24f33b0e4d0cb840692392af",
+      "blob": "f182297002b874d26f47febdc7c745fc542b6046",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/CallWorkspace.tsx",
-      "blob": "437f5556455c8b26b5148fd4afbb2890364b9525",
+      "blob": "1488d757e743c539563299dd680034bcf0dae8bd",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1089,28 +1088,28 @@
     },
     {
       "path": "client/src/components/portal/CaseOverview.tsx",
-      "blob": "13bddca994627fdeac8c286003635a202e43b349",
+      "blob": "16b43caa20377ec6673f29a18c3acdd5b1016eab",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/CompactCallRow.tsx",
-      "blob": "5addafea8bc13ca301af3e024fddcd9f89ead0ff",
+      "blob": "0c512275c5b4f36d83d42fd331cb52b5990ba2d6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/InternalContactsTool.tsx",
-      "blob": "15d63c5ef8fb9eec6ad440ce5e913c962693c353",
+      "blob": "b582508e909306698e851b43c6288de850458295",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/InvoiceDeskPanel.tsx",
-      "blob": "21e5c7609d203870133b55644e9272ecb5d042eb",
+      "blob": "2ad6569ebcaed89b7fc12bbd67178f4af62f5889",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1166,21 +1165,21 @@
     },
     {
       "path": "client/src/components/portal/PortalDocumentLibraryTab.tsx",
-      "blob": "2eccba1792493018f2bb443ed008fd6ac030e70b",
+      "blob": "e4fb404c4fe426221da9643a1245281379f3ddf6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/PortalEmailComposerTab.tsx",
-      "blob": "95a6061f88c94cee749d8e8d1c84fb83608254f4",
+      "blob": "029ff9cc18e9b6ea554a0d598e6d37f355b6d6df",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/PortalMarketingTab.tsx",
-      "blob": "43952a32e7aeb41539b5c730ac9916f4aa238a13",
+      "blob": "58e689b560d007f322da154af1d5b2cd853afda6",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1194,35 +1193,35 @@
     },
     {
       "path": "client/src/components/portal/PortalPatientDirectory.tsx",
-      "blob": "918bcef4b5b58741713f71ae76b9a8ed6527dc06",
+      "blob": "1d61f2f28b885bdb5696628748f1490b545d6923",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/PortalPatientSearchTab.tsx",
-      "blob": "a22c9a3ad7369548385a87cdc55c2a6b5ade67fc",
+      "blob": "a85af80ca58f0701113110d2ee24aed14c1e560b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/PortalPlexusTasksTab.tsx",
-      "blob": "cabaeb41932680469faae21b0cab9745b7e12661",
+      "blob": "d5204aa50149078c45d94bf886fd48bb9d522188",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/PortalShell.tsx",
-      "blob": "6dfbe1dcf43f00128f3e7d2e0f2bb0ceeef3acb6",
+      "blob": "0ab0e9dab94fd5c946779cb050693eb921bd4241",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/PortalTemplatesResourcesTab.tsx",
-      "blob": "358caac63b93301455d27d06a36628b16baf0e32",
+      "blob": "226ab6a74db9e622e2111041fc59bf3215b5b558",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1236,35 +1235,35 @@
     },
     {
       "path": "client/src/components/portal/QuickNoteTool.tsx",
-      "blob": "93f8e94344fda87c1641b973bed8507cdb690510",
+      "blob": "fcdf49f07a12a3ca834f3207d83ad3ce02e5d0db",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/ReportUploadPanel.tsx",
-      "blob": "d0949d31004a947f459bf6d27729ac78a21c347d",
+      "blob": "bd7b0c39fbf63b4bdd37050b219ffd2f6f7e6bb2",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/SchedulePatientDialog.tsx",
-      "blob": "8300bf3e72b78ee4719e521f1c55ac22d76f62e2",
+      "blob": "5184e7d51ea73525a1cb30b857cf563cbd992cb1",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/SchedulePatientPlayground.tsx",
-      "blob": "0a8fc7a6d2ef0e00fe4e044af4809aa93de3ae56",
+      "blob": "40b225dd93a86770e38f78c453966f83614675eb",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/SchedulingWorkspace.tsx",
-      "blob": "546e317452923a88895a00b47f601d37f0b01b33",
+      "blob": "a2d6b90cfa98130b48b1ca58eb1727c15a2175cc",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1285,14 +1284,14 @@
     },
     {
       "path": "client/src/components/portal/TeamPortalShell.tsx",
-      "blob": "0ff51370805fdd7f6e4c7301336b6156d86ed38c",
+      "blob": "276ca0b889dc3e41e0f5e375fbd7ac76b7b30a0b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/WorkspaceModeSwitcher.tsx",
-      "blob": "ada50753369655ef41725aae225c3473a586d382",
+      "blob": "f7378b345016a9ba727bd41ab69aa9a79750c09c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1306,35 +1305,35 @@
     },
     {
       "path": "client/src/components/portal/caseWorkspace.ts",
-      "blob": "746e517a67cd77c44b500b59c53fc23a3bb69ec6",
+      "blob": "9f72e8f15041e8f4f36042935a9f719f191ab9f5",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/leftRail/LeftRailCompactCalendar.tsx",
-      "blob": "e631932492748486fa18570e862cfb9c12aaa840",
+      "blob": "3352a2345291b9f1a1b82d4cc73e9bcce7a35d35",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/leftRail/LeftRailToolsButton.tsx",
-      "blob": "8af648b3ab071af57359dcd94f960ab26824bd05",
+      "blob": "f8f32334d94852ca18119224ff5164c0e6c9b867",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/messaging/PortalMessagesPanel.tsx",
-      "blob": "ac028dc72ad01fd4cdafe8a2ce47f966e844f35e",
+      "blob": "2e5e690e17d915102026281b23f6336e08e3c52b",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/messaging/PortalMessagesWindow.tsx",
-      "blob": "34d5a2961d9d84a997290d382fea83ec3d324fe7",
+      "blob": "f3b22240c6472ab6674a7734871ee6bbe0a8e49e",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1348,21 +1347,21 @@
     },
     {
       "path": "client/src/components/portal/tools/CommunicationTray.tsx",
-      "blob": "8d8af637c47c28056267a9af73e2d2e063940669",
+      "blob": "923449e5bd9b66e5716f571f82e6d459bfff3ac0",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/tools/ToolDock.tsx",
-      "blob": "488cbff971cc65f53465864bd231bb230dea3f39",
+      "blob": "7f8ddbaceeae30725b28f4d22e0a537b1f35ca55",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/portal/tools/WorkspaceSettingsDialog.tsx",
-      "blob": "c1cbc1e36f973dbecc04049f9e718ff1763c5947",
+      "blob": "930e7e39f30eefb3f1ce4b5990484a33638923b5",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1376,7 +1375,7 @@
     },
     {
       "path": "client/src/components/portal/tools/workspacePrefs.ts",
-      "blob": "c501632ed6d13acb1c0dc5feb2fb794ea4a1d34c",
+      "blob": "6aadaf11c3e636d50a7d51665a7e342091555232",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1425,7 +1424,7 @@
     },
     {
       "path": "client/src/components/qualification/OutreachBuildPane.tsx",
-      "blob": "da4247b82bf67181fc8cc184b6aa89bee8b7d51d",
+      "blob": "3d6704beeeeb3e1513d36992d7923f70785699fb",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1439,7 +1438,7 @@
     },
     {
       "path": "client/src/components/qualification/PatientPdfActions.tsx",
-      "blob": "1901dd56eec445e8c71d9199114d6419c3c4848c",
+      "blob": "731e5c4c8146b997e1913f0ba2e0ae10cf982d64",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1516,7 +1515,7 @@
     },
     {
       "path": "client/src/components/ui/button.tsx",
-      "blob": "409cfbfa02148aab0147bcc13b838b749e4cc45a",
+      "blob": "678893b31f1f4c911d842d83223f34a236431037",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1796,7 +1795,7 @@
     },
     {
       "path": "client/src/components/workflow/ClinicWorkflowPortal.tsx",
-      "blob": "de4648982b28fa2b179ec2d81d24161e2fd1c012",
+      "blob": "e74ada70404efb373ff7b3520e13d3b852028a7e",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -1943,21 +1942,21 @@
     },
     {
       "path": "client/src/features/command-center/providers/manualPhoneProvider.ts",
-      "blob": "504a630a58e12a7f9d8299d9de94239adac10622",
+      "blob": "4d403477cba3082404c3050073e8aa746e8ea783",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/features/command-center/providers/phoneProviderTypes.ts",
-      "blob": "f9baf6da854cea35ca03262abc35b8ec0071ca4a",
+      "blob": "e0a8355cfed8bda67ffc3aeafe47fcc229601ae3",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/features/command-center/providers/ringCentralProvider.ts",
-      "blob": "7a2c96df06dad9e223e3cfa71c22019aefcc106b",
+      "blob": "55db0658d95789b95a38c088a47d2006bc1566be",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2097,7 +2096,7 @@
     },
     {
       "path": "client/src/hooks/api/engagementCallSettings.ts",
-      "blob": "2c07e91546b9dbe8d6f60de92e510e744d5d3adc",
+      "blob": "b781789bc9b656d1673d4719e959fa8ab4d5e905",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2139,7 +2138,7 @@
     },
     {
       "path": "client/src/hooks/api/keys.ts",
-      "blob": "fdce60b5148bd968be300fb8af24bb4a2d4b0abc",
+      "blob": "841f763b09b232b70d259b918fd1a8c5528dd5ad",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2153,7 +2152,7 @@
     },
     {
       "path": "client/src/hooks/api/missionControl.ts",
-      "blob": "e67f0aab1333e0458273afbaee70469e354031ab",
+      "blob": "868ea1eecf042ca44ae1422d48d60b19b93e8f09",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2188,14 +2187,14 @@
     },
     {
       "path": "client/src/hooks/api/scheduler-assignments.ts",
-      "blob": "ea96b14bed18f74fc95db4bc25a69f051f71401f",
+      "blob": "5e3d761ae5b303a284076b5694d2d2fcbdc4bde3",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/hooks/api/screening-batches.ts",
-      "blob": "fa6f33b1feea456cc5014edc70765c9b64dd7ea3",
+      "blob": "067b4ae333747779191a7bd740a7e10a968412d4",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2230,7 +2229,7 @@
     },
     {
       "path": "client/src/index.css",
-      "blob": "933576e48ff52f07012457208045a158365d7673",
+      "blob": "d7917642b1e63b4d86f2732afafe3fd2619409ba",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2370,7 +2369,7 @@
     },
     {
       "path": "client/src/lib/navigation/navigationRegistry.ts",
-      "blob": "04758debe21fa039a6cea4137cd53892af1840b8",
+      "blob": "ff272816571b7575999b400fc3282660af6f3703",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2391,7 +2390,7 @@
     },
     {
       "path": "client/src/lib/packetQa.ts",
-      "blob": "b57836f3617e21ae2662892718abca0144801de3",
+      "blob": "d388de2c1d7482d4919527b794b11ab9fdfa7462",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2475,7 +2474,7 @@
     },
     {
       "path": "client/src/lib/plexusIqClinicalImportApi.ts",
-      "blob": "079528d7e5819505bfdafc77c9ccae64af178f33",
+      "blob": "fdb05fe56ff9cce48bc72d1af8ae5ac8f27d5d20",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2559,7 +2558,7 @@
     },
     {
       "path": "client/src/lib/queryClient.ts",
-      "blob": "57bce2cad26eced5cb3280f9546a463de102d56a",
+      "blob": "5be828f18dc7a2855c8f0012602f4bfe11c31dcf",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2608,7 +2607,7 @@
     },
     {
       "path": "client/src/lib/workflow/procedureEventsApi.ts",
-      "blob": "cf0b8ab849e74d8895365f2a3eed99558b096aa2",
+      "blob": "c1a3169cfbf62cf102073bf98eac1ae39264c701",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2629,14 +2628,14 @@
     },
     {
       "path": "client/src/lib/workflow/teamMemberProfileApi.ts",
-      "blob": "89ad67134863441bfed5357874e9a56266c47888",
+      "blob": "890b5aa985cbf440e9547fb42e258f5f4f509789",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/lib/workflow/teamMemberWorkspaceApi.ts",
-      "blob": "345e8aa22e96eb114ec1ab4f7ef80fe9f70fa37f",
+      "blob": "4a14aeee42f860aa8cd6502b67dd08fc1fa6f1b1",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2650,7 +2649,7 @@
     },
     {
       "path": "client/src/pages/SchedulePage.tsx",
-      "blob": "5fb0e40b3f524369c424d93ac0536c505884dbef",
+      "blob": "fa0fc595532b879a47941955905cbb31a1ccf864",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2713,7 +2712,7 @@
     },
     {
       "path": "client/src/pages/appointments.tsx",
-      "blob": "1b179463352434d59cdf3e6c26bd0e977f277706",
+      "blob": "056ac844ea3d4f26af5d73ce2bf489a7f410addc",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2755,7 +2754,7 @@
     },
     {
       "path": "client/src/pages/billing.tsx",
-      "blob": "d010ce17018cdcd7b91148d22e5c5b6b5c70f929",
+      "blob": "875d9648f8c7398db15c281c70e4162397fad2c5",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2769,14 +2768,14 @@
     },
     {
       "path": "client/src/pages/clinic-analytics.tsx",
-      "blob": "95281ccb113688253bda249e68673d97136d1010",
+      "blob": "7870dcafd66320bb636d538c76d0861dc3b12b9f",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/clinic-onboarding.tsx",
-      "blob": "19153db15dce7c0a24f010e8a00b5f00aee51e0e",
+      "blob": "111dd3a0d0183d65daab452c5ac696c7d2fa5675",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2790,14 +2789,14 @@
     },
     {
       "path": "client/src/pages/clinical-intelligence.tsx",
-      "blob": "5e0f20d7b3d88ebf3b99b03f015b67397cb09002",
+      "blob": "ab224efa0c142e71d6067e3bef85139c54f99191",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/document-library.tsx",
-      "blob": "f8a1b4692c5551a7c6803f8bbebcd59532d2bdf7",
+      "blob": "89a74efd00b91255b0936580a866f128c4f3260e",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2811,7 +2810,7 @@
     },
     {
       "path": "client/src/pages/documents.tsx",
-      "blob": "552b3f8e914f5ce7f8c57fdeebc04b00cb9aed2d",
+      "blob": "ea325f1c323e014c9b03d610bc297fb6d71836da",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2825,28 +2824,28 @@
     },
     {
       "path": "client/src/pages/engagement-center.tsx",
-      "blob": "c358b669696056d59d284bdeead4524855bc2c4d",
+      "blob": "879b22152525bf05f5ed001e9e13e70616d499de",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/home-preview.tsx",
-      "blob": "ad56f687330256884791c5ad8b249329e86d4b85",
+      "blob": "1a59fa84381de771c93f14597fdd5b8efe1ffaa0",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/home.tsx",
-      "blob": "6b00a1f6841760327115dc92827b4ec29ca458a3",
+      "blob": "8cededa5f51917a6dd67730f80e15f9e1ed92b64",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/imaging-central.tsx",
-      "blob": "ffa00c8a1938ce4c09fdc211fde56e94abdf3545",
+      "blob": "6cb5c268a97b0676663af237348e2dbe389e5cb4",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2874,7 +2873,7 @@
     },
     {
       "path": "client/src/pages/invoices.tsx",
-      "blob": "409756dfbe0e06d977c5168c9f6276d535dd51e3",
+      "blob": "dce510069535d7a7ad1b52581be00e72d400dfe3",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2888,14 +2887,14 @@
     },
     {
       "path": "client/src/pages/login.tsx",
-      "blob": "3e8cb4a80a70a6e08a37df25eed1c0121e48e02b",
+      "blob": "58d21032df86cb00cd8f2a62df34a7512fc9b83f",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/mission-control.tsx",
-      "blob": "90125ef724d280c28199ee570cc34ec0226c2d40",
+      "blob": "1f8583105ead82060c54dec18353f5357b76cf00",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2937,7 +2936,7 @@
     },
     {
       "path": "client/src/pages/patient-database.tsx",
-      "blob": "13efded66848b97566050d582bcc63681a92f817",
+      "blob": "eea61fbd1bf474bcdb00a397ab3c5845fd858526",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2958,7 +2957,7 @@
     },
     {
       "path": "client/src/pages/plexus-bank.tsx",
-      "blob": "8f80ec29cc8bb1c5f6ead5621d44a2e56b2f62a5",
+      "blob": "237c0692824d628b0df9957e3611a316171598a1",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3007,14 +3006,14 @@
     },
     {
       "path": "client/src/pages/plexus-iq.tsx",
-      "blob": "fc4b88b733842acff383172f0d920df2d5c13453",
+      "blob": "4d6f914192f8dcae5f9e2b565770bb431f4a3ea4",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/plexus-tasks.tsx",
-      "blob": "0fe713855a47078b2d4d850965c2d0c14edb14a8",
+      "blob": "e8b6d0bd94d4b8a226051ac767b3e3225860b88c",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3028,7 +3027,7 @@
     },
     {
       "path": "client/src/pages/qualification.tsx",
-      "blob": "de0035ee558b72aa68c3821bed7dea75434538e8",
+      "blob": "88969da435c4e023a541144b3b8c8a105ae34862",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3042,7 +3041,7 @@
     },
     {
       "path": "client/src/pages/schedule-dashboard.tsx",
-      "blob": "2d27e3b860bd692481998102035f9b2549c7b61f",
+      "blob": "78d75e359da07d96f458d6349ab1356eae5d56bd",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3056,7 +3055,7 @@
     },
     {
       "path": "client/src/pages/shared-schedule.tsx",
-      "blob": "5a1830d743f48cbb8d634411c9c10cde13854480",
+      "blob": "0b9a680265a14e5fa3145910c08a50c661a939ec",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3077,14 +3076,14 @@
     },
     {
       "path": "client/src/pages/team-member-portals.tsx",
-      "blob": "494b985ef8d2e98058d61f2cf16abb04b851cf05",
+      "blob": "82248308ee2b6127f7a1629f8481110fb51ebac5",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/team-ops.tsx",
-      "blob": "29ab49e434641d2ef26781eaa566830340fe3320",
+      "blob": "a98034c64ad64bb4e804a86d41449b11a20781fb",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3098,7 +3097,7 @@
     },
     {
       "path": "client/src/types/emr.ts",
-      "blob": "22c6bd5e2cca68a75eab3cb6cfe5ad500ef786f4",
+      "blob": "b2070a2be71e14789509dedb11f460daad7f0ee7",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

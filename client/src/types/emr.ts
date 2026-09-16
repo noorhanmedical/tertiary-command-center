@@ -315,6 +315,12 @@ export interface EmrPlexusIq {
   supportingDiagnoses?: string[] | null;
   adminApprovalStatus?: string | null;
   adminApprovalNote?: string | null;
+  /** Canonical screening status: draft | processing | completed | error. */
+  iqStatus?: string | null;
+  /** True when reasoning carries an analysis-failure sentinel (provider
+   *  failure) — distinct from a successful empty (Not Qualified) result. */
+  iqFailed?: boolean;
+  iqFailureReason?: string | null;
 }
 
 // ── Active execution cases ──────────────────────────────────────────────

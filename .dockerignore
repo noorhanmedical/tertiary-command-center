@@ -1,0 +1,49 @@
+# Keep the Docker build context lean and reproducible. Only what the build
+# and runtime need should enter the image.
+
+# VCS / CI
+.git
+.github
+.gitignore
+.gitattributes
+
+# Dependencies + build output (rebuilt inside the image)
+node_modules
+dist
+infrastructure/cdk.out
+infrastructure/node_modules
+
+# Local env / secrets — never bake into an image
+.env
+.env.*
+!.env.example
+cookies.txt
+infrastructure/cookies.txt
+
+# Editor / OS cruft
+.DS_Store
+.vscode
+.idea
+
+# Tests + E2E artifacts (not needed at runtime)
+tests
+test-results
+playwright-report
+**/*.spec.ts
+
+# Local-only recovery / sandbox dirs
+tmp_recovery
+artifacts
+storage
+
+# Stray nested clone (operator-local, must never ship)
+tertiary-command-center
+
+# Docs / summaries / archives
+*.md
+!replit.md
+*.tar.gz
+PLEXUS_WORK_SUMMARY.html
+
+# Replit-specific
+.replit

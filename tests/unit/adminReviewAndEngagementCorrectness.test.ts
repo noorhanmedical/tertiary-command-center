@@ -453,7 +453,7 @@ async function testCanonicalUiManifestResolved() {
   // The file entry has the new hash.
   const entry = manifest.files.find((f) => f.path === "client/src/pages/engagement-center.tsx");
   assert.ok(entry, "manifest must still list the file");
-  assert.equal(entry!.blob, "c358b669696056d59d284bdeead4524855bc2c4d",
+  assert.equal(entry!.blob, "879b22152525bf05f5ed001e9e13e70616d499de",
     "manifest hash must match current git blob");
 }
 

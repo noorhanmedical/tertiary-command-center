@@ -41,14 +41,43 @@ export type MissionRepoDeps = Pick<
   | "countUpcomingAncillaryPatients_UNAVAILABLE"
 >;
 
-// Client wire format (from client/src/hooks/api/missionControl.ts):
-//   Wrapped<T> = { value: T; sourceMissing: boolean }
-// sourceMissing = TRUE only when repository returned `available: false`.
-type Wrapped<T> = { value: T; sourceMissing: boolean };
+// Canonical Mission Control metric contract (MC-DATA-001). ONE per-field
+// shape shared conceptually with client/src/hooks/api/missionControl.ts
+// (MissionMetric). Availability is decided ONLY by the repository's
+// discriminated `MetricValue.available` — never by `value === 0`. A real
+// measured 0 is { value: 0, sourceMissing: false }; an unavailable source is
+// { value: null, sourceMissing: true }. `0` is NEVER a stand-in for missing,
+// and no metric's availability depends on a sibling's.
+export type MetricUnit = "count" | "currency" | "percent" | "duration";
 
-function wrapCount(m: MetricValue<number>, fallback = 0): Wrapped<number> {
-  if (m.available) return { value: m.value, sourceMissing: false };
-  return { value: fallback, sourceMissing: true };
+export type MissionMetric = {
+  key: string;
+  value: number | null;
+  unit: MetricUnit;
+  sourceMissing: boolean;
+  reason?: string;
+};
+
+// Map a repository MetricValue → a MissionMetric. Available → real value
+// (including 0); unavailable → null + the repo's reason.
+function metric(
+  key: string,
+  m: MetricValue<number>,
+  unit: MetricUnit = "count",
+): MissionMetric {
+  return m.available
+    ? { key, value: m.value, unit, sourceMissing: false }
+    : { key, value: null, unit, sourceMissing: true, reason: m.reason };
+}
+
+// A metric whose authoritative source is not wired yet. NEVER a 0 — the
+// value is null so the UI renders an honest "—" rather than a fake zero.
+function missingMetric(
+  key: string,
+  reason: string,
+  unit: MetricUnit = "count",
+): MissionMetric {
+  return { key, value: null, unit, sourceMissing: true, reason };
 }
 
 export type MissionLaneStatus =
@@ -171,19 +200,32 @@ export async function buildMissionControlSpine(
   ]);
 
   const spine = {
-    prescreen: wrapCount(prescreen),
-    // readyToCall / followUp / declined / re-eligible / pending have
-    // no authoritative single-table definition yet — kept unavailable
-    // until a scoped repo helper is authored.
-    readyToCall: { value: 0, sourceMissing: true } as Wrapped<number>,
-    followUp: { value: 0, sourceMissing: true } as Wrapped<number>,
-    callbacks: wrapCount(callbacksPending),
-    pending: wrapCount(upcomingAncillary),
-    noReport: wrapCount(reportsMissing),
-    reEligible: { value: 0, sourceMissing: true } as Wrapped<number>,
-    declined: { value: 0, sourceMissing: true } as Wrapped<number>,
-    readyForBilling: wrapCount(readyForBilling),
-    tasks: wrapCount(openTasks),
+    prescreen: metric("spine.prescreen", prescreen),
+    // readyToCall / followUp / declined / re-eligible have no authoritative
+    // single-table definition yet — honestly unavailable (value: null),
+    // NOT a fake 0, until a scoped repo helper is authored (MC-DATA-003).
+    readyToCall: missingMetric(
+      "spine.readyToCall",
+      "No scoped ready-to-call helper yet (MC-DATA-003).",
+    ),
+    followUp: missingMetric(
+      "spine.followUp",
+      "No scoped follow-up helper yet (MC-DATA-003).",
+    ),
+    callbacks: metric("spine.callbacks", callbacksPending),
+    // upcomingAncillary is explicitly UNAVAILABLE from the repo → null.
+    pending: metric("spine.pending", upcomingAncillary),
+    noReport: metric("spine.noReport", reportsMissing),
+    reEligible: missingMetric(
+      "spine.reEligible",
+      "No authoritative re-eligible source yet.",
+    ),
+    declined: missingMetric(
+      "spine.declined",
+      "No scoped declined helper yet (MC-DATA-003).",
+    ),
+    readyForBilling: metric("spine.readyForBilling", readyForBilling),
+    tasks: metric("spine.tasks", openTasks),
   };
 
   const roleQueues = ROLE_DEFS.map(({ role, label }) => ({
@@ -205,69 +247,81 @@ export async function buildMissionControlSpine(
     clinics: [] as string[],
     owners: [] as string[],
     roleQueues,
+    // Per-field metric contract (MC-DATA-001). NO section-level sourceMissing:
+    // each metric carries its own availability, so a live metric (e.g.
+    // inPipeline, tasksOpen, billingReady) is NEVER blanked by an unavailable
+    // sibling. Not-yet-wired metrics are honest `missingMetric` (value: null),
+    // NOT a fake 0.
     sections: {
       calls: {
-        madeToday: 0,
-        reachedToday: 0,
-        callbacksPending: callbacksPending.available ? callbacksPending.value : 0,
-        madeLast7: 0,
         // madeToday / reachedToday / madeLast7 need a scoped date-window
-        // count on outreach_calls.started_at + outcome; kept sourceMissing
-        // until a scoped helper lands.
-        sourceMissing: !callbacksPending.available,
+        // count on outreach_calls.started_at + outcome (MC-DATA-003).
+        madeToday: missingMetric(
+          "calls.madeToday",
+          "outreach_calls window count not wired yet (MC-DATA-003).",
+        ),
+        reachedToday: missingMetric(
+          "calls.reachedToday",
+          "reached-outcome window count not wired yet (MC-DATA-003).",
+        ),
+        callbacksPending: metric("calls.callbacksPending", callbacksPending),
+        madeLast7: missingMetric(
+          "calls.madeLast7",
+          "outreach_calls 7d count not wired yet (MC-DATA-003).",
+        ),
       },
       patientServices: {
-        // Client contract fields; the "activePatients" concept is
-        // reported honestly as inPipeline (execution cases actively
-        // in the pipeline).
-        inPipeline: activeCases.available ? activeCases.value : 0,
-        prescreenBacklog: prescreen.available ? prescreen.value : 0,
-        pendingAncillary: upcomingAncillary.available ? upcomingAncillary.value : 0,
-        declinedLast7: 0,
-        // declinedLast7 needs a scoped outreach_calls query with
-        // outcome IN ('declined','not_interested','refused_dnc') in
-        // last 7 days — kept unavailable until authored.
-        sourceMissing:
-          !activeCases.available ||
-          !prescreen.available ||
-          !upcomingAncillary.available,
+        // inPipeline = execution cases actively in the pipeline (live).
+        inPipeline: metric("patientServices.inPipeline", activeCases),
+        prescreenBacklog: metric("patientServices.prescreenBacklog", prescreen),
+        pendingAncillary: metric("patientServices.pendingAncillary", upcomingAncillary),
+        declinedLast7: missingMetric(
+          "patientServices.declinedLast7",
+          "declined-outcome 7d count not wired yet (MC-DATA-003).",
+        ),
       },
       finance: {
-        billingReady: readyForBilling.available ? readyForBilling.value : 0,
-        invoicesSubmitted: 0,
-        paidAmount: 0,
-        outstandingBalance: 0,
-        // Mission Control 60-day overdue split + paid/submitted require an
-        // audited invoice + remittance aggregation that has not been
-        // authored yet. Kept sourceMissing — we do NOT populate with the
-        // Home Stats numbers because those are clinic-scoped and this
-        // section is platform-wide.
-        sourceMissing: true,
+        billingReady: metric("finance.billingReady", readyForBilling),
+        invoicesSubmitted: missingMetric(
+          "finance.invoicesSubmitted",
+          "invoice submission count not wired yet (MC-DATA-007).",
+        ),
+        paidAmount: missingMetric(
+          "finance.paidAmount",
+          "collections source not wired yet (MC-DATA-007).",
+          "currency",
+        ),
+        outstandingBalance: missingMetric(
+          "finance.outstandingBalance",
+          "AR source not wired yet (MC-DATA-007).",
+          "currency",
+        ),
       },
       operations: {
-        tasksOpen: openTasks.available ? openTasks.value : 0,
-        tasksOverdue: 0,
-        tasksHighPriority: 0,
-        // tasksOverdue / tasksHighPriority require joining plexus_tasks
-        // on due_date + priority indexes that are not yet in place.
-        // sourceMissing reflects the derived overdue / high-priority
-        // fields, not the tasksOpen count.
-        sourceMissing: true,
+        tasksOpen: metric("operations.tasksOpen", openTasks),
+        tasksOverdue: missingMetric(
+          "operations.tasksOverdue",
+          "overdue-task predicate not wired yet (MC-DATA-006).",
+        ),
+        tasksHighPriority: missingMetric(
+          "operations.tasksHighPriority",
+          "high-priority predicate not wired yet (MC-DATA-006).",
+        ),
       },
       ancillaryToday: {
-        scheduledToday: scheduledToday.available ? scheduledToday.value : 0,
-        completedToday: 0,
-        cancelledToday: 0,
-        // completedToday / cancelledToday need
-        // procedure_events.completed_at filtered by today, plus
-        // globalScheduleEvents.status counts. Kept sourceMissing.
-        sourceMissing: !scheduledToday.available,
+        scheduledToday: metric("ancillaryToday.scheduledToday", scheduledToday),
+        completedToday: missingMetric(
+          "ancillaryToday.completedToday",
+          "procedure completion count not wired yet (MC-DATA-004).",
+        ),
+        cancelledToday: missingMetric(
+          "ancillaryToday.cancelledToday",
+          "cancellation count not wired yet (MC-DATA-004).",
+        ),
       },
-      // Non-client-contract server extras. Ignored by TypeScript on the
-      // client; safe to include.
+      // Non-client-contract server extra. Ignored by the client type; safe.
       qualification: {
-        backlog: qualificationBacklog.available ? qualificationBacklog.value : 0,
-        sourceMissing: !qualificationBacklog.available,
+        backlog: metric("qualification.backlog", qualificationBacklog),
       },
     },
     ringCentral: { connected: false as const },

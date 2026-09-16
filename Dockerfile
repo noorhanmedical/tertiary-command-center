@@ -1,7 +1,12 @@
 # =============================================================================
-# Plexus Command Center — Production Dockerfile
+# Plexus Command Center — Production/Staging Dockerfile
 # Multi-stage build: compile TypeScript + bundle React, then run in slim image.
-# Runs database migrations at startup before launching the app.
+#
+# The default container command runs the APPLICATION ONLY (node dist/index.cjs).
+# Database schema changes are applied out-of-band by a dedicated one-shot ECS
+# "migrate" task that overrides the command (see the MigrationTaskDef in
+# infrastructure/lib/plexus-staging-stack.ts). Nothing mutates the schema on
+# normal app startup.
 # =============================================================================
 
 # --- Stage 1: Build -----------------------------------------------------------
@@ -53,6 +58,15 @@ RUN mkdir -p /app/storage /app/tmp && chown -R appuser:appgroup /app/storage /ap
 
 USER appuser
 
-# Start: run migrations then launch app
+# -----------------------------------------------------------------------------
+# Default command: run the APPLICATION ONLY.
+#
+# Schema changes are NOT applied here. Running `drizzle-kit push` on every
+# container start is destructive and races across rolling ECS tasks. Migrations
+# run exactly once via the dedicated one-shot ECS "migrate" task definition,
+# which overrides this command with:
+#     sh -c "HOME=/app/tmp npx drizzle-kit push"
+# (see infrastructure/lib/plexus-staging-stack.ts -> MigrationTaskDef).
+# -----------------------------------------------------------------------------
 ENV NODE_ENV=production
-CMD ["sh", "-c", "HOME=/app/tmp npx drizzle-kit push --force && node dist/index.cjs"]
+CMD ["node", "dist/index.cjs"]

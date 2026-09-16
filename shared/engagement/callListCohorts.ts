@@ -27,6 +27,8 @@ export const CALL_LIST_COHORT_KEYS = [
   "no_answer",
   "callback_due",
   "reached_not_scheduled",
+  "scheduled",
+  "refused",
   "scheduling_follow_up",
   "not_contacted_in_x_days",
   "unassigned_eligible",
@@ -86,6 +88,22 @@ export const CALL_LIST_COHORTS: readonly CallListCohortDef[] = [
     label: "Reached — Not Scheduled",
     description:
       "Patient was reached but the objective is still open (not yet scheduled).",
+    usesOutreachHistory: true,
+    parameterized: false,
+  },
+  {
+    key: "scheduled",
+    label: "Scheduled",
+    description:
+      "Objective has reached a booked/scheduled state (canonical scheduling state, not a UI string).",
+    usesOutreachHistory: false,
+    parameterized: false,
+  },
+  {
+    key: "refused",
+    label: "Refused",
+    description:
+      "Latest relevant outreach outcome is a refusal (declined / refused). Distinct from Do-Not-Contact.",
     usesOutreachHistory: true,
     parameterized: false,
   },

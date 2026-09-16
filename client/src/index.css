@@ -1755,3 +1755,35 @@
 
 /* (Ancillary workflow tile smoke effect removed — icon now lights up to the
    service color on hover instead.) */
+
+/* ══════════════════════════════════════════════════════════════════════
+   PLEXUS ROUTE TRANSITION (Pass 3B) — ONE centralized page-enter animation.
+   Applied by PlexusAdminShell's content-outlet wrapper, which is keyed by
+   pathname so it remounts (and replays) only on genuine route/path changes —
+   never on local state, query-string (?tab=), filters, dropdowns, modals, or
+   in-page tabs. It animates opacity + a 6px rise over ~180ms ease-out.
+
+   Only `opacity` and `transform` are animated (no layout properties), so there
+   is no layout shift. The animation intentionally does NOT use forwards/both
+   fill, so once it completes the wrapper reverts to its base style (no lingering
+   transform) — leaving `position: fixed` descendants unaffected after entry.
+   Reduced-motion users get instant rendering (no fade, no slide).
+   ══════════════════════════════════════════════════════════════════════ */
+@keyframes plexus-route-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.plexus-route-transition {
+  animation: plexus-route-in 180ms ease-out backwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plexus-route-transition {
+    animation: none;
+  }
+}

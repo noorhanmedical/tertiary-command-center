@@ -402,7 +402,14 @@ export function DispositionSheet({
   }
 
   const isCallback = outcome === "callback";
-  const canSubmit = !!outcome && !logCall.isPending && !staleClaim;
+  // Refused is a first-class result: a non-empty reason is REQUIRED before it
+  // can be saved. The reason persists canonically in outreach_calls.notes (no
+  // refusal-only subsystem). Covers the refusal family (DNC + declined +
+  // not-interested).
+  const REFUSAL_OUTCOMES = new Set<OutreachCallOutcome>(["refused_dnc", "declined", "not_interested"]);
+  const isRefusal = outcome != null && REFUSAL_OUTCOMES.has(outcome);
+  const refusalReasonMissing = isRefusal && notes.trim().length === 0;
+  const canSubmit = !!outcome && !logCall.isPending && !staleClaim && !refusalReasonMissing;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -466,17 +473,28 @@ export function DispositionSheet({
 
           <div>
             <Label htmlFor="disposition-notes" className="text-xs font-semibold text-slate-700">
-              Notes <span className="text-slate-400">(optional)</span>
+              {isRefusal ? (
+                <>Reason for refusal <span className="text-rose-500">(required)</span></>
+              ) : (
+                <>Notes <span className="text-slate-400">(optional)</span></>
+              )}
             </Label>
             <Textarea
               id="disposition-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={4}
-              placeholder="Anything the next caller should know…"
-              className="mt-1.5 resize-none rounded-2xl border-slate-200 text-sm"
+              placeholder={isRefusal ? "Why is the patient refusing? (required)" : "Anything the next caller should know…"}
+              className={`mt-1.5 resize-none rounded-2xl text-sm ${refusalReasonMissing ? "border-rose-300 focus-visible:ring-rose-400" : "border-slate-200"}`}
               data-testid="disposition-notes"
+              aria-invalid={refusalReasonMissing}
+              aria-required={isRefusal}
             />
+            {refusalReasonMissing && (
+              <p className="mt-1 text-[11px] text-rose-600" data-testid="disposition-refusal-reason-required">
+                A reason is required to record a refusal.
+              </p>
+            )}
           </div>
 
           {onPushToPlayground && (

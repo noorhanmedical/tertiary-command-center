@@ -126,7 +126,7 @@ export default function ScheduleDashboardPage() {
 
   return (
     <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1650px] flex-col gap-6 px-6 py-6">
+      <div className="mx-auto flex w-full max-w-[1520px] flex-col gap-6 px-6 py-6">
         <PageHeader
           variant="light"
           eyebrow="PLEXUS ANCILLARY"
@@ -218,7 +218,6 @@ export default function ScheduleDashboardPage() {
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
-                className="rounded-2xl border-white/60 bg-white/80"
                 onClick={() => setWeekStartOverride(data?.previousWeekStart || null)}
               >
                 <ChevronLeft className="mr-2 h-4 w-4" />
@@ -229,7 +228,6 @@ export default function ScheduleDashboardPage() {
               </Badge>
               <Button
                 variant="outline"
-                className="rounded-2xl border-white/60 bg-white/80"
                 onClick={() => setWeekStartOverride(data?.nextWeekStart || null)}
               >
                 Next Week
@@ -246,6 +244,7 @@ export default function ScheduleDashboardPage() {
                   key={tab.clinicKey}
                   type="button"
                   onClick={() => setSelectedClinicKey(tab.clinicKey)}
+                  aria-pressed={active}
                   className={[
                     "rounded-2xl border px-4 py-2 text-sm font-medium transition",
                     active

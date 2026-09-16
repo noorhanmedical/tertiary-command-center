@@ -27,6 +27,199 @@ export function registerPatientRoutes(
   app: Express,
 ) {
 
+  // ─── BULK ADMIN APPROVAL ──────────────────────────────────────────────────
+  // Minimum-safe bulk wrapper around the LIVE legacy screening-level approval
+  // (the same two canonical steps the single-patient route performs):
+  //   1. patient_screenings.adminApprovalStatus + audit columns
+  //   2. commitPatient(id, userId, { auto: true }) on approve + Draft
+  //      → execution case create-or-update → Engagement.
+  // This is NOT a third review model — it loops the existing legacy path and
+  // reuses commitPatient (the one canonical commit engine). It intentionally
+  // does NOT touch the dormant service-specific recorder.
+  //
+  // Safety (idempotent + honest):
+  //   • Only QUALIFIED screenings are approval-eligible: status in
+  //     (completed|qualified) AND qualifyingTests.length > 0.
+  //   • FAILED analyses (status='error' or reasoning.__analysisFailure) are
+  //     NEVER approved — a provider failure is not a clinical decision.
+  //   • NOT-QUALIFIED (empty qualifyingTests) is never treated as approval-ready.
+  //   • Already-approved rows are skipped (idempotent replay is a no-op).
+  //   • Soft-deleted rows are skipped.
+  //
+  // Selection: either an explicit `ids: number[]` (Select All / Approve
+  // Selected send the visible/filtered ids) OR `scope: { allQualifiedPending:
+  // true, facility?, clinicId? }` (Approve All Filtered without shipping every
+  // id). Server is authoritative — every id is re-validated here regardless of
+  // what the client sent.
+  app.post("/api/patient-screenings/bulk-admin-approval", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const status = String(body.status ?? "approved");
+      if (status !== "approved") {
+        // This bulk endpoint only performs approvals (the operational need).
+        // Non-approval bulk transitions stay on the single-patient route.
+        return res.status(400).json({ error: "bulk endpoint only supports status='approved'" });
+      }
+      const note =
+        typeof body.note === "string" && body.note.trim() ? body.note.trim() : null;
+      const userId: string | null = req.session.userId ?? null;
+
+      // Resolve the candidate id set.
+      let candidateIds: number[] = [];
+      if (Array.isArray(body.ids)) {
+        candidateIds = (body.ids as unknown[])
+          .map((v) => Number(v))
+          .filter((n) => Number.isInteger(n) && n > 0);
+      } else if (body.scope && typeof body.scope === "object") {
+        const scope = body.scope as {
+          allQualifiedPending?: boolean;
+          facility?: string;
+          clinicId?: number;
+        };
+        if (scope.allQualifiedPending) {
+          const { db } = await import("../db");
+          const { patientScreenings } = await import("@shared/schema");
+          const { and, or, eq, isNull, inArray, sql } = await import("drizzle-orm");
+          const conds = [
+            isNull(patientScreenings.deletedAt),
+            inArray(patientScreenings.status, ["completed", "qualified"]),
+            sql`array_length(${patientScreenings.qualifyingTests}, 1) > 0`,
+            or(
+              isNull(patientScreenings.adminApprovalStatus),
+              eq(patientScreenings.adminApprovalStatus, "pending"),
+              eq(patientScreenings.adminApprovalStatus, "needs_info"),
+            ),
+          ];
+          if (typeof scope.facility === "string" && scope.facility.trim()) {
+            conds.push(eq(patientScreenings.facility, scope.facility.trim()));
+          }
+          if (Number.isInteger(scope.clinicId)) {
+            conds.push(eq(patientScreenings.clinicId, scope.clinicId as number));
+          }
+          const rows = await db
+            .select({ id: patientScreenings.id })
+            .from(patientScreenings)
+            .where(and(...conds));
+          candidateIds = rows.map((r) => r.id);
+        }
+      }
+      candidateIds = Array.from(new Set(candidateIds));
+      if (candidateIds.length === 0) {
+        return res.status(400).json({
+          error: "Provide ids[] or scope.allQualifiedPending",
+          code: "NO_CANDIDATES",
+        });
+      }
+
+      // Hard cap so a runaway request can't approve the whole DB by accident.
+      const MAX_BULK = 5000;
+      if (candidateIds.length > MAX_BULK) {
+        return res.status(413).json({
+          error: `Bulk approval capped at ${MAX_BULK} patients per request`,
+          code: "BULK_LIMIT",
+          attempted: candidateIds.length,
+        });
+      }
+
+      const result = {
+        attempted: candidateIds.length,
+        approved: 0,
+        committed: 0,
+        executionCasesReady: 0,
+        skippedAlreadyApproved: 0,
+        skippedNotQualified: 0,
+        skippedFailed: 0,
+        skippedNotFound: 0,
+        errors: [] as Array<{ id: number; error: string }>,
+        approvedIds: [] as number[],
+      };
+
+      for (const id of candidateIds) {
+        try {
+          const p = await storage.getPatientScreening(id);
+          if (!p) {
+            result.skippedNotFound += 1;
+            continue;
+          }
+          // Idempotent: already approved → no-op.
+          if ((p.adminApprovalStatus ?? "") === "approved") {
+            result.skippedAlreadyApproved += 1;
+            continue;
+          }
+          // Never approve a provider FAILURE (error status or failure sentinel).
+          const reasoning = (p.reasoning ?? null) as Record<string, unknown> | null;
+          const isFailure =
+            p.status === "error" ||
+            (reasoning != null &&
+              (Object.prototype.hasOwnProperty.call(reasoning, "__analysisFailure") ||
+                Object.prototype.hasOwnProperty.call(reasoning, "__analysisError")));
+          if (isFailure) {
+            result.skippedFailed += 1;
+            continue;
+          }
+          // Only QUALIFIED (completed/qualified with qualifying tests) is
+          // approval-eligible. Not-qualified is never auto-approved.
+          const tests = Array.isArray(p.qualifyingTests) ? p.qualifyingTests : [];
+          const isQualified =
+            (p.status === "completed" || p.status === "qualified") && tests.length > 0;
+          if (!isQualified) {
+            result.skippedNotQualified += 1;
+            continue;
+          }
+
+          // Step 1 — legacy screening-level approval columns.
+          const updated = await storage.updatePatientScreening(id, {
+            adminApprovalStatus: "approved",
+            adminApprovedAt: new Date(),
+            adminApprovedByUserId: userId,
+            adminApprovalNote: note,
+          });
+          result.approved += 1;
+          result.approvedIds.push(id);
+
+          // Step 2 — canonical commit → execution case → Engagement (Draft only;
+          // commitPatient no-ops when already committed).
+          if ((updated?.commitStatus ?? "Draft") === "Draft") {
+            const commit = await commitPatient(id, userId, { auto: true });
+            if (commit.ok) {
+              result.committed += 1;
+              result.executionCasesReady += 1;
+            } else {
+              result.errors.push({
+                id,
+                error: `commit_failed:${(commit as { error?: { code?: string } }).error?.code ?? "unknown"}`,
+              });
+            }
+          } else {
+            // Already committed earlier — execution case already exists.
+            result.executionCasesReady += 1;
+          }
+        } catch (e) {
+          result.errors.push({
+            id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
+      void logAudit(req, "bulk_admin_approval", "patient", 0, {
+        attempted: result.attempted,
+        approved: result.approved,
+        committed: result.committed,
+        skippedAlreadyApproved: result.skippedAlreadyApproved,
+        skippedNotQualified: result.skippedNotQualified,
+        skippedFailed: result.skippedFailed,
+      });
+      invalidatePatientDatabase();
+      return res.json({ ok: true, ...result });
+    } catch (error: any) {
+      console.error("[bulk-admin-approval] error:", error?.message ?? error);
+      return res
+        .status(500)
+        .json({ error: error?.message ?? "Bulk approval failed" });
+    }
+  });
+
   // Recently soft-deleted patients within the restore window. Used by
   // the Plexus IQ Recently Deleted card. Expired rows (delete_expires_at
   // < now) are omitted by the repository.

@@ -37,6 +37,8 @@ import {
 import { classifyRows } from "../services/largeImport/dedupClassifier";
 import { loadExistingIdentityIndex } from "../services/largeImport/existingIdentityIndex";
 import type { ImportFileFormat } from "@shared/schema";
+import { storage } from "../storage";
+import { summarizeIqScreenings, iqPhaseFromJob } from "@shared/patientImportPreview";
 
 // ─── Upload ceiling ──────────────────────────────────────────────────────────
 // Rationale: the requirement is 128 MB. We set 250 MB to give headroom for
@@ -182,8 +184,12 @@ export function registerLargePatientImportRoutes(app: Express) {
       const idx = await loadExistingIdentityIndex(job.clinicId ?? null);
       const classified = classifyRows(parse.rows, idx);
       const page = classified.slice(offset, offset + limit).map((cr) => ({
-        rowIndex: cr.row.rowIndex, name: cr.row.name, dob: cr.row.dob, phone: cr.row.phone,
-        mrn: cr.row.mrn, facility: cr.row.facility, insurance: cr.row.insurance,
+        rowIndex: cr.row.rowIndex, name: cr.row.name, dob: cr.row.dob, gender: cr.row.gender,
+        phone: cr.row.phone, email: cr.row.email, mrn: cr.row.mrn,
+        // External/source Patient ID — distinct from MRN.
+        patientId: cr.row.patientId ?? null,
+        facility: cr.row.facility, provider: cr.row.provider, insurance: cr.row.insurance,
+        diagnoses: cr.row.diagnoses, medications: cr.row.medications, history: cr.row.history,
         classification: cr.classification, matchTier: cr.matchTier, reasons: cr.reasons,
       }));
       return res.json({ rows: page, offset, limit, total: classified.length });
@@ -248,6 +254,83 @@ export function registerLargePatientImportRoutes(app: Express) {
     return res.status(202).json({ jobId: job.id, status: "importing" });
   });
 
+  // ── GET post-import Plexus IQ progress for this job's batch ──────────────
+  // Read-only. Auto-IQ is enqueued on import completion (importJobRunner), so
+  // the dialog just watches REAL state here — no manual "Run IQ" click. A
+  // FAILED analysis is reported as failed, NEVER as "not qualified".
+  app.get("/api/patient-import/large/:id/iq-progress", async (req: Request, res: Response) => {
+    const job = await getImportJob(parseInt(String(req.params.id), 10));
+    if (!job) return res.status(404).json({ error: "Import job not found" });
+    if (!assertScope(req, res, job)) return;
+
+    const batchId = job.batchId ?? null;
+    if (batchId == null) {
+      return res.json({
+        jobId: job.id,
+        batchId: null,
+        imported: job.importedRows ?? 0,
+        phase: "not_started",
+        analysis: { status: "not_started", completedPatients: 0, totalPatients: 0 },
+        counts: { total: 0, qualified: 0, notQualified: 0, failed: 0, pending: 0 },
+      });
+    }
+
+    try {
+      const [analysisJob, screenings] = await Promise.all([
+        storage.getLatestAnalysisJobByBatch(batchId),
+        storage.getPatientScreeningsByBatch(batchId),
+      ]);
+      const counts = summarizeIqScreenings(screenings as ReadonlyArray<{ status?: string | null; qualifyingTests?: unknown; reasoning?: unknown }>);
+      const phase = iqPhaseFromJob(analysisJob ?? null);
+      // Billing-pause signal (§30): one batch-level flag the UI can use to show
+      // a single "provider credits unavailable — completed preserved, resume
+      // later" banner instead of a per-patient error wall. Derived from the
+      // durable job error message the runner writes when the breaker trips.
+      const providerPaused =
+        !!analysisJob &&
+        analysisJob.status === "failed" &&
+        /paused|credits|billing quota/i.test(analysisJob.errorMessage ?? "");
+      return res.json({
+        jobId: job.id,
+        batchId,
+        imported: job.importedRows ?? screenings.length,
+        phase,
+        providerPaused,
+        analysis: analysisJob
+          ? {
+              id: analysisJob.id,
+              status: analysisJob.status,
+              completedPatients: analysisJob.completedPatients ?? 0,
+              totalPatients: analysisJob.totalPatients ?? 0,
+              errorMessage: analysisJob.errorMessage ?? null,
+            }
+          : { status: "not_started", completedPatients: 0, totalPatients: 0 },
+        counts,
+      });
+    } catch (e) {
+      return res.status(500).json({ error: (e as Error)?.message ?? "Failed to load IQ progress" });
+    }
+  });
+
+  // ── POST retry FAILED Plexus IQ analyses for this job's batch ────────────
+  // Recovery only: re-enqueues the CANONICAL durable analysis runner with
+  // resetFailed, which resets error/processing patients to draft and re-runs
+  // them. Never creates a duplicate batch and never touches qualified rows.
+  app.post("/api/patient-import/large/:id/iq-retry", async (req: Request, res: Response) => {
+    const job = await getImportJob(parseInt(String(req.params.id), 10));
+    if (!job) return res.status(404).json({ error: "Import job not found" });
+    if (!assertScope(req, res, job)) return;
+    const batchId = job.batchId ?? null;
+    if (batchId == null) return res.status(409).json({ error: "No batch for this import job yet." });
+    try {
+      const { startBatchAnalysis } = await import("../services/batchAnalysisRunner");
+      const result = await startBatchAnalysis(batchId, req.session?.userId ?? null, { resetFailed: true });
+      return res.status(202).json({ jobId: job.id, batchId, analysisJobId: result.jobId, totalPatients: result.totalPatients });
+    } catch (e) {
+      return res.status(500).json({ error: (e as Error)?.message ?? "Failed to retry Plexus IQ" });
+    }
+  });
+
   // ── GET possible-matches — side-by-side incoming vs existing patient ─────
   app.get("/api/patient-import/large/:id/possible-matches", async (req: Request, res: Response) => {
     const job = await getImportJob(parseInt(String(req.params.id), 10));
@@ -289,7 +372,8 @@ export function registerLargePatientImportRoutes(app: Express) {
           rowIndex: cr.row.rowIndex,
           incoming: {
             name: cr.row.name, dob: cr.row.dob, phone: cr.row.phone,
-            mrn: cr.row.mrn, facility: cr.row.facility, insurance: cr.row.insurance,
+            mrn: cr.row.mrn, patientId: cr.row.patientId ?? null,
+            facility: cr.row.facility, insurance: cr.row.insurance,
           },
           existingPatient: existing
             ? { screeningId: existing.id, name: existing.name, dob: existing.dob, phone: existing.phone, mrn: existing.mrn, facility: existing.facility }

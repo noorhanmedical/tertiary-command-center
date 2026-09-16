@@ -7,6 +7,13 @@ import { screenSinglePatientWithAI } from "./screening";
 import { getQualificationMode } from "../routes/helpers";
 import { invalidatePatientDatabase } from "../routes/patientDatabase";
 import { classifyPlexusIqPreCheck } from "./plexusIqPreCheck";
+import {
+  classifyProviderFailure,
+  isBillingBreakerTripped,
+  tripBillingBreaker,
+  resetBillingBreaker,
+  billingBreakerState,
+} from "./plexusIq/providerFailure";
 import { readPlexusIqRuntimeConfig, type PlexusIqRuntimeConfig } from "./plexusIqRuntimeConfig";
 import {
   screenPatientsWithAIBatch,
@@ -571,6 +578,9 @@ async function runAnalysisLoop(
   // speed in flight.
   const counters = emptyRunnerCounters();
   const chunkHistory: PlexusIqChunkEntry[] = [];
+  // Fresh run — clear any billing circuit-breaker trip from a prior run so a
+  // resume (presumably after credits were restored) is not blocked by stale state.
+  resetBillingBreaker();
   try {
     const batch = await storage.getScreeningBatch(batchId);
     if (!batch) throw new NoSuchBatchError(batchId);
@@ -658,6 +668,13 @@ async function runAnalysisLoop(
         // error state. The category lives in
         // `reasoning.__analysisFailure` (jsonb shape) so the status
         // endpoint can split missing-info from technical/AI failures.
+        // Billing circuit breaker (§18): once broad billing exhaustion is
+        // detected, stop scheduling new provider work. Leave this row UNTOUCHED
+        // (stays draft/pending) so it is naturally eligible on resume — never
+        // write an error row and never touch qualifying_tests.
+        if (isBillingBreakerTripped()) {
+          return;
+        }
         const pre = classifyPlexusIqPreCheck({
           id: patient.id,
           name: patient.name,
@@ -757,9 +774,17 @@ async function runAnalysisLoop(
           // and timeouts read as technical_failed; everything else
           // (JSON parse failures, model errors) reads as ai_error.
           const category = classifyCaughtError(err);
+          // Centralized provider-failure classification (§17). Billing
+          // exhaustion trips the circuit breaker so the runner stops scheduling
+          // new provider work instead of burning the rest of the cohort into
+          // identical billing errors (§18).
+          const providerFailure = classifyProviderFailure(err);
+          if (providerFailure.isBillingExhaustion) {
+            tripBillingBreaker(providerFailure.userMessage);
+          }
           await writeAnalysisFailure(patient.id, {
             category,
-            reason: errMsg,
+            reason: `[${providerFailure.category}] ${errMsg}`,
             failedAt: new Date().toISOString(),
           });
           bumpFailureCounter(counters, category);
@@ -820,6 +845,37 @@ async function runAnalysisLoop(
       await storage.updateAnalysisJob(jobId, {
         metadata: interimMetadata as unknown as Record<string, unknown>,
       });
+
+      // §18 billing circuit breaker: if broad billing exhaustion was detected,
+      // stop scheduling further chunks. Remaining rows stay draft/pending
+      // (untouched) so a resume after credits are restored is clean.
+      if (isBillingBreakerTripped()) break;
+    }
+
+    if (isBillingBreakerTripped()) {
+      // Paused, not completed. Leave the batch as draft (remaining rows are
+      // resumable) and mark the job errored with a clear, non-sensitive reason.
+      const bstate = billingBreakerState();
+      await db.transaction(async (tx) => {
+        await tx
+          .update(screeningBatches)
+          .set({ status: "draft" })
+          .where(eq(screeningBatches.id, batchId));
+      });
+      await storage.updateAnalysisJob(jobId, {
+        status: "failed",
+        errorMessage: `Plexus IQ paused — ${bstate.reason ?? "provider credits unavailable"}. Completed patients preserved; remaining rows left pending for resume.`,
+        completedAt: new Date(),
+        metadata: buildTerminalMetadata({
+          eligibleIds,
+          initialSkipped,
+          counters,
+          chunkHistory,
+          config,
+        }) as unknown as Record<string, unknown>,
+      });
+      invalidatePatientDatabase();
+      return;
     }
 
     await db.transaction(async (tx) => {

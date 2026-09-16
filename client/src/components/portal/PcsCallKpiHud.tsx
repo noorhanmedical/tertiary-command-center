@@ -72,7 +72,14 @@ export function PcsCallKpiHud({
 
   return (
     <div
-      className="mb-2 flex flex-wrap items-center gap-2"
+      // The KPI tiles reuse the shared (wide) FloatingMetricsTile pill, which
+      // is sized for the full-width Outreach console. Inside the narrow Team
+      // Portal work-queue rail that pill is wider than the rail, so we contain
+      // any horizontal overflow HERE (min-w-0 + contained x-scroll) instead of
+      // letting it bleed into the shared rail scroller — which would otherwise
+      // scroll the whole queue sideways and clip the patient names. Scrollbar
+      // is hidden for a clean strip; the shared tile itself is untouched.
+      className="mb-2 flex flex-wrap items-center gap-2 min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       data-testid="pcs-call-kpi-hud"
     >
       <FloatingMetricsTile

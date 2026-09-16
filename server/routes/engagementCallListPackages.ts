@@ -20,6 +20,7 @@ import {
 import { previewCohort } from "../services/engagement/callListCohortService";
 import { previewCallListDistribution } from "../services/engagement/callListDistributionPreview";
 import { confirmCallListDistribution } from "../services/engagement/callListConfirm";
+import { generateAndStoreCallListPdf } from "../services/engagement/callListPdf";
 import {
   getPackageById,
   getPackageWithMembers,
@@ -366,6 +367,21 @@ export function registerEngagementCallListPackageRoutes(
           actorUserId,
           allowedClinicIds: allowedClinicIds === null ? null : [...allowedClinicIds],
         });
+        // §10: kick server-side PDF generation for the freshly created packages
+        // WITHOUT blocking the confirm response. Assignment/package commit is
+        // already durable; a slow/failed render only sets generation_status.
+        void (async () => {
+          try {
+            const { listPackagesByOperation } = await import("../repositories/callListPackages.repo");
+            const pkgs = await listPackagesByOperation(distributionOperationId);
+            for (const p of pkgs) {
+              // eslint-disable-next-line no-await-in-loop
+              await generateAndStoreCallListPdf(p.id).catch(() => {});
+            }
+          } catch (e) {
+            console.error("[call-lists:auto-pdf] deferred generation error:", (e as Error)?.message ?? e);
+          }
+        })();
         return res.json(result);
       } catch (error: unknown) {
         console.error(
@@ -625,6 +641,36 @@ export function registerEngagementCallListPackageRoutes(
         );
         return res.status(500).json({ error: "Failed to update package status" });
       }
+    },
+  );
+
+  // POST /api/engagement/call-lists/packages/:id/generate-pdf
+  // SERVER-SIDE PDF generation from the FROZEN package snapshot (no browser
+  // required). Doubles as "Retry PDF" via { force: true }. Membership is never
+  // mutated — the same snapshot always produces the artifact. Idempotent:
+  // without force, a package already `ready` returns its existing blob.
+  app.post(
+    "/api/engagement/call-lists/packages/:id/generate-pdf",
+    requireManagerOrAdmin,
+    async (req: Request, res: Response) => {
+      if (!ensureEnabled(res)) return;
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid package id" });
+      }
+      if (!(await loadPackageInScope(req, res, id))) return;
+      const force = (req.body as { force?: boolean })?.force === true;
+      const result = await generateAndStoreCallListPdf(id, { force });
+      if (!result.ok) {
+        if (result.status === "not_found") return res.status(404).json({ error: "Package not found" });
+        return res.status(500).json({ ok: false, generationStatus: "failed", error: result.error });
+      }
+      return res.json({
+        ok: true,
+        generationStatus: "ready",
+        pdfBlobId: result.pdfBlobId,
+        patientCount: result.patientCount,
+      });
     },
   );
 

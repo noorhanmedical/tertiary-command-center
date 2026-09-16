@@ -266,8 +266,8 @@ export default function DocumentLibraryPage() {
   }
 
   return (
-    <main className="flex-1 overflow-y-auto bg-[hsl(210,35%,96%)] dark:bg-slate-950">
-      <div className="max-w-6xl mx-auto px-5 py-8">
+    <main className="finance-page">
+      <div className="mx-auto w-full max-w-[1280px] px-6 py-6">
         <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
           <PageHeader
             eyebrow="PLEXUS · ADMIN"

@@ -753,24 +753,110 @@ export function QualifyingEvidence({ test, diagnoses, medications }: {
 
 // Current Qualifying Tests — circular service icons (3 per row); clicking one
 // opens a popup with the structured qualification evidence.
+// Map canonical screening state → the EHR Plexus IQ status display. Answer
+// first: one large status word + one action. Provider failure ("Failed") is
+// visibly distinct from a successful empty result ("Not Qualified").
+function deriveIqStatus(iq: EmrChart["plexusIq"], testsLen: number): {
+  kind: "failed" | "running" | "qualified" | "notqualified" | "notrun";
+  label: string;
+  tone: "green" | "amber" | "red" | "slate" | "blue";
+} {
+  const s = iq.iqStatus ?? null;
+  if (iq.iqFailed || s === "error") return { kind: "failed", label: "Failed", tone: "red" };
+  if (s === "processing") return { kind: "running", label: "Running", tone: "blue" };
+  if (s === "completed") {
+    return testsLen > 0
+      ? { kind: "qualified", label: "Qualified", tone: "green" }
+      : { kind: "notqualified", label: "Not Qualified", tone: "slate" };
+  }
+  return { kind: "notrun", label: "Not run", tone: "slate" };
+}
+
 function PlexusIqSection({ chart }: SectionProps) {
   const iq = chart.plexusIq;
   const tests = iq.qualifyingTests ?? [];
   const diagnoses = (chart.diagnoses ?? []).map((d) => (d.icd10 ? `${d.icd10} · ${d.description}` : d.description ?? "")).filter(Boolean);
   const medications = (chart.medications ?? []).map((m) => m.name ?? "").filter(Boolean);
   const [selected, setSelected] = useState<EmrQualifyingTest | null>(null);
+
+  // Manual Run Plexus IQ — delegates to the canonical runner endpoint. Status
+  // comes from canonical backend state (screening.status + reasoning sentinel),
+  // never inferred from client state.
+  const psid = chart.patientScreeningId ?? null;
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const st = deriveIqStatus(iq, tests.length);
+  const running = st.kind === "running";
+  const runIq = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/plexus-ehr/patients/${psid}/run-plexus-iq`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || `HTTP ${res.status}`);
+      }
+      return res.json();
+    },
+    onSuccess: (d: { iq?: { status?: string } }) => {
+      const s = d?.iq?.status;
+      toast({
+        title: s === "already_running" ? "Plexus IQ already running" : "Plexus IQ started",
+        description: s === "already_running"
+          ? "A qualification job is already in progress for this patient."
+          : "Qualification has been queued.",
+      });
+      // Refresh canonical status. One bounded follow-up catches the terminal
+      // state without a continuous poll (the runner finishes quickly).
+      qc.invalidateQueries({ queryKey: ["/api/patients", psid] });
+      window.setTimeout(() => qc.invalidateQueries({ queryKey: ["/api/patients", psid] }), 4000);
+    },
+    onError: (e: unknown) =>
+      toast({ title: "Couldn't start Plexus IQ", description: String((e as Error)?.message ?? e), variant: "destructive" }),
+  });
+  const btnLabel = running
+    ? "Running…"
+    : st.kind === "failed"
+      ? "Retry"
+      : st.kind === "qualified" || st.kind === "notqualified"
+        ? "Re-run Plexus IQ"
+        : "Run Plexus IQ";
+
   return (
     <SectionCard
       id="plexus-iq"
       title="Current Qualifying Tests"
       icon={<Sparkles className="w-4 h-4" />}
       count={tests.length || null}
-      action={iq.adminApprovalStatus
-        ? <Pill tone={iq.adminApprovalStatus === "approved" ? "green" : iq.adminApprovalStatus === "rejected" ? "red" : "amber"} testId="badge-admin-approval">{iq.adminApprovalStatus}</Pill>
-        : undefined}
+      action={
+        <div className="flex items-center gap-2">
+          <Pill tone={st.tone} testId="badge-iq-status">{st.label}</Pill>
+          {iq.adminApprovalStatus && (
+            <Pill tone={iq.adminApprovalStatus === "approved" ? "green" : iq.adminApprovalStatus === "rejected" ? "red" : "amber"} testId="badge-admin-approval">{iq.adminApprovalStatus}</Pill>
+          )}
+          {psid != null && (
+            <Button
+              size="sm"
+              variant={st.kind === "failed" ? "destructive" : "outline"}
+              className="h-7 text-[11px]"
+              disabled={running || runIq.isPending}
+              onClick={() => runIq.mutate()}
+              data-testid="button-run-plexus-iq"
+            >
+              {runIq.isPending ? "Starting…" : btnLabel}
+            </Button>
+          )}
+        </div>
+      }
     >
+      {st.kind === "failed" && (
+        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300" data-testid="iq-failed-banner">
+          Plexus IQ could not complete analysis. Provider unavailable — press Retry to run again.
+        </div>
+      )}
       {tests.length === 0 ? (
-        <EmptyState icon={<Sparkles className="w-8 h-8" />} title="No qualifying tests on record yet" hint="Run this patient through Plexus IQ to surface qualifying ancillary opportunities." testId="empty-plexus" />
+        <EmptyState icon={<Sparkles className="w-8 h-8" />} title={st.kind === "notqualified" ? "No qualifying tests (screened)" : "No qualifying tests on record yet"} hint={st.kind === "notqualified" ? "Plexus IQ completed and found no qualifying ancillary services for this patient." : "Run this patient through Plexus IQ to surface qualifying ancillary opportunities."} testId="empty-plexus" />
       ) : (
         <div className="grid grid-cols-3 gap-x-4 gap-y-5" data-testid="qualifying-tests-grid">
           {tests.map((t) => {

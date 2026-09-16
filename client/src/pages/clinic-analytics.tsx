@@ -493,7 +493,7 @@ export default function ClinicAnalyticsPage() {
           context={clinic.name}
           titleTestId="text-clinic-analytics-title"
         />
-        <p className="mt-4 text-sm text-slate-500">Due diligence &amp; ancillary revenue opportunity</p>
+        <p className="mt-4 text-sm text-finance-text-secondary">Due diligence &amp; ancillary revenue opportunity</p>
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">

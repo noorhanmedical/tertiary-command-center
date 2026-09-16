@@ -34,7 +34,71 @@ const addPatientSchema = z.object({
   rawClinicalText: z.string().optional().nullable(),
 });
 
+// Shared Plexus IQ enqueue — delegates to the ONE canonical durable runner
+// (startBatchAnalysis → runAnalysisLoop). Targets a single screening within its
+// batch via patientIds. Surfaces the runner's duplicate-job guard as
+// `already_running` so a re-run never spawns concurrent duplicate work.
+type IqEnqueueResult = {
+  status: "queued" | "already_running" | "skipped";
+  analysisJobId: number | null;
+  reason?: string;
+};
+
+async function enqueuePlexusIq(
+  batchId: number,
+  patientScreeningId: number,
+  userId: string | null,
+): Promise<IqEnqueueResult> {
+  try {
+    const { startBatchAnalysis } = await import("../services/batchAnalysisRunner");
+    const iq = await startBatchAnalysis(batchId, userId, {
+      patientIds: [patientScreeningId],
+    });
+    if (iq.duplicate) {
+      return { status: "already_running", analysisJobId: iq.jobId, reason: iq.duplicate.reason };
+    }
+    return { status: "queued", analysisJobId: iq.jobId };
+  } catch (err: unknown) {
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "error",
+      source: "plexus-ehr",
+      kind: "iq_enqueue_failed",
+      patientScreeningId,
+      message: (err as Error)?.message ?? String(err),
+    }));
+    return { status: "skipped", analysisJobId: null, reason: "iq_enqueue_failed" };
+  }
+}
+
 export function registerPlexusEhrAddPatientRoutes(app: Express) {
+  /**
+   * POST /api/plexus-ehr/patients/:id/run-plexus-iq
+   *
+   * Manual "Run Plexus IQ" for an existing patient. Delegates to the SAME
+   * canonical runner as bulk import + create-time auto-IQ. Duplicate-run
+   * protection: if a job is already running for the batch covering this
+   * patient, returns `already_running` with the existing analysis job id
+   * (never spawns concurrent duplicate work). Never auto-approves / commits.
+   */
+  app.post("/api/plexus-ehr/patients/:id/run-plexus-iq", async (req: Request, res: Response) => {
+    if (!req.session.role || !["admin", "clinician"].includes(req.session.role)) {
+      return res.status(403).json({ error: "Admin or clinician access required" });
+    }
+    const id = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: "Invalid patient id" });
+    }
+    const screening = await storage.getPatientScreening(id);
+    if (!screening) return res.status(404).json({ error: "Patient not found" });
+    if (!screening.batchId) {
+      return res.status(409).json({ error: "Patient has no batch context to analyze", code: "NO_BATCH" });
+    }
+    const iq = await enqueuePlexusIq(screening.batchId, id, req.session.userId ?? null);
+    const httpStatus = iq.status === "queued" ? 202 : iq.status === "already_running" ? 200 : 503;
+    return res.status(httpStatus).json({ patientScreeningId: id, iq });
+  });
+
   /**
    * POST /api/plexus-ehr/patients
    *
@@ -118,39 +182,19 @@ export function registerPlexusEhrAddPatientRoutes(app: Express) {
       // Re-fetch the patient to get identity linkage
       const finalPatient = await storage.getPatientScreening(patient.id);
 
-      // Auto-trigger Plexus IQ qualification (fire-and-forget)
-      void (async () => {
-        try {
-          const { screenSinglePatientWithAI } = await import("../services/screening");
-          const { getQualificationMode } = await import("./helpers");
-          const mode = await getQualificationMode(facility);
-          const result = await screenSinglePatientWithAI({
-            name: data.name,
-            dob: data.dob ?? null,
-            gender: data.gender ?? null,
-            diagnoses: data.diagnoses ?? null,
-            history: data.history ?? null,
-            medications: data.medications ?? null,
-            notes: data.notes ?? null,
-            insurance: data.insurance ?? null,
-          }, mode);
-          if (result && result.qualifyingTests && Array.isArray(result.qualifyingTests)) {
-            await storage.updatePatientScreening(patient.id, {
-              qualifyingTests: result.qualifyingTests,
-              reasoning: result.reasoning ?? {},
-              status: "completed",
-            });
-          }
-        } catch (aiErr: any) {
-          console.error("[plexus-ehr/patients] auto-qualification failed:", aiErr?.message ?? aiErr);
-        }
-      })();
+      // P0 — enqueue Plexus IQ through the CANONICAL durable runner (same path
+      // as bulk import + manual Run Plexus IQ). Creates an analysis_jobs row and
+      // runs runAnalysisLoop in the background. Replaces the previous un-awaited
+      // inline screenSinglePatientWithAI IIFE that created no job, no trail, and
+      // swallowed errors to console. Provider failure is now recorded durably by
+      // the runner (failure ≠ not-qualified) instead of vanishing.
+      const iq = await enqueuePlexusIq(batch.id, patient.id, req.session.userId ?? null);
 
       res.status(201).json({
         patient: finalPatient ?? patient,
         batchId: batch.id,
         identityResult: identityResult?.status ?? "unknown",
-        autoQualificationTriggered: true,
+        iq,
       });
     } catch (error: any) {
       console.error("[plexus-ehr/patients] create error:", error?.message ?? error);
@@ -291,39 +335,16 @@ export function registerPlexusEhrAddPatientRoutes(app: Express) {
 
       const finalPatient = await storage.getPatientScreening(patient.id);
 
-      // Auto-trigger Plexus IQ qualification (fire-and-forget — don't block response)
-      void (async () => {
-        try {
-          const { screenSinglePatientWithAI } = await import("../services/screening");
-          const { getQualificationMode } = await import("./helpers");
-          const mode = await getQualificationMode(effectiveFacility);
-          const result = await screenSinglePatientWithAI({
-            name: patientData.name,
-            dob: patientData.dob ?? null,
-            gender: patientData.gender ?? null,
-            diagnoses: patientData.diagnoses ?? null,
-            history: patientData.history ?? null,
-            medications: patientData.medications ?? null,
-            notes: patientData.notes ?? null,
-            insurance: patientData.insurance ?? null,
-          }, mode);
-          if (result && result.qualifyingTests && Array.isArray(result.qualifyingTests)) {
-            await storage.updatePatientScreening(patient.id, {
-              qualifyingTests: result.qualifyingTests,
-              reasoning: result.reasoning ?? {},
-              status: "completed",
-            });
-          }
-        } catch (aiErr: any) {
-          console.error("[plexus-ehr/patients/parse] auto-qualification failed:", aiErr?.message ?? aiErr);
-        }
-      })();
+      // P0 — enqueue Plexus IQ through the CANONICAL durable runner (see the
+      // note on the direct-add endpoint). No inline IIFE / swallowed errors.
+      const iq = await enqueuePlexusIq(batch.id, patient.id, req.session.userId ?? null);
 
       res.status(201).json({
         patient: finalPatient ?? patient,
         batchId: batch.id,
         parsedFields: patientData,
         identityResult: identityResult?.status ?? "unknown",
+        iq,
         autoQualificationTriggered: true,
       });
     } catch (error: any) {
