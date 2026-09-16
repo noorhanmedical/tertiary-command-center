@@ -51,6 +51,14 @@ export type LogSafeTag =
   | "operational-queue"
   | "engagement-board"
   | "patient-packet"
+  // Background-service + admin sources (surgical PHI-safe port from main).
+  | "absence_watcher"
+  | "admin_analysis_jobs"
+  // Non-PHI operation discriminators (used with the optional `op` field).
+  | "first_tick"
+  | "tick"
+  | "auto_execute"
+  | "ai_proposal"
   // Outcome enums from helper return shapes.
   | "disabled"
   | "skipped"
@@ -68,6 +76,10 @@ export type LogSafeTag =
  */
 export type LogSafePayload = {
   source: LogSafeTag;
+  // Optional non-PHI operation discriminator (e.g. which background tick /
+  // route sub-operation failed). Must be a LogSafeTag literal — never a raw
+  // string that could carry PHI.
+  op?: LogSafeTag;
   outcome?: LogSafeTag;
   // Numeric counts — the typical safe metric.
   count?: number;

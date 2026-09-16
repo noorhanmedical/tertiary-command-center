@@ -27,6 +27,7 @@
 
 import { storage } from "../storage";
 import { withAdvisoryLock } from "../lib/advisoryLock";
+import { errorPhiSafe, warnPhiSafe } from "../lib/phiSafeLogger";
 import { releaseAndRedistributeCanonical } from "./engagement/absenceRedistribution";
 import { openai, withRetry } from "./aiClient";
 import { resolveClinicTimeZone } from "./engagement/clinicTimeZone";
@@ -72,9 +73,9 @@ export function startAbsenceWatcher() {
   started = true;
   // Stagger first tick a bit so app start isn't slowed.
   kickoffTimer = setTimeout(() => {
-    runOnce().catch((err) => console.error("[absenceWatcher] first tick:", err));
+    runOnce().catch(() => errorPhiSafe({ source: "absence_watcher", op: "first_tick", outcome: "failed" }));
     tickInterval = setInterval(() => {
-      runOnce().catch((err) => console.error("[absenceWatcher] tick:", err));
+      runOnce().catch(() => errorPhiSafe({ source: "absence_watcher", op: "tick", outcome: "failed" }));
     }, TICK_MS);
   }, 30_000);
 }
@@ -256,8 +257,8 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
             try {
               await releaseAndRedistributeCanonical(sc.id, "absence_auto_execute");
               await storage.updateTask(existingAlert.id, { status: "resolved" });
-            } catch (err) {
-              console.error("[absenceWatcher] auto-execute failed:", err);
+            } catch {
+              errorPhiSafe({ source: "absence_watcher", op: "auto_execute", outcome: "failed" });
             }
           }
         }
@@ -290,8 +291,8 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
           const parsed = JSON.parse(raw);
           if (typeof parsed.summary === "string") aiSummary = parsed.summary;
           if (Array.isArray(parsed.actions)) aiPlan = { actions: parsed.actions };
-        } catch (err) {
-          console.warn("[absenceWatcher] AI proposal failed (using fallback):", (err as Error)?.message);
+        } catch {
+          warnPhiSafe({ source: "absence_watcher", op: "ai_proposal", outcome: "failed" });
         }
       }
 
