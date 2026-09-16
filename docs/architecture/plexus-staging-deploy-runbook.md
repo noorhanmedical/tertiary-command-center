@@ -179,3 +179,38 @@ Build an isolated Plexus test-DB harness that:
 Until then, `npm run test:unit` is reported honestly as
 **PARTIAL / BLOCKED BY 3 PRE-EXISTING TEST-ENVIRONMENT FAILURES**, with all other
 tests green and no regressions introduced by the snapshot.
+
+---
+
+## 8. HTTP STAGING ONLY — COOKIE_SECURE=false (NON-PHI TESTING ONLY)
+
+To allow browser login/session testing over the plain-HTTP ALB DNS (no domain
+/ no TLS yet), the **staging** ECS app task definition sets:
+
+```
+COOKIE_SECURE=false
+```
+
+This is applied ONLY to `plexus-staging-app` (task def revision 3+), via an ECS
+task-definition environment override. It does **not** change:
+- production defaults,
+- the shared application security logic (`server/index.ts` still reads
+  `COOKIE_SECURE === "true"`),
+- the HTTPS requirement for production.
+
+Effect: express-session emits the session cookie over HTTP with `HttpOnly` and
+`SameSite=Lax`, and the `Secure` flag absent — so browser login + session
+persistence work for synthetic, non-PHI staging validation.
+
+**HARD CONSTRAINTS**
+- **NON-PHI TESTING ONLY.** No real patient data over this HTTP endpoint.
+- Synthetic/test accounts only (e.g. the default `admin/admin` seed — a
+  throwaway bootstrap credential that must be changed/removed before real use).
+
+**REQUIRED STATE BEFORE ANY PHI OR PRODUCTION USE**
+- HTTPS enabled (ACM cert + 443 listener + HTTP→HTTPS redirect), AND
+- `COOKIE_SECURE=true` restored on the task definition.
+
+Reverting is a one-line task-def env change back to `COOKIE_SECURE=true` plus
+the HTTPS listener; the CDK is structured so adding ACM/443/redirect is
+straightforward.
