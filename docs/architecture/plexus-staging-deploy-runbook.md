@@ -214,3 +214,47 @@ persistence work for synthetic, non-PHI staging validation.
 Reverting is a one-line task-def env change back to `COOKIE_SECURE=true` plus
 the HTTPS listener; the CDK is structured so adding ACM/443/redirect is
 straightforward.
+
+---
+
+## 9. REQUIRED PRE-PRODUCTION HARDENING (tracked; do NOT forget before prod)
+
+These items exist on the old `tertiary-command-center` main branch but were
+intentionally NOT ported wholesale during the repo cutover (they are larger,
+non-wired, or subsystem-level changes that deserve dedicated reviewed work).
+The surgical PHI-safe port for `admin.ts` + `absenceWatcher.ts` IS done.
+
+### 9.1 Full PHI-safe observability subsystem (from old-main 9289ec50 + edaec088)
+- `server/middleware/requestObservability.ts` (`getRequestId`, request lifecycle)
+- `server/lib/aiObservability.ts`
+- expanded `server/lib/phiSafeLogger.ts` (main's ~414-line version; ours is a
+  minimal ~130-line subset)
+- `server/middleware/errorHandler.ts` PHI-safe wiring
+- remaining raw `error.message` logging cleanup across routes/services still
+  using `console.error(...err.message)`, specifically (verified on this branch):
+  - `server/routes/plexusEhrAddPatient.ts` (~5 sites)
+  - `server/routes/plexusIqClinicalImport.ts` (~3 sites)
+  - and the broader set touched by 9289ec50 (patients.ts, batches.ts,
+    screening.ts, batchAnalysisRunner.ts, aiClient.ts, google.ts, etc.)
+- observability tests: `tests/unit/phiSafeObservability.test.ts`,
+  `tests/unit/aiPhiLogging.test.ts`
+
+### 9.2 ADR-002 fail-closed tenant isolation (from old-main d471a3b2)
+`server/middleware/tenantContext.ts` on main is additive scaffolding and is NOT
+yet wired into repositories (legacy `req.clinicId` still used). Porting the
+scaffold alone changes nothing at runtime, so it is deferred. Required future
+work:
+1. Introduce/validate the `TenantContext` discriminated union
+   (`clinic` | `platform` | `denied`).
+2. Wire tenant context into the request lifecycle.
+3. Migrate repositories off ambiguous `req.clinicId === null` semantics.
+4. Ensure ONLY explicit platform/admin scope may omit the clinic predicate.
+5. Deny authenticated non-admin users that have no valid clinic scope
+   (fail-closed, replacing the current fail-open null overloading).
+6. Add tenant-isolation regression tests.
+7. Test cross-clinic access is refused (fail-closed).
+8. Verify no route/repository silently widens scope on a null clinic context.
+
+NOTE: The current Plexus access-control model (`clinicContext.ts`,
+`accessControl.ts`, `accessDecision.ts`) remains in force and was NOT weakened
+during cutover. This is the same model old-main runs today.
