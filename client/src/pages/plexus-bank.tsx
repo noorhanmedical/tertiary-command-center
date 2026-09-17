@@ -240,11 +240,11 @@ export default function PlexusBankPage() {
         {/* Main column */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Page-level title — base + active module context. */}
-          <div className="shrink-0 bg-white px-5 pt-6 pb-2">
+          <div className="shrink-0 bg-white px-6 pt-6 pb-2">
             <InteriorPageTitle title="Plexus Bank" context={bankContext} />
           </div>
           {/* Global filter bar — persists across module switches */}
-          <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 bg-white px-5 py-3" data-testid="bank-filter-bar">
+          <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 bg-white px-6 py-3" data-testid="bank-filter-bar">
             <FilterSelect label="Clinic" value={filters.clinic} options={BANK_CLINICS} onChange={(v) => ctxValue.setFilter("clinic", v)} testId="bank-filter-clinic" />
             <FilterSelect label="Region" value={filters.region} options={BANK_REGIONS} onChange={(v) => ctxValue.setFilter("region", v)} testId="bank-filter-region" />
             <FilterSelect label="State" value={filters.state} options={["TX", "AZ"]} onChange={(v) => ctxValue.setFilter("state", v)} testId="bank-filter-state" />

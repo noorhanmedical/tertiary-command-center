@@ -24,7 +24,7 @@ import {
   // layout
   PlexusPage,
   PlexusPageInner,
-  InteriorPageTitle,
+  PlexusInteriorTitle,
   StructuralHeader,
   SectionTitle,
   PageToolbar,
@@ -187,7 +187,7 @@ export default function UiSystemPreviewPage() {
 
         {/* 1 + 2. Interior Page Title + Subtitle */}
         <div>
-          <InteriorPageTitle title="UI System Preview" subtitle="Plexus Winter Design System" />
+          <PlexusInteriorTitle title="UI System Preview" subtitle="Plexus Winter Design System" />
           {/* Route-isolation note as a normal-flow caption (not a second subtitle). */}
           <Alert tone="info" className="mt-1">
             Isolated route · uses production primitives · no live page affected
@@ -519,7 +519,7 @@ export default function UiSystemPreviewPage() {
         <GallerySection n="52" title="Interior Page Composition — Patient EHR">
           <div className="plexus-card overflow-hidden p-0">
             <div className="p-6 md:p-8">
-              <InteriorPageTitle title="Patient EHR" subtitle="Taylor Family Practice" />
+              <PlexusInteriorTitle title="Patient EHR" subtitle="Taylor Family Practice" />
               <MetricStrip
                 className="mb-6"
                 metrics={[

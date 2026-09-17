@@ -61,14 +61,17 @@ export function PlexusPageInner({
 }
 
 /**
- * InteriorPageTitle (§5) — the mandatory large, thin title that begins every
- * interior page. NO buttons/search/filters/actions allowed in this area by
- * design: the component intentionally exposes no `actions` prop.
+ * PlexusInteriorTitle (§5) — the design-system-gallery title primitive (large,
+ * thin, weight 300 + optional subtitle). Scoped to the `.plexus-ui` gallery
+ * (`/ui-system-preview`) only. The LIVE canonical page title is
+ * `@/components/InteriorPageTitle` (weight 450 + navy hairline); this one is
+ * intentionally kept separate for the winter design-system preview and renamed
+ * so there is exactly one `InteriorPageTitle` symbol in the app.
  *
- * Anatomy: large simple title (weight 300) + optional subtitle/context.
- * Spacing: 28px top, 4px subtitle gap, 24px bottom before toolbar/content.
+ * NO buttons/search/filters/actions allowed in this area by design: the
+ * component intentionally exposes no `actions` prop.
  */
-export function InteriorPageTitle({
+export function PlexusInteriorTitle({
   title,
   subtitle,
   className,

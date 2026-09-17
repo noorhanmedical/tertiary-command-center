@@ -894,7 +894,7 @@ export default function BillingPage() {
     <main className="flex-1 overflow-hidden flex flex-col bg-finance-bg" data-testid="billing-page">
       {/* Header */}
       <div className="shrink-0 bg-white border-b border-slate-200">
-        <div className="px-5 pt-4 pb-3">
+        <div className="px-6 pt-4 pb-3">
           <PageHeader
             backHref="/"
             eyebrow="PLEXUS ANCILLARY · BILLING"
@@ -914,7 +914,7 @@ export default function BillingPage() {
         </div>
 
         {/* Metrics bar */}
-        <div className="px-5 pb-3 grid grid-cols-3 lg:grid-cols-6 gap-3" data-testid="billing-metrics">
+        <div className="px-6 pb-3 grid grid-cols-3 lg:grid-cols-6 gap-3" data-testid="billing-metrics">
           {[
             { icon: Receipt, label: "Total Records", value: String(metrics.totalRecords), color: "text-slate-700", bg: "bg-slate-100", testid: "metric-total-records" },
             { icon: Wallet, label: "Primary Paid", value: fmtMoney(metrics.totalPrimary), color: "text-emerald-700", bg: "bg-emerald-50", testid: "metric-primary-paid" },
@@ -973,7 +973,7 @@ export default function BillingPage() {
         </div>
 
         {/* Secondary filter bar */}
-        <div className="flex items-center gap-2 px-5 py-2 border-t border-slate-100 flex-wrap bg-slate-50/60">
+        <div className="flex items-center gap-2 px-6 py-2 border-t border-slate-100 flex-wrap bg-slate-50/60">
           <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           <FilterPill icon={User} label="Provider" value={filterProvider} options={uniqueProviders} onChange={setFilterProvider} testId="select-filter-provider" />
           <FilterPill icon={Scan} label="Service" value={filterService} options={SERVICE_TYPE_OPTIONS} onChange={setFilterService} testId="select-filter-service" />

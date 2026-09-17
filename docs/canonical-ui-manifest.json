@@ -2754,7 +2754,7 @@
     },
     {
       "path": "client/src/pages/billing.tsx",
-      "blob": "875d9648f8c7398db15c281c70e4162397fad2c5",
+      "blob": "1296556bcfb5c233c93c5bba68011f4ee008bea2",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2873,7 +2873,7 @@
     },
     {
       "path": "client/src/pages/invoices.tsx",
-      "blob": "dce510069535d7a7ad1b52581be00e72d400dfe3",
+      "blob": "2c26a33ebee87bac4e7270bd77a0dd6052d979c2",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2957,7 +2957,7 @@
     },
     {
       "path": "client/src/pages/plexus-bank.tsx",
-      "blob": "237c0692824d628b0df9957e3611a316171598a1",
+      "blob": "abad4caeb8a588931991f872550da02d89585879",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3083,7 +3083,7 @@
     },
     {
       "path": "client/src/pages/team-ops.tsx",
-      "blob": "a98034c64ad64bb4e804a86d41449b11a20781fb",
+      "blob": "70b768ddb79486a9150148cfa625561cce3ed842",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
