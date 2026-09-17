@@ -2754,7 +2754,7 @@
     },
     {
       "path": "client/src/pages/billing.tsx",
-      "blob": "1296556bcfb5c233c93c5bba68011f4ee008bea2",
+      "blob": "13f0d70c266c7a2b230c3088dcaecc4db5f87ea2",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2873,7 +2873,7 @@
     },
     {
       "path": "client/src/pages/invoices.tsx",
-      "blob": "2c26a33ebee87bac4e7270bd77a0dd6052d979c2",
+      "blob": "37434f628dc9c468a09cdabd3846fe8665ca380d",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true

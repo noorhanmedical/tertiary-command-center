@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/layout";
 import { cn } from "@/lib/utils";
 import {
   Select,
@@ -211,9 +212,11 @@ export default function AdminAccessPage() {
       <div className="finance-page">
         <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-6 py-6">
           <PageHeader eyebrow="PLEXUS · ACCESS" icon={ShieldCheck} title="Access Management" context="Restricted" />
-          <div className="rounded-2xl border border-slate-200/80 bg-white p-12 text-center text-sm text-slate-500">
-            You do not have access to any access-management sections.
-          </div>
+          <EmptyState
+            icon={ShieldCheck}
+            title="No access-management sections"
+            description="You do not have access to any access-management sections."
+          />
         </div>
       </div>
     );

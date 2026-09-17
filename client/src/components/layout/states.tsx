@@ -21,6 +21,8 @@ export interface EmptyStateProps {
   /** Optional primary action (e.g. "Add patient"). */
   action?: ReactNode;
   className?: string;
+  /** Override the default data-testid ("empty-state"). */
+  testId?: string;
 }
 
 /**
@@ -33,6 +35,7 @@ export function EmptyState({
   icon: Icon = Inbox,
   action,
   className,
+  testId = "empty-state",
 }: EmptyStateProps) {
   return (
     <div
@@ -40,7 +43,7 @@ export function EmptyState({
         "flex flex-col items-center justify-center rounded-2xl border border-dashed border-finance-border bg-finance-card-soft px-6 py-12 text-center",
         className,
       )}
-      data-testid="empty-state"
+      data-testid={testId}
     >
       <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-finance-bg-soft text-finance-text-muted">
         <Icon className="h-5 w-5" aria-hidden />
@@ -114,15 +117,17 @@ export interface LoadingSkeletonProps {
   /** Number of skeleton rows to render. Defaults to 3. */
   rows?: number;
   className?: string;
+  /** Override the default data-testid ("loading-skeleton"). */
+  testId?: string;
 }
 
 /**
  * LoadingSkeleton — canonical list/section loading placeholder. Prefer this
  * (and other skeletons) over spinners for content areas.
  */
-export function LoadingSkeleton({ rows = 3, className }: LoadingSkeletonProps) {
+export function LoadingSkeleton({ rows = 3, className, testId = "loading-skeleton" }: LoadingSkeletonProps) {
   return (
-    <div className={cn("space-y-3", className)} data-testid="loading-skeleton" aria-busy="true">
+    <div className={cn("space-y-3", className)} data-testid={testId} aria-busy="true">
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}

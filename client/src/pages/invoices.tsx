@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState, LoadingSkeleton } from "@/components/layout";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -244,7 +245,7 @@ function BillingOverview({
   const { data, isLoading } = useInvoiceAging();
 
   if (isLoading || !data) {
-    return <div className="py-12 text-center text-slate-400 text-sm">Loading overview…</div>;
+    return <LoadingSkeleton className="py-4" testId="loading-overview" />;
   }
 
   const { clinics, totals } = data;
@@ -299,10 +300,13 @@ function BillingOverview({
           </div>
         </div>
         {clinics.length === 0 ? (
-          <div className="py-16 text-center" data-testid="empty-overview">
-            <Wallet className="w-12 h-12 mx-auto text-slate-300 mb-3" />
-            <p className="text-slate-500">No outstanding balances.</p>
-            <p className="text-xs text-slate-400 mt-1">All invoices are paid in full.</p>
+          <div className="p-4">
+            <EmptyState
+              icon={Wallet}
+              testId="empty-overview"
+              title="No outstanding balances."
+              description="All invoices are paid in full."
+            />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -446,22 +450,18 @@ function InvoicesList({
       </div>
 
         {isLoading ? (
-          <div className="py-12 text-center text-slate-400 text-sm">Loading invoices…</div>
+          <LoadingSkeleton className="py-4" testId="loading-invoices" />
         ) : filtered.length === 0 ? (
-          <div className="py-16 text-center" data-testid="empty-invoices">
-            <FileText className="w-12 h-12 mx-auto text-slate-300 mb-3" />
-            {filterFacility || filterBucket ? (
-              <>
-                <p className="text-slate-500">No invoices match these filters.</p>
-                <p className="text-xs text-slate-400 mt-1">Try clearing the clinic or aging filter.</p>
-              </>
-            ) : (
-              <>
-                <p className="text-slate-500">No invoices yet.</p>
-                <p className="text-xs text-slate-400 mt-1">Click "New Invoice" to generate one for a clinic.</p>
-              </>
-            )}
-          </div>
+          <EmptyState
+            icon={FileText}
+            testId="empty-invoices"
+            title={filterFacility || filterBucket ? "No invoices match these filters." : "No invoices yet."}
+            description={
+              filterFacility || filterBucket
+                ? "Try clearing the clinic or aging filter."
+                : 'Click "New Invoice" to generate one for a clinic.'
+            }
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

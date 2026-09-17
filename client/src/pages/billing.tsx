@@ -44,6 +44,7 @@ import {
   Download,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
+import { EmptyState, LoadingSkeleton } from "@/components/layout";
 import { CanonicalBillingPanel } from "@/components/billing/CanonicalBillingPanel";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -995,12 +996,14 @@ export default function BillingPage() {
       {/* Records table */}
       <div className="flex-1 overflow-auto">
         {isLoading ? (
-          <div className="flex items-center justify-center py-16 text-slate-400 text-sm">Loading...</div>
+          <LoadingSkeleton className="p-4" testId="billing-loading" />
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center px-6">
-            <DollarSign className="w-10 h-10 text-slate-300 mb-3" />
-            <p className="text-slate-500 font-medium">No billing records found</p>
-            <p className="text-sm text-slate-400 mt-1">Complete a schedule or click Add Row to enter one manually.</p>
+          <div className="p-6">
+            <EmptyState
+              icon={DollarSign}
+              title="No billing records found"
+              description="Complete a schedule or click Add Row to enter one manually."
+            />
           </div>
         ) : (
           <div className="min-w-max">
