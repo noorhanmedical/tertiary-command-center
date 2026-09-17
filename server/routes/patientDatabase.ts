@@ -4,6 +4,7 @@ import { normalizePatientName, normalizeDob } from "../lib/patientKey";
 import { computeCooldowns } from "../services/cooldownCanonical";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { getRequestId } from "../middleware/requestObservability";
 
 const UNASSIGNED = "Unassigned";
 
@@ -227,7 +228,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
       cacheSet(rosterResponseCache, cacheKey, payload);
       res.json(payload);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -251,7 +252,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
       res.json(payload);
     } catch (error: any) {
       console.error("[patient-database/cooldown-summary] error:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -285,7 +286,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
       res.json(payload);
     } catch (error: any) {
       console.error("[patient-database/import-report] error:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -306,7 +307,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
       res.json({ encodedKey, name: screening.name, dob: screening.dob ?? null });
     } catch (error: any) {
       console.error("[patient-database/resolve] error:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -436,7 +437,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
       });
     } catch (error: any) {
       console.error("[patient-database/profile] error:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 }

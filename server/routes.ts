@@ -177,8 +177,9 @@ export async function registerRoutes(
   });
 
   const { resolveAccessContext } = await import("./services/access/accessContextService");
+  const { loginRateLimit, noteLoginResult } = await import("./middleware/loginRateLimit");
 
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", loginRateLimit, async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       // Keep validation errors generic; never reveal which field/account failed.
@@ -190,18 +191,21 @@ export async function registerRoutes(
     // Uniform 401 for BOTH unknown identifier and bad password — never disclose
     // whether an account (or an administrator account) exists.
     if (!user) {
+      noteLoginResult(req, false); // time-bound brute-force throttle
       return res.status(401).json({ error: "Invalid work email or password" });
     }
     // Per-request account-state gate. Do NOT leak that the account exists but is
     // disabled — return the same generic message as a bad credential.
     const status = (user.status ?? (user.active ? "active" : "inactive"));
     if (user.active === false || status !== "active") {
+      noteLoginResult(req, false);
       return res.status(401).json({ error: "Invalid work email or password" });
     }
 
     // Session stores IDENTITY only. `role`/`clinicId` remain for legacy
     // middleware compatibility but are NOT authoritative — authorization is
     // resolved from the DB-derived access context on every request.
+    noteLoginResult(req, true); // successful auth clears the throttle counter
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.role = user.role;

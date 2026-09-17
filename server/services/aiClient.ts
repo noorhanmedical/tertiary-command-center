@@ -1,5 +1,6 @@
 import OpenAI_import from "openai";
 import { withOpenAIConcurrencyLimit } from "../middleware/rateLimiter";
+import { assertAiPhiAllowed } from "../lib/aiPhiPolicy";
 
 const OpenAI = ((OpenAI_import as any).default ?? OpenAI_import) as typeof OpenAI_import;
 
@@ -42,6 +43,11 @@ export async function withRetry<T>(
   retries = MAX_RETRIES,
   label = "AI call"
 ): Promise<T> {
+  // AI PHI egress gate — single chokepoint. Throws AiPhiBlockedError when
+  // PHI-capable AI is not approved for this environment (default: allowed, so
+  // current behavior is unchanged). Callers with a deterministic path fall back;
+  // others surface an explicit failure. Never fabricates clinical output.
+  assertAiPhiAllowed(label);
   let lastErr: unknown;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -68,7 +74,18 @@ export async function withRetry<T>(
         throw err;
       }
       const delay = 1000 * Math.pow(2, attempt - 1);
-      console.warn(`[${label}] attempt ${attempt} failed (${err.message}), retrying in ${delay}ms...`);
+      // PHI-safe: log structural retry metadata only — never err.message
+      // (AI error messages can echo prompt/PHI content).
+      console.warn(
+        JSON.stringify({
+          source: "ai_client",
+          operation: label,
+          outcome: "retry",
+          attempt,
+          status: typeof err?.status === "number" ? err.status : null,
+          delay_ms: delay,
+        }),
+      );
       await sleep(delay);
     }
   }

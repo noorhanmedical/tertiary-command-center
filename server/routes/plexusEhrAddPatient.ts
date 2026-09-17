@@ -11,6 +11,7 @@
 
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
+import { getRequestId } from "../middleware/requestObservability";
 import { db } from "../db";
 import { storage } from "../storage";
 import { patientScreenings, screeningBatches } from "@shared/schema/screening";
@@ -349,7 +350,7 @@ export function registerPlexusEhrAddPatientRoutes(app: Express) {
       });
     } catch (error: any) {
       console.error("[plexus-ehr/patients/parse] error:", error?.message ?? error);
-      res.status(500).json({ error: error.message ?? "Failed to parse and create patient" });
+      res.status(500).json({ error: "Failed to parse and create patient", requestId: getRequestId() });
     }
   });
 
