@@ -7,6 +7,9 @@ import { createServer } from "http";
 import { readFileSync } from "node:fs";
 import { errorHandler } from "./middleware/errorHandler";
 import { clinicContext } from "./middleware/clinicContext";
+import { tenantContext } from "./lib/tenantContext";
+import { securityHeaders } from "./middleware/securityHeaders";
+import { requestObservability } from "./middleware/requestObservability";
 import { validateEnv } from "./lib/validateEnv";
 import { startBackgroundServices, stopBackgroundServices } from "./lifecycle";
 
@@ -19,6 +22,14 @@ const httpServer = createServer(app);
 // Behind ALB / reverse proxy: trust the first hop so req.ip, X-Forwarded-Proto,
 // and the secure-cookie check work correctly.
 app.set("trust proxy", 1);
+// Disable the framework fingerprint header.
+app.disable("x-powered-by");
+
+// Security headers + per-request correlation id run FIRST (before health
+// endpoints and body parsing) so every response is hardened and every log line
+// can be correlated. Neither logs request bodies / query strings (PHI-safe).
+app.use(securityHeaders);
+app.use(requestObservability);
 
 declare module "http" {
   interface IncomingMessage {
@@ -83,6 +94,10 @@ app.use(
 // Attach req.clinicId from session. Must run after session middleware.
 // Admin role gets null (bypasses all clinic filters); others get their clinic.
 app.use(clinicContext);
+// ADR-002 Stage A: resolve the authoritative fail-closed tenant scope from the
+// session (never from client-supplied clinic_id). Runs alongside the legacy
+// clinicContext; repositories migrate onto req.tenant incrementally in Stage B.
+app.use(tenantContext);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
