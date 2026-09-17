@@ -56,8 +56,9 @@ COPY --from=builder /app/tsconfig.json ./tsconfig.json
 # Copy migration SQL files if they exist
 COPY --from=builder /app/migrations ./migrations
 
-# Copy backfill scripts
+# Copy backfill / ops scripts (both dirs: scripts/ and script/)
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/script ./script
 
 # The app listens on port 5000
 EXPOSE 5000
