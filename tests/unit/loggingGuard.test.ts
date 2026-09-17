@@ -29,10 +29,12 @@ const GUARDED_FILES = [
   "server/routes/patientDatabase.ts",
   "server/routes/plexusEhrAddPatient.ts",
   "server/routes/patients.ts",
+  "server/routes/clinicalData.ts",
   "server/routes/admin.ts",
   "server/services/absenceWatcher.ts",
   "server/services/aiClient.ts",
   "server/middleware/errorHandler.ts",
+  "server/middleware/tenantResourceGuards.ts",
 ];
 
 // Client-facing leak: returning a raw error message/stack in an HTTP response.

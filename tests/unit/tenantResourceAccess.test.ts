@@ -98,6 +98,33 @@ check("patient audit no longer logs patient name (PHI) into changes", () => {
   assert.ok(!/logAudit\(req, "delete", "patient", id, \{ name:/.test(src), "delete audit must not log patient name");
 });
 
+// Screening-keyed clinical sub-resources (clinical-data, encounters, prior-tests,
+// admin-review, episode-documents, communications GET+POST) must all enforce
+// tenant ownership via the shared guard before returning/writing PHI.
+check("clinicalData family enforces tenant on every screening-keyed route", () => {
+  const src = readFileSync(join(ROOT, "server/routes/clinicalData.ts"), "utf8");
+  const routeCount = (src.match(/app\.(get|post)\(/g) || []).length;
+  const guardCount = (src.match(/enforceScreeningTenant\(req, res/g) || []).length;
+  assert.ok(routeCount >= 7, `expected >=7 routes, found ${routeCount}`);
+  assert.equal(
+    guardCount,
+    routeCount,
+    `every route must enforce tenant (routes=${routeCount}, guards=${guardCount})`,
+  );
+  // No raw error.message leaks remain in this family.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  assert.ok(!/error:\s*error\.message/.test(code), "no raw error.message leaks");
+});
+
+check("enforceScreeningTenant guard loads screening then enforces (order matters)", () => {
+  const src = readFileSync(join(ROOT, "server/middleware/tenantResourceGuards.ts"), "utf8");
+  assert.ok(
+    src.indexOf("getPatientScreening(screeningId)") < src.indexOf("enforceTenantResource(req, res"),
+    "must load screening (to get clinicId) before enforcing",
+  );
+  assert.ok(src.includes('res.status(404)'), "not-found / cross-clinic returns 404 (no existence leak)");
+});
+
 if (failures > 0) {
   console.error(`\ntenantResourceAccess.test.ts: ${failures} failure(s)`);
   process.exit(1);

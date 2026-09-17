@@ -7,6 +7,8 @@ import {
   getEpisodeDocumentsView,
 } from "../repositories/clinicalData.repo";
 import { listCommunicationsForPatient, logCommunication } from "../repositories/communications.repo";
+import { enforceScreeningTenant } from "../middleware/tenantResourceGuards";
+import { getRequestId } from "../middleware/requestObservability";
 
 // Canonical clinical reference domains for the Patient EHR chart.
 //   GET /api/patients/:screeningId/clinical-data
@@ -23,13 +25,14 @@ export function registerClinicalDataRoutes(app: Express) {
       if (!Number.isFinite(screeningId)) {
         return res.status(400).json({ error: "Invalid screening id" });
       }
+      if (!(await enforceScreeningTenant(req, res, screeningId))) return;
       const encounterLimit = req.query.encounterLimit
         ? parseInt(String(req.query.encounterLimit), 10)
         : undefined;
       const data = await getPatientClinicalData(screeningId, { encounterLimit });
       res.json(data);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -39,12 +42,13 @@ export function registerClinicalDataRoutes(app: Express) {
       if (!Number.isFinite(screeningId)) {
         return res.status(400).json({ error: "Invalid screening id" });
       }
+      if (!(await enforceScreeningTenant(req, res, screeningId))) return;
       const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
       const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : undefined;
       const page = await listEncounters(screeningId, { limit, offset });
       res.json(page);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -56,10 +60,11 @@ export function registerClinicalDataRoutes(app: Express) {
       if (!Number.isFinite(screeningId)) {
         return res.status(400).json({ error: "Invalid screening id" });
       }
+      if (!(await enforceScreeningTenant(req, res, screeningId))) return;
       const rows = await listPriorTests(screeningId);
       res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -72,10 +77,11 @@ export function registerClinicalDataRoutes(app: Express) {
       if (!Number.isFinite(screeningId)) {
         return res.status(400).json({ error: "Invalid screening id" });
       }
+      if (!(await enforceScreeningTenant(req, res, screeningId))) return;
       const view = await getAdminReviewView(screeningId);
       res.json(view);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -88,10 +94,11 @@ export function registerClinicalDataRoutes(app: Express) {
       if (!Number.isFinite(screeningId)) {
         return res.status(400).json({ error: "Invalid screening id" });
       }
+      if (!(await enforceScreeningTenant(req, res, screeningId))) return;
       const view = await getEpisodeDocumentsView(screeningId);
       res.json(view);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -103,10 +110,11 @@ export function registerClinicalDataRoutes(app: Express) {
     try {
       const screeningId = parseInt(String(req.params.screeningId), 10);
       if (!Number.isFinite(screeningId)) return res.status(400).json({ error: "Invalid screening id" });
+      if (!(await enforceScreeningTenant(req, res, screeningId))) return;
       const rows = await listCommunicationsForPatient(screeningId);
       res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -121,6 +129,7 @@ export function registerClinicalDataRoutes(app: Express) {
       }
       const screeningId = parseInt(String(req.params.screeningId), 10);
       if (!Number.isFinite(screeningId)) return res.status(400).json({ error: "Invalid screening id" });
+      if (!(await enforceScreeningTenant(req, res, screeningId))) return;
       const b = (req.body ?? {}) as Record<string, unknown>;
       if (typeof b.outcome !== "string" || !b.outcome) return res.status(400).json({ error: "outcome required" });
       const row = await logCommunication({
@@ -144,8 +153,8 @@ export function registerClinicalDataRoutes(app: Express) {
         durationSeconds: typeof b.durationSeconds === "number" ? b.durationSeconds : null,
       });
       res.status(201).json(row);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 }
