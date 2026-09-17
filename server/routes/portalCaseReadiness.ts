@@ -3,6 +3,7 @@ import multer from "multer";
 import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db";
+import { getRequestId } from "../middleware/requestObservability";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import {
   createCaseDocumentReadiness,
@@ -233,7 +234,7 @@ export function registerPortalCaseReadinessRoutes(app: Express) {
         const readiness = summaries.get(String(executionCaseId)) ?? null;
         return res.json({ readiness });
       } catch (error: any) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
       }
     },
   );
@@ -312,7 +313,7 @@ export function registerPortalCaseReadinessRoutes(app: Express) {
 
         return res.json({ ok: true, caseDocumentReadiness: row });
       } catch (error: any) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
       }
     },
   );
@@ -401,7 +402,7 @@ export function registerPortalCaseReadinessRoutes(app: Express) {
 
         return res.json({ ok: true, caseDocumentReadiness: row, blobId: blob.id });
       } catch (error: any) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
       }
     },
   );

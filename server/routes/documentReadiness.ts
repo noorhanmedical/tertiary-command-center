@@ -2,6 +2,7 @@ import type { Express, Request } from "express";
 import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db";
+import { getRequestId } from "../middleware/requestObservability";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import {
   listDocumentRequirements,
@@ -79,7 +80,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
       const rows = await listDocumentRequirements(filters, limit);
       res.json(rows);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -92,7 +93,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
       if (!row) return res.status(404).json({ error: "Document requirement not found" });
       res.json(row);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -122,7 +123,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
       const rows = await listCaseDocumentReadiness(filters, limit);
       res.json(rows);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -135,7 +136,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
       if (!row) return res.status(404).json({ error: "Case document readiness not found" });
       res.json(row);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -448,7 +449,7 @@ export function registerDocumentReadinessRoutes(app: Express) {
         procedureNoteGenerationResult,
       });
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 }

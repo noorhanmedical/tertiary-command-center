@@ -35,6 +35,9 @@ const GUARDED_FILES = [
   "server/services/aiClient.ts",
   "server/middleware/errorHandler.ts",
   "server/middleware/tenantResourceGuards.ts",
+  "server/routes/billingDocuments.ts",
+  "server/routes/documentReadiness.ts",
+  "server/routes/portalCaseReadiness.ts",
 ];
 
 // Client-facing leak: returning a raw error message/stack in an HTTP response.

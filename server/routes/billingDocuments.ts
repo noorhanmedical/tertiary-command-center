@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { requireBillingView } from "../middleware/billingGuards";
+import { getRequestId } from "../middleware/requestObservability";
 import {
   listBillingDocumentRequests,
   getBillingDocumentRequestById,
@@ -37,7 +38,7 @@ export function registerBillingDocumentRoutes(app: Express) {
       const requests = await listBillingDocumentRequests(filters, limit);
       res.json(requests);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -50,7 +51,7 @@ export function registerBillingDocumentRoutes(app: Express) {
       if (!request) return res.status(404).json({ error: "Billing document request not found" });
       res.json(request);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 }
