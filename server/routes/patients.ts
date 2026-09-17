@@ -13,6 +13,8 @@ import {
 } from "../services/screening";
 import { normalizeInsuranceType } from "../services/ingest";
 import { logAudit } from "../services/auditService";
+import { enforceTenantResource } from "../lib/tenantContext";
+import { getRequestId } from "../middleware/requestObservability";
 import { invalidatePatientDatabase } from "./patientDatabase";
 // Phase 1 convergence: assignNewlyEligiblePatient disabled — canonical
 // assignment flows through Engagement Center distributionService.
@@ -373,9 +375,12 @@ export function registerPatientRoutes(
       const id = parseInt(req.params.id);
       const patient = await storage.getPatientScreening(id);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
+      // ADR-002 Stage B: enforce tenant ownership BEFORE returning PHI.
+      // Cross-clinic → 404 (no existence disclosure); denied → 403.
+      if (!enforceTenantResource(req, res, (patient as { clinicId?: number | null }).clinicId)) return;
       res.json(patient);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 
@@ -384,6 +389,8 @@ export function registerPatientRoutes(
       const id = parseInt(req.params.id);
       const patient = await storage.getPatientScreening(id);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
+      // Enforce tenant ownership before any mutation.
+      if (!enforceTenantResource(req, res, (patient as { clinicId?: number | null }).clinicId)) return;
 
       await storage.deletePatientScreening(id);
 
@@ -391,11 +398,12 @@ export function registerPatientRoutes(
         patientCount: (await storage.getPatientScreeningsByBatch(patient.batchId)).length,
       });
 
-      void logAudit(req, "delete", "patient", id, { name: patient.name });
+      // PHI-safe audit: record the resource id + batch, NOT the patient name.
+      void logAudit(req, "delete", "patient", id, { batchId: patient.batchId });
       invalidatePatientDatabase();
       res.status(204).send();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.status(500).json({ error: "Internal server error", requestId: getRequestId() });
     }
   });
 

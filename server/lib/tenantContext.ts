@@ -121,3 +121,58 @@ export function requireTenantScope(
   }
   next();
 }
+
+/** Result of a per-resource tenant access check (ADR-002 Stage B). */
+export type TenantAccessResult =
+  | { ok: true }
+  | { ok: false; httpStatus: 403 | 404; error: string };
+
+/**
+ * Per-resource ownership check (Stage B). Call AFTER loading a resource to
+ * confirm the caller's tenant scope permits it. This must be part of the
+ * authorization path — never "load PHI, return, then check".
+ *
+ * Policy:
+ *   - denied scope        → 403 (never reached if requireTenantScope ran first)
+ *   - platform scope      → allowed
+ *   - clinic scope + same → allowed
+ *   - clinic scope + other/none → 404 (do NOT reveal that a resource exists in
+ *     another clinic — return the same "not found" a non-existent id would).
+ *
+ * Returning 404 (not 403) for cross-clinic avoids leaking resource existence.
+ * The caller must NOT have sent PHI before invoking this.
+ */
+export function checkTenantResourceAccess(
+  ctx: TenantContext,
+  resourceClinicId: number | null | undefined,
+): TenantAccessResult {
+  if (ctx.kind === "denied") {
+    return { ok: false, httpStatus: 403, error: "Forbidden" };
+  }
+  if (ctx.kind === "platform") return { ok: true };
+  if (typeof resourceClinicId === "number" && resourceClinicId === ctx.clinicId) {
+    return { ok: true };
+  }
+  // clinic scope but resource belongs to another clinic (or has none):
+  // respond as "not found" so existence is not disclosed cross-tenant.
+  return { ok: false, httpStatus: 404, error: "Not found" };
+}
+
+/**
+ * Express helper: enforce per-resource tenant access on `req`, writing the
+ * appropriate PHI-free response and returning false when denied. Usage:
+ *   const patient = await load(id);
+ *   if (!patient) return res.status(404)...;
+ *   if (!enforceTenantResource(req, res, patient.clinicId)) return; // stops here
+ *   res.json(patient);
+ */
+export function enforceTenantResource(
+  req: Request,
+  res: Response,
+  resourceClinicId: number | null | undefined,
+): boolean {
+  const result = checkTenantResourceAccess(req.tenant, resourceClinicId);
+  if (result.ok) return true;
+  res.status(result.httpStatus).json({ error: result.error });
+  return false;
+}
