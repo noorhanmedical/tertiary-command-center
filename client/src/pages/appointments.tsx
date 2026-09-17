@@ -18,6 +18,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { PageHeader, HeaderPill, HeaderStatusPill } from "@/components/PageHeader";
+import { PageShell } from "@/components/layout";
 import type { AncillaryAppointment } from "@shared/schema";
 import { Link } from "wouter";
 import {
@@ -261,8 +262,7 @@ export default function AppointmentsPage() {
   const [activeTab, setActiveTab] = useState<Facility>("Taylor Family Practice");
 
   return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 px-6 py-6">
+    <PageShell>
         <PageHeader
           variant="light"
           icon={Calendar}
@@ -300,7 +300,6 @@ export default function AppointmentsPage() {
         </div>
 
         <ClinicTab key={activeTab} facility={activeTab} />
-      </div>
-    </div>
+    </PageShell>
   );
 }

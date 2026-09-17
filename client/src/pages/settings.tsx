@@ -28,6 +28,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { PageHeader } from "@/components/PageHeader";
+import { PageShell } from "@/components/layout";
 
 const FACILITIES = VALID_FACILITIES;
 type Facility = (typeof VALID_FACILITIES)[number];
@@ -1033,8 +1034,7 @@ export function OperationalRuleSections() {
 
 export default function SettingsPage() {
   return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-6 py-6">
+    <PageShell>
         <PageHeader
           backHref="/"
           eyebrow="PLEXUS ANCILLARY · SETTINGS"
@@ -1047,7 +1047,6 @@ export default function SettingsPage() {
         <InvoiceReminderSettingsCard />
         <ChangePasswordCard />
         <OperationalRuleSections />
-      </div>
-    </div>
+    </PageShell>
   );
 }

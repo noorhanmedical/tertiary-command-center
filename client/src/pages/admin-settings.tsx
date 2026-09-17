@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
+import { PageShell } from "@/components/layout";
 import { QualificationModeSettings } from "@/components/QualificationModeSettings";
 import { WorldTimeImageApproval } from "@/components/settings/WorldTimeImageApproval";
 
@@ -194,8 +195,7 @@ export default function AdminSettingsPage() {
   const meta = SECTION_META[activeSection];
 
   return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 px-6 py-6">
+    <PageShell>
         <PageHeader
           eyebrow="PLEXUS ANCILLARY · ADMIN"
           icon={Shield}
@@ -406,7 +406,6 @@ export default function AdminSettingsPage() {
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </PageShell>
   );
 }

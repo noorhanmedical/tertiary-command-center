@@ -1,8 +1,7 @@
-import { Link } from "wouter";
-import { ArrowLeft, type LucideIcon } from "lucide-react";
+import { type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { Button } from "@/components/ui/button";
 import { InteriorPageTitle } from "@/components/InteriorPageTitle";
+import { BackButton } from "@/components/layout/BackButton";
 
 export interface PageHeaderProps {
   /**
@@ -64,16 +63,7 @@ export function PageHeader({
     <div className={className} data-testid="page-header">
       {backHref && (
         <div className="mb-3">
-          <Link href={backHref}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1.5 text-finance-text-secondary hover:text-finance-text"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              {backLabel}
-            </Button>
-          </Link>
+          <BackButton fallbackHref={backHref} label={backLabel} />
         </div>
       )}
 

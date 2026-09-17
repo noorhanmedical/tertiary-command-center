@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PageHeader, HeaderPill, HeaderStatusPill } from "@/components/PageHeader";
+import { PageShell } from "@/components/layout";
 import { CalendarDays as CalendarHeaderIcon } from "lucide-react";
 
 type TeamMember = {
@@ -125,8 +126,7 @@ export default function ScheduleDashboardPage() {
   );
 
   return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1520px] flex-col gap-6 px-6 py-6">
+    <PageShell width="wide">
         <PageHeader
           variant="light"
           eyebrow="PLEXUS ANCILLARY"
@@ -489,7 +489,6 @@ export default function ScheduleDashboardPage() {
             </ul>
           )}
         </Card>
-      </div>
-    </div>
+    </PageShell>
   );
 }

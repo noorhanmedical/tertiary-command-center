@@ -213,7 +213,7 @@
     },
     {
       "path": "client/src/components/PageHeader.tsx",
-      "blob": "ac100cb13d7254f6b4b6f963958fcc48f7c180a6",
+      "blob": "62da9f27b7101fc0274e10a29837c03ab47634d3",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2712,7 +2712,7 @@
     },
     {
       "path": "client/src/pages/appointments.tsx",
-      "blob": "056ac844ea3d4f26af5d73ce2bf489a7f410addc",
+      "blob": "f9d6cac53ce21bbef8472a2e8c3dfd5cda55def7",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3041,14 +3041,14 @@
     },
     {
       "path": "client/src/pages/schedule-dashboard.tsx",
-      "blob": "78d75e359da07d96f458d6349ab1356eae5d56bd",
+      "blob": "0c363eac154f28508ae1b48575907d6e3ff7012b",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
     },
     {
       "path": "client/src/pages/settings.tsx",
-      "blob": "aee16c1f558c1486c909ab25180c38dd36c39038",
+      "blob": "870972777b827170bf491bdeb4cc03fd91617358",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
