@@ -32,18 +32,38 @@ const files = readdirSync("tests/unit")
   .filter((f) => f.endsWith(".test.ts"))
   .sort();
 
+// Resource-safe: STRICTLY SERIAL. Each test file runs in its own short-lived
+// tsx process that exits before the next starts, so DB connections/pools are
+// released between files and local Postgres is never saturated. A tiny settle
+// gives the OS/PG time to reclaim sockets after DB-heavy files.
+function sleepMs(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    /* busy-wait: keeps the runner single-threaded and predictable */
+  }
+}
+
 let failed = 0;
+let passed = 0;
 const failures: string[] = [];
 
 for (const f of files) {
   const path = `tests/unit/${f}`;
   try {
-    execSync(`npx tsx "${path}"`, { stdio: "inherit", env: cleanEnv });
+    execSync(`npx tsx "${path}"`, {
+      stdio: "inherit",
+      env: cleanEnv,
+      timeout: 120_000, // never let a single hung file block the whole run
+    });
+    passed++;
   } catch {
     failed++;
     failures.push(f);
   }
+  sleepMs(150); // brief settle so PG reclaims connections between files
 }
+
+console.log(`\n[isolated] ${passed} passed, ${failed} failed of ${files.length} files`);
 
 if (failed > 0) {
   console.error(`\n[isolated] ${failed} test file(s) FAILED:`);

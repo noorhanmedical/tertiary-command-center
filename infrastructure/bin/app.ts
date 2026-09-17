@@ -2,6 +2,7 @@
 import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
 import { PlexusStagingStack } from "../lib/plexus-staging-stack";
+import { PlexusProductionStack } from "../lib/plexus-production-stack";
 
 const app = new cdk.App();
 
@@ -32,6 +33,23 @@ new PlexusStagingStack(app, "PlexusStaging", {
   tags: {
     Project: "plexus",
     Environment: "staging",
+    ManagedBy: "cdk",
+  },
+});
+
+// -----------------------------------------------------------------------------
+// PRODUCTION — prepared for review and `cdk synth` only. NOT deployed by this
+// change. Deploy is gated behind explicit approval + a supplied ACM cert/domain
+// (see -c prodCertArn / -c prodDomainName). Uses the same account/region
+// resolution; production could later target a separate account via context.
+// -----------------------------------------------------------------------------
+new PlexusProductionStack(app, "PlexusProduction", {
+  env: { account, region },
+  description:
+    "Plexus OS - Ancillaries — PRODUCTION (HA ECS Fargate + Multi-AZ RDS + ALB + S3, us-east-1)",
+  tags: {
+    Project: "plexus",
+    Environment: "production",
     ManagedBy: "cdk",
   },
 });
