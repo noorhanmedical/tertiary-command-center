@@ -14,6 +14,7 @@ import {
 import { normalizeInsuranceType } from "../services/ingest";
 import { logAudit } from "../services/auditService";
 import { enforceTenantResource } from "../lib/tenantContext";
+import { enforceScreeningTenant } from "../middleware/tenantResourceGuards";
 import { getRequestId } from "../middleware/requestObservability";
 import { invalidatePatientDatabase } from "./patientDatabase";
 // Phase 1 convergence: assignNewlyEligiblePatient disabled — canonical
@@ -268,6 +269,7 @@ export function registerPatientRoutes(
   app.patch("/api/patients/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      if (!(await enforceScreeningTenant(req, res, id))) return; // ADR-002 tenant guard
       const parsed = updatePatientSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -1300,8 +1302,8 @@ export function registerPatientRoutes(
   app.post("/api/patients/:id/analyze", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const patient = await storage.getPatientScreening(id);
-      if (!patient) return res.status(404).json({ error: "Patient not found" });
+      const patient = await enforceScreeningTenant(req, res, id); // ADR-002 tenant guard
+      if (!patient) return;
 
       const patientQualMode = await getQualificationMode(patient.facility ?? null);
 
@@ -1401,6 +1403,7 @@ export function registerPatientRoutes(
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid patient id" });
+      if (!(await enforceScreeningTenant(req, res, id))) return; // ADR-002 tenant guard
 
       const result = await commitPatient(id, req.session.userId ?? null, { auto: false });
       if (!result.ok) {
@@ -1459,6 +1462,7 @@ export function registerPatientRoutes(
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid patient id" });
+      if (!(await enforceScreeningTenant(req, res, id))) return; // ADR-002 tenant guard
 
       const sessionUserId = req.session.userId ?? null;
       if (!sessionUserId) return res.status(401).json({ error: "Not authenticated" });
@@ -1494,6 +1498,7 @@ export function registerPatientRoutes(
   app.post("/api/patients/:id/analyze-test", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      if (!(await enforceScreeningTenant(req, res, id))) return; // ADR-002 tenant guard
       const { testName } = req.body;
       if (!testName || typeof testName !== "string") {
         return res.status(400).json({ error: "testName is required" });
