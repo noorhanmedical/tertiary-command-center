@@ -437,15 +437,28 @@ function OverviewSection({ chart }: SectionProps) {
                 ? `Call ${d.name?.split(" ")[0] || "patient"} regarding ${tests.length} test${tests.length !== 1 ? "s" : ""}.`
                 : "No pending actions — run Plexus IQ to qualify services.")}
           </p>
-          <div className="flex gap-2">
-            {phoneHref ? (
-              <a href={phoneHref} className="flex-1">
-                <Button size="sm" className="w-full bg-slate-900 hover:bg-slate-800 text-white gap-1.5 h-8"><Phone className="w-3.5 h-3.5" />Call</Button>
-              </a>
-            ) : (
-              <Button size="sm" className="flex-1 h-8" disabled>No phone</Button>
-            )}
-            <Link href="/appointments" className="flex-1"><Button size="sm" variant="outline" className="w-full h-8 gap-1 text-[11px]" data-testid="overview-schedule"><CalendarClock className="w-3 h-3" />Schedule</Button></Link>
+          {/* Outlined circular icon actions — same language as the chart-nav
+              identity block (green phone, charcoal calendar; transparent). */}
+          <div className="flex items-center gap-2.5">
+            <a
+              href={phoneHref ?? undefined}
+              aria-disabled={!phoneHref}
+              title={phoneHref ? "Call patient" : "No phone on file"}
+              className={`w-9 h-9 rounded-full border-2 flex items-center justify-center bg-transparent transition-colors ${phoneHref ? "hover:bg-emerald-50" : "opacity-40 pointer-events-none"}`}
+              style={{ borderColor: "#1FA870", color: "#1FA870" }}
+              data-testid="overview-call"
+            >
+              <Phone className="w-4 h-4" />
+            </a>
+            <Link
+              href="/appointments"
+              title="Schedule"
+              className="w-9 h-9 rounded-full border-2 flex items-center justify-center bg-transparent transition-colors hover:bg-slate-100"
+              style={{ borderColor: "#334155", color: "#334155" }}
+              data-testid="overview-schedule"
+            >
+              <CalendarClock className="w-4 h-4" />
+            </Link>
           </div>
         </OverviewPanel>
 
