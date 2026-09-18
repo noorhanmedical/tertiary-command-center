@@ -22,6 +22,7 @@ import {
   FileBarChart,
 } from "lucide-react";
 import { fmtDate } from "./profileTypes";
+import { normalizeInsuranceDisplay } from "./insuranceDisplay";
 import {
   type EmrChart, type EmrQualifyingTest, type AdChannelStatus, COOLDOWN_STATE_TONES,
   JOURNEY_STAGES, type EmrLab, type EmrVital, type EmrEncounter,
@@ -1804,40 +1805,35 @@ function DocumentsSection({ chart }: SectionProps) {
   );
 }
 
-// ── 9. Demographics ────────────────────────────────────────────────────────
-function DemographicsSection({ chart }: SectionProps) {
-  const d = chart.demographics;
-  return (
-    <SectionCard id="demographics" title="Demographics" icon={<User className="w-4 h-4" />}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
-        <div>
-          <KV label="Name" value={d.name || "—"} testId="text-demo-name" />
-          <KV label="MRN" value={d.mrn || "—"} />
-          <KV label="DOB" value={d.dob || "—"} />
-          <KV label="Age" value={d.age != null ? `${d.age}` : "—"} />
-          <KV label="Gender" value={d.gender || "—"} />
-        </div>
-        <div>
-          <KV label="Phone" value={d.phoneNumber || "—"} />
-          <KV label="Email" value={d.email || "—"} />
-          <KV label="Address" value={d.address || "—"} />
-          <KV label="Clinic" value={d.clinic || "—"} />
-          <KV label="Language" value={d.language || "—"} />
-        </div>
-      </div>
-    </SectionCard>
-  );
-}
-
-// ── 10. Insurance & Eligibility ────────────────────────────────────────────
+// ── 9. Patient Information (unified Demographics + Insurance & Eligibility) ──
 const ELIG_TONE: Record<string, keyof typeof TONE_PILL> = {
   preferred: "green", allowed: "green", requires_admin_approval: "amber", blocked: "red", unknown: "slate",
 };
-function InsuranceSection({ chart }: SectionProps) {
+
+// Subsection label used inside the unified Patient Information card.
+function InfoSubheading({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+      {children}
+    </div>
+  );
+}
+
+// Normalized insurance + eligibility detail (rendered inside Patient Information).
+function InsuranceDetail({ chart }: SectionProps) {
+  const ins = normalizeInsuranceDisplay(chart.insurance.primary);
   const plans = chart.insurance.plans ?? [];
   return (
-    <SectionCard id="insurance" title="Insurance & Eligibility" icon={<ShieldCheck className="w-4 h-4" />}>
-      <KV label="Primary insurance" value={chart.insurance.primary || "—"} testId="text-insurance-primary" />
+    <div data-testid="patient-info-insurance">
+      {!ins.hasData ? (
+        <KV label="Insurance" value="—" testId="text-insurance-primary" />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+          {ins.fields.map((f, i) => (
+            <KV key={f.label} label={f.label} value={f.value} testId={i === 0 ? "text-insurance-primary" : undefined} />
+          ))}
+        </div>
+      )}
       <div className="mt-3">
         {plans.length === 0 ? (
           <EmptyState icon={<ShieldCheck className="w-8 h-8" />} title="No eligibility reviews on file" hint="Eligibility determinations and prior-auth status appear here once reviewed." testId="empty-insurance" />
@@ -1855,6 +1851,45 @@ function InsuranceSection({ chart }: SectionProps) {
           </Table>
         )}
       </div>
+    </div>
+  );
+}
+
+// One unified "Patient Information" tile: Demographics + Insurance & Eligibility
+// in a single card with clear internal sections (no two separate giant cards).
+// The insurance subsection is gated by the (still separate) "insurance" section
+// access level so per-role visibility semantics are preserved.
+function PatientInformationSection({ chart }: SectionProps) {
+  const d = chart.demographics;
+  const { getSectionAccess } = usePatientDirectorySectionAccess();
+  const showInsurance = getSectionAccess("insurance") !== "hidden";
+  return (
+    <SectionCard id="demographics" title="Patient Information" icon={<User className="w-4 h-4" />}>
+      <InfoSubheading>Demographics</InfoSubheading>
+      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+        <div>
+          <KV label="Name" value={d.name || "—"} testId="text-demo-name" />
+          <KV label="MRN" value={d.mrn || "—"} />
+          <KV label="DOB" value={d.dob || "—"} />
+          <KV label="Age" value={d.age != null ? `${d.age}` : "—"} />
+          <KV label="Gender" value={d.gender || "—"} />
+        </div>
+        <div>
+          <KV label="Phone" value={d.phoneNumber || "—"} />
+          <KV label="Email" value={d.email || "—"} />
+          <KV label="Address" value={d.address || "—"} />
+          <KV label="Clinic" value={d.clinic || "—"} />
+          <KV label="Language" value={d.language || "—"} />
+        </div>
+      </div>
+      {showInsurance && (
+        <div className="mt-5 border-t border-slate-100 dark:border-border/50 pt-4">
+          <InfoSubheading>Insurance &amp; Eligibility</InfoSubheading>
+          <div className="mt-2">
+            <InsuranceDetail chart={chart} />
+          </div>
+        </div>
+      )}
     </SectionCard>
   );
 }
@@ -2689,8 +2724,8 @@ export type ChartSectionDef = {
 // outreach-automation surfaces kept at the end.
 export const CHART_SECTIONS: ChartSectionDef[] = [
   // ── PATIENT (identity first) ──
-  { id: "demographics", label: "Demographics", icon: <User className="w-4 h-4" />, Component: DemographicsSection, group: "identity" },
-  { id: "insurance", label: "Insurance & Eligibility", icon: <ShieldCheck className="w-4 h-4" />, Component: InsuranceSection, group: "identity" },
+  // Unified Patient Information tile (demographics + insurance/eligibility).
+  { id: "demographics", label: "Patient Information", icon: <User className="w-4 h-4" />, Component: PatientInformationSection, group: "identity" },
   // ── PATIENT OVERVIEW ──
   { id: "overview", label: "Overview", icon: <User className="w-4 h-4" />, Component: OverviewSection, group: "overview" },
   { id: "plexus-iq", label: "Current Qualifying Tests", icon: <Sparkles className="w-4 h-4" />, Component: PlexusIqSection, group: "overview" },

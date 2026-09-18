@@ -24,6 +24,7 @@ import {
   sectionSummaryLine, EcwSyncContext, EpisodeDocsProvider,
 } from "./PatientChartSections";
 import { type EmrChart } from "@/types/emr";
+import { normalizeInsuranceDisplay } from "./insuranceDisplay";
 import { usePatientDirectorySectionAccess } from "@/hooks/usePatientDirectorySectionAccess";
 
 // ─── Nav group labels ─────────────────────────────────────────────────────
@@ -196,7 +197,7 @@ export function PatientChart({
               <span>{d.gender || "—"}</span>
               <span className="flex items-center gap-0.5"><Building2 className="w-3 h-3" />{d.clinic || "—"}</span>
               <span className="flex items-center gap-0.5"><Stethoscope className="w-3 h-3" />{d.provider || "—"}</span>
-              <span className="flex items-center gap-0.5"><ShieldCheck className="w-3 h-3" />{chart.insurance.primary || "—"}</span>
+              <span className="flex items-center gap-0.5"><ShieldCheck className="w-3 h-3" />{normalizeInsuranceDisplay(chart.insurance.primary).summaryLine}</span>
               {d.phoneNumber && <span className="flex items-center gap-0.5"><Phone className="w-3 h-3" />{d.phoneNumber}</span>}
             </div>
           </div>

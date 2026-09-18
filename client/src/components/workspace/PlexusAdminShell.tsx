@@ -80,7 +80,12 @@ export function PlexusAdminShell({
 }) {
   const [location] = useLocation();
   const adminRoute = isAdminWorkspaceRoute(location);
-  const onHome = location === "/home" || location === "/";
+  // Home variants that must NEVER show the workspace tab strip. All routes that
+  // render the Home dashboard (or its preview) are included so opened-workspace
+  // tabs can never accumulate across the Home top section. Return to open
+  // modules via the dock (open-page dots) / left rail / normal navigation.
+  const HOME_ROUTES = new Set(["/", "/home", "/home-preview", "/visit-patients"]);
+  const onHome = HOME_ROUTES.has(location);
   // Open-workspace routes → dock "open" dots, so the dock shows (and returns
   // you to) previously-opened pages. This is what replaces the tab strip on
   // Home, where the strip is intentionally hidden.
