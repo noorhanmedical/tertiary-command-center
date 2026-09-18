@@ -1520,8 +1520,41 @@ function EpisodeDocContent({ d }: { d: EpisodeDoc }) {
       </div>
     );
   }
-  if (d.bodyText) return <p className="text-[13px] text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{d.bodyText}</p>;
+  // Narrative notes render on a document canvas — a white "page" with generous
+  // margins and a readable measure, floated on a pale winter surround, so a
+  // clinical note reads like a document rather than a raw text blob. Read-only.
+  if (d.bodyText) return <NoteDocumentCanvas body={d.bodyText} />;
   return <p className="text-xs text-slate-400">No content on file.</p>;
+}
+
+// A read-only document "page" for narrative note bodies (Order/Procedure notes).
+// Lines that look like section headings (e.g. "Reason for Study", "Indication")
+// are lifted to headings inside the single continuous document.
+function NoteDocumentCanvas({ body }: { body: string }) {
+  const blocks = body.replace(/\r\n/g, "\n").split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  const isHeading = (line: string) =>
+    line.length > 0 && line.length <= 48 && !/[.:;,]$/.test(line) && !line.includes(". ") &&
+    (line === line.toUpperCase() || /^[A-Z][A-Za-z/&' ]+$/.test(line)) && line.split(/\s+/).length <= 6;
+  return (
+    <div className="rounded-xl bg-[#eef4fb] p-3 sm:p-5" data-testid="note-document-canvas">
+      <article
+        className="mx-auto max-w-[680px] rounded-lg bg-white px-6 py-6 sm:px-9 sm:py-8 shadow-sm ring-1 ring-slate-200/70"
+        style={{ fontSize: "13.5px", lineHeight: 1.7, color: "#1f2937" }}
+      >
+        {blocks.map((block, i) => {
+          const firstLine = block.split("\n")[0];
+          if (block.split("\n").length === 1 && isHeading(firstLine)) {
+            return (
+              <h3 key={i} className="mt-5 first:mt-0 mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-[#3169E8]">
+                {firstLine}
+              </h3>
+            );
+          }
+          return <p key={i} className="mb-3 whitespace-pre-wrap">{block}</p>;
+        })}
+      </article>
+    </div>
+  );
 }
 
 // One service group: current episode docs + previous episodes (collapsed).

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Pencil, PenLine, FileText, Send, History, Eye, Download } from "lucide-react";
+import { PenLine, FileText, Send, History, Eye, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -386,9 +386,13 @@ function NoteEditor({
   onSendBack: () => void;
   onAmend: () => void;
 }) {
+  const [previewing, setPreviewing] = useState(false);
   if (!note) return <EmptyState message="Select a note to view details." testId="empty-note-editor" />;
   const locked = note.status === "Signed";
   const soap = editing && editDraft ? editDraft : note.soap;
+  // Edit mode shows inline fields; Preview (during edit) and read/signed show
+  // the continuous read-only document.
+  const showFields = editing && !locked && !previewing;
   const sections: { key: keyof EncounterNote["soap"]; label: string }[] = [
     { key: "subjective", label: "Subjective" },
     { key: "objective", label: "Objective" },
@@ -397,74 +401,99 @@ function NoteEditor({
   ];
 
   return (
-    <PanelCard testId="panel-note-editor">
-      <div className="flex items-start justify-between border-b border-finance-border px-4 py-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-finance-text">{note.patientName}</h3>
-            <StatusPill label={note.status} tone={NOTE_TONE[note.status]} />
-            {note.version > 1 && <span className="text-xs text-finance-text-muted">v{note.version}</span>}
-          </div>
-          <div className="text-xs text-finance-text-muted">{note.mrn} · {note.age}{note.gender} · Encounter {note.encounterDate}</div>
+    <div className="overflow-hidden rounded-[16px] border border-finance-border bg-white" data-testid="panel-note-editor">
+      {/* ── Sticky note toolbar ── */}
+      <div className="sticky top-0 z-10 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-finance-border bg-white/85 px-4 py-2.5 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-2">
+          <FileText className="h-4 w-4 shrink-0 text-finance-text-muted" />
+          <span className="truncate text-sm font-semibold text-finance-text">Encounter Note</span>
+          <span className="truncate text-xs text-finance-text-muted">· {note.patientName} · {note.mrn}</span>
+          <StatusPill label={note.status} tone={NOTE_TONE[note.status]} />
+          {note.version > 1 && <span className="text-xs text-finance-text-muted">v{note.version}</span>}
         </div>
-        <ServiceChip service={note.service} />
+
+        <div className="ml-auto flex items-center gap-2">
+          {/* Edit | Preview segmented control (hidden once signed). */}
+          {!locked && (
+            <div className="flex rounded-[10px] border border-finance-border p-0.5">
+              <button
+                type="button"
+                onClick={() => { setPreviewing(false); if (!editing) onStartEdit(); }}
+                className={`rounded-[8px] px-2.5 py-1 text-xs font-medium transition-colors ${showFields ? "bg-finance-dark text-white" : "text-finance-text-secondary hover:bg-finance-bg-soft"}`}
+                data-testid="button-edit-note"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewing(true)}
+                className={`rounded-[8px] px-2.5 py-1 text-xs font-medium transition-colors ${!showFields ? "bg-finance-dark text-white" : "text-finance-text-secondary hover:bg-finance-bg-soft"}`}
+                data-testid="button-preview-note"
+              >
+                Preview
+              </button>
+            </div>
+          )}
+          {locked ? (
+            <>
+              <StatusPill label="Locked — Signed" tone="green" />
+              <Button size="sm" variant="outline" onClick={onAmend} data-testid="button-create-amendment"><FileText className="mr-1.5 h-4 w-4" /> Create Amendment</Button>
+              <Button size="sm" variant="ghost" data-testid="button-version-history"><History className="mr-1.5 h-4 w-4" /> History</Button>
+            </>
+          ) : editing ? (
+            <>
+              <Button size="sm" onClick={onSaveDraft} data-testid="button-save-draft">Save Draft</Button>
+              <Button size="sm" variant="outline" onClick={() => { setPreviewing(false); onCancelEdit(); }} data-testid="button-done-editing">Done</Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" onClick={onSign} data-testid="button-sign-note"><PenLine className="mr-1.5 h-4 w-4" /> Sign</Button>
+              <Button size="sm" variant="outline" onClick={onSendBack} data-testid="button-send-back"><Send className="mr-1.5 h-4 w-4" /> Send Back</Button>
+              <Button size="sm" variant="ghost" data-testid="button-version-history-2"><History className="mr-1.5 h-4 w-4" /> History</Button>
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="space-y-4 p-4">
-        {/* vitals */}
-        <div>
-          <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-finance-text-muted">Vitals</div>
-          <div className="grid grid-cols-3 gap-2 text-sm">
+      {/* ── Document canvas: white page on a pale winter surround ── */}
+      <div className="max-h-[70vh] overflow-y-auto bg-[#eef4fb] p-4 sm:p-6">
+        <article className="mx-auto max-w-[720px] rounded-[12px] bg-white px-7 py-7 sm:px-10 sm:py-9 shadow-sm ring-1 ring-slate-200/70">
+          {/* Document masthead */}
+          <div className="mb-5 border-b border-slate-100 pb-4">
+            <div className="text-[17px] font-semibold text-finance-text">{note.patientName}</div>
+            <div className="mt-0.5 text-xs text-finance-text-muted">
+              {note.mrn} · {note.age}{note.gender} · Encounter {note.encounterDate} · {note.service}
+            </div>
+          </div>
+
+          {/* Vitals — a compact inline strip, not boxed cards */}
+          <h3 className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-[#3169E8]">Vitals</h3>
+          <div className="mb-6 flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-finance-text">
             {Object.entries(note.vitals).map(([k, v]) => (
-              <div key={k} className="rounded-[10px] border border-finance-border bg-finance-bg-soft px-2.5 py-1.5">
-                <div className="text-[10px] uppercase text-finance-text-muted">{k}</div>
-                <div className="tabular-nums text-finance-text">{v}</div>
-              </div>
+              <span key={k}><span className="uppercase text-[11px] text-finance-text-muted">{k} </span><span className="tabular-nums">{v}</span></span>
             ))}
           </div>
-        </div>
 
-        {/* SOAP */}
-        {sections.map((s) => (
-          <div key={s.key}>
-            <div className="mb-1 flex items-center justify-between">
-              <div className="text-xs font-semibold uppercase tracking-wide text-finance-text-muted">{s.label}</div>
-              {!locked && !editing && (
-                <button type="button" onClick={onStartEdit} className="text-finance-text-muted hover:text-finance-periwinkle" data-testid={`button-edit-${s.key}`}>
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
+          {/* SOAP — continuous document headings, not separate editors */}
+          {sections.map((s) => (
+            <section key={s.key} className="mb-5">
+              <h3 className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-[#3169E8]">{s.label}</h3>
+              {showFields ? (
+                <Textarea
+                  value={soap[s.key]}
+                  onChange={(e) => onEditField(s.key, e.target.value)}
+                  className="min-h-[72px] resize-y border-0 bg-transparent p-0 text-[13.5px] leading-[1.7] text-finance-text shadow-none focus-visible:ring-0"
+                  style={{ boxShadow: "none" }}
+                  data-testid={`textarea-${s.key}`}
+                />
+              ) : (
+                <p className="whitespace-pre-wrap text-[13.5px] leading-[1.7] text-finance-text">{soap[s.key] || "—"}</p>
               )}
-            </div>
-            {editing && !locked ? (
-              <Textarea value={soap[s.key]} onChange={(e) => onEditField(s.key, e.target.value)} className="min-h-[64px] text-sm" data-testid={`textarea-${s.key}`} />
-            ) : (
-              <p className="text-sm leading-relaxed text-finance-text">{soap[s.key]}</p>
-            )}
-          </div>
-        ))}
+            </section>
+          ))}
+        </article>
       </div>
-
-      <div className="flex flex-wrap gap-2 border-t border-finance-border px-4 py-3">
-        {locked ? (
-          <>
-            <StatusPill label="Locked — Signed" tone="green" />
-            <Button size="sm" variant="outline" onClick={onAmend} data-testid="button-create-amendment"><FileText className="mr-1.5 h-4 w-4" /> Create Amendment</Button>
-            <Button size="sm" variant="ghost" data-testid="button-version-history"><History className="mr-1.5 h-4 w-4" /> Version History</Button>
-          </>
-        ) : editing ? (
-          <>
-            <Button size="sm" onClick={onSaveDraft} data-testid="button-save-draft">Save Draft</Button>
-            <Button size="sm" variant="outline" onClick={onCancelEdit} data-testid="button-done-editing">Done Editing</Button>
-          </>
-        ) : (
-          <>
-            <Button size="sm" onClick={onSign} data-testid="button-sign-note"><PenLine className="mr-1.5 h-4 w-4" /> Sign Note</Button>
-            <Button size="sm" variant="outline" onClick={onSendBack} data-testid="button-send-back"><Send className="mr-1.5 h-4 w-4" /> Send Back</Button>
-            <Button size="sm" variant="ghost" data-testid="button-version-history-2"><History className="mr-1.5 h-4 w-4" /> Version History</Button>
-          </>
-        )}
-      </div>
-    </PanelCard>
+    </div>
   );
 }
 
