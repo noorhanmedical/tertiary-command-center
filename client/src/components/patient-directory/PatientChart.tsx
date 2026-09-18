@@ -25,6 +25,7 @@ import {
 } from "./PatientChartSections";
 import { type EmrChart } from "@/types/emr";
 import { normalizeInsuranceDisplay } from "./insuranceDisplay";
+import { PatientContextRail } from "./PatientContextRail";
 import { usePatientDirectorySectionAccess } from "@/hooks/usePatientDirectorySectionAccess";
 
 // ─── Nav group labels ─────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ export function PatientChart({
 
   const navSections = CHART_SECTIONS.filter((s) => getSectionAccess(s.id) !== "hidden");
   const [activeSection, setActiveSection] = useState<string>(navSections[0]?.id ?? "overview");
+  const [contextCollapsed, setContextCollapsed] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const manualScrollUntil = useRef<number>(0);
@@ -360,6 +362,13 @@ export function PatientChart({
            </EpisodeDocsProvider>
           </EcwSyncContext.Provider>
         </div>
+
+        {/* ─── Right context panel (xl+, collapsible) ─── */}
+        <PatientContextRail
+          chart={chart}
+          collapsed={contextCollapsed}
+          onToggle={() => setContextCollapsed((v) => !v)}
+        />
       </div>
     </div>
   );
