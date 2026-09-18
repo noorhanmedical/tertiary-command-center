@@ -18,6 +18,16 @@ export const EHR_HEX = {
   controlBorder: "#D3DCE8", // hairline on control surfaces
   canvas: "#F3F6FA", // app winter canvas behind the chart (paler than control)
   surface: "#FFFFFF", // elevated white clinical surface
+  // ── Dark left patient-list panel (approved mock) ────────────────────────
+  // The patient list is the deep winter-slate zone; chart nav is the light
+  // winter tint; main workspace is white. list (dark) → nav (control) → white.
+  listDark: "#20293B", // deep cool slate — patient list panel
+  listDark2: "#283245", // slightly raised (group header band)
+  listBorder: "#33405A", // hairline within the dark panel
+  listText: "#E7ECF5", // primary text on the dark panel
+  listMuted: "#93A0B8", // secondary/metadata text on the dark panel
+  listSelected: "#FFFFFF", // selected row = elevated light card lifting off the slate
+  listAvatar: "#33415C", // initials-avatar chip on the dark panel
   surfaceMuted: "#F7F9FC", // legacy secondary surface (superseded by `control`)
   selected: "#DCE6F5", // single icy-blue selected/active surface (rows + nav)
   documentSurround: "#eef4fb", // pale winter surround behind a document page

@@ -619,14 +619,14 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientChart.tsx",
-      "blob": "de3cf66c0de99dd9486f4659f28e3928876d4afb",
+      "blob": "ec3f1cdadebb195d1ed46344ba7c8fb8603ea3f7",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
     },
     {
       "path": "client/src/components/patient-directory/PatientChartSections.tsx",
-      "blob": "e887d88cc029a9fc3108bea9d1cd5077aa96cdb1",
+      "blob": "c3feaf0bcf43e3c28255326dcf4ac082a3dc9f3c",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -2936,7 +2936,7 @@
     },
     {
       "path": "client/src/pages/patient-database.tsx",
-      "blob": "c53a66ad64edac4d951cb7da8859f53726f24c33",
+      "blob": "6bc1ae57aec5d5cd3816c6e3077baaaea9f896da",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true

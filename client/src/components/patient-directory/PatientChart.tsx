@@ -13,18 +13,17 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Link } from "wouter";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
-  Phone, CalendarPlus, Building2, ShieldCheck, ChevronLeft, ChevronRight,
-  Stethoscope, MessageSquare,
+  Phone, CalendarPlus, ChevronLeft, ChevronRight,
+  MessageSquare,
 } from "lucide-react";
 import {
   CHART_SECTIONS, SectionSkeleton, SectionSummaryCard, AccessDeniedSection,
   sectionSummaryLine, EcwSyncContext, EpisodeDocsProvider,
 } from "./PatientChartSections";
 import { type EmrChart } from "@/types/emr";
-import { normalizeInsuranceDisplay } from "./insuranceDisplay";
 import { EHR_HEX } from "./ehrTokens";
 import { initials } from "./profileTypes";
 import { usePatientDirectorySectionAccess } from "@/hooks/usePatientDirectorySectionAccess";
@@ -38,6 +37,91 @@ const GROUP_LABELS: Record<string, string> = {
   operations: "OPERATIONS & PLEXUS CLINICAL WORKFLOW",
   deep: "PLEXUS DEEP INTELLIGENCE",
 };
+
+// Compact patient identity block for the top of the chart-nav column. Portrait
+// avatar (neutral initials — no invented gendered art), name, muted DOB/MRN/
+// Plexus ID, and outlined circular quick actions (phone green-outline, calendar
+// charcoal-outline, message optional). Transparent interiors, icon-only. Wires
+// the existing tel:/schedule/mailto affordances only — no new behavior.
+function ChartNavPatientHeader({
+  chart,
+  phoneHref,
+  onSchedule,
+}: {
+  chart: EmrChart;
+  phoneHref: string | null;
+  onSchedule?: () => void;
+}) {
+  const d = chart.demographics;
+  const [, navigate] = useLocation();
+  const meta = [
+    d.dob ? `DOB ${d.dob}${d.age != null ? ` (${d.age}y)` : ""}` : null,
+    d.mrn ? `MRN ${d.mrn}` : null,
+    chart.plexusId ? chart.plexusId : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="px-1.5 pt-0.5 pb-3 mb-1 border-b" style={{ borderColor: EHR_HEX.controlBorder }} data-testid="chart-nav-patient-header">
+      <div className="flex flex-col items-center text-center">
+        <div
+          className="w-14 h-14 rounded-full flex items-center justify-center text-base font-semibold mb-2 ring-2 ring-white shadow-sm"
+          style={{ background: EHR_HEX.selected, color: EHR_HEX.textStrong }}
+          data-testid="chart-avatar"
+          aria-hidden
+        >
+          {d.name ? initials(d.name) : "?"}
+        </div>
+        <div className="text-[15px] font-semibold leading-tight text-slate-900 truncate max-w-full" data-testid="text-chart-name">
+          {d.name || "Unknown patient"}
+        </div>
+        <div className="mt-1 space-y-0.5">
+          {meta.map((m, i) => (
+            <div key={i} className="text-[11px] leading-tight" style={{ color: "#8592A6" }}>{m}</div>
+          ))}
+        </div>
+
+        {/* Outlined circular quick actions — transparent interiors, icon-only. */}
+        <div className="mt-2.5 flex items-center justify-center gap-2.5">
+          <button
+            type="button"
+            disabled={!phoneHref}
+            onClick={() => { if (phoneHref) window.location.href = phoneHref; }}
+            title={phoneHref ? "Call patient" : "No phone on file"}
+            aria-label="Call patient"
+            data-testid="button-call"
+            className="w-9 h-9 rounded-full border-2 flex items-center justify-center bg-transparent transition-colors disabled:opacity-40 hover:bg-emerald-50"
+            style={{ borderColor: "#1FA870", color: "#1FA870" }}
+          >
+            <Phone className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => (onSchedule ? onSchedule() : navigate("/appointments"))}
+            title="Schedule"
+            aria-label="Schedule appointment"
+            data-testid="button-schedule"
+            className="w-9 h-9 rounded-full border-2 flex items-center justify-center bg-transparent transition-colors hover:bg-slate-100"
+            style={{ borderColor: "#334155", color: "#334155" }}
+          >
+            <CalendarPlus className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            disabled={!d.email}
+            onClick={() => { if (d.email) window.location.href = `mailto:${d.email}`; }}
+            title={d.email ? "Message patient" : "No email on file"}
+            aria-label="Message patient"
+            data-testid="button-message"
+            className="w-9 h-9 rounded-full border-2 flex items-center justify-center bg-transparent transition-colors disabled:opacity-40 hover:bg-slate-100"
+            style={{ borderColor: "#334155", color: "#334155" }}
+          >
+            <MessageSquare className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function PatientChart({
   chart,
@@ -166,78 +250,18 @@ export function PatientChart({
 
   return (
     <div className="flex flex-col h-full" data-testid="patient-chart" style={{ background: "#F3F6FA" }}>
-      {/* ═══════════════════════════════════════════════════════════════════
-          PATIENT HEADER — sticky, ~88px, gradient background
-          ═══════════════════════════════════════════════════════════════════ */}
-      <header
-        className="sticky top-0 z-20 shrink-0 border-b"
-        style={{ background: "linear-gradient(90deg, #FFFFFF 0%, #F5F8FF 55%, #EEF4FF 100%)", borderColor: "#E2E8F0", padding: "8px 16px" }}
-        data-testid="chart-header"
-      >
-        <div className="flex items-center gap-4">
-          {onBack && (
-            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 lg:hidden" onClick={onBack}>
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-          )}
-          {/* Initials avatar */}
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-sm font-semibold"
-            style={{ background: EHR_HEX.selected, color: EHR_HEX.textStrong }}
-            data-testid="chart-avatar"
-            aria-hidden
-          >
-            {d.name ? initials(d.name) : "?"}
-          </div>
-          {/* Identity */}
-          <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-bold leading-tight" style={{ color: "#0F172A" }} data-testid="text-chart-name">
-              {d.name || "Unknown patient"}
-            </h1>
-            {/* Secondary — identity line */}
-            <div className="flex flex-wrap items-center gap-x-2 text-xs mt-0.5" style={{ color: "#667085" }}>
-              {d.mrn && (
-                <>
-                  <span>MRN {d.mrn}</span>
-                  <span aria-hidden>·</span>
-                </>
-              )}
-              <span>{d.dob ? `DOB ${d.dob}` : "DOB —"}{d.age ? ` (${d.age})` : ""}</span>
-              <span aria-hidden>·</span>
-              <span>{d.gender || "—"}</span>
-              <span aria-hidden>·</span>
-              <span className="flex items-center gap-0.5"><Building2 className="w-3 h-3" />{d.clinic || "—"}</span>
-            </div>
-            {/* Tertiary — insurance · PCP · phone */}
-            <div className="flex flex-wrap items-center gap-x-3 text-xs mt-0.5" style={{ color: "#8592A6" }}>
-              <span className="flex items-center gap-0.5"><ShieldCheck className="w-3 h-3" />{normalizeInsuranceDisplay(chart.insurance.primary).summaryLine}</span>
-              <span className="flex items-center gap-0.5"><Stethoscope className="w-3 h-3" />{d.provider || "—"}</span>
-              {d.phoneNumber && <span className="flex items-center gap-0.5"><Phone className="w-3 h-3" />{d.phoneNumber}</span>}
-            </div>
-          </div>
-          {/* Actions */}
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
-            {phoneHref ? (
-              <a href={phoneHref}><Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg"><Phone className="w-3.5 h-3.5" />Call</Button></a>
-            ) : (
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" disabled><Phone className="w-3.5 h-3.5" />Call</Button>
-            )}
-            {onSchedule ? (
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" onClick={onSchedule}><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button>
-            ) : (
-              <Link href="/appointments"><Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg"><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button></Link>
-            )}
-            {d.email ? (
-              <a href={`mailto:${d.email}`}><Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" data-testid="button-message"><MessageSquare className="w-3.5 h-3.5" />Message</Button></a>
-            ) : (
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs rounded-lg" disabled title="No email on file"><MessageSquare className="w-3.5 h-3.5" />Message</Button>
-            )}
-          </div>
+      {/* Mobile-only back to the roster (the wide desktop header row was removed;
+          patient identity + actions now live at the top of the chart nav). */}
+      {onBack && (
+        <div className="lg:hidden shrink-0 border-b px-3 py-2" style={{ borderColor: "#E2E8F0", background: "#FFFFFF" }}>
+          <Button size="sm" variant="ghost" className="h-7 gap-1.5" onClick={onBack} data-testid="button-back-roster">
+            <ChevronLeft className="w-4 h-4" /> Patients
+          </Button>
         </div>
-      </header>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          MAIN: CHART NAV + SCROLLABLE CONTENT
+          MAIN: CHART NAV (owns patient identity) + SCROLLABLE CONTENT
           ═══════════════════════════════════════════════════════════════════ */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* ─── Chart Navigation (220px, collapsible) ─── */}
@@ -262,7 +286,12 @@ export function PatientChart({
           style={{ width: "220px", background: EHR_HEX.control, borderRight: `1px solid ${EHR_HEX.controlBorder}`, padding: "14px 10px" }}
           data-testid="chart-section-nav"
         >
-          <div className="flex items-center justify-between px-2.5 mb-2">
+          {/* Compact patient identity block — owns the patient portrait, name,
+              muted DOB/MRN/Plexus ID, and outlined circular quick actions. This
+              replaces the removed wide top header row. */}
+          <ChartNavPatientHeader chart={chart} phoneHref={phoneHref} onSchedule={onSchedule} />
+
+          <div className="flex items-center justify-between px-2.5 mb-2 mt-1">
             <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#98A2B3" }}>Chart</span>
             <button
               onClick={() => setNavCollapsed(true)}

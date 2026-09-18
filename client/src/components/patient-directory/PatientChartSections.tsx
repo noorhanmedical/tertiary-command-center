@@ -1950,15 +1950,18 @@ function PatientInformationSection({ chart }: SectionProps) {
   const insSecondary = ins.fields.filter((f) => !PRIMARY_INSURANCE_LABELS.has(f.label));
 
   const hasSecondary =
-    !!(d.email || d.address || d.language || d.mrn) || insSecondary.length > 0 || plans.length > 0;
+    !!(d.email || d.address || d.language) || insSecondary.length > 0 || plans.length > 0;
 
   return (
     <SectionCard id="demographics" title="Patient Information" icon={<User className="w-4 h-4" />}>
       <InfoSubheading>Demographics</InfoSubheading>
-      <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1">
-        <KV label="DOB" value={d.dob ? `${d.dob}${d.age != null ? ` (${d.age})` : ""}` : "—"} testId="text-demo-name" />
+      <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-1">
+        <KV label="Full Name" value={d.name || "—"} testId="text-demo-name" />
+        <KV label="Date of Birth" value={d.dob ? `${d.dob}${d.age != null ? ` (${d.age} years)` : ""}` : "—"} />
         <KV label="Gender" value={d.gender || "—"} />
         <KV label="Phone" value={d.phoneNumber || "—"} />
+        <KV label="Plexus ID" value={chart.plexusId || "—"} />
+        <KV label="Medical Record Number" value={d.mrn || "—"} />
         <KV label="Clinic" value={d.clinic || "—"} />
         <KV label="PCP" value={d.provider || "—"} />
       </div>
@@ -1993,7 +1996,6 @@ function PatientInformationSection({ chart }: SectionProps) {
           {expanded && (
             <div className="mt-2 border-t border-slate-100 dark:border-border/50 pt-3 space-y-3" data-testid="patient-info-details">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1">
-                <KV label="MRN" value={d.mrn || "—"} />
                 <KV label="Email" value={d.email || "—"} />
                 <KV label="Address" value={d.address || "—"} />
                 <KV label="Language" value={d.language || "—"} />
