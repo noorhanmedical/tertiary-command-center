@@ -92,12 +92,10 @@ export function initials(name: string): string {
   );
 }
 
-export function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso.includes("T") ? iso : `${iso}T00:00:00`);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+// Canonical short date ("Oct 10, 1972"). Delegates to the platform formatter so
+// the EHR never renders raw YYYY-MM-DD. Kept as a named export for existing
+// callers across the patient-directory components.
+export { formatDate as fmtDate } from "@/lib/format";
 
 export function uniqueQualifyingTests(screenings: DirectoryScreening[]): string[] {
   const set = new Set<string>();

@@ -11,6 +11,15 @@ const MISSING = "—";
 function asDate(value: Date | string | null | undefined): Date | null {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  // Date-only ISO strings ("YYYY-MM-DD") parse as UTC midnight via `new Date`,
+  // which shifts to the previous day in negative-offset timezones. Parse them
+  // as LOCAL calendar dates so the displayed day always matches the source.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (dateOnly) {
+    const [, y, m, dd] = dateOnly;
+    const d = new Date(Number(y), Number(m) - 1, Number(dd));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
 }

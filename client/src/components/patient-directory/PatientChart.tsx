@@ -291,8 +291,7 @@ export function PatientChart({
               replaces the removed wide top header row. */}
           <ChartNavPatientHeader chart={chart} phoneHref={phoneHref} onSchedule={onSchedule} />
 
-          <div className="flex items-center justify-between px-2.5 mb-2 mt-1">
-            <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#98A2B3" }}>Chart</span>
+          <div className="flex items-center justify-end px-1 mb-1 mt-1">
             <button
               onClick={() => setNavCollapsed(true)}
               title="Collapse navigation"
@@ -304,7 +303,7 @@ export function PatientChart({
           </div>
           {(() => {
             let lastGroup = "";
-            return navSections.map((s) => {
+            return navSections.map((s, idx) => {
               const active = activeSection === s.id;
               const group = (s as any).group ?? "";
               const showHeader = group && group !== lastGroup;
@@ -312,8 +311,12 @@ export function PatientChart({
               return (
                 <div key={s.id}>
                   {showHeader && (
-                    <div className="mt-3 mb-1 px-2.5" style={{ fontSize: "10px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#98A2B3" }}>
-                      {GROUP_LABELS[group] ?? group}
+                    // Stronger, clearly non-clickable category title, preceded by
+                    // a subtle partial-width separator (except the first group).
+                    <div className={idx > 0 ? "mt-3 pt-3 border-t border-[#D3DCE8] mx-2.5" : "mt-1"}>
+                      <div className="mb-1 px-0" style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" as const, color: "#5B6B86" }}>
+                        {GROUP_LABELS[group] ?? group}
+                      </div>
                     </div>
                   )}
                   <button
@@ -325,13 +328,13 @@ export function PatientChart({
                       borderRadius: "7px",
                       fontSize: "13px",
                       fontWeight: active ? 600 : 500,
-                      color: active ? "#263B63" : "#667085",
-                      background: active ? EHR_HEX.selected : "transparent",
-                      borderLeft: active ? `2px solid ${EHR_HEX.primaryBlue}` : "2px solid transparent",
+                      color: active ? "#FFFFFF" : "#667085",
+                      background: active ? "#1E2A44" : "transparent",
+                      borderLeft: "2px solid transparent",
                     }}
                     data-testid={`nav-section-${s.id}`}
                   >
-                    <span style={{ color: active ? "#3169E8" : "#98A2B3" }}>{s.icon}</span>
+                    <span style={{ color: active ? "#FFFFFF" : "#98A2B3" }}>{s.icon}</span>
                     <span className="truncate">{s.label}</span>
                   </button>
                 </div>
