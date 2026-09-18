@@ -1,6 +1,7 @@
 import { Home, LogOut } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import type { AuthUser } from "@/App";
+import { PageContextIndicator } from "@/components/PageContextIndicator";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
@@ -224,6 +225,7 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
           >
             Plexus OS
           </span>
+          <PageContextIndicator />
         </div>
 
         <div className="flex items-center gap-2">

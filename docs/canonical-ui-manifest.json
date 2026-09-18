@@ -297,7 +297,7 @@
     },
     {
       "path": "client/src/components/TopBanner.tsx",
-      "blob": "80a206f875d2ff06ce11389c491f2f6757d9ec05",
+      "blob": "20f8e9e751cf804baa757b75483a0303ed3ce1f0",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
