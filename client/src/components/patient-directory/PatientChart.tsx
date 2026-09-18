@@ -25,7 +25,6 @@ import {
 } from "./PatientChartSections";
 import { type EmrChart } from "@/types/emr";
 import { normalizeInsuranceDisplay } from "./insuranceDisplay";
-import { PatientContextRail } from "./PatientContextRail";
 import { usePatientDirectorySectionAccess } from "@/hooks/usePatientDirectorySectionAccess";
 
 // ─── Nav group labels ─────────────────────────────────────────────────────
@@ -63,7 +62,6 @@ export function PatientChart({
 
   const navSections = CHART_SECTIONS.filter((s) => getSectionAccess(s.id) !== "hidden");
   const [activeSection, setActiveSection] = useState<string>(navSections[0]?.id ?? "overview");
-  const [contextCollapsed, setContextCollapsed] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const manualScrollUntil = useRef<number>(0);
@@ -171,7 +169,7 @@ export function PatientChart({
           ═══════════════════════════════════════════════════════════════════ */}
       <header
         className="sticky top-0 z-20 shrink-0 border-b"
-        style={{ background: "linear-gradient(90deg, #FFFFFF 0%, #F5F8FF 55%, #EEF4FF 100%)", borderColor: "#E2E8F0", padding: "12px 18px" }}
+        style={{ background: "linear-gradient(90deg, #FFFFFF 0%, #F5F8FF 55%, #EEF4FF 100%)", borderColor: "#E2E8F0", padding: "8px 16px" }}
         data-testid="chart-header"
       >
         <div className="flex items-center gap-4">
@@ -186,20 +184,23 @@ export function PatientChart({
           </div>
           {/* Identity */}
           <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-bold leading-tight" style={{ color: "#0F172A" }} data-testid="text-chart-name">
+            <h1 className="text-xl font-bold leading-tight" style={{ color: "#0F172A" }} data-testid="text-chart-name">
               {d.name || "Unknown patient"}
             </h1>
+            {/* Secondary — identity line */}
             <div className="flex flex-wrap items-center gap-x-2 text-xs mt-0.5" style={{ color: "#667085" }}>
-              <span>{chart.plexusId || "PLX-—"}</span>
-              <span>·</span>
               <span>{d.mrn ? `MRN ${d.mrn}` : "MRN —"}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 text-xs mt-0.5" style={{ color: "#667085" }}>
+              <span aria-hidden>·</span>
               <span>{d.dob ? `DOB ${d.dob}` : "DOB —"}{d.age ? ` (${d.age})` : ""}</span>
+              <span aria-hidden>·</span>
               <span>{d.gender || "—"}</span>
+              <span aria-hidden>·</span>
               <span className="flex items-center gap-0.5"><Building2 className="w-3 h-3" />{d.clinic || "—"}</span>
-              <span className="flex items-center gap-0.5"><Stethoscope className="w-3 h-3" />{d.provider || "—"}</span>
+            </div>
+            {/* Tertiary — insurance · PCP · phone */}
+            <div className="flex flex-wrap items-center gap-x-3 text-xs mt-0.5" style={{ color: "#8592A6" }}>
               <span className="flex items-center gap-0.5"><ShieldCheck className="w-3 h-3" />{normalizeInsuranceDisplay(chart.insurance.primary).summaryLine}</span>
+              <span className="flex items-center gap-0.5"><Stethoscope className="w-3 h-3" />{d.provider || "—"}</span>
               {d.phoneNumber && <span className="flex items-center gap-0.5"><Phone className="w-3 h-3" />{d.phoneNumber}</span>}
             </div>
           </div>
@@ -327,7 +328,7 @@ export function PatientChart({
              screeningId={chart.patientScreeningId ?? null}
              enabled={getSectionAccess("documents") === "full"}
            >
-            <div className="px-5 py-4 max-w-5xl" style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+            <div className="px-4 py-3 max-w-5xl" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
               {CHART_SECTIONS.map((s) => {
                 const access = getSectionAccess(s.id);
                 if (access === "hidden") return null;
@@ -362,13 +363,6 @@ export function PatientChart({
            </EpisodeDocsProvider>
           </EcwSyncContext.Provider>
         </div>
-
-        {/* ─── Right context panel (xl+, collapsible) ─── */}
-        <PatientContextRail
-          chart={chart}
-          collapsed={contextCollapsed}
-          onToggle={() => setContextCollapsed((v) => !v)}
-        />
       </div>
     </div>
   );

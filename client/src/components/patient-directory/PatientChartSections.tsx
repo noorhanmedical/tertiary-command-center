@@ -53,19 +53,19 @@ export function SectionCard({
       data-testid={`chart-section-${id}`}
     >
       <div className="rounded-2xl border border-slate-200/80 dark:border-border/60 bg-white dark:bg-card shadow-sm">
-        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-100 dark:border-border/50">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-slate-900/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-100 dark:border-border/50">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-slate-900/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
               {icon}
             </div>
-            <h2 className="text-base font-bold tracking-tight truncate" data-testid={`heading-${id}`}>{title}</h2>
+            <h2 className="text-[15px] font-bold tracking-tight truncate" data-testid={`heading-${id}`}>{title}</h2>
             {count != null && (
               <span className="text-xs font-semibold text-muted-foreground tabular-nums">{count}</span>
             )}
           </div>
           {action}
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-4">{children}</div>
       </div>
     </section>
   );
@@ -1852,76 +1852,103 @@ function InfoSubheading({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Normalized insurance + eligibility detail (rendered inside Patient Information).
-function InsuranceDetail({ chart }: SectionProps) {
-  const ins = normalizeInsuranceDisplay(chart.insurance.primary);
-  const plans = chart.insurance.plans ?? [];
+// Eligibility reviews table (secondary detail inside Patient Information).
+function EligibilityTable({ plans }: { plans: NonNullable<EmrChart["insurance"]["plans"]> }) {
   return (
-    <div data-testid="patient-info-insurance">
-      {!ins.hasData ? (
-        <KV label="Insurance" value="—" testId="text-insurance-primary" />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
-          {ins.fields.map((f, i) => (
-            <KV key={f.label} label={f.label} value={f.value} testId={i === 0 ? "text-insurance-primary" : undefined} />
-          ))}
-        </div>
-      )}
-      <div className="mt-3">
-        {plans.length === 0 ? (
-          <EmptyState icon={<ShieldCheck className="w-8 h-8" />} title="No eligibility reviews on file" hint="Eligibility determinations and prior-auth status appear here once reviewed." testId="empty-insurance" />
-        ) : (
-          <Table head={<><Th>Plan</Th><Th>Priority</Th><Th>Eligibility</Th><Th>Approval</Th><Th>Reviewed</Th></>}>
-            {plans.map((p, i) => (
-              <tr key={i} className="border-b border-slate-100 dark:border-border/40 last:border-0" data-testid={`row-eligibility-${i}`}>
-                <Td className="font-medium">{p.insuranceName || p.insuranceType || "—"}</Td>
-                <Td>{p.priorityClass ? p.priorityClass.replace(/_/g, " ") : "—"}</Td>
-                <Td><Pill tone={ELIG_TONE[(p.eligibilityStatus || "unknown").toLowerCase()] ?? "slate"}>{(p.eligibilityStatus || "unknown").replace(/_/g, " ")}</Pill></Td>
-                <Td>{(p.approvalStatus || "—").replace(/_/g, " ")}</Td>
-                <Td>{p.reviewedAt ? fmtDate(p.reviewedAt.slice(0, 10)) : "—"}</Td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </div>
-    </div>
+    <Table head={<><Th>Plan</Th><Th>Priority</Th><Th>Eligibility</Th><Th>Approval</Th><Th>Reviewed</Th></>}>
+      {plans.map((p, i) => (
+        <tr key={i} className="border-b border-slate-100 dark:border-border/40 last:border-0" data-testid={`row-eligibility-${i}`}>
+          <Td className="font-medium">{p.insuranceName || p.insuranceType || "—"}</Td>
+          <Td>{p.priorityClass ? p.priorityClass.replace(/_/g, " ") : "—"}</Td>
+          <Td><Pill tone={ELIG_TONE[(p.eligibilityStatus || "unknown").toLowerCase()] ?? "slate"}>{(p.eligibilityStatus || "unknown").replace(/_/g, " ")}</Pill></Td>
+          <Td>{(p.approvalStatus || "—").replace(/_/g, " ")}</Td>
+          <Td>{p.reviewedAt ? fmtDate(p.reviewedAt.slice(0, 10)) : "—"}</Td>
+        </tr>
+      ))}
+    </Table>
   );
 }
 
-// One unified "Patient Information" tile: Demographics + Insurance & Eligibility
-// in a single card with clear internal sections (no two separate giant cards).
-// The insurance subsection is gated by the (still separate) "insurance" section
-// access level so per-role visibility semantics are preserved.
+// Primary insurance field labels kept in the always-visible summary; the rest
+// (group number, relationship, effective/last-verified dates) move behind
+// "View all details" so the first viewport stays compact.
+const PRIMARY_INSURANCE_LABELS = new Set(["Insurance", "Plan Type", "Member ID", "Coverage Status", "Eligibility"]);
+
+// One unified, COMPACT "Patient Information" tile: primary demographics +
+// primary insurance always visible in a dense multi-column grid; secondary
+// metadata (address, email, language, group #, relationship, dates) and the
+// eligibility table live behind an inline "View all details" expander so
+// Overview stays above the fold. Insurance is gated by the "insurance" section
+// access level. Name/MRN are intentionally NOT repeated here (they anchor the
+// patient header).
 function PatientInformationSection({ chart }: SectionProps) {
   const d = chart.demographics;
   const { getSectionAccess } = usePatientDirectorySectionAccess();
   const showInsurance = getSectionAccess("insurance") !== "hidden";
+  const [expanded, setExpanded] = useState(false);
+
+  const ins = normalizeInsuranceDisplay(chart.insurance.primary);
+  const plans = chart.insurance.plans ?? [];
+  const eligibility = plans.find((p) => p.eligibilityStatus)?.eligibilityStatus ?? null;
+  const insPrimary = ins.fields.filter((f) => PRIMARY_INSURANCE_LABELS.has(f.label));
+  const insSecondary = ins.fields.filter((f) => !PRIMARY_INSURANCE_LABELS.has(f.label));
+
+  const hasSecondary =
+    !!(d.email || d.address || d.language || d.mrn) || insSecondary.length > 0 || plans.length > 0;
+
   return (
     <SectionCard id="demographics" title="Patient Information" icon={<User className="w-4 h-4" />}>
       <InfoSubheading>Demographics</InfoSubheading>
-      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6">
-        <div>
-          <KV label="Name" value={d.name || "—"} testId="text-demo-name" />
-          <KV label="MRN" value={d.mrn || "—"} />
-          <KV label="DOB" value={d.dob || "—"} />
-          <KV label="Age" value={d.age != null ? `${d.age}` : "—"} />
-          <KV label="Gender" value={d.gender || "—"} />
-        </div>
-        <div>
-          <KV label="Phone" value={d.phoneNumber || "—"} />
-          <KV label="Email" value={d.email || "—"} />
-          <KV label="Address" value={d.address || "—"} />
-          <KV label="Clinic" value={d.clinic || "—"} />
-          <KV label="Language" value={d.language || "—"} />
-        </div>
+      <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1">
+        <KV label="DOB" value={d.dob ? `${d.dob}${d.age != null ? ` (${d.age})` : ""}` : "—"} testId="text-demo-name" />
+        <KV label="Gender" value={d.gender || "—"} />
+        <KV label="Phone" value={d.phoneNumber || "—"} />
+        <KV label="Clinic" value={d.clinic || "—"} />
+        <KV label="PCP" value={d.provider || "—"} />
       </div>
+
       {showInsurance && (
-        <div className="mt-5 border-t border-slate-100 dark:border-border/50 pt-4">
+        <div className="mt-3 border-t border-slate-100 dark:border-border/50 pt-3">
           <InfoSubheading>Insurance &amp; Eligibility</InfoSubheading>
-          <div className="mt-2">
-            <InsuranceDetail chart={chart} />
-          </div>
+          {!ins.hasData ? (
+            <div className="mt-1.5"><KV label="Insurance" value="—" testId="text-insurance-primary" /></div>
+          ) : (
+            <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1">
+              {insPrimary.map((f, i) => (
+                <KV key={f.label} label={f.label} value={f.value} testId={i === 0 ? "text-insurance-primary" : undefined} />
+              ))}
+              {eligibility && <KV label="Eligibility" value={eligibility.replace(/_/g, " ")} />}
+            </div>
+          )}
         </div>
+      )}
+
+      {hasSecondary && (
+        <>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-[#3169E8] hover:underline"
+            data-testid="button-patient-info-details"
+            aria-expanded={expanded}
+          >
+            {expanded ? "Hide details" : "View all details"}
+          </button>
+          {expanded && (
+            <div className="mt-2 border-t border-slate-100 dark:border-border/50 pt-3 space-y-3" data-testid="patient-info-details">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1">
+                <KV label="MRN" value={d.mrn || "—"} />
+                <KV label="Email" value={d.email || "—"} />
+                <KV label="Address" value={d.address || "—"} />
+                <KV label="Language" value={d.language || "—"} />
+                {insSecondary.map((f) => (
+                  <KV key={f.label} label={f.label} value={f.value} />
+                ))}
+              </div>
+              {showInsurance && plans.length > 0 && <EligibilityTable plans={plans} />}
+            </div>
+          )}
+        </>
       )}
     </SectionCard>
   );
