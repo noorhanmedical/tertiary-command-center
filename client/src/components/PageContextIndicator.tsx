@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 
 /**
@@ -64,15 +65,43 @@ function resolveLabel(location: string): string | null {
   return best?.label ?? null;
 }
 
+/** Fade-out / fade-in duration (ms). Kept in sync with the CSS transition. */
+const FADE_MS = 220;
+
 export function PageContextIndicator() {
   const [location] = useLocation();
-  const label = resolveLabel(location);
-  if (!label) return null;
+  const target = resolveLabel(location);
+
+  // `label` is the value currently rendered; `visible` drives the crossfade.
+  // On every route change we fade the current label out, swap the text while
+  // it is invisible, then fade the new one in — so switching pages always
+  // animates, even to a page that was already open (the transition is driven
+  // by the route change, not by mount).
+  const [label, setLabel] = useState<string | null>(target);
+  const [visible, setVisible] = useState(false);
+
+  // Fade in whenever a (non-null) label becomes the rendered one.
+  useEffect(() => {
+    if (label == null) return;
+    const id = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(id);
+  }, [label]);
+
+  // React to route/target changes: fade out, then swap the rendered label.
+  useEffect(() => {
+    if (target === label) return;
+    setVisible(false);
+    const t = setTimeout(() => setLabel(target), FADE_MS);
+    return () => clearTimeout(t);
+  }, [target, label]);
+
+  if (label == null) return null;
 
   return (
     <span
       className="pctx hidden sm:inline-flex items-center"
       data-testid="page-context-indicator"
+      data-visible={visible ? "true" : "false"}
       aria-label={`Current page: ${label}`}
     >
       <style>{`
@@ -87,9 +116,19 @@ export function PageContextIndicator() {
           font-size: 22px; font-weight: 300; letter-spacing: -0.01em; line-height: 1.2;
           color: #bff0d6;
           text-shadow: 0 0 10px rgba(120, 220, 170, 0.30);
-          animation: pctxIlluminate 1200ms cubic-bezier(0.22, 1, 0.36, 1) both;
-          transition: color 300ms ease, text-shadow 300ms ease;
           white-space: nowrap;
+          /* Crossfade: hidden by default; the wrapper's data-visible flips it. */
+          opacity: 0;
+          transform: translateX(5px);
+          transition:
+            opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+            transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+            color 300ms ease,
+            text-shadow 300ms ease;
+        }
+        .pctx[data-visible="true"] .pctx-label {
+          opacity: 1;
+          transform: translateX(0);
         }
         /* Slight angled (inclined) accent under the active page name. */
         .pctx-label::after {
@@ -114,10 +153,6 @@ export function PageContextIndicator() {
           color: #d6ffe8;
           text-shadow: 0 0 14px rgba(140, 235, 185, 0.45);
         }
-        @keyframes pctxIlluminate {
-          0%   { opacity: 0; filter: brightness(0.75); }
-          100% { opacity: 1; filter: brightness(1); }
-        }
         @keyframes pctxUnderline {
           0%   { opacity: 0; transform: skewX(-16deg) scaleX(0.55); }
           100% { opacity: 0.85; transform: skewX(-16deg) scaleX(1); }
@@ -128,7 +163,7 @@ export function PageContextIndicator() {
           50%      { opacity: 0.95; }
         }
         @media (prefers-reduced-motion: reduce) {
-          .pctx-label { animation: none; }
+          .pctx-label { transition: none; opacity: 1; transform: none; }
           .pctx-label::after { animation: none; opacity: 0.85; transform: skewX(-16deg) scaleX(1); }
         }
       `}</style>
