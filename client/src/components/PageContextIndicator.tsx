@@ -66,7 +66,7 @@ function resolveLabel(location: string): string | null {
 }
 
 /** Fade-out / fade-in duration (ms). Kept in sync with the CSS transition. */
-const FADE_MS = 220;
+const FADE_MS = 450;
 
 export function PageContextIndicator() {
   const [location] = useLocation();
@@ -121,8 +121,8 @@ export function PageContextIndicator() {
           opacity: 0;
           transform: translateX(5px);
           transition:
-            opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
-            transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+            opacity 450ms cubic-bezier(0.22, 1, 0.36, 1),
+            transform 450ms cubic-bezier(0.22, 1, 0.36, 1),
             color 300ms ease,
             text-shadow 300ms ease;
         }
