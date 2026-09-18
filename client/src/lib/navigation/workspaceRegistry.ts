@@ -148,12 +148,129 @@ export const WORKSPACES: WorkspaceDefinition[] = [
     sidebar: { group: "core", order: 1, icon: HomeIcon, roles: ["admin", "clinician", "scheduler"] },
   },
   {
+    id: "plexus-iq",
+    title: "Plexus IQ",
+    canonicalRoute: "/plexus-iq",
+    // Patient Intake / qualification is the IQ intake funnel (surface
+    // "plexusIq") and resolves here too. Clinical Intelligence & Governance
+    // is now its OWN workspace (see below), not part of Plexus IQ.
+    matches: (p) =>
+      underRoute(p, "/plexus-iq") ||
+      underRoute(p, "/patient-intake") ||
+      underRoute(p, "/qualification"),
+    // Route is unguarded — visible to every authenticated main-app user.
+    // (No allowedRoles = all roles; empty sidebar.roles = all roles.)
+    // Pinned to the top of the CORE group per product direction.
+    sidebar: { group: "core", order: 2, icon: Sparkles, roles: [] },
+  },
+  {
     id: "mission-control",
     title: "Mission Control",
     canonicalRoute: "/mission-control",
     matches: (p) => underRoute(p, "/mission-control"),
     allowedRoles: ["admin"],
-    sidebar: { group: "core", order: 2, icon: Radar, roles: ["admin"] },
+    sidebar: { group: "core", order: 3, icon: Radar, roles: ["admin"] },
+  },
+  {
+    id: "plexus-ehr",
+    title: "Plexus EHR",
+    canonicalRoute: "/patient-directory",
+    matches: (p) => underRoute(p, "/patient-directory"),
+    allowedRoles: ["admin", "clinician", "biller"],
+    sidebar: { group: "core", order: 4, icon: Database, roles: ["admin", "clinician", "biller"] },
+  },
+  {
+    id: "engagement",
+    title: "Engagement Center",
+    canonicalRoute: "/engagement-center",
+    // Outreach-patient qualification + per-scheduler call console resolve here.
+    matches: (p) =>
+      underRoute(p, "/engagement-center") ||
+      underRoute(p, "/outreach-patients") ||
+      underRoute(p, "/outreach/scheduler"),
+    // Route is unguarded — visible to every authenticated main-app user.
+    // (No allowedRoles = all roles; empty sidebar.roles = all roles.)
+    sidebar: { group: "core", order: 5, icon: TrendingUp, roles: [] },
+  },
+  {
+    id: "team-portals",
+    title: "Team Member Portals",
+    // The Team Portals HUB (a normal in-shell landing page with PCS/ACS
+    // tiles). The PCS/ACS workspaces it links to are full-screen portals and
+    // are intentionally NOT part of this registry (see isTeamPortalRoute).
+    canonicalRoute: "/team-member-portals",
+    matches: (p) => underRoute(p, "/team-member-portals"),
+    allowedRoles: ["admin", "clinician", "technician", "liaison"],
+    sidebar: { group: "core", order: 6, icon: HeartHandshake, roles: ["admin", "clinician", "technician", "liaison"] },
+  },
+  {
+    id: "team-ops",
+    title: "Team Ops",
+    canonicalRoute: "/team-ops",
+    matches: (p) => underRoute(p, "/team-ops"),
+    allowedRoles: ["admin"],
+    sidebar: { group: "core", order: 7, icon: Users2, roles: ["admin"] },
+  },
+  {
+    id: "plexus-tasks",
+    title: "Plexus Tasks",
+    canonicalRoute: "/plexus-tasks",
+    matches: (p) => underRoute(p, "/plexus-tasks"),
+    allowedRoles: ["admin", "clinician", "scheduler", "biller"],
+    sidebar: { group: "core", order: 8, icon: CheckSquare, roles: ["admin", "clinician", "scheduler", "biller"] },
+  },
+  {
+    id: "imaging-central",
+    title: "Imaging Central",
+    canonicalRoute: "/imaging-central",
+    matches: (p) => underRoute(p, "/imaging-central"),
+    allowedRoles: ["admin", "clinician", "technician", "liaison"],
+    sidebar: { group: "core", order: 9, icon: ScanLine, roles: ["admin", "clinician", "technician", "liaison"] },
+  },
+  {
+    id: "ancillary-documents",
+    title: "Ancillary Documents",
+    canonicalRoute: "/ancillary-documents",
+    // Document Upload has been unwired from the surfaced UI (per product
+    // direction). The /document-upload route file + App.tsx registration are
+    // retained on disk, but no nav item or workspace claims it anymore.
+    matches: (p) => underRoute(p, "/ancillary-documents"),
+    allowedRoles: ["admin", "clinician"],
+    sidebar: { group: "core", order: 10, icon: FileText, roles: ["admin", "clinician"] },
+  },
+  {
+    id: "clinic-onboarding",
+    title: "Clinic Onboarding",
+    canonicalRoute: "/clinic-onboarding",
+    matches: (p) => underRoute(p, "/clinic-onboarding"),
+    allowedRoles: ["admin"],
+    // Standalone left-nav item (NOT nested under Clinician Portal).
+    sidebar: { group: "core", order: 11, icon: ClipboardCheck, roles: ["admin"] },
+  },
+  {
+    id: "clinic-analytics",
+    title: "Clinic Analytics",
+    canonicalRoute: "/clinic-analytics",
+    matches: (p) => underRoute(p, "/clinic-analytics") || underRoute(p, "/analytics"),
+    allowedRoles: ["admin"],
+    // Standalone left-nav item (NOT nested under Clinician Portal).
+    sidebar: { group: "core", order: 12, icon: BarChart3, roles: ["admin"] },
+  },
+  {
+    id: "clinician-portal",
+    title: "Clinician Portal",
+    canonicalRoute: "/clinician-portal",
+    matches: (p) => underRoute(p, "/clinician-portal"),
+    allowedRoles: ["admin", "clinician"],
+    sidebar: { group: "core", order: 13, icon: Stethoscope, roles: ["admin", "clinician"] },
+  },
+  {
+    id: "clinical-intelligence",
+    title: "Clinical Intelligence",
+    canonicalRoute: "/clinical-intelligence",
+    matches: (p) => underRoute(p, "/clinical-intelligence"),
+    // Route is unguarded — visible to every authenticated main-app user.
+    sidebar: { group: "core", order: 14, icon: Brain, roles: [] },
   },
   {
     id: "global-schedule",
@@ -168,84 +285,7 @@ export const WORKSPACES: WorkspaceDefinition[] = [
       underRoute(p, "/dashboard") ||
       underRoute(p, "/schedule-dashboard"),
     allowedRoles: ["admin", "clinician", "scheduler"],
-    sidebar: { group: "core", order: 3, icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
-  },
-  {
-    id: "plexus-iq",
-    title: "Plexus IQ",
-    canonicalRoute: "/plexus-iq",
-    // Patient Intake / qualification is the IQ intake funnel (surface
-    // "plexusIq") and resolves here too. Clinical Intelligence & Governance
-    // is now its OWN workspace (see below), not part of Plexus IQ.
-    matches: (p) =>
-      underRoute(p, "/plexus-iq") ||
-      underRoute(p, "/patient-intake") ||
-      underRoute(p, "/qualification"),
-    // Route is unguarded — visible to every authenticated main-app user.
-    // (No allowedRoles = all roles; empty sidebar.roles = all roles.)
-    sidebar: { group: "core", order: 4, icon: Sparkles, roles: [] },
-  },
-  {
-    id: "clinical-intelligence",
-    title: "Clinical Intelligence",
-    canonicalRoute: "/clinical-intelligence",
-    matches: (p) => underRoute(p, "/clinical-intelligence"),
-    // Route is unguarded — visible to every authenticated main-app user.
-    sidebar: { group: "core", order: 5, icon: Brain, roles: [] },
-  },
-  {
-    id: "plexus-ehr",
-    title: "Plexus EHR",
-    canonicalRoute: "/patient-directory",
-    matches: (p) => underRoute(p, "/patient-directory"),
-    allowedRoles: ["admin", "clinician", "biller"],
-    sidebar: { group: "core", order: 6, icon: Database, roles: ["admin", "clinician", "biller"] },
-  },
-  {
-    id: "imaging-central",
-    title: "Imaging Central",
-    canonicalRoute: "/imaging-central",
-    matches: (p) => underRoute(p, "/imaging-central"),
-    allowedRoles: ["admin", "clinician", "technician", "liaison"],
-    sidebar: { group: "clinical-operations", order: 1, icon: ScanLine, roles: ["admin", "clinician", "technician", "liaison"] },
-  },
-  {
-    id: "ancillary-documents",
-    title: "Ancillary Documents",
-    canonicalRoute: "/ancillary-documents",
-    // Document Upload is a tool launched from Ancillary Documents.
-    matches: (p) => underRoute(p, "/ancillary-documents") || underRoute(p, "/document-upload"),
-    allowedRoles: ["admin", "clinician"],
-    sidebar: { group: "clinical-operations", order: 2, icon: FileText, roles: ["admin", "clinician"] },
-  },
-  {
-    id: "engagement",
-    title: "Engagement Center",
-    canonicalRoute: "/engagement-center",
-    // Outreach-patient qualification + per-scheduler call console resolve here.
-    matches: (p) =>
-      underRoute(p, "/engagement-center") ||
-      underRoute(p, "/outreach-patients") ||
-      underRoute(p, "/outreach/scheduler"),
-    // Route is unguarded — visible to every authenticated main-app user.
-    // (No allowedRoles = all roles; empty sidebar.roles = all roles.)
-    sidebar: { group: "clinical-operations", order: 3, icon: TrendingUp, roles: [] },
-  },
-  {
-    id: "clinic-analytics",
-    title: "Clinic Analytics",
-    canonicalRoute: "/clinic-analytics",
-    matches: (p) => underRoute(p, "/clinic-analytics") || underRoute(p, "/analytics"),
-    allowedRoles: ["admin"],
-    sidebar: { group: "clinical-operations", order: 4, icon: BarChart3, roles: ["admin"] },
-  },
-  {
-    id: "clinic-onboarding",
-    title: "Clinic Onboarding",
-    canonicalRoute: "/clinic-onboarding",
-    matches: (p) => underRoute(p, "/clinic-onboarding"),
-    allowedRoles: ["admin"],
-    sidebar: { group: "clinical-operations", order: 5, icon: ClipboardCheck, roles: ["admin"] },
+    sidebar: { group: "core", order: 15, icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
   },
   {
     id: "billing",
@@ -272,47 +312,12 @@ export const WORKSPACES: WorkspaceDefinition[] = [
     sidebar: { group: "finance", order: 3, icon: Landmark, roles: ["admin"] },
   },
   {
-    id: "plexus-tasks",
-    title: "Plexus Tasks",
-    canonicalRoute: "/plexus-tasks",
-    matches: (p) => underRoute(p, "/plexus-tasks"),
-    allowedRoles: ["admin", "clinician", "scheduler", "biller"],
-    sidebar: { group: "operations", order: 1, icon: CheckSquare, roles: ["admin", "clinician", "scheduler", "biller"] },
-  },
-  {
-    id: "team-ops",
-    title: "Team Ops",
-    canonicalRoute: "/team-ops",
-    matches: (p) => underRoute(p, "/team-ops"),
-    allowedRoles: ["admin"],
-    sidebar: { group: "operations", order: 2, icon: Users2, roles: ["admin"] },
-  },
-  {
     id: "document-library",
     title: "Document Library",
     canonicalRoute: "/document-library",
     matches: (p) => underRoute(p, "/document-library"),
     allowedRoles: ["admin"],
-    sidebar: { group: "operations", order: 3, icon: Library, roles: ["admin"] },
-  },
-  {
-    id: "team-portals",
-    title: "Team Portals",
-    // The Team Portals HUB (a normal in-shell landing page with PCS/ACS
-    // tiles). The PCS/ACS workspaces it links to are full-screen portals and
-    // are intentionally NOT part of this registry (see isTeamPortalRoute).
-    canonicalRoute: "/team-member-portals",
-    matches: (p) => underRoute(p, "/team-member-portals"),
-    allowedRoles: ["admin", "clinician", "technician", "liaison"],
-    sidebar: { group: "portals", order: 1, icon: HeartHandshake, roles: ["admin", "clinician", "technician", "liaison"] },
-  },
-  {
-    id: "clinician-portal",
-    title: "Clinician Portal",
-    canonicalRoute: "/clinician-portal",
-    matches: (p) => underRoute(p, "/clinician-portal"),
-    allowedRoles: ["admin", "clinician"],
-    sidebar: { group: "portals", order: 2, icon: Stethoscope, roles: ["admin", "clinician"] },
+    sidebar: { group: "operations", order: 1, icon: Library, roles: ["admin"] },
   },
   {
     // Phase 4B — Access Management console (/admin/access). Distinct from the

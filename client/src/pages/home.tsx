@@ -60,21 +60,6 @@ export type ScreeningBatchWithPatients = ScreeningBatchWithPatientsHook;
 const FACILITIES = VALID_FACILITIES;
 const IMPORT_ACCESS_CODE = "1234";
 
-// Platform App tile label → route. Reuses existing routes only.
-const HOME_APP_ROUTES: Record<string, string> = {
-  "Mission Control": "/mission-control",
-  "Plexus EHR": "/patient-directory",
-  "Outreach / Engagement Center": "/engagement-center",
-  "Team Member Portals": "/team-member-portals",
-  "Team Ops": "/team-ops",
-  "Plexus Tasks": "/plexus-nucleus",
-  "Imaging Central": "/imaging-central",
-  "Document Upload": "/document-upload",
-  "Ancillary Documents": "/ancillary-documents",
-  "Clinician Portal": "/clinician-portal",
-  "Clinic Onboarding": "/clinic-onboarding",
-  "Clinic Analytics": "/clinic-analytics",
-};
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 export default function Home() {
@@ -703,10 +688,6 @@ export default function Home() {
             data={homeDashboardData}
             onNewPatient={() => setLocation("/patient-directory")}
             onOpenPlexusIq={() => setLocation("/plexus-iq")}
-            onOpenApp={(label) => {
-              const route = HOME_APP_ROUTES[label];
-              if (route) setLocation(route);
-            }}
           />
         )}
       </div>

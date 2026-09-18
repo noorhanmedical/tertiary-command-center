@@ -80,6 +80,10 @@ import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
 import { InteriorPageTitle } from "@/components/InteriorPageTitle";
+import { PlexusIQDashboardRow } from "@/components/plexus-iq/PlexusIQDashboardRow";
+import { PlexusIQGlobalCalendarPanel } from "@/components/plexus-iq/global-calendar/PlexusIQGlobalCalendarPanel";
+import { PlexusIQJourneyBar, type JourneyMetrics } from "@/components/plexus-iq/global-calendar/PlexusIQJourneyBar";
+import { useCurrentUser } from "@/hooks/api/auth";
 
 // Plexus IQ page — patient workspace center + calendar drawer.
 //
@@ -218,6 +222,83 @@ export default function PlexusIQPage() {
     () => buildCommandCalendarUnscheduledItems(summary),
     [summary],
   );
+
+  // ───── Admin gate for the global calendar + scheduling panel ─────────────
+  // The entire calendar/scheduling panel is admin-only; non-admins never
+  // render it. The route itself remains visible to all authenticated users
+  // (the batch board below is unaffected).
+  const { data: currentUser } = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
+
+  // ───── Scheduled + completed-today events for the Journey bar ────────────
+  // Read-only counts from the canonical global_schedule_events feed. Admin-only
+  // (mirrors the calendar's visibility); non-admins don't fetch these.
+  const scheduledEventRange = useMemo(() => defaultCommandCalendarEventWindow(), []);
+  const { data: scheduledEvents = [] } = useQuery<GlobalScheduleEvent[]>({
+    queryKey: [
+      "/api/global-schedule-events",
+      {
+        eventType: "ancillary_appointment",
+        startDate: scheduledEventRange.start,
+        endDate: scheduledEventRange.end,
+      },
+    ],
+    enabled: isAdmin,
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("eventType", "ancillary_appointment");
+      params.set("startDate", scheduledEventRange.start);
+      params.set("endDate", scheduledEventRange.end);
+      params.set("limit", "500");
+      const res = await fetch(`/api/global-schedule-events?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Scheduled events fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const journeyMetrics = useMemo<JourneyMetrics>(() => {
+    // Overall all patients + final qualification from the summary + detail feed.
+    let allPatients = 0;
+    let qualified = 0;
+    for (const row of summary) {
+      allPatients += row.patientCount;
+      const detail = batchDetails[row.id];
+      if (detail?.patients) {
+        for (const p of detail.patients) {
+          if (p.status === "completed") qualified += 1;
+        }
+      }
+    }
+    const todayKey = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    })();
+    const completedToday = completedEvents.filter((e) => {
+      const s = e.startsAt ? new Date(e.startsAt as unknown as string) : null;
+      if (!s || Number.isNaN(s.getTime())) return false;
+      return (
+        `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, "0")}-${String(s.getDate()).padStart(2, "0")}` ===
+        todayKey
+      );
+    }).length;
+
+    return {
+      allPatients,
+      qualified,
+      // Total Called: live feed not connected yet — surfaced as "—".
+      totalCalled: null,
+      totalScheduled: scheduledEvents.length,
+      completedToday,
+    };
+  }, [summary, batchDetails, completedEvents, scheduledEvents]);
+
+  const refreshGlobalCalendar = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: CALENDAR_SUMMARY_KEY });
+    queryClient.invalidateQueries({ queryKey: ["/api/global-schedule-events"] });
+  }, [queryClient]);
 
   const handleUnscheduledItemAction = useCallback(
     (item: CanonicalCalendarUnscheduledItem) => {
@@ -994,6 +1075,42 @@ export default function PlexusIQPage() {
             titleTestId="text-plexus-iq-title"
           />
         </div>
+
+        {/* ───── Top dashboard: Network Overview (left) + Global Calendar
+            (right, admin-only) + Journey bar. Pinned to the top of the page
+            per product direction. ───── */}
+        <div className="px-6 pb-4 space-y-4" data-testid="plexus-iq-top-dashboard">
+          <div
+            className={
+              isAdmin
+                ? "grid grid-cols-1 gap-4 xl:grid-cols-[1fr_minmax(360px,420px)]"
+                : "grid grid-cols-1 gap-4"
+            }
+          >
+            {/* LEFT — Network Overview (its own tile) */}
+            <div
+              className="rounded-[14px] border border-slate-200 bg-white p-4 shadow-sm"
+              data-testid="plexus-iq-network-overview"
+            >
+              <div className="mb-3 flex items-center gap-2">
+                <h2 className="text-[15px] font-semibold text-slate-900">Network Overview</h2>
+              </div>
+              <PlexusIQDashboardRow summary={summary} batchDetails={batchDetails} />
+            </div>
+
+            {/* RIGHT — Global Calendar (admin-only) */}
+            {isAdmin && (
+              <PlexusIQGlobalCalendarPanel
+                cells={calendarCells}
+                onScheduled={refreshGlobalCalendar}
+              />
+            )}
+          </div>
+
+          {/* Journey bar */}
+          <PlexusIQJourneyBar metrics={journeyMetrics} />
+        </div>
+
         <PlexusIQActiveBatchHeader
           batches={batches}
           summary={summary}

@@ -9,7 +9,6 @@ import {
   Trash2,
   RefreshCw,
   ClipboardList,
-  Upload,
   AlertTriangle,
   Search,
   Plus,
@@ -448,9 +447,9 @@ export default function DocumentsPage() {
             <PlexusButton asChild variant="secondary" size="sm" icon={ClipboardList}>
               <Link href="/plexus" data-testid="button-generate-note">Generate Note</Link>
             </PlexusButton>
-            <PlexusButton asChild variant="secondary" size="sm" icon={Upload}>
-              <Link href="/document-upload" data-testid="button-upload-report">Upload Report</Link>
-            </PlexusButton>
+            {/* Upload Report entry point removed — the /document-upload
+                surface has been unwired per product direction (route retained
+                on disk only). */}
             {!canonical && notes.length > 0 && (
               <PlexusButton
                 variant="primary"

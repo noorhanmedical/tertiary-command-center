@@ -31,7 +31,6 @@ import {
   Shield,
   Sparkles,
   Stethoscope,
-  Upload,
   Users,
   Users2,
 } from "lucide-react";
@@ -90,7 +89,7 @@ const OPERATIONS_SHORTCUTS: Shortcut[] = [
   { href: "/plexus-tasks", label: "Plexus Tasks", testId: "tile-plexus-tasks", icon: <CheckSquare className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
   { href: "/document-library", label: "Document Library", testId: "tile-document-library", icon: <Library className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
   { href: "/team-member-portals", label: "Team Portals", testId: "tile-team-member-portals", icon: <Users2 className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
-  { href: "/document-upload", label: "Document Upload", testId: "tile-document-upload", icon: <Upload className={TILE_ICON} style={TILE_ICON_STYLE} strokeWidth={1.75} /> },
+  // Document Upload shortcut removed — surface unwired (route retained on disk only).
 ];
 
 const FINANCE_SHORTCUTS: Shortcut[] = [

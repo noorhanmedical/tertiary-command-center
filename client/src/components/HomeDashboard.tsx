@@ -23,7 +23,6 @@ import {
   Radar,
   Sparkles,
   Stethoscope,
-  Upload,
   Users,
   Users2,
   Waves,
@@ -520,18 +519,14 @@ export function HomeDashboard({
                   label="Plexus Tasks"
                   icon={<CheckSquare className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
-                {/* Row 3: Imaging Central | Document Upload | Ancillary Documents */}
+                {/* Row 3: Imaging Central | Ancillary Documents.
+                    Document Upload tile removed — the surface has been unwired
+                    per product direction (route retained on disk only). */}
                 <SecondaryTile
                   href="/imaging-central"
                   testId="tile-imaging-central"
                   label="Imaging Central"
                   icon={<ScanLine className="w-9 h-9 text-emerald-600" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/document-upload"
-                  testId="tile-document-upload"
-                  label="Document Upload"
-                  icon={<Upload className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/ancillary-documents"

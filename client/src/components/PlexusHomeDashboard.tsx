@@ -1,24 +1,17 @@
 import React from "react";
 import {
-  Activity,
   Brain,
   Building2,
   CalendarDays,
   CheckSquare,
   CircleDollarSign,
   CreditCard,
-  FileText,
   HeartPulse,
   Phone,
   Sparkles,
-  Stethoscope,
-  ScanLine,
-  Upload,
-  UserRound,
   Users,
   WalletCards,
   Waves,
-  ArrowRight,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { WorldTimeCard } from "@/components/world-time/WorldTimeCard";
@@ -98,7 +91,6 @@ export type HomeDashboardData = {
 
 export type PlexusHomeDashboardProps = {
   data: HomeDashboardData;
-  onOpenApp?: (label: string) => void;
   onOpenPlexusIq?: () => void;
   onNewPatient?: () => void;
 };
@@ -108,10 +100,10 @@ export type PlexusHomeDashboardProps = {
 | HOME  — main content only. The app-level left rail/sidebar is unchanged.
 |--------------------------------------------------------------------------
 */
-export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPatient }: PlexusHomeDashboardProps) {
+export function PlexusHomeDashboard({ data, onOpenPlexusIq, onNewPatient }: PlexusHomeDashboardProps) {
   return (
     <div className="min-h-full bg-[#e2e8f0] text-[#172033]">
-      {/* pb-28 keeps the bottom Platform Apps row clear of the floating GlobalDock. */}
+      {/* pb-28 keeps content clear of the floating GlobalDock. */}
       <div className="mx-auto w-full max-w-[1600px] px-6 pt-6 pb-28">
         {/* PAGE HEADER */}
         <section className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -343,27 +335,6 @@ export function PlexusHomeDashboard({ data, onOpenApp, onOpenPlexusIq, onNewPati
             </DashboardPanel>
           </div>
         </section>
-
-        {/* PLATFORM APPS */}
-        <section>
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[#51617d]">
-            Platform Apps
-          </div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <AppTile icon={<Activity />} label="Mission Control" onClick={onOpenApp} />
-            <AppTile icon={<Users />} label="Plexus EHR" onClick={onOpenApp} />
-            <AppTile icon={<Phone />} label="Outreach / Engagement Center" onClick={onOpenApp} />
-            <AppTile icon={<UserRound />} label="Team Member Portals" onClick={onOpenApp} />
-            <AppTile icon={<Stethoscope />} label="Team Ops" onClick={onOpenApp} />
-            <AppTile icon={<CheckSquare />} label="Plexus Tasks" onClick={onOpenApp} />
-            <AppTile icon={<ScanLine className="text-emerald-600" />} label="Imaging Central" onClick={onOpenApp} />
-            <AppTile icon={<Upload />} label="Document Upload" onClick={onOpenApp} />
-            <AppTile icon={<FileText />} label="Ancillary Documents" onClick={onOpenApp} />
-            <AppTile icon={<UserRound />} label="Clinician Portal" badge={10} onClick={onOpenApp} />
-            <AppTile icon={<CheckSquare />} label="Clinic Onboarding" onClick={onOpenApp} />
-            <AppTile icon={<Activity />} label="Clinic Analytics" onClick={onOpenApp} />
-          </div>
-        </section>
       </div>
     </div>
   );
@@ -440,36 +411,6 @@ function TaskCount({ count, tone = "blue" }: { count: number; tone?: TaskItem["t
     >
       {count}
     </span>
-  );
-}
-
-function AppTile({
-  icon,
-  label,
-  badge,
-  onClick,
-}: {
-  icon: React.ReactElement;
-  label: string;
-  badge?: number;
-  onClick?: (label: string) => void;
-}) {
-  return (
-    <button
-      onClick={() => onClick?.(label)}
-      className="group relative flex min-h-[70px] items-center gap-3 rounded-[10px] border border-[#e2e8ef] bg-white/85 backdrop-blur-sm px-5 text-left shadow-[0_3px_10px_rgba(23,32,51,0.03)] transition hover:-translate-y-[1px] hover:shadow-md"
-      data-testid={`home-app-tile-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
-    >
-      <span className="relative">
-        {cloneIcon(icon, "h-5 w-5 text-[#2e3398]")}
-        {badge !== undefined && (
-          <span className="absolute -right-3 -top-3 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
-            {badge}
-          </span>
-        )}
-      </span>
-      <span className="text-[12px] font-medium leading-4 text-[#24314a]">{label}</span>
-    </button>
   );
 }
 
