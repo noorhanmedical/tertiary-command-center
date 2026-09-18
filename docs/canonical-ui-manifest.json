@@ -626,7 +626,7 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientChartSections.tsx",
-      "blob": "a3546de329d9acb4a4123d6273926c5dd1d21cb8",
+      "blob": "2ce2412ea3e20b5bf62af6130b1d441b09305dde",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true
@@ -808,7 +808,7 @@
     },
     {
       "path": "client/src/components/physician/orders/OrdersNotesPage.tsx",
-      "blob": "3d3ca3a0176e656db52bc2402d141cca68761c6e",
+      "blob": "aa73feef0ca77db2b6543aa5b2acc40d51239fb5",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

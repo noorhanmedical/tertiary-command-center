@@ -124,6 +124,15 @@ function LegacyOrdersNotesPage() {
     if (!selectedId && notes.length) setSelectedId(notes[0].id);
   }, [notes, selectedId]);
 
+  // Unsaved-changes guard: while a note draft is being edited, warn before the
+  // browser unloads (close/refresh/navigate). UI-only; save semantics unchanged.
+  useEffect(() => {
+    if (!editing) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [editing]);
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: NOTES_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: PORTAL_QUERY_KEY });

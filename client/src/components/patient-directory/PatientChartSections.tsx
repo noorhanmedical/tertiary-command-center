@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { fmtDate } from "./profileTypes";
 import { normalizeInsuranceDisplay } from "./insuranceDisplay";
+import { icd10System, ORGAN_SYSTEM_ORDER, isPrnFrequency, allergySeverityTone } from "./clinicalGrouping";
 import {
   type EmrChart, type EmrQualifyingTest, type AdChannelStatus, COOLDOWN_STATE_TONES,
   JOURNEY_STAGES, type EmrLab, type EmrVital, type EmrEncounter,
@@ -2029,19 +2030,54 @@ function ProvidersSection({ chart }: SectionProps) {
 }
 
 // ── 12. Diagnoses / Problem List ───────────────────────────────────────────
+// Grouped by ICD-10 chapter → organ system (deterministic; "Other" fallback).
+// Collapsible groups, default expanded so nothing is hidden.
 function DiagnosesSection({ chart }: SectionProps) {
   const dx = chart.diagnoses ?? [];
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const groups = useMemo(() => {
+    const m = new Map<string, typeof dx>();
+    for (const d of dx) {
+      const sys = icd10System(d.icd10);
+      const arr = m.get(sys);
+      if (arr) arr.push(d); else m.set(sys, [d]);
+    }
+    return ORGAN_SYSTEM_ORDER.filter((s) => m.has(s)).map((s) => ({ system: s, items: m.get(s)! }));
+  }, [dx]);
+
   return (
     <SectionCard id="diagnoses" title="Diagnoses / Problem List" icon={<Stethoscope className="w-4 h-4" />} count={dx.length || null}>
       {dx.length === 0 ? (
         <EmptyState icon={<Stethoscope className="w-8 h-8" />} title="No diagnoses recorded" hint="Problem list entries are pulled from this patient's clinical data." testId="empty-diagnoses" />
       ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {dx.map((d, i) => (
-            <Badge key={i} variant="secondary" className="text-[11px]" data-testid={`chip-diagnosis-${i}`}>
-              {d.icd10 ? `${d.icd10} · ` : ""}{d.description}
-            </Badge>
-          ))}
+        <div className="space-y-2.5">
+          {groups.map(({ system, items }) => {
+            const isCollapsed = collapsed.has(system);
+            return (
+              <div key={system} data-testid={`dx-group-${system.replace(/\s+/g, "-").toLowerCase()}`}>
+                <button
+                  type="button"
+                  onClick={() => setCollapsed((prev) => { const n = new Set(prev); n.has(system) ? n.delete(system) : n.add(system); return n; })}
+                  className="flex w-full items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400 hover:text-slate-600"
+                  aria-expanded={!isCollapsed}
+                >
+                  {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  {system}
+                  <span className="text-slate-300">·</span>
+                  <span className="tabular-nums text-slate-400">{items.length}</span>
+                </button>
+                {!isCollapsed && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {items.map((d, i) => (
+                      <Badge key={i} variant="secondary" className="text-[11px]" data-testid={`chip-diagnosis-${system.replace(/\s+/g, "-").toLowerCase()}-${i}`}>
+                        {d.icd10 ? `${d.icd10} · ` : ""}{d.description}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </SectionCard>
@@ -2049,22 +2085,45 @@ function DiagnosesSection({ chart }: SectionProps) {
 }
 
 // ── 13. Medications ────────────────────────────────────────────────────────
+// Split into Active vs PRN / As Needed by explicit frequency token only
+// (deterministic; no clinical inference). Historical/discontinued grouping is
+// not shown because the source shape carries no medication status field.
+function MedsTable({ rows, group }: { rows: NonNullable<EmrChart["medications"]>; group: string }) {
+  return (
+    <Table head={<><Th>Medication</Th><Th>Dose</Th><Th>Frequency</Th></>}>
+      {rows.map((m, i) => (
+        <tr key={i} className="border-b border-slate-100 dark:border-border/40 last:border-0" data-testid={`row-medication-${group}-${i}`}>
+          <Td className="font-medium">{m.name}</Td>
+          <Td>{m.dose || "—"}</Td>
+          <Td>{m.frequency || "—"}</Td>
+        </tr>
+      ))}
+    </Table>
+  );
+}
 function MedicationsSection({ chart }: SectionProps) {
   const meds = chart.medications ?? [];
+  const prn = meds.filter((m) => isPrnFrequency(m.frequency));
+  const active = meds.filter((m) => !isPrnFrequency(m.frequency));
   return (
     <SectionCard id="medications" title="Medications" icon={<PillIcon className="w-4 h-4" />} count={meds.length || null}>
       {meds.length === 0 ? (
         <EmptyState icon={<PillIcon className="w-8 h-8" />} title="No medications recorded" hint="Active medications are pulled from this patient's clinical data." testId="empty-medications" />
       ) : (
-        <Table head={<><Th>Medication</Th><Th>Dose</Th><Th>Frequency</Th></>}>
-          {meds.map((m, i) => (
-            <tr key={i} className="border-b border-slate-100 dark:border-border/40 last:border-0" data-testid={`row-medication-${i}`}>
-              <Td className="font-medium">{m.name}</Td>
-              <Td>{m.dose || "—"}</Td>
-              <Td>{m.frequency || "—"}</Td>
-            </tr>
-          ))}
-        </Table>
+        <div className="space-y-3">
+          {active.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Active</div>
+              <MedsTable rows={active} group="active" />
+            </div>
+          )}
+          {prn.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">PRN / As Needed</div>
+              <MedsTable rows={prn} group="prn" />
+            </div>
+          )}
+        </div>
       )}
     </SectionCard>
   );
@@ -2079,13 +2138,16 @@ function AllergiesSection({ chart }: SectionProps) {
         <EmptyState icon={<AlertTriangle className="w-8 h-8" />} title="No known allergies on file" hint="Allergy and intolerance records appear here once captured." testId="empty-allergies" />
       ) : (
         <Table head={<><Th>Substance</Th><Th>Reaction</Th><Th>Severity</Th></>}>
-          {allergies.map((a, i) => (
-            <tr key={i} className="border-b border-slate-100 dark:border-border/40 last:border-0" data-testid={`row-allergy-${i}`}>
-              <Td className="font-medium">{a.substance}</Td>
-              <Td>{a.reaction || "—"}</Td>
-              <Td>{a.severity || "—"}</Td>
-            </tr>
-          ))}
+          {allergies.map((a, i) => {
+            const tone = allergySeverityTone(a.severity);
+            return (
+              <tr key={i} className="border-b border-slate-100 dark:border-border/40 last:border-0" data-testid={`row-allergy-${i}`}>
+                <Td className="font-medium">{a.substance}</Td>
+                <Td>{a.reaction || "—"}</Td>
+                <Td>{a.severity ? <Pill tone={tone === "rose" ? "red" : tone === "amber" ? "amber" : "slate"}>{a.severity}</Pill> : "—"}</Td>
+              </tr>
+            );
+          })}
         </Table>
       )}
     </SectionCard>
