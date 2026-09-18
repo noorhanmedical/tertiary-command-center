@@ -626,7 +626,7 @@
     },
     {
       "path": "client/src/components/patient-directory/PatientChartSections.tsx",
-      "blob": "1106c3fb53f8dbd0cb0c0c555e0ed493910d9605",
+      "blob": "a3546de329d9acb4a4123d6273926c5dd1d21cb8",
       "approvedException": false,
       "referencedInAppTsx": false,
       "protectedUi": true

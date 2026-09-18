@@ -526,6 +526,59 @@ function OverviewSection({ chart }: SectionProps) {
           )}
         </OverviewPanel>
       </div>
+
+      {/* Divider + clinical snapshot (problems / meds / allergies) */}
+      <div className="border-t border-slate-100 dark:border-border/50 my-6" />
+      <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:divide-border/50">
+        <OverviewPanel title={`Active Problems (${(chart.diagnoses ?? []).length})`} className="md:pr-7 pb-6 md:pb-1 min-h-[92px]">
+          {(chart.diagnoses ?? []).length === 0 ? (
+            <p className="text-xs text-slate-500" data-testid="overview-dx-empty">No diagnoses recorded.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1">
+              {(chart.diagnoses ?? []).slice(0, 6).map((dx, i) => (
+                <span key={i} className="inline-flex items-center rounded-md bg-slate-100 dark:bg-muted/40 px-1.5 py-0.5 text-[11px] text-slate-700 dark:text-slate-200" data-testid={`overview-dx-${i}`}>
+                  {dx.icd10 ? `${dx.icd10} · ` : ""}{dx.description || "—"}
+                </span>
+              ))}
+              {(chart.diagnoses ?? []).length > 6 && (
+                <span className="text-[10px] text-slate-500 self-center">+{(chart.diagnoses ?? []).length - 6} more</span>
+              )}
+            </div>
+          )}
+        </OverviewPanel>
+
+        <OverviewPanel title={`Medications (${(chart.medications ?? []).length})`} className="md:px-7 py-6 md:py-1 min-h-[92px]">
+          {(chart.medications ?? []).length === 0 ? (
+            <p className="text-xs text-slate-500" data-testid="overview-meds-empty">No medications recorded.</p>
+          ) : (
+            <div className="space-y-1">
+              {(chart.medications ?? []).slice(0, 4).map((m, i) => (
+                <div key={i} className="flex items-baseline justify-between gap-2 text-xs" data-testid={`overview-med-${i}`}>
+                  <span className="text-slate-700 dark:text-slate-200 truncate">{m.name || "—"}</span>
+                  <span className="text-[10px] text-slate-500 shrink-0">{[m.dose, m.frequency].filter(Boolean).join(" · ")}</span>
+                </div>
+              ))}
+              {(chart.medications ?? []).length > 4 && (
+                <div className="text-[10px] text-slate-500">+{(chart.medications ?? []).length - 4} more</div>
+              )}
+            </div>
+          )}
+        </OverviewPanel>
+
+        <OverviewPanel title={`Allergies (${(chart.allergies ?? []).length})`} className="md:pl-7 pt-6 md:pt-1 min-h-[92px]">
+          {(chart.allergies ?? []).length === 0 ? (
+            <p className="text-xs text-slate-500" data-testid="overview-allergies-empty">No known allergies.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1">
+              {(chart.allergies ?? []).slice(0, 6).map((a, i) => (
+                <span key={i} className="inline-flex items-center rounded-md bg-rose-50 dark:bg-rose-950/30 px-1.5 py-0.5 text-[11px] text-rose-700 dark:text-rose-300" data-testid={`overview-allergy-${i}`}>
+                  {a.substance || "—"}{a.severity ? ` (${a.severity})` : ""}
+                </span>
+              ))}
+            </div>
+          )}
+        </OverviewPanel>
+      </div>
     </SectionCard>
   );
 }
