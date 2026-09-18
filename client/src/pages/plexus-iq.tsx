@@ -987,7 +987,7 @@ export default function PlexusIQPage() {
             points live inside the operating-list view's inline toolbar
             (relocated via onAddPatient / onOpenCalendar below). Jobs still
             run; only the always-on status chrome is removed. */}
-        <div className="px-6 pt-6 pb-2">
+        <div className="px-6 pt-6 pb-4">
           <InteriorPageTitle
             title="Plexus IQ"
             context={focusBatch?.facility}

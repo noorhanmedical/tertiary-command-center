@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InteriorPageTitle } from "@/components/InteriorPageTitle";
+import { EmptyState } from "@/components/layout";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
@@ -318,7 +319,7 @@ export default function PatientDatabasePage() {
           Add Patient / Import Patients live here in the top action area — never
           buried in the left rail. Edit Patient appears contextually when a
           patient is open. */}
-      <div className="shrink-0 px-6 pt-6 pb-3 flex flex-wrap items-center justify-between gap-3 border-b border-border/50">
+      <div className="shrink-0 px-6 pt-6 pb-4 flex flex-wrap items-center justify-between gap-3 border-b border-border/50">
         <InteriorPageTitle title="Plexus EHR" />
         <div className="flex items-center gap-2">
           {selectedRepId != null && (
@@ -565,10 +566,12 @@ export default function PatientDatabasePage() {
             <Button size="sm" variant="outline" className="mt-4" onClick={clearSelection} data-testid="button-clear-selection">Back to EHR</Button>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-6" data-testid="profile-empty-state">
-            <UserSearch className="w-14 h-14 mb-4 opacity-25" />
-            <p className="text-lg font-medium text-slate-700 dark:text-foreground">Select a patient</p>
-            <p className="text-sm mt-1 max-w-sm">Choose a patient from the EHR to open their full clinical chart, qualifying opportunities, calls, scheduling, and billing readiness.</p>
+          <div className="flex h-full items-center justify-center px-6" data-testid="profile-empty-state">
+            <EmptyState
+              icon={UserSearch}
+              title="Select a patient"
+              description="Choose a patient from the EHR to open their full clinical chart, qualifying opportunities, calls, scheduling, and billing readiness."
+            />
           </div>
         )}
       </section>

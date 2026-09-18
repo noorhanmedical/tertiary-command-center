@@ -2936,7 +2936,7 @@
     },
     {
       "path": "client/src/pages/patient-database.tsx",
-      "blob": "eea61fbd1bf474bcdb00a397ab3c5845fd858526",
+      "blob": "18eeceb249484bddea309121d07807aa9d97bbff",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -2957,7 +2957,7 @@
     },
     {
       "path": "client/src/pages/plexus-bank.tsx",
-      "blob": "abad4caeb8a588931991f872550da02d89585879",
+      "blob": "cbc3e85aa03cba0f8bfa2c69844ad268b2e6f474",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true
@@ -3006,7 +3006,7 @@
     },
     {
       "path": "client/src/pages/plexus-iq.tsx",
-      "blob": "4d6f914192f8dcae5f9e2b565770bb431f4a3ea4",
+      "blob": "7010a85709902292c3da92474c2255423467e02c",
       "approvedException": false,
       "referencedInAppTsx": true,
       "protectedUi": true

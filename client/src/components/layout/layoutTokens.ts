@@ -71,3 +71,84 @@ export const BREAKPOINTS = {
   xl: 1280,
   "2xl": 1536,
 } as const;
+
+/* ══════════════════════════════════════════════════════════════════════
+   DESIGN-SYSTEM PILOT — authoritative shared tokens (§ 3-page pilot).
+   Consumed identically by Plexus EHR, Plexus IQ, and Plexus Bank so the
+   three workflow families read as one product. Additive: these name the
+   values the pilots standardize on; they do not change the palette (which
+   stays in index.css) or any existing consumer.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Typography scale (Tailwind classes). The page title is delegated to
+ * InteriorPageTitle; the rest are the in-body text roles.
+ */
+export const TYPOGRAPHY = {
+  /** In-body section heading (delegated to SectionHeader). */
+  sectionTitle: "text-[18px] font-semibold leading-6 tracking-[-0.01em]",
+  /** Card / panel heading. */
+  cardTitle: "text-[15px] font-semibold leading-5",
+  /** Default body text. */
+  body: "text-sm leading-5",
+  /** Secondary / supporting text. */
+  secondary: "text-sm text-finance-text-secondary",
+  /** Caption / metadata / eyebrow. */
+  caption: "text-xs text-finance-text-muted",
+} as const;
+
+/**
+ * The canonical interior page-header band (the row that hosts
+ * InteriorPageTitle + page-level actions). One padding value for all three
+ * pilots so header height is identical: 24px top, 16px bottom, page gutter
+ * left/right, hairline underneath.
+ */
+export const PAGE_HEADER_BAND =
+  "shrink-0 px-6 pt-6 pb-4 flex flex-wrap items-center justify-between gap-3 border-b border-border/50" as const;
+
+/** In-body / master-detail spacing (px values expressed as Tailwind). */
+export const SPACING = {
+  /** Master-detail right-pane / content padding. */
+  panePadding: "p-6",
+  /** Card internal padding (matches PlexusCard `md`/`lg`). */
+  cardPadding: "p-5",
+  /** Gap between cards / metric tiles. */
+  cardGap: "gap-4",
+  /** Gap between form fields. */
+  formGap: "gap-4",
+  /** Table cell padding (x/y). */
+  tableCell: "px-4 py-2.5",
+} as const;
+
+/** Control + surface geometry (radii + fixed sizes). */
+export const GEOMETRY = {
+  /** Card / panel radius. */
+  cardRadius: "rounded-2xl",
+  /** Control radius (buttons / inputs / selects). */
+  controlRadius: "rounded-lg",
+  /** Modal / drawer radius. */
+  modalRadius: "rounded-2xl",
+  /** Module sidebar (secondary in-page rail, e.g. Plexus Bank) width. */
+  moduleSidebarWidth: "w-[248px]",
+  /** Master-detail left (directory) pane width. */
+  directoryPaneWidth: "w-[320px]",
+  /** Module-sidebar row height. */
+  sidebarRowHeight: "h-9",
+} as const;
+
+/** Global navigation chrome sizing (mirrors the shell). */
+export const NAV = {
+  /** Left global rail width (shell SIDEBAR_STYLE --sidebar-width = 18rem). */
+  railWidth: "w-72",
+  /** Workspace-tab strip height. */
+  workspaceTabHeight: "h-10",
+  /** In-page tab height. */
+  tabHeight: "h-9",
+} as const;
+
+/** Canonical icon sizes (Tailwind h/w). */
+export const ICON_SIZE = {
+  sm: "h-3.5 w-3.5",
+  md: "h-4 w-4",
+  lg: "h-5 w-5",
+} as const;

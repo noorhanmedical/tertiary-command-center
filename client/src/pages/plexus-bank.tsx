@@ -240,7 +240,7 @@ export default function PlexusBankPage() {
         {/* Main column */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Page-level title — base + active module context. */}
-          <div className="shrink-0 bg-white px-6 pt-6 pb-2">
+          <div className="shrink-0 bg-white px-6 pt-6 pb-4">
             <InteriorPageTitle title="Plexus Bank" context={bankContext} />
           </div>
           {/* Global filter bar — persists across module switches */}
