@@ -31,6 +31,14 @@ export type GlobalDockProps = {
   onActivate?: (app: DockAppDefinition) => void;
   /** Badge counts keyed by app ID. */
   badges?: Record<string, number>;
+  /**
+   * Routes of currently-open pages/workspaces. Any dock app whose route
+   * matches one of these gets an "open" dot indicator — so the dock doubles
+   * as a way to see and return to previously-opened pages (e.g. on Home,
+   * where the workspace tab strip is intentionally hidden). Additive; does
+   * not affect the dock-ownership self-suppression.
+   */
+  openRoutes?: string[];
   /** CSS position override. Default: "fixed". Use "absolute" inside portals. */
   position?: "fixed" | "absolute";
   /** Additional className on the outermost wrapper. */
@@ -49,6 +57,7 @@ export function GlobalDock({
   activeState,
   onActivate,
   badges,
+  openRoutes,
   position = "fixed",
   className = "",
 }: GlobalDockProps) {
@@ -142,7 +151,10 @@ export function GlobalDock({
             (app.destinationType === "route" && app.route
               ? location === app.route || location.startsWith(app.route + "/")
               : false);
-          const isOpen = activeState?.openAppIds?.includes(app.id) ?? false;
+          const openByRoute =
+            !!app.route &&
+            !!openRoutes?.some((r) => r === app.route || r.startsWith(app.route + "/"));
+          const isOpen = (activeState?.openAppIds?.includes(app.id) ?? false) || openByRoute;
           const badge = canonicalBadges?.[app.id] ?? (typeof app.badge === "function" ? undefined : (app.badge as number | undefined));
 
           return (

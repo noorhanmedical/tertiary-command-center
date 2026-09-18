@@ -24,6 +24,7 @@ import { GlobalNav } from "@/components/GlobalNav";
 import { GlobalDock } from "@/components/dock";
 import { WorkspaceTabBar } from "@/components/workspace/WorkspaceTabBar";
 import { isAdminWorkspaceRoute } from "@/lib/navigation/workspaceRegistry";
+import { useWorkspaceTabs } from "@/lib/navigation/workspaceTabs";
 
 // RouteTransition — centralized page-enter animation (Pass 3B).
 //
@@ -79,20 +80,27 @@ export function PlexusAdminShell({
 }) {
   const [location] = useLocation();
   const adminRoute = isAdminWorkspaceRoute(location);
+  const onHome = location === "/home" || location === "/";
+  // Open-workspace routes → dock "open" dots, so the dock shows (and returns
+  // you to) previously-opened pages. This is what replaces the tab strip on
+  // Home, where the strip is intentionally hidden.
+  const { openTabs } = useWorkspaceTabs();
+  const openRoutes = openTabs.map((t) => t.lastRoute);
 
   return (
     <div className="flex flex-col h-screen w-full overflow-hidden">
       <TopBanner user={user} onLogout={onLogout} />
       {/* One app-level dock. On Team Portal routes it self-suppresses via
-          DockOwnershipContext so the portal's owned dock is the only one. */}
-      <GlobalDock />
+          DockOwnershipContext so the portal's owned dock is the only one.
+          `openRoutes` lights an "open" dot under apps whose page is open. */}
+      <GlobalDock openRoutes={openRoutes} />
       {/* Persistent application-level workspace tab strip. Full main-app width,
           directly beneath the TopBanner and above the GlobalNav + content row.
-          Self-hides when no workspace tabs are open (e.g. on Home). Gated on
-          adminRoute so it never appears on any non-admin shell surface; Team
-          Portal routes never mount this shell at all, so they are already
-          isolated. */}
-      {adminRoute && <WorkspaceTabBar />}
+          Hidden on Home (navigate via the dock's open-page dots there) and
+          self-hides when no workspace tabs are open. Gated on adminRoute so it
+          never appears on any non-admin shell surface; Team Portal routes never
+          mount this shell at all, so they are already isolated. */}
+      {adminRoute && !onHome && <WorkspaceTabBar />}
       <div className="flex flex-1 min-h-0 min-w-0">
         {adminRoute && <GlobalNav user={user} onLogout={onLogout} />}
         <div className="flex flex-col flex-1 min-w-0 min-h-0">

@@ -18,10 +18,40 @@ import { useLocation } from "wouter";
 
 // Route → page label. Longest-prefix match wins so nested routes resolve to
 // their parent workspace label. Add entries here to extend coverage.
+// `/home` (and `/`) intentionally have NO entry — the brand stands alone on
+// the root so the indicator only appears once you're inside a workspace.
 const ROUTE_LABELS: { prefix: string; label: string }[] = [
+  // Pilots
   { prefix: "/patient-directory", label: "Plexus EHR" },
   { prefix: "/plexus-iq", label: "Plexus IQ" },
   { prefix: "/plexus-bank", label: "Plexus Bank" },
+  // Clinical / scheduling
+  { prefix: "/ancillary-documents", label: "Ancillary Documents" },
+  { prefix: "/document-library", label: "Document Library" },
+  { prefix: "/document-upload", label: "Document Upload" },
+  { prefix: "/schedule", label: "Global Schedule" },
+  { prefix: "/dashboard", label: "Schedule Dashboard" },
+  { prefix: "/appointments", label: "Appointments" },
+  { prefix: "/imaging-central", label: "Imaging Central" },
+  { prefix: "/clinic-analytics", label: "Clinic Analytics" },
+  { prefix: "/analytics", label: "Clinic Analytics" },
+  { prefix: "/clinic-onboarding", label: "Clinic Onboarding" },
+  { prefix: "/clinical-intelligence", label: "Clinical Intelligence" },
+  // Qualification / engagement
+  { prefix: "/patient-intake", label: "Qualification" },
+  { prefix: "/qualification", label: "Qualification" },
+  { prefix: "/outreach-patients", label: "Outreach" },
+  { prefix: "/engagement-center", label: "Engagement" },
+  // Billing / finance
+  { prefix: "/billing", label: "Billing" },
+  { prefix: "/invoices", label: "Invoices" },
+  // Ops / team / admin
+  { prefix: "/team-ops", label: "Team Ops" },
+  { prefix: "/team-member-portals", label: "Team Portals" },
+  { prefix: "/plexus-tasks", label: "Plexus Tasks" },
+  { prefix: "/clinician-portal", label: "Clinician Portal" },
+  { prefix: "/admin/access", label: "Access Management" },
+  { prefix: "/admin", label: "Admin" },
 ];
 
 function resolveLabel(location: string): string | null {
