@@ -220,11 +220,13 @@ export function AccessDeniedSection({
   );
 }
 
+// Compact stacked label-over-value pair. Dense grid cell — the value sits
+// directly under its label instead of being spread edge-to-edge.
 function KV({ label, value, testId }: { label: string; value: React.ReactNode; testId?: string }) {
   return (
-    <div className="flex items-start justify-between gap-3 py-2 border-b border-slate-100 dark:border-border/40 last:border-0">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground pt-0.5">{label}</span>
-      <span className="text-sm font-medium text-right max-w-[60%] break-words" data-testid={testId}>{value}</span>
+    <div className="py-1 min-w-0">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground leading-none">{label}</div>
+      <div className="mt-0.5 text-sm font-medium text-finance-text break-words leading-snug" data-testid={testId}>{value}</div>
     </div>
   );
 }
@@ -438,7 +440,7 @@ function OverviewSection({ chart }: SectionProps) {
           <div className="flex gap-2">
             {phoneHref ? (
               <a href={phoneHref} className="flex-1">
-                <Button size="sm" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 h-8"><Phone className="w-3.5 h-3.5" />Call</Button>
+                <Button size="sm" className="w-full bg-slate-900 hover:bg-slate-800 text-white gap-1.5 h-8"><Phone className="w-3.5 h-3.5" />Call</Button>
               </a>
             ) : (
               <Button size="sm" className="flex-1 h-8" disabled>No phone</Button>

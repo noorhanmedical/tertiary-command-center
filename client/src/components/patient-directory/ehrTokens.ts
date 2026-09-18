@@ -10,11 +10,16 @@
 
 /** Raw hex values (for inline styles: gradients, borderColor, etc.). */
 export const EHR_HEX = {
-  // Backgrounds
-  canvas: "#F3F6FA", // app winter canvas behind the chart
+  // ── Tonal elevation ladder ──────────────────────────────────────────────
+  // Interactive chrome/controls (rails, toolbars, selected rows) sit in the
+  // DARKER cool-winter hue; the workspace canvas is paler; content cards are
+  // white. Reads: control (darkest) → canvas (pale) → surface (white).
+  control: "#E4EAF3", // directory rail / chart-nav rail / control chrome (darkest)
+  controlBorder: "#D3DCE8", // hairline on control surfaces
+  canvas: "#F3F6FA", // app winter canvas behind the chart (paler than control)
   surface: "#FFFFFF", // elevated white clinical surface
-  surfaceMuted: "#F7F9FC", // nav rail / secondary surface
-  selected: "#E8EEF8", // icy-blue selected/active surface
+  surfaceMuted: "#F7F9FC", // legacy secondary surface (superseded by `control`)
+  selected: "#DCE6F5", // single icy-blue selected/active surface (rows + nav)
   documentSurround: "#eef4fb", // pale winter surround behind a document page
   // Text
   textPrimary: "#0F172A", // deep navy — headings
@@ -24,6 +29,7 @@ export const EHR_HEX = {
   textFaint: "#98A2B3", // group labels / faint captions
   // Accents / status
   accentBlue: "#3169E8", // informational / active blue
+  primaryBlue: "#3169E8", // THE one primary blue (active/selected/links/accents)
   // Borders
   border: "#E2E8F0", // subtle cool-gray hairline
   borderSoft: "#EDF1F5",

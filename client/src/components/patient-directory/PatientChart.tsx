@@ -17,7 +17,7 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
   Phone, CalendarPlus, Building2, ShieldCheck, ChevronLeft, ChevronRight,
-  Stethoscope, MessageSquare, User as UserIcon,
+  Stethoscope, MessageSquare,
 } from "lucide-react";
 import {
   CHART_SECTIONS, SectionSkeleton, SectionSummaryCard, AccessDeniedSection,
@@ -25,6 +25,8 @@ import {
 } from "./PatientChartSections";
 import { type EmrChart } from "@/types/emr";
 import { normalizeInsuranceDisplay } from "./insuranceDisplay";
+import { EHR_HEX } from "./ehrTokens";
+import { initials } from "./profileTypes";
 import { usePatientDirectorySectionAccess } from "@/hooks/usePatientDirectorySectionAccess";
 
 // ─── Nav group labels ─────────────────────────────────────────────────────
@@ -178,9 +180,14 @@ export function PatientChart({
               <ChevronLeft className="w-4 h-4" />
             </Button>
           )}
-          {/* Silhouette avatar */}
-          <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: "#E8EEF7" }}>
-            <UserIcon className="w-6 h-6" style={{ color: "#5D6B82" }} />
+          {/* Initials avatar */}
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-sm font-semibold"
+            style={{ background: EHR_HEX.selected, color: EHR_HEX.textStrong }}
+            data-testid="chart-avatar"
+            aria-hidden
+          >
+            {d.name ? initials(d.name) : "?"}
           </div>
           {/* Identity */}
           <div className="min-w-0 flex-1">
@@ -189,8 +196,12 @@ export function PatientChart({
             </h1>
             {/* Secondary — identity line */}
             <div className="flex flex-wrap items-center gap-x-2 text-xs mt-0.5" style={{ color: "#667085" }}>
-              <span>{d.mrn ? `MRN ${d.mrn}` : "MRN —"}</span>
-              <span aria-hidden>·</span>
+              {d.mrn && (
+                <>
+                  <span>MRN {d.mrn}</span>
+                  <span aria-hidden>·</span>
+                </>
+              )}
               <span>{d.dob ? `DOB ${d.dob}` : "DOB —"}{d.age ? ` (${d.age})` : ""}</span>
               <span aria-hidden>·</span>
               <span>{d.gender || "—"}</span>
@@ -233,7 +244,7 @@ export function PatientChart({
         {navCollapsed ? (
           <div
             className="hidden lg:flex flex-col items-center shrink-0 pt-3"
-            style={{ width: "40px", background: "#F7F9FC", borderRight: "1px solid #E2E8F0" }}
+            style={{ width: "40px", background: EHR_HEX.control, borderRight: `1px solid ${EHR_HEX.controlBorder}` }}
             data-testid="chart-section-nav-collapsed"
           >
             <button
@@ -248,7 +259,7 @@ export function PatientChart({
         ) : (
         <nav
           className="hidden lg:flex flex-col shrink-0 overflow-y-auto"
-          style={{ width: "220px", background: "#F7F9FC", borderRight: "1px solid #E2E8F0", padding: "14px 10px" }}
+          style={{ width: "220px", background: EHR_HEX.control, borderRight: `1px solid ${EHR_HEX.controlBorder}`, padding: "14px 10px" }}
           data-testid="chart-section-nav"
         >
           <div className="flex items-center justify-between px-2.5 mb-2">
@@ -286,8 +297,8 @@ export function PatientChart({
                       fontSize: "13px",
                       fontWeight: active ? 600 : 500,
                       color: active ? "#263B63" : "#667085",
-                      background: active ? "#E8EEF8" : "transparent",
-                      borderLeft: active ? "2px solid #3169E8" : "2px solid transparent",
+                      background: active ? EHR_HEX.selected : "transparent",
+                      borderLeft: active ? `2px solid ${EHR_HEX.primaryBlue}` : "2px solid transparent",
                     }}
                     data-testid={`nav-section-${s.id}`}
                   >
