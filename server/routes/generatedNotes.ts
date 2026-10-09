@@ -7,13 +7,30 @@ import {
   getGeneratedNoteById,
 } from "../repositories/generatedNotes.repo";
 
+import { requirePermission } from "../middleware/accessControl";
+import { readDocumentPatientIdentities } from "../services/ancillaryDocuments/patientIdentity";
+import { tenantAllowsClinic } from "../lib/tenantContext";
+
 export function registerGeneratedNotesRoutes(app: Express) {
-  app.get("/api/generated-notes", async (_req, res) => {
+  app.get("/api/generated-notes", requirePermission("document.view"), async (req, res) => {
     try {
+      if (!req.tenant || req.tenant.kind === "denied") return res.status(403).json({ error: "Forbidden" });
       const notes = await storage.getAllGeneratedNotes();
-      res.json(notes);
+      const identities = await readDocumentPatientIdentities(
+        [...new Set(notes.map(n => n.patientId))],
+        req.tenant.kind === "clinic" ? req.tenant.clinicId : undefined,
+      );
+      // Old notes with null clinic can inherit screening ownership, but a
+      // contradictory clinic/batch association must never disclose demographics.
+      res.json(notes.flatMap(note => {
+        const linked = identities.get(note.patientId);
+        if (!linked || !tenantAllowsClinic(req.tenant, linked.clinicId)
+          || linked.batchId !== note.batchId
+          || (note.clinicId != null && note.clinicId !== linked.clinicId)) return [];
+        return [{ ...note, patientIdentity: linked.identity }];
+      }));
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Failed to load generated documents" });
     }
   });
 

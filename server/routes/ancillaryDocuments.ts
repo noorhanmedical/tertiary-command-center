@@ -19,6 +19,44 @@ import {
 } from "../services/ancillaryDocuments/documentProjection";
 import { getAncillaryCaseById } from "../repositories/ancillaryCases.repo";
 
+import { readDocumentPatientIdentities } from "../services/ancillaryDocuments/patientIdentity";
+import { patientAncillaryCases } from "@shared/schema/ancillaryCases";
+import { db } from "../db";
+import { and, eq, inArray } from "drizzle-orm";
+import { ancillaryDocumentReferences } from "@shared/schema/ancillaryDocuments";
+import { requirePermission } from "../middleware/accessControl";
+import type { AncillaryDocumentContractItem } from "@shared/schema/ancillaryDocuments";
+
+async function attachPatientIdentities(items: AncillaryDocumentContractItem[], clinicId: number) {
+  if (!items.length) return items;
+  const refs = await db.select().from(ancillaryDocumentReferences).where(and(
+    eq(ancillaryDocumentReferences.clinicId, clinicId),
+    inArray(ancillaryDocumentReferences.id, items.map(i => i.ancillaryDocumentReferenceId)),
+  ));
+  const identities = await readDocumentPatientIdentities(
+    [...new Set(refs.flatMap(r => r.patientScreeningId == null ? [] : [r.patientScreeningId]))], clinicId,
+  );
+  const cases = await db.select({
+    id: patientAncillaryCases.id, clinicId: patientAncillaryCases.clinicId,
+    globalPatientId: patientAncillaryCases.globalPlexusPatientId,
+    membershipId: patientAncillaryCases.patientClinicMembershipId,
+  }).from(patientAncillaryCases).where(and(
+    eq(patientAncillaryCases.clinicId, clinicId),
+    inArray(patientAncillaryCases.id, [...new Set(items.map(i => i.ancillaryCaseId))]),
+  ));
+  return items.map(item => {
+    const ref = refs.find(r => r.id === item.ancillaryDocumentReferenceId && r.clinicId === clinicId && r.ancillaryCaseId === item.ancillaryCaseId);
+    const linked = ref?.patientScreeningId == null ? undefined : identities.get(ref.patientScreeningId);
+    const acase = cases.find(c => c.id === item.ancillaryCaseId && c.clinicId === clinicId);
+    const consistent = linked && ref && acase
+      && acase.globalPatientId === linked.globalPatientId && acase.membershipId === linked.membershipId
+      && (ref.globalPlexusPatientId == null || ref.globalPlexusPatientId === linked.globalPatientId);
+    return { ...item, patientIdentity: consistent ? linked.identity : {
+      mrn: null, dob: null, plexusId: null, status: "stale" as const,
+    } };
+  });
+}
+
 function requireClinicScope(req: Request, res: Response): number | null {
   const clinicId = (req as { clinicId?: number | null }).clinicId ?? null;
   if (clinicId == null) {
@@ -41,7 +79,7 @@ function is503(e: unknown): boolean {
 
 export function registerAncillaryDocumentsRoutes(app: Express): void {
   // ─── GET /api/ancillary-cases/:ancillaryCaseId/documents ──────────
-  app.get("/api/ancillary-cases/:ancillaryCaseId/documents", async (req, res) => {
+  app.get("/api/ancillary-cases/:ancillaryCaseId/documents", requirePermission("document.view"), async (req, res) => {
     // Flag OFF → explicit disabled contract, zero canonical reads.
     if (!featureFlags.unifiedAncillaryDocuments) {
       return res.json({ disabled: true, ancillaryCaseId: null, cases: [] });
@@ -62,7 +100,9 @@ export function registerAncillaryDocumentsRoutes(app: Express): void {
         ancillaryCaseId,
         includeHistory: req.query.includeHistory !== "false",
       });
-      return res.json(projection);
+      return res.json({ ...projection, cases: await Promise.all(projection.cases.map(async c => ({
+        ...c, documents: await attachPatientIdentities(c.documents, clinicId),
+      }))) });
     } catch (e) {
       if (is503(e)) return res.status(503).json({ error: "Ancillary Documents unavailable", code: "ANCILLARY_DOCUMENT_MIGRATION_MISSING" });
       console.error("[ancillary-cases/documents] error:", (e as Error)?.message ?? e);
@@ -71,7 +111,7 @@ export function registerAncillaryDocumentsRoutes(app: Express): void {
   });
 
   // ─── GET /api/ancillary-documents ─────────────────────────────────
-  app.get("/api/ancillary-documents", async (req, res) => {
+  app.get("/api/ancillary-documents", requirePermission("document.view"), async (req, res) => {
     if (!featureFlags.unifiedAncillaryDocuments) {
       // Explicit disabled contract — no migration-0053 reads.
       return res.json({ disabled: true, items: [], nextCursor: null });
@@ -94,7 +134,7 @@ export function registerAncillaryDocumentsRoutes(app: Express): void {
         // Opaque compound cursor (string), decoded/validated in the service.
         cursor: typeof q.cursor === "string" && q.cursor.length > 0 ? q.cursor : undefined,
       });
-      return res.json({ items: result.items, nextCursor: result.nextCursor });
+      return res.json({ items: await attachPatientIdentities(result.items, clinicId), nextCursor: result.nextCursor });
     } catch (e) {
       if ((e as { code?: string })?.code === "INVALID_CURSOR") {
         return res.status(400).json({ error: "Invalid cursor", code: "INVALID_CURSOR" });
