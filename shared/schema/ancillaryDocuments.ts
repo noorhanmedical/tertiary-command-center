@@ -255,6 +255,7 @@ export const BILLING_DOCUMENT_SOURCE_TABLE = "billing_document_requests";
 // bytes, note body, storage secrets, raw bucket keys, global-identity match
 // data, or retry-ledger internals.
 export type AncillaryDocumentContractItem = {
+  patientIdentity?: import("../documentPatientIdentity").DocumentPatientIdentity;
   ancillaryDocumentReferenceId: number;
   ancillaryCaseId: number;
   serviceType: string | null;

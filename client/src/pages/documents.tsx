@@ -1,3 +1,4 @@
+import { identitySummary, type DocumentPatientIdentity } from "@shared/documentPatientIdentity";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -21,13 +22,9 @@ import {
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 import { CanonicalAncillaryDocumentsList } from "@/components/ancillary-documents/CanonicalAncillaryDocuments";
 import { isUnifiedAncillaryDocumentsEnabled } from "@/lib/unifiedAncillaryDocumentsFlag";
-// Phase B2 — IA / interaction redesign. The archaic nested disclosure
-// (facility → date → patient → service → note → action) is replaced by a
-// Clinic → Patient → Document master-detail workspace. This is PRESENTATION
-// ONLY: the data fetch, feature-flag branch, mutations, handlers, document
-// contents, and canonical path are all unchanged. A client-side view-model
-// (buildWorkspaceModel) derives the three-level shape from the SAME flat
-// /api/generated-notes array — no API/data change.
+// Clinic → Patient → Document layout is preserved. The generated-notes read
+// now includes verified, clinic-scoped patient demographics; document bodies
+// and mutation handlers are unchanged.
 import {
   PlexusPage,
   PlexusButton,
@@ -57,6 +54,7 @@ function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
   return false;
 }
 type GeneratedNote = {
+  patientIdentity?: DocumentPatientIdentity;
   id: number;
   patientId: number;
   batchId: number;
@@ -98,6 +96,7 @@ function formatDate(dateStr: string | null): string {
 // Derives Clinic → Patient → (per-service) Document from the flat notes
 // array. Does NOT change fetching or note logic.
 type WorkspacePatient = {
+  patientIdentity?: DocumentPatientIdentity;
   patientId: number;
   patientName: string;
   scheduleDate: string | null;
@@ -109,7 +108,7 @@ type WorkspaceClinic = {
   patients: WorkspacePatient[];
 };
 
-function buildWorkspaceModel(notes: GeneratedNote[]): WorkspaceClinic[] {
+export function buildWorkspaceModel(notes: GeneratedNote[]): WorkspaceClinic[] {
   const clinicMap = new Map<string, Map<number, WorkspacePatient>>();
   for (const note of notes) {
     const facility = note.facility || "Unknown Facility";
@@ -117,6 +116,7 @@ function buildWorkspaceModel(notes: GeneratedNote[]): WorkspaceClinic[] {
     const patients = clinicMap.get(facility)!;
     if (!patients.has(note.patientId)) {
       patients.set(note.patientId, {
+        patientIdentity: note.patientIdentity,
         patientId: note.patientId,
         patientName: note.patientName,
         scheduleDate: note.scheduleDate,
@@ -288,7 +288,7 @@ export default function DocumentsPage() {
   // issues ZERO canonical requests.
   const canonical = isUnifiedAncillaryDocumentsEnabled();
 
-  const { data: notes = [], isLoading } = useQuery<GeneratedNote[]>({
+  const { data: notes = [], isLoading, isError } = useQuery<GeneratedNote[]>({
     queryKey: ["/api/generated-notes"],
     enabled: !canonical,
   });
@@ -388,7 +388,7 @@ export default function DocumentsPage() {
     if (!activeClinic) return [];
     const q = patientSearch.trim().toLowerCase();
     if (!q) return activeClinic.patients;
-    return activeClinic.patients.filter((p) => p.patientName.toLowerCase().includes(q));
+    return activeClinic.patients.filter((p) => [p.patientName, p.patientIdentity?.mrn, p.patientIdentity?.plexusId, p.patientIdentity?.dob].some(value => value?.toLowerCase().includes(q)));
   }, [activeClinic, patientSearch]);
 
   const activePatient =
@@ -476,6 +476,8 @@ export default function DocumentsPage() {
                 <SkeletonRow />
                 <SkeletonRow />
               </div>
+            ) : isError ? (
+              <EmptyState kind="no-data" title="Documents unavailable" message="Patient identity could not be verified. Reload to try again." />
             ) : clinics.length === 0 ? (
               <div className="plexus-doc-panel p-2" data-testid="documents-list">
                 <EmptyState
@@ -544,9 +546,9 @@ export default function DocumentsPage() {
                               className="plexus-nav-row flex cursor-pointer flex-col gap-0.5 py-2.5 pl-3 pr-3 focus-visible:outline-none"
                             >
                               <span className="block truncate" style={{ fontSize: 14, fontWeight: 600, color: "#18243b" }}>{p.patientName}</span>
-                              {/* Real available metadata only. DOB / MRN / Plexus ID are
-                                  intentionally omitted until wired from real data — never
-                                  render sample/fabricated identifiers on the live route. */}
+                              <span className="block text-[11px] text-[#8a97ab]" data-testid={`patient-identity-${p.patientId}`}>
+                                {identitySummary(p.patientIdentity)}
+                              </span>
                               <span className="block" style={{ fontSize: 11.5, color: "#8a97ab" }}>
                                 {p.scheduleDate ? formatDate(p.scheduleDate) : "\u2014"}
                                 {" \u00b7 "}
@@ -573,6 +575,7 @@ export default function DocumentsPage() {
                       <div className="mb-4 flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h2 className="truncate" style={{ fontSize: 22, fontWeight: 600, color: "#18243b" }}>{activePatient.patientName}</h2>
+                          <p className="mt-1 text-[12px] text-[#8a97ab]" data-testid="active-patient-identity">{identitySummary(activePatient.patientIdentity)}</p>
                           <p className="mt-0.5" style={{ fontSize: 12.5, color: "#8a97ab" }}>
                             {activeFacility}{activePatient.scheduleDate ? ` · ${formatDate(activePatient.scheduleDate)}` : ""}
                           </p>

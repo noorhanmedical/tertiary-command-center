@@ -1,3 +1,4 @@
+import { identitySummary } from "@shared/documentPatientIdentity";
 // Phase 2E-B — canonical Ancillary Documents UI (read-only).
 //
 // Renders the shared /api/ancillary-documents contract. Used by:
@@ -61,6 +62,9 @@ function DocRow({ item }: { item: AncillaryDocumentContractItem }) {
           {" · "}created {fmtDate(item.actualCreatedAt)}
           {item.signedAt ? ` · signed ${fmtDate(item.signedAt)}` : ""}
           {item.effectiveClinicalDate ? ` · effective ${fmtDate(item.effectiveClinicalDate)}` : ""}
+        </div>
+        <div className="text-xs text-muted-foreground" data-testid={`doc-patient-identity-${item.ancillaryDocumentReferenceId}`}>
+          {identitySummary(item.patientIdentity)}
         </div>
         {item.warnings.length > 0 && (
           <div className="text-xs text-amber-600">{item.warnings.join(", ")}</div>
